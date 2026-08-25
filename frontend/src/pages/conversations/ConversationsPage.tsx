@@ -647,7 +647,7 @@ export function ConversationsPage({
 
     if (syncTask.status === "failed") {
       setSyncProgress({ failedStep: 2, phase: "failed", sourceLabel, taskId: syncTask.id });
-      onNotifyError(syncTask.error ?? t("conversation.sync.description.failed"));
+      onNotifyError(syncTask.error?.message ?? t("conversation.sync.description.failed"));
       return;
     }
 
@@ -1139,7 +1139,6 @@ export function ConversationsPage({
           recordKind={currentRecordKind}
           translationSettings={{
             ...appSettings.conversationTranslation,
-            ...appSettings.aiRuntime,
             ...resolveAgentCapability(appSettings, "cardTranslation"),
           }}
           visibility={contentVisibility}

@@ -1,10 +1,10 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::TargetProfile;
 use crate::backend::path_utils::normalize_path_for_storage;
+use crate::backend::runtime::AppResult;
 use sqlx::SqlitePool;
 
 use super::{
-    codec::{decode_json, encode_json},
+    codec::{decode_json_app, encode_json_app},
     sql,
 };
 
@@ -15,11 +15,13 @@ pub(crate) async fn load_profiles_sqlx(
     let payloads = sqlx::query_scalar::<_, String>(sql::LIST_PROFILES)
         .bind(tenant_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     payloads
         .into_iter()
-        .map(|payload| decode_json(payload).and_then(normalize_profile_paths))
+        .map(|payload| {
+            let profile = decode_json_app(payload)?;
+            normalize_profile_paths(profile)
+        })
         .collect()
 }
 
@@ -32,9 +34,11 @@ pub(crate) async fn load_profile_sqlx(
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?
-        .map(|payload| decode_json(payload).and_then(normalize_profile_paths))
+        .await?
+        .map(|payload| {
+            let profile = decode_json_app(payload)?;
+            normalize_profile_paths(profile)
+        })
         .transpose()
 }
 
@@ -47,10 +51,9 @@ pub(crate) async fn upsert_profile_sqlx(
     sqlx::query(sql::UPSERT_PROFILE)
         .bind(tenant_id)
         .bind(&profile.id)
-        .bind(encode_json(&profile)?)
+        .bind(encode_json_app(&profile)?)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -74,32 +77,28 @@ pub(crate) async fn delete_profile_sqlx(
     tenant_id: &str,
     profile_id: &str,
 ) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     sqlx::query(sql::DELETE_APP_SHORTCUT_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     sqlx::query(sql::DELETE_ASSET_MOUNT_OBSERVATIONS_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     sqlx::query(sql::DELETE_ASSET_MOUNTS_BY_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     sqlx::query(sql::DELETE_PROFILE)
         .bind(tenant_id)
         .bind(profile_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -107,6 +106,7 @@ pub(crate) async fn delete_profile_sqlx(
 mod tests {
     use super::*;
     use crate::backend::models::{AppKind, AssetKind, DeploymentStrategy, ProfileSafety, RuleSet};
+    use crate::backend::runtime::AppError;
     use crate::backend::store::Database;
     use uuid::Uuid;
 
@@ -154,8 +154,7 @@ mod tests {
                     )
                     .bind(&profile.id)
                     .execute(database.pool())
-                    .await
-                    .map_err(|error| error.to_string())?;
+                    .await?;
                     let profiles = load_profiles_sqlx(database.pool(), "default").await?;
                     let loaded_profile =
                         load_profile_sqlx(database.pool(), "default", &profile.id).await?;
@@ -167,7 +166,7 @@ mod tests {
                         sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
                             .fetch_one(database.pool())
                             .await
-                            .map_err(|error| error.to_string())?;
+                            .map_err(AppError::external)?;
                     AppResult::Ok((
                         profiles,
                         loaded_profile,

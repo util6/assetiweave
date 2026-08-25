@@ -1,7 +1,7 @@
 use crate::backend::models::{Asset, AssetFormat, TargetProfile};
 use crate::backend::{
-    dto::AppResult,
     path_utils::{expand_path, hash_path},
+    runtime::{AppError, AppResult},
 };
 use std::{
     fs::{self, Metadata},
@@ -29,22 +29,18 @@ pub(crate) fn target_dir(profile: &TargetProfile) -> AppResult<PathBuf> {
     let target_root = profile
         .target_paths
         .first()
-        .ok_or_else(|| format!("Profile {} 未配置目标路径", profile.name))?;
-    expand_path(target_root)
+        .ok_or_else(|| AppError::Validation(format!("Profile {} 未配置目标路径", profile.name)))?;
+    Ok(expand_path(target_root)?)
 }
 
 pub(crate) fn target_path(profile: &TargetProfile, asset: &Asset) -> AppResult<PathBuf> {
-    Ok(target_dir(profile)?.join(target_link_name(asset)))
+    Ok(target_dir_for_profile_asset(profile, asset)?.join(target_link_name(asset)))
 }
 
 pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult<MountInspection> {
-    let target_dir_path = target_dir(profile)?;
+    let target_dir_path = target_dir_for_profile_asset(profile, asset)?;
     let target_path = target_path(profile, asset)?;
-    let target_dir_label = profile
-        .target_paths
-        .first()
-        .cloned()
-        .unwrap_or_else(|| target_dir_path.to_string_lossy().to_string());
+    let target_dir_label = target_dir_path.to_string_lossy().to_string();
 
     let source_path = canonical_source_path(asset)?;
     let metadata = match fs::symlink_metadata(&target_path) {
@@ -57,7 +53,7 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
                 linked_source: None,
             });
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(AppError::External(error.to_string())),
     };
 
     if !metadata.file_type().is_symlink() {
@@ -77,7 +73,8 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
         });
     }
 
-    let linked_path = fs::read_link(&target_path).map_err(|error| error.to_string())?;
+    let linked_path =
+        fs::read_link(&target_path).map_err(|error| AppError::External(error.to_string()))?;
     let resolved_link = resolve_link_target(&target_path, &linked_path);
     let state = if same_path(&resolved_link, &source_path) {
         PhysicalMountState::Mounted
@@ -93,6 +90,94 @@ pub(crate) fn inspect_mount(profile: &TargetProfile, asset: &Asset) -> AppResult
         state,
         linked_source: Some(resolved_link.to_string_lossy().to_string()),
     })
+}
+
+pub(crate) fn inspect_mount_with_catalog(
+    profile: &TargetProfile,
+    asset: &Asset,
+    catalog: &crate::backend::target_catalog::TargetCatalog,
+) -> AppResult<MountInspection> {
+    let target_dir_path = target_dir_for_asset(profile, asset, catalog)?;
+    let target_path = target_dir_path.join(target_link_name(asset));
+    let target_dir_label = target_dir_path.to_string_lossy().to_string();
+
+    let source_path = canonical_source_path(asset)?;
+    let metadata = match fs::symlink_metadata(&target_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(MountInspection {
+                target_dir: target_dir_label,
+                target_path: target_path.to_string_lossy().to_string(),
+                state: PhysicalMountState::NotMounted,
+                linked_source: None,
+            });
+        }
+        Err(error) => return Err(AppError::External(error.to_string())),
+    };
+
+    if !metadata.file_type().is_symlink() {
+        let state = if same_path(&target_path, &source_path)
+            || target_content_matches_asset_source(asset, &source_path, &target_path, &metadata)
+                .unwrap_or(false)
+        {
+            PhysicalMountState::NotMounted
+        } else {
+            PhysicalMountState::Conflict
+        };
+        return Ok(MountInspection {
+            target_dir: target_dir_label,
+            target_path: target_path.to_string_lossy().to_string(),
+            state,
+            linked_source: None,
+        });
+    }
+
+    let linked_path =
+        fs::read_link(&target_path).map_err(|error| AppError::External(error.to_string()))?;
+    let resolved_link = resolve_link_target(&target_path, &linked_path);
+    let state = if same_path(&resolved_link, &source_path) {
+        PhysicalMountState::Mounted
+    } else if !resolved_link.exists() {
+        PhysicalMountState::Broken
+    } else {
+        PhysicalMountState::Conflict
+    };
+
+    Ok(MountInspection {
+        target_dir: target_dir_label,
+        target_path: target_path.to_string_lossy().to_string(),
+        state,
+        linked_source: Some(resolved_link.to_string_lossy().to_string()),
+    })
+}
+
+fn target_dir_for_asset(
+    profile: &TargetProfile,
+    asset: &Asset,
+    catalog: &crate::backend::target_catalog::TargetCatalog,
+) -> AppResult<PathBuf> {
+    let descriptor = catalog.require_descriptor(&profile.target_provider_id)?;
+    let target_index = descriptor
+        .default_targets
+        .iter()
+        .position(|target| target.asset_kind == asset.kind);
+    let target_root = target_index
+        .and_then(|index| profile.target_paths.get(index))
+        .or_else(|| profile.target_paths.first())
+        .ok_or_else(|| AppError::Validation(format!("Profile {} 未配置目标路径", profile.name)))?;
+    expand_path(target_root)
+}
+
+fn target_dir_for_profile_asset(profile: &TargetProfile, asset: &Asset) -> AppResult<PathBuf> {
+    let target_index = profile
+        .supported_kinds
+        .iter()
+        .position(|kind| *kind == asset.kind);
+    let target_root = target_index
+        .and_then(|index| profile.target_paths.get(index))
+        .or_else(|| profile.target_paths.first())
+        .ok_or_else(|| AppError::Validation(format!("Profile {} 未配置目标路径", profile.name)))?;
+    expand_path(target_root)
 }
 
 fn target_link_name(asset: &Asset) -> String {
@@ -125,7 +210,7 @@ fn same_path(left: &Path, right: &Path) -> bool {
 pub(crate) fn canonical_source_path(asset: &Asset) -> AppResult<PathBuf> {
     expand_path(&asset.absolute_path)?
         .canonicalize()
-        .map_err(|error| error.to_string())
+        .map_err(|error| AppError::External(error.to_string()))
 }
 
 pub(crate) fn target_is_asset_source(asset: &Asset, target_path: &Path) -> AppResult<bool> {
@@ -135,7 +220,8 @@ pub(crate) fn target_is_asset_source(asset: &Asset, target_path: &Path) -> AppRe
 
 pub(crate) fn target_content_matches_asset(asset: &Asset, target_path: &Path) -> AppResult<bool> {
     let source_path = canonical_source_path(asset)?;
-    let metadata = fs::symlink_metadata(target_path).map_err(|error| error.to_string())?;
+    let metadata =
+        fs::symlink_metadata(target_path).map_err(|error| AppError::External(error.to_string()))?;
     target_content_matches_asset_source(asset, &source_path, target_path, &metadata)
 }
 
@@ -178,6 +264,48 @@ mod tests {
         fs::remove_dir_all(&target_root).ok();
         assert_eq!(inspection.state, PhysicalMountState::NotMounted);
         assert_eq!(inspection.linked_source, None);
+    }
+
+    #[test]
+    fn target_path_uses_the_profile_rule_for_the_asset_kind() {
+        let root = unique_temp_dir("assetiweave-multi-target");
+        let profile = TargetProfile {
+            id: "fixture".to_string(),
+            name: "Fixture".to_string(),
+            app_kind: None,
+            target_provider_id: "fixture".to_string(),
+            target_paths: vec![
+                root.join("skills").to_string_lossy().to_string(),
+                root.join("prompts").to_string_lossy().to_string(),
+            ],
+            supported_kinds: vec![AssetKind::Skill, AssetKind::Prompt],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            enabled: true,
+            include: RuleSet {
+                kinds: vec![AssetKind::Skill, AssetKind::Prompt],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            exclude: RuleSet {
+                kinds: vec![],
+                tags: vec![],
+                groups: vec![],
+                sources: vec![],
+                path_patterns: vec![],
+            },
+            safety: ProfileSafety {
+                allow_remove: false,
+                allow_overwrite: false,
+            },
+        };
+        let mut asset = test_asset("prompt", &root.join("source").join("prompt"));
+        asset.kind = AssetKind::Prompt;
+        asset.format = AssetFormat::Markdown;
+
+        let target = target_path(&profile, &asset).expect("prompt target path");
+        assert!(target.starts_with(root.join("prompts")));
     }
 
     #[test]

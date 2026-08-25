@@ -183,7 +183,7 @@ aiwc sk mt downloaded-skill -p codex
 aiwc sk um downloaded-skill -p codex
 ```
 
-完整命令、JSON 输出约定和通用 API 调用方式见 [CLI 文档](docs/cli.md)。
+完整命令、JSON 输出约定和通用 API 调用方式见 [CLI 文档](docs/user-guides/cli-reference.md)。
 
 适配器工作区升级有三种来源：
 
@@ -247,7 +247,7 @@ flowchart TB
 | CLI | Go 1.24 + Cobra，提供友好命令与通用 API 调用 |
 | Storage | SQLite + 本地文件系统 |
 
-开发时的目录职责、文件落点和新旧架构边界见 [仓库目录与架构边界](docs/repository-structure.md)。
+开发时的目录职责、文件落点和新旧架构边界见 [仓库目录与架构边界](docs/knowledge/repository-structure.md)。
 
 ## 本地开发
 

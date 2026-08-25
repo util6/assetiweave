@@ -1,9 +1,10 @@
 use crate::backend::{
-    dto::{AppResult, ExecutionResult},
+    dto::ExecutionResult,
     models::{
         Asset, DeploymentAction, DeploymentActionType, DeploymentPlan, DeploymentState,
         DeploymentStrategy, TargetProfile,
     },
+    runtime::AppResult,
 };
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -72,6 +73,7 @@ pub(crate) async fn execute_deployment_plan(
     assets: &[Asset],
     plan: &DeploymentPlan,
     requested_action_ids: Option<&[String]>,
+    target_catalog: &crate::backend::target_catalog::TargetCatalog,
 ) -> AppResult<ExecutionResult> {
     let requested: Option<HashSet<&str>> =
         requested_action_ids.map(|ids| ids.iter().map(String::as_str).collect());
@@ -138,6 +140,16 @@ pub(crate) async fn execute_deployment_plan(
             );
             continue;
         };
+        if let Err(error) = target_catalog.require_descriptor(&profile.target_provider_id) {
+            let message = error.to_string();
+            result.errors.push(message.clone());
+            log_action_error(
+                "部署动作失败：目标 Provider 不可用",
+                &message,
+                &action_log_fields(action, Some(asset), Some(profile)),
+            );
+            continue;
+        }
 
         match execute_deployment_action(pool, tenant_id, profile, asset, action).await {
             Ok(()) => {
@@ -188,7 +200,7 @@ async fn execute_deployment_action(
     let target_path = PathBuf::from(&action.target_path);
     ensure_target_within_profile(profile, &target_path)?;
     let source_path = crate::backend::targeting::canonical_source_path(asset)
-        .map_err(DeploymentError::Failure)?;
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
 
     if target_path.exists()
         && !crate::backend::store::is_managed_deployment_sqlx(
@@ -199,7 +211,7 @@ async fn execute_deployment_action(
             &action.target_path,
         )
         .await
-        .map_err(DeploymentError::Failure)?
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?
         && !target_can_be_replaced_with_asset(asset, &target_path)
             .map_err(DeploymentError::Failure)?
     {
@@ -222,7 +234,7 @@ async fn execute_deployment_action(
         DeploymentStrategy::SymlinkToSource => {
             crate::backend::host_filesystem::HostFilesystem::current()
                 .create_symlink(&source_path, &target_path)
-                .map_err(DeploymentError::Failure)?
+                .map_err(|error| DeploymentError::Failure(error.to_string()))?
         }
         DeploymentStrategy::CopyToTarget => copy_asset(&source_path, &target_path)?,
         other => {
@@ -244,26 +256,37 @@ async fn execute_deployment_action(
     };
     crate::backend::store::upsert_deployment_state_sqlx(pool, tenant_id, &state)
         .await
-        .map_err(DeploymentError::Failure)?;
+        .map_err(|error| DeploymentError::Failure(error.to_string()))?;
     Ok(())
 }
 
 fn target_can_be_replaced_with_asset(asset: &Asset, target_path: &Path) -> Result<bool, String> {
-    if crate::backend::targeting::target_is_asset_source(asset, target_path)? {
+    if crate::backend::targeting::target_is_asset_source(asset, target_path)
+        .map_err(|error| error.to_string())?
+    {
         return Ok(false);
     }
-    crate::backend::targeting::target_content_matches_asset(asset, target_path)
+    Ok(
+        crate::backend::targeting::target_content_matches_asset(asset, target_path)
+            .map_err(|error| error.to_string())?,
+    )
 }
 
 fn ensure_target_within_profile(
     profile: &TargetProfile,
     target_path: &Path,
 ) -> Result<(), DeploymentError> {
-    let allowed_root =
-        crate::backend::targeting::target_dir(profile).map_err(DeploymentError::Failure)?;
-    if !crate::backend::host_filesystem::HostFilesystem::current()
-        .is_within(target_path, &allowed_root)
-    {
+    let filesystem = crate::backend::host_filesystem::HostFilesystem::current();
+    let mut allowed = false;
+    for root in &profile.target_paths {
+        let expanded = crate::backend::path_utils::expand_path(root)
+            .map_err(|error| DeploymentError::Failure(error.to_string()))?;
+        if filesystem.is_within(target_path, &expanded) {
+            allowed = true;
+            break;
+        }
+    }
+    if !allowed {
         return Err(DeploymentError::Failure(format!(
             "拒绝写入 Profile 目标目录外部: {}",
             target_path.display()
@@ -275,7 +298,7 @@ fn ensure_target_within_profile(
 fn remove_existing_target(path: &Path) -> Result<(), DeploymentError> {
     crate::backend::host_filesystem::HostFilesystem::current()
         .remove_path(path)
-        .map_err(DeploymentError::Failure)
+        .map_err(|error| DeploymentError::Failure(error.to_string()))
 }
 
 fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
@@ -291,5 +314,5 @@ fn copy_asset(source: &Path, target: &Path) -> Result<(), DeploymentError> {
 fn copy_dir(source: &Path, target: &Path) -> Result<(), DeploymentError> {
     crate::backend::host_filesystem::HostFilesystem::current()
         .copy_dir(source, target)
-        .map_err(DeploymentError::Failure)
+        .map_err(|error| DeploymentError::Failure(error.to_string()))
 }

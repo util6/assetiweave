@@ -94,20 +94,6 @@ pub enum DeploymentStrategy {
     ConfigMerge,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(transparent)]
-pub struct TargetProviderId(pub String);
-
-impl TargetProviderId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TargetPathRule {
     pub asset_kind: AssetKind,

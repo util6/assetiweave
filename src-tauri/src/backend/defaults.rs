@@ -3,6 +3,7 @@ use crate::backend::models::{
     AssetKind, ProfileSafety, RuleSet, Source, SourceKind, SourceOrigin, SourceScannerKind,
     TargetProfile,
 };
+use crate::backend::target_catalog::TargetCatalog;
 use std::collections::BTreeMap;
 
 pub(crate) const DEFAULT_APP_PROFILE_IDS: &[&str] = &[
@@ -104,38 +105,53 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
     sources
 }
 
-pub(crate) fn default_profiles() -> Vec<TargetProfile> {
-    crate::backend::target_catalog::TargetCatalog::builtin()
-        .expect("builtin target descriptors must be valid")
+pub(crate) fn default_profiles_from_catalog(catalog: &TargetCatalog) -> Vec<TargetProfile> {
+    catalog
         .descriptors()
         .iter()
-        .map(|descriptor| TargetProfile {
-            id: descriptor.id.clone(),
-            name: descriptor.name.clone(),
-            app_kind: descriptor.app_kind_compat,
-            target_provider_id: descriptor.id.clone(),
-            target_paths: vec![descriptor.default_targets[0].path.clone()],
-            supported_kinds: descriptor.supported_kinds.clone(),
-            deployment_strategy: descriptor.deployment_strategy,
-            enabled: true,
-            include: RuleSet {
-                kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
-                tags: vec![],
-                groups: vec![],
-                sources: vec![],
-                path_patterns: vec![],
-            },
-            exclude: RuleSet {
-                kinds: vec![AssetKind::Unclassified],
-                tags: vec![],
-                groups: vec![],
-                sources: vec![],
-                path_patterns: vec![],
-            },
-            safety: ProfileSafety {
-                allow_remove: false,
-                allow_overwrite: false,
-            },
+        .map(|descriptor| {
+            let mut supported_kinds = descriptor
+                .default_targets
+                .iter()
+                .map(|target| target.asset_kind)
+                .collect::<Vec<_>>();
+            for kind in &descriptor.supported_kinds {
+                if !supported_kinds.contains(kind) {
+                    supported_kinds.push(*kind);
+                }
+            }
+            TargetProfile {
+                id: descriptor.id.clone(),
+                name: descriptor.name.clone(),
+                app_kind: descriptor.app_kind_compat,
+                target_provider_id: descriptor.id.clone(),
+                target_paths: descriptor
+                    .default_targets
+                    .iter()
+                    .map(|target| target.path.clone())
+                    .collect(),
+                supported_kinds,
+                deployment_strategy: descriptor.deployment_strategy,
+                enabled: true,
+                include: RuleSet {
+                    kinds: vec![AssetKind::Skill, AssetKind::Prompt, AssetKind::Rule],
+                    tags: vec![],
+                    groups: vec![],
+                    sources: vec![],
+                    path_patterns: vec![],
+                },
+                exclude: RuleSet {
+                    kinds: vec![AssetKind::Unclassified],
+                    tags: vec![],
+                    groups: vec![],
+                    sources: vec![],
+                    path_patterns: vec![],
+                },
+                safety: ProfileSafety {
+                    allow_remove: false,
+                    allow_overwrite: false,
+                },
+            }
         })
         .collect()
 }
@@ -272,9 +288,16 @@ fn sub_nav(id: &str, label: &str, route_key: &str) -> SubNavItem {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_app_shortcuts, default_navigation_model, default_profiles,
+        default_app_shortcuts, default_navigation_model, default_profiles_from_catalog,
         default_sources_for_tenant,
     };
+    use crate::backend::models::TargetProfile;
+    use crate::backend::target_catalog::TargetCatalog;
+
+    fn default_profiles() -> Vec<TargetProfile> {
+        let catalog = TargetCatalog::builtin_for_tests().expect("builtin target descriptors");
+        default_profiles_from_catalog(&catalog)
+    }
 
     #[test]
     fn memory_is_an_independent_default_navigation_module() {

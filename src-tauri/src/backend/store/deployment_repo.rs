@@ -1,8 +1,8 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::DeploymentState;
+use crate::backend::runtime::AppResult;
 use sqlx::{Row, SqlitePool};
 
-use super::{codec::encode_enum, sql};
+use super::{codec::encode_enum_app, sql};
 
 pub(crate) async fn upsert_deployment_state_sqlx(
     pool: &SqlitePool,
@@ -14,13 +14,12 @@ pub(crate) async fn upsert_deployment_state_sqlx(
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
-        .bind(encode_enum(state.strategy)?)
+        .bind(encode_enum_app(state.strategy)?)
         .bind(&state.source_hash)
         .bind(&state.deployed_at)
         .bind(&state.managed_by)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -37,8 +36,7 @@ pub(crate) async fn is_managed_deployment_sqlx(
         .bind(asset_id)
         .bind(target_path)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(managed_by.as_deref() == Some("assetiweave"))
 }
 
@@ -51,8 +49,7 @@ pub(crate) async fn count_deployment_state_by_profile_sqlx(
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_one(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(count as usize)
 }
 
@@ -65,15 +62,9 @@ pub(crate) async fn load_managed_deployment_targets_by_profile_sqlx(
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     rows.into_iter()
-        .map(|row| {
-            Ok((
-                row.try_get(0).map_err(|error| error.to_string())?,
-                row.try_get(1).map_err(|error| error.to_string())?,
-            ))
-        })
+        .map(|row| Ok((row.try_get(0)?, row.try_get(1)?)))
         .collect()
 }
 
@@ -91,8 +82,7 @@ pub(crate) async fn delete_deployment_state_sqlx(
         .bind(asset_id)
         .bind(target_path)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -103,8 +93,7 @@ pub(crate) async fn delete_orphan_deployment_state_sqlx(
     sqlx::query(sql::DELETE_ORPHAN_DEPLOYMENT_STATE)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -112,6 +101,7 @@ pub(crate) async fn delete_orphan_deployment_state_sqlx(
 mod tests {
     use super::*;
     use crate::backend::models::DeploymentStrategy;
+    use crate::backend::runtime::AppError;
     use uuid::Uuid;
 
     #[test]
@@ -203,7 +193,7 @@ mod tests {
                 let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_state")
                     .fetch_one(database.pool())
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
                 AppResult::Ok(rows)
             })
             .map(|rows| assert_eq!(rows, 2))
@@ -241,8 +231,7 @@ mod tests {
         .bind(asset_id)
         .bind("2026-06-18T00:00:00Z")
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         Ok(())
     }
 

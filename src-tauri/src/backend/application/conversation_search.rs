@@ -1,6 +1,7 @@
 use super::prelude::*;
 use crate::backend::dto::ConversationSearchIndexRebuildReport;
 use crate::backend::dto::ConversationSearchIndexStatus;
+use crate::backend::runtime::AppResult;
 
 impl AppService {
     pub(crate) fn rebuild_conversation_search_index(

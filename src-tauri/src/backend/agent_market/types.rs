@@ -3,6 +3,7 @@ use std::{fmt, path::PathBuf, time::Duration};
 use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use url::Url;
 
 const MAX_ID_BYTES: usize = 64;
@@ -86,6 +87,7 @@ pub(crate) enum VerificationStatus {
 }
 
 impl crate::backend::extension_kernel::TrustGate for VerificationStatus {
+    #[cfg(test)]
     fn can_enable(&self) -> bool {
         true
     }
@@ -94,12 +96,13 @@ impl crate::backend::extension_kernel::TrustGate for VerificationStatus {
         matches!(self, Self::Experimental)
     }
 
+    #[cfg(test)]
     fn integrity_changed(&self) -> bool {
         false
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CoreCompatibility {
     pub(crate) min: String,
@@ -150,6 +153,7 @@ pub(crate) enum Distribution {
         priority: u32,
         command_candidates: Vec<String>,
         version_args: Vec<String>,
+        #[serde(default)]
         version_range: String,
         launch_args: Vec<String>,
         #[serde(default)]
@@ -343,15 +347,6 @@ impl Distribution {
         }
     }
 
-    pub(crate) fn priority(&self) -> u32 {
-        match self {
-            Self::System { priority, .. }
-            | Self::Binary { priority, .. }
-            | Self::Npx { priority, .. }
-            | Self::Uvx { priority, .. } => *priority,
-        }
-    }
-
     pub(crate) fn distribution_type(&self) -> DistributionType {
         match self {
             Self::System { .. } => DistributionType::System,
@@ -370,6 +365,7 @@ impl Distribution {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn ownership(&self) -> Ownership {
         self.distribution_type().ownership()
     }
@@ -383,6 +379,7 @@ pub(crate) struct CatalogItem {
     pub(crate) description: String,
     pub(crate) protocol: AgentMarketProtocol,
     pub(crate) version: String,
+    #[serde(default)]
     pub(crate) core_compatibility: CoreCompatibility,
     pub(crate) capabilities: CatalogCapabilities,
     pub(crate) verification: Verification,
@@ -535,12 +532,10 @@ impl AgentInstallation {
     pub(crate) fn package_identity(
         &self,
     ) -> Result<crate::backend::extension_kernel::PackageIdentity, String> {
-        let version = Version::parse(&self.agent_version).map_err(|error| {
-            format!(
-                "agent {} has invalid package version: {error}",
-                self.agent_id
-            )
-        })?;
+        // PackageIdentity currently uses semver for every extension kind, but
+        // ACP Agent versions are opaque observations. Keep lifecycle identity
+        // stable and retain the real value only on AgentInstallation.
+        let version = Version::new(0, 0, 0);
         Ok(crate::backend::extension_kernel::PackageIdentity {
             kind: crate::backend::extension_kernel::PackageKind::Agent,
             package_id: self.agent_id.clone(),
@@ -568,7 +563,9 @@ impl AgentInstallation {
             args: self.args.clone(),
             env,
             working_dir: self.install_dir.clone(),
-            version_req: Some(format!("={}", self.agent_version)),
+            // ACP runtime versions are observed for diagnostics only. Protocol
+            // conformance, not semantic-version equality, determines readiness.
+            version_req: None,
             immutable_install_dir: self.install_dir.clone().unwrap_or_else(|| {
                 self.resolved_program
                     .parent()
@@ -643,6 +640,7 @@ pub(crate) struct AgentMarketError {
     pub(crate) phase: Option<String>,
     pub(crate) retryable: bool,
     pub(crate) action: Option<String>,
+    pub(crate) details: Option<Value>,
 }
 
 impl AgentMarketError {
@@ -654,6 +652,7 @@ impl AgentMarketError {
             phase: None,
             retryable,
             action: None,
+            details: None,
         }
     }
 }
@@ -666,7 +665,7 @@ impl fmt::Display for AgentMarketError {
 
 impl std::error::Error for AgentMarketError {}
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LifecycleTaskState {
     Queued,
@@ -683,7 +682,7 @@ impl LifecycleTaskState {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LifecycleTaskPhase {
     Queued,
@@ -703,7 +702,7 @@ pub(crate) enum LifecycleTaskPhase {
     Cancelled,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProgressSnapshot {
     pub(crate) completed_units: u64,
@@ -712,7 +711,7 @@ pub(crate) struct ProgressSnapshot {
     pub(crate) total_bytes: Option<u64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentLifecycleTaskSnapshot {
     pub(crate) id: String,
@@ -735,7 +734,7 @@ pub(crate) struct AgentLifecycleTaskSnapshot {
     pub(crate) warnings: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentMarketErrorView {
     pub(crate) code: String,
@@ -744,17 +743,23 @@ pub(crate) struct AgentMarketErrorView {
     pub(crate) phase: Option<String>,
     pub(crate) retryable: bool,
     pub(crate) action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) details: Option<Value>,
 }
 
 impl From<&AgentMarketError> for AgentMarketErrorView {
     fn from(value: &AgentMarketError) -> Self {
         Self {
             code: value.code.clone(),
-            message: value.message.clone(),
+            message: crate::backend::runtime::sanitize_public_message(&value.message),
             agent_id: value.agent_id.clone(),
             phase: value.phase.clone(),
             retryable: value.retryable,
             action: value.action.clone(),
+            details: value
+                .details
+                .as_ref()
+                .and_then(crate::backend::runtime::sanitize_details),
         }
     }
 }
@@ -766,12 +771,6 @@ pub(crate) struct AgentMarketListRequest {
     pub(crate) protocol: Option<AgentMarketProtocol>,
     #[serde(default)]
     pub(crate) installed_only: bool,
-    #[serde(default = "default_true")]
-    pub(crate) include_incompatible: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -788,6 +787,7 @@ pub(crate) struct AgentInstallPreviewRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentInstallStartRequest {
     pub(crate) agent_id: String,
+    pub(crate) action: String,
     pub(crate) catalog_version: String,
     pub(crate) agent_version: String,
     pub(crate) distribution_id: String,
@@ -842,11 +842,9 @@ impl CatalogItem {
         if self.description.trim().is_empty() || self.description.len() > MAX_TEXT_BYTES {
             return Err(format!("invalid description for {}", self.id));
         }
-        if !is_fixed_version(&self.version)
-            || !is_fixed_version(&self.core_compatibility.min)
-            || !is_fixed_version(&self.core_compatibility.max_exclusive)
+        if self.version.trim().is_empty() || self.version.len() > 120 || self.version.contains('\0')
         {
-            return Err(format!("catalog version must be fixed for {}", self.id));
+            return Err(format!("invalid observed version for {}", self.id));
         }
         if self.distributions.is_empty() {
             return Err(format!("catalog item has no distributions: {}", self.id));
@@ -865,15 +863,12 @@ impl CatalogItem {
                 return Err(format!("invalid distribution: {}", distribution.id()));
             }
             if let Distribution::System {
-                version_range,
-                command_candidates,
-                ..
+                command_candidates, ..
             } = distribution
             {
-                if semver::VersionReq::parse(version_range).is_err()
-                    || command_candidates
-                        .iter()
-                        .any(|command| !is_safe_command_candidate(command))
+                if command_candidates
+                    .iter()
+                    .any(|command| !is_safe_command_candidate(command))
                 {
                     return Err(format!(
                         "invalid system distribution: {}",
@@ -1076,11 +1071,11 @@ mod tests {
     }
 
     #[test]
-    fn catalog_rejects_floating_versions_and_unsafe_paths() {
+    fn catalog_accepts_observed_versions_but_rejects_unsafe_paths() {
         let mut item = item();
-        item.version = "latest".to_string();
-        assert!(item.validate_basic().is_err());
-        item.version = "1.2.3".to_string();
+        item.version = "release-2026.08-current".to_string();
+        item.validate_basic()
+            .expect("Agent version metadata is observational");
         item.distributions = vec![Distribution::Binary {
             id: "binary".to_string(),
             priority: 20,
@@ -1150,7 +1145,7 @@ mod tests {
             installation_id: "installation".to_string(),
             display_name: "Agent".to_string(),
             catalog_item_version: "1.2.3".to_string(),
-            agent_version: "1.2.3".to_string(),
+            agent_version: "release-2026.08-current".to_string(),
             protocol: AgentMarketProtocol::Acp,
             distribution_id: "binary".to_string(),
             distribution_type: DistributionType::Binary,
@@ -1186,7 +1181,9 @@ mod tests {
             .package_manifest()
             .expect("agent package manifest");
         assert_eq!(manifest.identity.package_id, "agent");
+        assert_eq!(manifest.identity.version, Version::new(0, 0, 0));
         assert_eq!(manifest.invocation.args, vec!["acp"]);
+        assert_eq!(manifest.invocation.version_req, None);
         assert_eq!(manifest.invocation.env[0].key, "TOKEN");
         assert_eq!(manifest.availability_probe.args, vec!["--version"]);
         assert_eq!(
@@ -1197,5 +1194,29 @@ mod tests {
                 .args,
             vec!["--models"]
         );
+    }
+
+    #[test]
+    fn agent_market_error_view_redacts_infrastructure_diagnostics() {
+        let mut error = AgentMarketError::new(
+            "uninstall_failed",
+            "failed to remove /Users/util6/private-agent token=secret",
+            true,
+        );
+        error.details = Some(serde_json::json!({
+            "path": "/Users/util6/private-agent",
+            "token": "secret",
+            "phase": "cleaning_up",
+        }));
+
+        let view = AgentMarketErrorView::from(&error);
+        let serialized = serde_json::to_string(&view).unwrap();
+
+        assert_eq!(view.message, "The operation failed.");
+        assert_eq!(view.details.as_ref().unwrap()["path"], "<redacted>");
+        assert!(view.details.as_ref().unwrap().get("token").is_none());
+        assert_eq!(view.details.as_ref().unwrap()["phase"], "cleaning_up");
+        assert!(!serialized.contains("/Users/util6"));
+        assert!(!serialized.contains("secret"));
     }
 }

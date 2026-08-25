@@ -1,6 +1,6 @@
 //! Bootstrap-only filesystem materialization and prepared adapter persistence.
 
-use crate::backend::{dto::AppResult, store};
+use crate::backend::runtime::AppResult;
 use sqlx::SqlitePool;
 
 /// Materialize built-in adapter files outside the store, then pass the prepared
@@ -9,20 +9,11 @@ pub(crate) async fn materialize_and_seed_builtin_adapters(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<()> {
-    let adapters = tokio::task::spawn_blocking(
-        crate::backend::conversations::ensure_official_conversation_adapters,
-    )
-    .await
-    .map_err(|error| format!("adapter materialization task failed: {error}"))??;
-    store::seed_prepared_builtin_conversation_adapters_sqlx(pool, tenant_id, adapters).await?;
-    store::migrate_legacy_conversation_adapter_hashes_sqlx(pool, tenant_id).await?;
-    store::normalize_conversation_paths_sqlx(pool, tenant_id).await?;
-    Ok(())
+    crate::backend::bootstrap::materialize_and_seed_builtin_adapters(pool, tenant_id).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::backend::{
         models::{ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState},
         store,

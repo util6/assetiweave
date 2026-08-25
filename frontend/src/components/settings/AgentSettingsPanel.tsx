@@ -212,7 +212,7 @@ export function AgentSettingsPanel({
         snapshot = await agentRuntime.getAgentMarketRefreshTask(snapshot.id);
       }
       if (snapshot.state === "failed") {
-        setConnectionMessages((current) => ({ ...current, _market: snapshot.error || t("settings.agents.refreshFailed") }));
+        setConnectionMessages((current) => ({ ...current, _market: snapshot.error?.message || t("settings.agents.refreshFailed") }));
         return;
       }
       await reloadMarketCatalog();
@@ -279,6 +279,7 @@ export function AgentSettingsPanel({
     try {
       const request = {
         agentId: agent.id,
+        action,
         catalogVersion: preview.catalogVersion,
         agentVersion: preview.targetVersion,
         distributionId: preview.selectedDistribution.distributionId,
@@ -716,7 +717,12 @@ function DefinitionValue({ label, value }: { label: string; value: string }) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "Agent 操作失败";
 }
 
 function applyConnectionResult(

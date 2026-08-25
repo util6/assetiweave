@@ -1,5 +1,4 @@
 use super::prelude::*;
-use std::io::ErrorKind;
 
 const CONVERSATION_RUNTIME_OVERRIDES_KEY: &str = "conversationRuntimeOverrides";
 const ADAPTER_RUNTIME_PROBE_TIMEOUT_MS: u64 = 3_000;
@@ -7,7 +6,7 @@ const ADAPTER_RUNTIME_PROBE_OUTPUT_CAP: usize = 16 * 1024;
 pub(super) const LEGACY_JAVASCRIPT_COMMAND_NODE_VERSION: &str = ">=20";
 
 enum RuntimeProbeError {
-    Spawn(std::io::Error),
+    Spawn(String),
     Output(String),
     Timeout { stdout: Vec<u8>, stderr: Vec<u8> },
 }
@@ -28,10 +27,9 @@ pub(super) fn resolve_adapter_entry_path(
     if let Some(runtime) = manifest.runtime.as_ref() {
         return Ok(resolve_command_path(manifest_dir, &runtime.entry));
     }
-    let command = manifest
-        .command
-        .first()
-        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    let command = manifest.command.first().ok_or_else(|| {
+        AppError::external({ "adapter command must include an executable".to_string() })
+    })?;
     Ok(resolve_command_path(manifest_dir, command))
 }
 
@@ -41,21 +39,22 @@ pub(super) struct AdapterCommandInvocation {
     pub(super) display_path: PathBuf,
 }
 
-pub(super) fn build_adapter_invocation(
+pub(super) fn build_adapter_invocation_with_settings(
     manifest_dir: &Path,
     manifest: &ConversationAdapterManifest,
+    settings: &Value,
 ) -> AppResult<AdapterCommandInvocation> {
     if let Some(runtime) = adapter_execution_runtime(manifest) {
-        return Ok(build_adapter_runtime_invocation(
+        return Ok(build_adapter_runtime_invocation_with_settings(
             manifest_dir,
             &runtime,
             &[],
+            settings,
         ));
     }
-    let (command, args) = manifest
-        .command
-        .split_first()
-        .ok_or_else(|| "adapter command must include an executable".to_string())?;
+    let (command, args) = manifest.command.split_first().ok_or_else(|| {
+        AppError::external({ "adapter command must include an executable".to_string() })
+    })?;
     Ok(build_adapter_command_invocation(
         manifest_dir,
         command,
@@ -104,10 +103,11 @@ pub(super) fn build_adapter_command_invocation(
     }
 }
 
-pub(super) fn build_adapter_runtime_invocation(
+pub(super) fn build_adapter_runtime_invocation_with_settings(
     manifest_dir: &Path,
     runtime: &ConversationAdapterRuntime,
     call_args: &[String],
+    settings: &Value,
 ) -> AdapterCommandInvocation {
     let entry_path = resolve_command_path(manifest_dir, &runtime.entry);
     if matches!(runtime.kind, ConversationAdapterRuntimeKind::Executable) {
@@ -125,7 +125,7 @@ pub(super) fn build_adapter_runtime_invocation(
     args.extend_from_slice(call_args);
 
     AdapterCommandInvocation {
-        program: configured_runtime_program(&runtime.kind),
+        program: configured_runtime_program(&runtime.kind, settings),
         args,
         display_path: entry_path,
     }
@@ -147,14 +147,15 @@ pub(super) fn ensure_adapter_runtime_available(
     if status.available {
         Ok(())
     } else {
-        Err(status
-            .error
-            .unwrap_or_else(|| adapter_runtime_missing_message(runtime, &invocation.program)))
+        Err(AppError::external(status.error.unwrap_or_else(|| {
+            adapter_runtime_missing_message(runtime, &invocation.program)
+        })))
     }
 }
 
-pub(super) fn list_adapter_runtime_statuses(
+pub(super) fn list_adapter_runtime_statuses_with_settings(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
+    settings: &Value,
 ) -> Vec<ConversationAdapterRuntimeStatus> {
     [
         ConversationAdapterRuntimeKind::Node,
@@ -163,7 +164,7 @@ pub(super) fn list_adapter_runtime_statuses(
     ]
     .into_iter()
     .map(|kind| {
-        let program = configured_runtime_program(&kind);
+        let program = configured_runtime_program(&kind, settings);
         let required_version = requirements
             .iter()
             .find(|(requirement_kind, _)| *requirement_kind == kind)
@@ -272,11 +273,10 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
     program: PathBuf,
     required_version: Option<&str>,
 ) -> ConversationAdapterRuntimeStatus {
-    let mut command = Command::new(&program);
-    command.args(runtime_version_args(kind));
     let required_version = required_version.map(str::to_string);
     match run_runtime_probe(
-        command,
+        program.clone(),
+        runtime_version_args(kind),
         Duration::from_millis(ADAPTER_RUNTIME_PROBE_TIMEOUT_MS),
     ) {
         Ok((status, stdout, stderr)) if status.success() => {
@@ -297,7 +297,10 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
             )),
             hint: Some(runtime_remediation_hint(kind, &program)),
         },
-        Err(RuntimeProbeError::Spawn(error)) if error.kind() == ErrorKind::NotFound => {
+        Err(RuntimeProbeError::Spawn(error))
+            if error.to_ascii_lowercase().contains("not found")
+                || error.to_ascii_lowercase().contains("no such file") =>
+        {
             let requirement = required_version
                 .as_deref()
                 .map(|version| format!(" {version}"))
@@ -381,7 +384,7 @@ fn runtime_status_from_success(
                         requirement,
                         detected_version,
                     )),
-                    Err(error) => Some(error),
+                    Err(error) => Some(error.to_string()),
                 }
             }
             None => Some(format!(
@@ -427,66 +430,48 @@ fn runtime_version_mismatch_error(
 }
 
 fn run_runtime_probe(
-    mut command: Command,
+    program: PathBuf,
+    args: Vec<&str>,
     timeout: Duration,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), RuntimeProbeError> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(RuntimeProbeError::Spawn)?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| RuntimeProbeError::Output("runtime stdout was not available".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| RuntimeProbeError::Output("runtime stderr was not available".to_string()))?;
-    let stdout_reader =
-        thread::spawn(move || read_capped(stdout, ADAPTER_RUNTIME_PROBE_OUTPUT_CAP));
-    let stderr_reader =
-        thread::spawn(move || read_capped(stderr, ADAPTER_RUNTIME_PROBE_OUTPUT_CAP));
-
-    let started = Instant::now();
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| RuntimeProbeError::Output(error.to_string()))?
-        {
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stdout reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stderr reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            return Ok((status, stdout, stderr));
+    let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
+    let output = crate::backend::host_process::run_program_with_timeout(
+        &program,
+        &args,
+        None,
+        timeout,
+        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+    )
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
         }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stdout reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| {
-                    RuntimeProbeError::Output("runtime stderr reader panicked".to_string())
-                })?
-                .map_err(RuntimeProbeError::Output)?;
-            return Err(RuntimeProbeError::Timeout { stdout, stderr });
+        crate::backend::host_process::HostProcessError::Spawn(reason) => {
+            RuntimeProbeError::Spawn(reason)
         }
-        thread::sleep(Duration::from_millis(50));
+        crate::backend::host_process::HostProcessError::Output(reason) => {
+            RuntimeProbeError::Output(reason)
+        }
+        crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
+            RuntimeProbeError::Timeout { stdout, stderr }
+        }
+        crate::backend::host_process::HostProcessError::Cancelled => {
+            RuntimeProbeError::Output("runtime probe was cancelled".to_string())
+        }
+        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            RuntimeProbeError::Output(reason)
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            RuntimeProbeError::Output("runtime probe output exceeded configured limit".to_string())
+        }
+    })?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(RuntimeProbeError::Output(format!(
+            "runtime probe output exceeded cap of {ADAPTER_RUNTIME_PROBE_OUTPUT_CAP} bytes"
+        )));
     }
+    Ok((output.status, output.stdout, output.stderr))
 }
 
 fn adapter_runtime_missing_message(runtime: &ConversationAdapterRuntime, program: &Path) -> String {
@@ -525,7 +510,9 @@ pub(super) fn runtime_version_satisfies_constraint(
 ) -> AppResult<bool> {
     let minimum = parse_minimum_version_constraint(requirement)?;
     let detected = parse_detected_runtime_version(detected_version).ok_or_else(|| {
-        format!("could not parse adapter runtime version from output: {detected_version}")
+        AppError::external({
+            format!("could not parse adapter runtime version from output: {detected_version}")
+        })
     })?;
     Ok(compare_versions(&detected, &minimum) != std::cmp::Ordering::Less)
 }
@@ -533,10 +520,14 @@ pub(super) fn runtime_version_satisfies_constraint(
 fn parse_minimum_version_constraint(requirement: &str) -> AppResult<Vec<u64>> {
     let requirement = requirement.trim();
     let version = requirement.strip_prefix(">=").ok_or_else(|| {
-        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        AppError::external({
+            format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        })
     })?;
     parse_exact_runtime_version(version.trim()).ok_or_else(|| {
-        format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
+        AppError::Validation(format!(
+            "adapter runtime version constraint must use >=x[.y[.z]]: {requirement}"
+        ))
     })
 }
 
@@ -587,11 +578,37 @@ fn compare_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind) -> PathBuf {
-    crate::backend::app_settings::read_app_settings_value()
-        .ok()
-        .and_then(|settings| runtime_program_from_settings(kind, &settings))
-        .unwrap_or_else(|| default_runtime_program(kind))
+fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind, settings: &Value) -> PathBuf {
+    runtime_program_from_settings(kind, settings).unwrap_or_else(|| default_runtime_program(kind))
+}
+
+#[cfg(test)]
+pub(super) fn build_adapter_invocation(
+    manifest_dir: &Path,
+    manifest: &ConversationAdapterManifest,
+) -> AppResult<AdapterCommandInvocation> {
+    build_adapter_invocation_with_settings(manifest_dir, manifest, &serde_json::json!({}))
+}
+
+#[cfg(test)]
+pub(super) fn build_adapter_runtime_invocation(
+    manifest_dir: &Path,
+    runtime: &ConversationAdapterRuntime,
+    call_args: &[String],
+) -> AdapterCommandInvocation {
+    build_adapter_runtime_invocation_with_settings(
+        manifest_dir,
+        runtime,
+        call_args,
+        &serde_json::json!({}),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn list_adapter_runtime_statuses(
+    requirements: &[(ConversationAdapterRuntimeKind, String)],
+) -> Vec<ConversationAdapterRuntimeStatus> {
+    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({}))
 }
 
 pub(super) fn runtime_program_from_settings(
@@ -730,26 +747,8 @@ fn is_javascript_adapter_command(path: &Path) -> bool {
         })
 }
 
-pub(super) fn read_capped<R: Read>(mut reader: R, cap: usize) -> AppResult<Vec<u8>> {
-    let mut output = Vec::new();
-    let mut buffer = [0u8; 8192];
-    loop {
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
-        output.extend_from_slice(&buffer[..read]);
-        if output.len() > cap {
-            return Err(format!("adapter output exceeded cap of {cap} bytes"));
-        }
-    }
-    Ok(output)
-}
-
 pub(super) fn hash_file(path: &Path) -> AppResult<String> {
-    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    let bytes = fs::read(path).map_err(AppError::external)?;
     Ok(hash_bytes(&bytes))
 }
 

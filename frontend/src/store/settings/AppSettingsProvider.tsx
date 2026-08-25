@@ -34,6 +34,8 @@ export {
   RESULT_PREVIEW_LINE_LIMIT_MAX,
   RESULT_PREVIEW_LINE_LIMIT_MIN,
   RESULT_PREVIEW_LINE_LIMIT_STEP,
+  assignAgentToAction,
+  assignModelToAgentActions,
   createFontFamilySetting,
   fontFamilyCss,
   fontFamilyOptionForPreset,
@@ -41,6 +43,7 @@ export {
   firstFontFamilyName,
   normalizeStoredSettings,
   normalizeConversationTranslationTargetLanguage,
+  modelsByAgentFromAssignments,
   resolveAgentCapability,
   resolveFontFamilyCss,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
@@ -49,6 +52,9 @@ export {
   PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
 } from "./settingsSchema";
 export type {
+  AgentActionId,
+  AgentAssignment,
+  AgentAssignments,
   AgentCapabilityAssignments,
   AgentCapabilityServiceId,
   AiRuntimeCli,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import {
   createSource,
@@ -7,14 +7,23 @@ import {
   listSourceAssets,
   revealPath,
   scanSkillSources,
+  startSourceScan,
   updateSource,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
+import type { SourceScanScope, SourceScanTaskSnapshot } from "../../services/catalog";
 
 const SKILL_SOURCES_CACHE_KEY = "catalog.skill-sources";
 const SKILL_SOURCE_ASSETS_CACHE_KEY = "catalog.skill-source-assets";
 
-export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Promise<void>) {
+export function useSourcesController(
+  onCatalogRefresh?: (assets?: Asset[]) => Promise<void>,
+  startBackgroundScan?: (
+    kind?: "skill" | "prompt" | "rule",
+    scope?: SourceScanScope,
+  ) => Promise<SourceScanTaskSnapshot>,
+  sourceScan?: SourceScanTaskSnapshot | null,
+) {
   const [sources, setSources] = useState<Source[]>(() => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? []);
   const [sourceAssets, setSourceAssets] = useState<Asset[]>(
     () => readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) ?? [],
@@ -26,10 +35,25 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
       readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) === undefined ||
       readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) === undefined,
   );
+  const startedScanIdsRef = useRef(new Set<string>());
+  const settledScanIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (
+      !sourceScan ||
+      !isTerminalSourceScan(sourceScan) ||
+      !startedScanIdsRef.current.has(sourceScan.id) ||
+      settledScanIdsRef.current.has(sourceScan.id)
+    ) {
+      return;
+    }
+    settledScanIdsRef.current.add(sourceScan.id);
+    void refreshAfterSourceScan(sourceScan).catch(() => onCatalogRefresh?.());
+  }, [sourceScan]);
 
   const assetCounts = useMemo(() => {
     return sourceAssets.reduce<Record<string, number>>((counts, asset) => {
@@ -114,9 +138,7 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
       const saved = await updateSource(source);
       setSources((currentSources) => upsertAndSortSources(currentSources, saved));
       if (saved.enabled && saved.last_scan_status !== "preview") {
-        const scannedAssets = await scanSkillSources();
-        await onCatalogRefresh?.(scannedAssets);
-        await Promise.all([refreshSources(), refreshSourceAssets()]);
+        await startSkillScan();
       } else {
         await onCatalogRefresh?.();
       }
@@ -131,9 +153,7 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
       const saved = await createSource(sourceInput);
       setSources((currentSources) => upsertAndSortSources(currentSources, saved));
       if (saved.enabled && saved.last_scan_status !== "preview") {
-        const scannedAssets = await scanSkillSources();
-        await onCatalogRefresh?.(scannedAssets);
-        await Promise.all([refreshSources(), refreshSourceAssets()]);
+        await startSkillScan();
       } else {
         await onCatalogRefresh?.();
       }
@@ -145,12 +165,35 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
   async function scanAllSources() {
     setBusy(true);
     try {
-      const scannedAssets = await scanSkillSources();
-      await onCatalogRefresh?.(scannedAssets);
-      await Promise.all([refreshSources(), refreshSourceAssets()]);
+      await startSkillScan();
     } finally {
       setBusy(false);
     }
+  }
+
+  async function startSkillScan() {
+    if (!startBackgroundScan) {
+      const scannedAssets = await scanSkillSources();
+      await onCatalogRefresh?.(scannedAssets);
+      await Promise.all([refreshSources(), refreshSourceAssets()]);
+      return;
+    }
+
+    const task = await startBackgroundScan("skill", "skills");
+    startedScanIdsRef.current.add(task.id);
+    if (isTerminalSourceScan(task)) {
+      settledScanIdsRef.current.add(task.id);
+      await refreshAfterSourceScan(task);
+    }
+  }
+
+  async function refreshAfterSourceScan(task: SourceScanTaskSnapshot) {
+    if (task.status === "completed" && task.result) {
+      await onCatalogRefresh?.(task.result);
+    } else {
+      await onCatalogRefresh?.();
+    }
+    await Promise.all([refreshSources(), refreshSourceAssets()]);
   }
 
   return {
@@ -175,6 +218,10 @@ export function useSourcesController(onCatalogRefresh?: (assets?: Asset[]) => Pr
     removeSourceAsset: (assetId: string) =>
       setSourceAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== assetId)),
   };
+}
+
+function isTerminalSourceScan(task: SourceScanTaskSnapshot) {
+  return task.status === "completed" || task.status === "failed" || task.status === "cancelled";
 }
 
 function upsertAndSortSources(sources: Source[], source: Source) {

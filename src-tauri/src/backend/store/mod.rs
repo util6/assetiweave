@@ -11,6 +11,7 @@ mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
 mod search_index_repo;
+mod settings_repo;
 mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
@@ -51,8 +52,11 @@ pub(crate) use conversation_repo::{
 };
 pub(crate) use database::{
     build_runtime, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
-    open_migrated_pool, seed_defaults_sqlx, seed_tenant_defaults_sqlx, Database,
+    open_migrated_pool, seed_defaults_sqlx_with_catalog, seed_tenant_defaults_sqlx_with_catalog,
+    Database,
 };
+#[cfg(test)]
+pub(crate) use database::{seed_defaults_sqlx, seed_tenant_defaults_sqlx};
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
     is_managed_deployment_sqlx, load_managed_deployment_targets_by_profile_sqlx,
@@ -96,6 +100,7 @@ pub(crate) use search_index_repo::{
     mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
+pub(crate) use settings_repo::{load_app_settings_sqlx, save_app_settings_sqlx};
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,
 };
@@ -106,7 +111,7 @@ pub(crate) use skill_remote_repo::{
 };
 pub(crate) use source_repo::{
     delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources_sqlx,
-    normalize_source, upsert_source_sqlx,
+    normalize_source_with_catalog, upsert_source_sqlx, upsert_source_sqlx_with_catalog,
 };
 pub(crate) use tenant_repo::{
     create_local_tenant_sqlx, list_tenants_for_principal_sqlx, load_local_request_context_sqlx,

@@ -15,7 +15,7 @@ fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
             sqlx::query(AssertSqlSafe(statement.to_string()))
                 .execute(&pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
         }
         Ok(())
     })
@@ -31,7 +31,7 @@ fn clear_test_tables(service: &AppService, tables: &[&str]) {
                 sqlx::query(AssertSqlSafe(statement))
                     .execute(&pool)
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
             }
             AppResult::Ok(())
         })
@@ -88,6 +88,10 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .expect("create tenant");
     assert_eq!(tenant.id, "client-a");
     assert_eq!(tenant.slug, "client-a");
+    assert_eq!(
+        AppService::from_runtime(&service.runtime).tenant_id(),
+        "client-a"
+    );
     drop(service);
 
     let tenant_service =
@@ -127,6 +131,114 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
 }
 
 #[test]
+fn switching_tenant_rebinds_the_next_app_service_request() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-tenant-switch-request-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let db_path = root.join("app.db");
+    let source_root = root.join("tenant-b-source");
+    fs::create_dir_all(&source_root).expect("create tenant B source root");
+
+    let service = AppService::open_with_db_path(db_path).expect("open application service");
+    let tenant_b = service
+        .create_tenant(TenantCreateParams {
+            name: "Tenant B".to_string(),
+            slug: Some("tenant-b".to_string()),
+            set_active: false,
+        })
+        .expect("create tenant B");
+
+    service
+        .switch_tenant(tenant_b.id.clone())
+        .expect("switch to tenant B");
+
+    let next_request = AppService::from_runtime(&service.runtime);
+    assert_eq!(next_request.tenant_id(), "tenant-b");
+    next_request
+        .add_source(SourceInput {
+            id: Some("tenant-b-source".to_string()),
+            name: "Tenant B source".to_string(),
+            kind: SourceKind::Local,
+            root_path: source_root.to_string_lossy().to_string(),
+            scanner_kind: None,
+            source_origin: None,
+            repo_root: None,
+            scan_root: None,
+            origin_app_kind: None,
+            origin_provider_id: None,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            default_kind: None,
+            enabled: true,
+            priority: 0,
+        })
+        .expect("create source in tenant B");
+
+    let pool = service.db.pool().clone();
+    let (default_sources, tenant_b_sources) = service
+        .db
+        .block_on(async move {
+            let default_sources =
+                crate::backend::store::load_sources_sqlx(&pool, "default").await?;
+            let tenant_b_sources =
+                crate::backend::store::load_sources_sqlx(&pool, "tenant-b").await?;
+            AppResult::Ok((default_sources, tenant_b_sources))
+        })
+        .expect("load sources by tenant");
+    assert!(!default_sources
+        .iter()
+        .any(|source| source.id == "tenant-b-source"));
+    assert!(tenant_b_sources
+        .iter()
+        .any(|source| source.id == "tenant-b-source"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-tenant-switch-runtime-resources-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create temp dir");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let tenant_b = service
+        .create_tenant(TenantCreateParams {
+            name: "Tenant B".to_string(),
+            slug: Some("tenant-b-runtime".to_string()),
+            set_active: false,
+        })
+        .expect("create tenant B");
+    execute_test_sql(
+        &service,
+        &format!(
+            "INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, manifest_path, executable_path, content_hash, trusted_hash, trust_state, protocol_version, capabilities, input_kinds, card_contract_version, card_kinds_json, created_at, updated_at) VALUES ('{}', 'tenant-b-only-adapter', 'Tenant B only adapter', 'external', '1.0.0', 1, NULL, NULL, NULL, NULL, 'trusted', 1, '[\"list\"]', '[\"directory\"]', NULL, '[]', '2026-08-23T00:00:00Z', '2026-08-23T00:00:00Z')",
+            tenant_b.id
+        ),
+    )
+    .expect("save tenant B adapter");
+
+    service
+        .switch_tenant(tenant_b.id)
+        .expect("switch to tenant B");
+
+    let next_request = AppService::from_runtime(&service.runtime);
+    assert!(next_request
+        .list_conversation_adapters()
+        .expect("list tenant B adapters")
+        .iter()
+        .any(|adapter| adapter.id == "tenant-b-only-adapter"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn system_skill_source_cannot_be_edited_or_removed() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-system-source-protection-{}",
@@ -146,8 +258,8 @@ fn system_skill_source_cannot_be_edited_or_removed() {
         .delete_source(crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID.to_string())
         .expect_err("system source removal should fail");
 
-    assert!(update_error.contains("cannot be edited"));
-    assert!(remove_error.contains("cannot be deleted"));
+    assert!(update_error.to_string().contains("cannot be edited"));
+    assert!(remove_error.to_string().contains("cannot be deleted"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -188,7 +300,7 @@ fn system_skill_cannot_be_copied_into_the_user_backup_library() {
         .backup_skill(asset.id)
         .expect_err("system Skill backup should fail");
 
-    assert!(error.contains("cannot be backed up"));
+    assert!(error.to_string().contains("cannot be backed up"));
 
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -450,9 +562,11 @@ fn upsert_conversation_export_fixture(
         .db
         .block_on(async move {
             crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             let sessions = if web_record {
                 crate::backend::store::import_web_record_sessions_sqlx(
                     &pool,
@@ -461,7 +575,8 @@ fn upsert_conversation_export_fixture(
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 crate::backend::store::list_web_record_sessions_sqlx(
                     &pool,
                     &tenant_id,
@@ -480,7 +595,8 @@ fn upsert_conversation_export_fixture(
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 crate::backend::store::list_conversation_sessions_sqlx(
                     &pool,
                     &tenant_id,
@@ -490,7 +606,8 @@ fn upsert_conversation_export_fixture(
                     1,
                     0,
                 )
-                .await?
+                .await
+                .map_err(AppError::external)?
             };
             AppResult::Ok(sessions[0].session.id.clone())
         })
@@ -511,13 +628,15 @@ fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> Conver
                 &tenant_id,
                 &session_id,
             )
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
             crate::backend::store::load_conversation_adapter_sqlx(
                 &pool,
                 &tenant_id,
                 &detail.session.adapter_id,
             )
-            .await?
+            .await
+            .map_err(|error| error.to_string())?
             .ok_or_else(|| "fixture adapter not found".to_string())
         })
         .expect("load export fixture adapter")
@@ -821,28 +940,28 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             .bind(&adapter.id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
             )
             .bind(&tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
             )
             .bind(&tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
             )
             .bind(tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("promote fixture to Card Contract v1");
@@ -918,14 +1037,14 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             .bind(&detail.session.adapter_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             sqlx::query(
                 "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
             )
             .bind(tenant_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("promote web fixture to v1");
@@ -996,7 +1115,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("unsafe adapter relative path should fail");
 
-    assert!(error.contains("relative_path"));
+    assert!(error.to_string().contains("relative_path"));
     assert!(!root.join("escape.md").exists());
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -1056,7 +1175,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("manifest missing export_markdown should fail");
 
-    assert!(error.contains("export_markdown"));
+    assert!(error.to_string().contains("export_markdown"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1097,7 +1216,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
                 .bind(&adapter.id)
                 .execute(&pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("force hash mismatch");
@@ -1112,7 +1231,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("trusted hash mismatch should fail");
 
-    assert!(error.contains("trusted hash mismatch"));
+    assert!(error.to_string().contains("trusted hash mismatch"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1165,7 +1284,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             .bind(&adapter_id)
             .execute(&pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             AppResult::Ok(())
         })
         .expect("store trusted hash");
@@ -1196,7 +1315,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("manifest tampering should fail trusted hash check");
 
-    assert!(error.contains("trusted hash mismatch"));
+    assert!(error.to_string().contains("trusted hash mismatch"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -1344,7 +1463,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         })
         .expect_err("symlink escape under output root should fail");
 
-    assert!(error.contains("symlink") || error.contains("output_root"));
+    assert!(error.to_string().contains("symlink") || error.to_string().contains("output_root"));
     assert!(!outside_root.join("export.md").exists());
     drop(service);
     fs::remove_dir_all(root).ok();
@@ -1448,7 +1567,7 @@ fn profile_delete_guard_blocks_sqlx_deployment_state() {
         .delete_profile(profile.id)
         .expect_err("delete blocked by deployment state");
 
-    assert!(error.contains("managed deployments"));
+    assert!(error.to_string().contains("managed deployments"));
     drop(service);
     fs::remove_dir_all(root).ok();
 }
@@ -2445,6 +2564,256 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     fs::remove_dir_all(root).ok();
 }
 
+#[test]
+fn refreshing_target_catalog_reconciles_existing_default_profiles() {
+    let root =
+        std::env::temp_dir().join(format!("assetiweave-target-reconcile-{}", Uuid::new_v4()));
+    let skill_target = root.join("codex-skills");
+    let prompt_target = root.join("codex-prompts");
+    fs::create_dir_all(&root).expect("create target reconciliation root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+
+    service
+        .runtime
+        .refresh_target_catalog(vec![crate::backend::models::TargetProfileDescriptor {
+            id: "codex".to_string(),
+            name: "Codex Fixture".to_string(),
+            app_kind_compat: Some(crate::backend::models::AppKind::Codex),
+            default_targets: vec![
+                crate::backend::models::TargetPathRule {
+                    asset_kind: AssetKind::Skill,
+                    path: skill_target.to_string_lossy().to_string(),
+                },
+                crate::backend::models::TargetPathRule {
+                    asset_kind: AssetKind::Prompt,
+                    path: prompt_target.to_string_lossy().to_string(),
+                },
+            ],
+            supported_kinds: vec![AssetKind::Skill, AssetKind::Prompt],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        }])
+        .expect("refresh target catalog");
+
+    let profile = service
+        .list_profiles()
+        .expect("list profiles")
+        .into_iter()
+        .find(|profile| profile.id == "codex")
+        .expect("existing Codex profile");
+    assert_eq!(
+        profile.target_paths,
+        vec![
+            skill_target.to_string_lossy().to_string(),
+            prompt_target.to_string_lossy().to_string(),
+        ]
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
+    let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
+    let source_root = root.join("fixture-source");
+    let target_root = root.join("fixture-target");
+    fs::create_dir_all(&source_root).expect("create fixture source");
+    fs::create_dir_all(&target_root).expect("create fixture target");
+    let source_file = source_root.join("SKILL.md");
+    fs::write(&source_file, "---\ndescription: fixture\n---\n").expect("write fixture asset");
+
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let descriptor = crate::backend::models::TargetProfileDescriptor {
+        id: "fixture-provider".to_string(),
+        name: "Fixture Provider".to_string(),
+        app_kind_compat: None,
+        default_targets: vec![crate::backend::models::TargetPathRule {
+            asset_kind: AssetKind::Skill,
+            path: target_root.to_string_lossy().to_string(),
+        }],
+        supported_kinds: vec![AssetKind::Skill],
+        deployment_strategy: DeploymentStrategy::SymlinkToSource,
+        icon: None,
+    };
+    service
+        .runtime
+        .refresh_target_catalog(vec![descriptor])
+        .expect("publish fixture target catalog");
+
+    service
+        .create_tenant(TenantCreateParams {
+            name: "Fixture tenant".to_string(),
+            slug: Some("fixture-tenant".to_string()),
+            set_active: true,
+        })
+        .expect("seed fixture provider profile");
+    let service = AppService::from_runtime(&service.runtime);
+    assert!(service
+        .list_profiles()
+        .expect("list seeded profiles")
+        .iter()
+        .any(|profile| profile.target_provider_id == "fixture-provider"));
+
+    let detected = service
+        .add_source(SourceInput {
+            id: Some("fixture-detect-source".to_string()),
+            name: "Fixture target source".to_string(),
+            kind: crate::backend::models::SourceKind::Local,
+            root_path: target_root.to_string_lossy().to_string(),
+            scanner_kind: Some(crate::backend::models::SourceScannerKind::Skill),
+            source_origin: Some(crate::backend::models::SourceOrigin::LocalFolder),
+            repo_root: None,
+            scan_root: None,
+            origin_app_kind: None,
+            origin_provider_id: None,
+            include_globs: Vec::new(),
+            exclude_globs: Vec::new(),
+            default_kind: Some(AssetKind::Skill),
+            enabled: true,
+            priority: 0,
+        })
+        .expect("save detected target source");
+    assert_eq!(
+        detected.origin_provider_id.as_deref(),
+        Some("fixture-provider")
+    );
+
+    let source = Source {
+        id: "fixture-asset-source".to_string(),
+        name: "Fixture asset source".to_string(),
+        kind: crate::backend::models::SourceKind::Local,
+        root_path: source_root.to_string_lossy().to_string(),
+        scanner_kind: crate::backend::models::SourceScannerKind::Skill,
+        source_origin: crate::backend::models::SourceOrigin::LocalFolder,
+        repo_root: None,
+        scan_root: String::new(),
+        origin_app_kind: None,
+        origin_provider_id: None,
+        include_globs: vec!["**/SKILL.md".to_string()],
+        exclude_globs: Vec::new(),
+        default_kind: Some(AssetKind::Skill),
+        enabled: true,
+        priority: 0,
+        last_scanned_at: None,
+        last_scan_status: None,
+    };
+    upsert_test_source(&service, &source);
+    replace_test_source_assets(
+        &service,
+        &source.id,
+        &[Asset {
+            id: "fixture-asset".to_string(),
+            source_id: source.id.clone(),
+            name: "Fixture Skill".to_string(),
+            kind: AssetKind::Skill,
+            detector_id: "fixture.detector".to_string(),
+            detector_version: 1,
+            format: crate::backend::models::AssetFormat::Markdown,
+            relative_path: "SKILL.md".to_string(),
+            absolute_path: source_file.to_string_lossy().to_string(),
+            entry_file: Some("SKILL.md".to_string()),
+            description: Some("fixture".to_string()),
+            content_hash: None,
+            discovered_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+        }],
+    );
+
+    let profile = service
+        .list_profiles()
+        .expect("list fixture profiles")
+        .into_iter()
+        .find(|profile| profile.target_provider_id == "fixture-provider")
+        .expect("fixture provider profile");
+    execute_test_sql(
+        &service,
+        &format!(
+            "INSERT INTO asset_mounts (tenant_id, asset_id, profile_id, enabled, strategy, created_at, updated_at) VALUES ('{}', 'fixture-asset', '{}', 1, 'symlink_to_source', '2026-08-21T00:00:00Z', '2026-08-21T00:00:00Z')",
+            service.tenant_id(),
+            profile.id,
+        ),
+    )
+    .expect("record fixture mount intent");
+    let plan = service
+        .create_plan(Some(&profile.id))
+        .expect("build plan from injected catalog");
+    assert_eq!(plan.summary.create_count, 1);
+    let execution = service
+        .execute_plan(plan, None)
+        .expect("execute plan from injected catalog");
+    assert_eq!(execution.executed_count, 1);
+    assert!(target_root.join("Fixture Skill.md").is_symlink());
+
+    let invalid = service.runtime.refresh_target_catalog(vec![
+        crate::backend::models::TargetProfileDescriptor {
+            id: "fixture-provider".to_string(),
+            name: "Fixture Provider".to_string(),
+            app_kind_compat: None,
+            default_targets: vec![crate::backend::models::TargetPathRule {
+                asset_kind: AssetKind::Skill,
+                path: String::new(),
+            }],
+            supported_kinds: vec![AssetKind::Skill],
+            deployment_strategy: DeploymentStrategy::SymlinkToSource,
+            icon: None,
+        },
+    ]);
+    assert!(invalid.is_err());
+    assert!(service
+        .runtime
+        .target_catalog()
+        .descriptor("fixture-provider")
+        .is_some());
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn invalid_disk_target_catalog_refresh_preserves_the_published_snapshot() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-target-disk-refresh-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(root.join("target-providers")).expect("create provider directory");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    assert!(service
+        .list_target_profile_descriptors()
+        .expect("list initial descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "codex"));
+    fs::write(
+        root.join("target-providers/invalid.json"),
+        serde_json::json!({
+            "id": "invalid-provider",
+            "name": "Invalid Provider",
+            "app_kind_compat": null,
+            "default_targets": [{ "asset_kind": "skill", "path": "" }],
+            "supported_kinds": ["skill"],
+            "deployment_strategy": "symlink_to_source",
+            "icon": null
+        })
+        .to_string(),
+    )
+    .expect("write invalid descriptor");
+
+    assert!(service.refresh_target_profile_descriptors().is_err());
+    assert!(service
+        .list_target_profile_descriptors()
+        .expect("list preserved descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "codex"));
+    assert!(!service
+        .list_target_profile_descriptors()
+        .expect("list preserved descriptors")
+        .iter()
+        .any(|descriptor| descriptor.id == "invalid-provider"));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
 fn github_repo_item() -> Value {
     json!({
         "full_name": "util6/util6-agents",
@@ -2473,16 +2842,20 @@ fn github_code_item() -> Value {
 #[test]
 fn skill_search_provider_supports_github_code_aliases() {
     assert_eq!(
-        normalize_skill_search_provider(None).as_deref(),
-        Ok("github")
+        normalize_skill_search_provider(None).as_deref().ok(),
+        Some("github")
     );
     assert_eq!(
-        normalize_skill_search_provider(Some("github_code")).as_deref(),
-        Ok("github-code")
+        normalize_skill_search_provider(Some("github_code"))
+            .as_deref()
+            .ok(),
+        Some("github-code")
     );
     assert_eq!(
-        normalize_skill_search_provider(Some("code")).as_deref(),
-        Ok("github-code")
+        normalize_skill_search_provider(Some("code"))
+            .as_deref()
+            .ok(),
+        Some("github-code")
     );
     assert!(normalize_skill_search_provider(Some("unknown")).is_err());
 }
@@ -2525,12 +2898,14 @@ fn github_tree_sha_for_skill_path_reads_root_and_nested_tree() {
     });
 
     assert_eq!(
-        github_tree_sha_for_skill_path(&value, None).as_deref(),
-        Ok("root-tree")
+        github_tree_sha_for_skill_path(&value, None).as_deref().ok(),
+        Some("root-tree")
     );
     assert_eq!(
-        github_tree_sha_for_skill_path(&value, Some("skills/browser")).as_deref(),
-        Ok("browser-tree")
+        github_tree_sha_for_skill_path(&value, Some("skills/browser"))
+            .as_deref()
+            .ok(),
+        Some("browser-tree")
     );
     assert!(github_tree_sha_for_skill_path(&value, Some("missing")).is_err());
 }
@@ -2977,9 +3352,11 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
         .db
         .block_on(async move {
             crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await?;
+                .await
+                .map_err(AppError::external)?;
             crate::backend::store::import_conversation_sessions_sqlx(
                 &pool,
                 &tenant_id,
@@ -2987,7 +3364,8 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
                 &[old_changed, unchanged.clone()],
                 false,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             crate::backend::store::import_conversation_sessions_sqlx(
                 &pool,
                 &tenant_id,

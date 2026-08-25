@@ -2,7 +2,6 @@ use super::prelude::*;
 use crate::backend::conversations::{
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,
 };
-use crate::backend::extension_kernel::DomainPackageSystem;
 use crate::backend::models::{
     ConversationAdapterPackageChangeAction, ConversationAdapterPackageChangeRisk,
     ConversationAdapterPackageOrigin, ConversationAdapterPackageRecordKind,
@@ -19,10 +18,10 @@ impl AppService {
         params: ConversationAdapterWorkspaceUpgradeParams,
     ) -> AppResult<Value> {
         if params.developer && params.package_dir.is_some() {
-            return Err(
+            return Err(AppError::Validation(
                 "developer conversation adapter upgrade cannot be combined with package_dir"
                     .to_string(),
-            );
+            ));
         }
 
         let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
@@ -30,7 +29,7 @@ impl AppService {
             let package_dir = crate::backend::path_utils::expand_path(&package_dir)?;
             (package_dir.clone(), vec![package_dir])
         } else if params.developer {
-            let current_dir = env::current_dir().map_err(|error| error.to_string())?;
+            let current_dir = env::current_dir().map_err(AppError::external)?;
             let adapter_root = find_developer_conversation_adapter_root(&current_dir)?;
             let package_dirs = current_dir
                 .ancestors()
@@ -48,10 +47,10 @@ impl AppService {
             (managed_root.clone(), package_dirs)
         };
         if package_dirs.is_empty() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "no conversation adapter package directories found under {}",
                 source_root.display()
-            ));
+            )));
         }
 
         let mut upgraded = Vec::with_capacity(package_dirs.len());
@@ -87,10 +86,10 @@ impl AppService {
             .as_deref()
             .and_then(clean_non_empty_string);
         if package_id.is_none() && adapter_id.is_none() {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter package inspection requires package_id or adapter_id"
                     .to_string(),
-            );
+            ));
         }
 
         let mut package = match package_id.as_deref() {
@@ -115,7 +114,9 @@ impl AppService {
         }
         if package.is_none() && adapter.is_none() {
             let id = package_id.or(adapter_id).unwrap_or_default();
-            return Err(format!("conversation adapter package not found: {id}"));
+            return Err(AppError::NotFound(format!(
+                "conversation adapter package not found: {id}"
+            )));
         }
 
         let origin = package
@@ -152,15 +153,15 @@ impl AppService {
                 | ConversationAdapterPackageOrigin::GitRef
                 | ConversationAdapterPackageOrigin::DevOverride
         ) {
-            return Err(
+            return Err(AppError::Validation(
                 "local conversation adapter registration requires local_directory, git_ref, or dev_override origin"
                     .to_string(),
-            );
+            ));
         }
         if !params.dry_run && !params.yes {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter local registration requires confirmation".to_string(),
-            );
+            ));
         }
         if params.origin == ConversationAdapterPackageOrigin::GitRef
             && params
@@ -169,38 +170,45 @@ impl AppService {
                 .and_then(clean_non_empty_string)
                 .is_none()
         {
-            return Err("git_ref conversation adapter registration requires git_ref".to_string());
+            return Err(AppError::Validation(
+                "git_ref conversation adapter registration requires git_ref".to_string(),
+            ));
         }
 
         let package_dir = crate::backend::path_utils::expand_path(&params.package_dir)?;
         let validation =
-            crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)?;
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)
+                .map_err(AppError::external)?;
         if let Some(existing) =
             self.load_conversation_adapter_package(&validation.manifest.package_id)?
         {
             if existing.origin == ConversationAdapterPackageOrigin::ManagedRelease {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "managed conversation adapter package is already installed: {}",
                     existing.package_id
-                ));
+                )));
             }
         }
 
-        let preflight = self.prepare_conversation_adapter_package_change(
-            ConversationAdapterPackageChangeParams {
+        let preflight = self
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
                 action: ConversationAdapterPackageChangeAction::Register,
                 package_id: None,
                 adapter_id: Some(validation.adapter_validation.manifest.id.clone()),
-            },
-        )?;
+            })
+            .map_err(AppError::external)?;
         reject_conversation_package_task_conflicts(&preflight)?;
-        let preview = crate::backend::conversations::register_external_adapter(
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
                 dry_run: params.dry_run,
                 yes: params.yes,
             },
-        )?;
+            &settings,
+        )
+        .map_err(AppError::external)?;
         if params.dry_run {
             return Ok(json!({
                 "dry_run": true,
@@ -213,7 +221,8 @@ impl AppService {
             }));
         }
 
-        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
+            .map_err(AppError::external)?;
         let now = Utc::now().to_rfc3339();
         let package = ConversationAdapterPackage {
             package_id: validation.manifest.package_id.clone(),
@@ -252,14 +261,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let adapter_to_save = adapter.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                &adapter_to_save,
-            )
-            .await
-        })?;
+        self.db
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_to_save,
+                )
+                .await
+            })
+            .map_err(AppError::external)?;
         self.save_conversation_adapter_package(&package)?;
         self.runtime.refresh_conversation_adapter_catalog()?;
 
@@ -309,24 +320,24 @@ impl AppService {
         if origin == ConversationAdapterPackageOrigin::BuiltIn
             && params.action == ConversationAdapterPackageChangeAction::Uninstall
         {
-            return Err(
+            return Err(AppError::Validation(
                 "built-in conversation adapters use disable, not package uninstall".to_string(),
-            );
+            ));
         }
         if params.action == ConversationAdapterPackageChangeAction::Unregister
             && origin == ConversationAdapterPackageOrigin::ManagedRelease
         {
-            return Err(
+            return Err(AppError::Validation(
                 "managed conversation adapter packages must be uninstalled, not unregistered"
                     .to_string(),
-            );
+            ));
         }
         if params.action == ConversationAdapterPackageChangeAction::Uninstall
             && origin != ConversationAdapterPackageOrigin::ManagedRelease
         {
-            return Err(
+            return Err(AppError::Validation(
                 "only managed conversation adapter packages can be uninstalled".to_string(),
-            );
+            ));
         }
 
         let mut managed_paths = BTreeSet::new();
@@ -367,14 +378,18 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let adapter_id = adapter_id.to_string();
-            if self.db.block_on(async move {
-                crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &adapter_id,
-                )
-                .await
-            })? {
+            if self
+                .db
+                .block_on(async move {
+                    crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &adapter_id,
+                    )
+                    .await
+                })
+                .map_err(AppError::external)?
+            {
                 task_conflicts.push("conversation_sync".to_string());
             }
         }
@@ -476,7 +491,9 @@ impl AppService {
         )?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
-            return Err("conversation adapter package install requires --yes".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package install requires --yes".to_string(),
+            ));
         }
         if params
             .version
@@ -495,7 +512,8 @@ impl AppService {
             .items
             .into_iter()
             .find(|item| item.package_id() == package_id)
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
+            .map_err(AppError::external)?;
         validate_conversation_script_catalog_item(&item)?;
 
         let result = install_conversation_adapter_package_from_item(
@@ -523,7 +541,9 @@ impl AppService {
         )?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
-            return Err("conversation adapter package update requires --yes".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package update requires --yes".to_string(),
+            ));
         }
         if params
             .version
@@ -542,7 +562,8 @@ impl AppService {
             .items
             .into_iter()
             .find(|item| item.package_id() == package_id)
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
+            .map_err(AppError::external)?;
         validate_conversation_script_catalog_item(&item)?;
         let result = install_conversation_adapter_package_from_item(
             self,
@@ -569,15 +590,20 @@ impl AppService {
         )?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
-            return Err("conversation adapter package uninstall requires --yes".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package uninstall requires --yes".to_string(),
+            ));
         }
         let package_id = params.package_id.trim();
         if package_id.is_empty() {
-            return Err("conversation adapter package id is required".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package id is required".to_string(),
+            ));
         }
         let package = self
             .load_conversation_adapter_package(package_id)?
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
+            .map_err(AppError::external)?;
 
         if params.dry_run {
             return Ok(json!({
@@ -588,29 +614,22 @@ impl AppService {
             }));
         }
 
-        let package_identity = crate::backend::extension_kernel::PackageIdentity {
-            kind: crate::backend::extension_kernel::PackageKind::ConversationAdapter,
-            package_id: package.package_id.clone(),
-            version: semver::Version::parse(&package.version)
-                .map_err(|error| format!("invalid installed package version: {error}"))?,
-        };
-        crate::backend::conversations::ConversationAdapterPackageSystem
-            .on_removed(&package_identity)
-            .map_err(|error| error.to_string())?;
-
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package.package_id.clone();
         let adapter_id = package.adapter_id.clone();
-        let uninstalled = self.db.block_on(async move {
-            crate::backend::store::deactivate_conversation_adapter_package_sqlx(
-                &pool,
-                &tenant_id,
-                &package_id,
-                &adapter_id,
-            )
-            .await
-        })?;
+        let uninstalled = self
+            .db
+            .block_on(async move {
+                crate::backend::store::deactivate_conversation_adapter_package_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &package_id,
+                    &adapter_id,
+                )
+                .await
+            })
+            .map_err(AppError::external)?;
         self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(json!({
             "dry_run": false,
@@ -638,9 +657,12 @@ impl AppService {
     ) -> AppResult<Vec<ConversationAdapterPackage>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::list_conversation_adapter_packages_sqlx(&pool, &tenant_id).await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::list_conversation_adapter_packages_sqlx(&pool, &tenant_id)
+                    .await
+            })
+            .map_err(|error| error)
     }
 
     pub(crate) fn load_conversation_adapter_package(
@@ -650,14 +672,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package_id.to_string();
-        self.db.block_on(async move {
-            crate::backend::store::load_conversation_adapter_package_sqlx(
-                &pool,
-                &tenant_id,
-                &package_id,
-            )
-            .await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::load_conversation_adapter_package_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &package_id,
+                )
+                .await
+            })
+            .map_err(|error| error)
     }
 
     pub(crate) fn load_conversation_adapter_package_versions(
@@ -667,14 +691,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id = package_id.to_string();
-        self.db.block_on(async move {
-            crate::backend::store::list_conversation_adapter_package_versions_sqlx(
-                &pool,
-                &tenant_id,
-                &package_id,
-            )
-            .await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::list_conversation_adapter_package_versions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &package_id,
+                )
+                .await
+            })
+            .map_err(|error| error)
     }
 
     pub(crate) fn list_installed_conversation_adapter_package_versions(
@@ -692,7 +718,8 @@ impl AppService {
             .version
             .as_deref()
             .and_then(clean_non_empty_string)
-            .ok_or_else(|| "conversation adapter package version is required".to_string())?;
+            .ok_or_else(|| "conversation adapter package version is required".to_string())
+            .map_err(AppError::external)?;
         self.activate_installed_conversation_adapter_package_version(
             &params.package_id,
             &version,
@@ -708,10 +735,12 @@ impl AppService {
     ) -> AppResult<Value> {
         let package = self
             .load_conversation_adapter_package(params.package_id.trim())?
-            .ok_or_else(|| "conversation adapter package not found".to_string())?;
+            .ok_or_else(|| "conversation adapter package not found".to_string())
+            .map_err(AppError::external)?;
         let versions = self.load_conversation_adapter_package_versions(&package.package_id)?;
         let target = select_rollback_version(&versions, &package.version)
-            .ok_or_else(|| "no inactive installed version is available for rollback".to_string())?;
+            .ok_or_else(|| "no inactive installed version is available for rollback".to_string())
+            .map_err(AppError::external)?;
         self.activate_installed_conversation_adapter_package_version(
             &package.package_id,
             &target.version,
@@ -730,31 +759,34 @@ impl AppService {
             .version
             .as_deref()
             .and_then(clean_non_empty_string)
-            .ok_or_else(|| "conversation adapter package version is required".to_string())?;
+            .ok_or_else(|| "conversation adapter package version is required".to_string())
+            .map_err(AppError::external)?;
         let package = self
             .load_conversation_adapter_package(package_id)?
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
+            .map_err(AppError::external)?;
         if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
-            return Err("only managed package versions can be deleted".to_string());
+            return Err(AppError::Validation(
+                "only managed package versions can be deleted".to_string(),
+            ));
         }
         let runtime_registered = self
             .list_conversation_adapters()?
             .iter()
             .any(|adapter| adapter.id == package.adapter_id);
         if package.version == version && runtime_registered {
-            return Err(
+            return Err(AppError::Validation(
                 "active conversation adapter package version must be uninstalled or switched before deletion"
                     .to_string(),
-            );
+            ));
         }
         let versions = self.load_conversation_adapter_package_versions(package_id)?;
         let target = versions
             .iter()
             .find(|candidate| candidate.version == version)
             .cloned()
-            .ok_or_else(|| {
-                format!("installed package version not found: {package_id}@{version}")
-            })?;
+            .ok_or_else(|| format!("installed package version not found: {package_id}@{version}"))
+            .map_err(AppError::external)?;
         let remaining_versions = versions
             .iter()
             .filter(|candidate| candidate.version != version)
@@ -788,10 +820,12 @@ impl AppService {
             }));
         }
         if !params.yes {
-            return Err("conversation adapter package version deletion requires --yes".to_string());
+            return Err(AppError::Validation(
+                "conversation adapter package version deletion requires --yes".to_string(),
+            ));
         }
         let staged = version_dir.with_file_name(format!(".{}-delete-{}", version, short_uuid()));
-        fs::rename(&version_dir, &staged).map_err(|error| error.to_string())?;
+        fs::rename(&version_dir, &staged).map_err(AppError::external)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package_id_owned = package_id.to_string();
@@ -809,10 +843,12 @@ impl AppService {
             .await
         });
         match deleted {
-            Ok(true) => fs::remove_dir_all(&staged).map_err(|error| error.to_string())?,
+            Ok(true) => fs::remove_dir_all(&staged).map_err(AppError::external)?,
             Ok(false) => {
                 let _ = fs::rename(&staged, &version_dir);
-                return Err("installed package version record was not found".to_string());
+                return Err(AppError::Validation(
+                    "installed package version record was not found".to_string(),
+                ));
             }
             Err(error) => {
                 let _ = fs::rename(&staged, &version_dir);
@@ -847,49 +883,57 @@ impl AppService {
         )?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !dry_run && !yes {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter package version activation requires --yes".to_string(),
-            );
+            ));
         }
         let mut package = self
             .load_conversation_adapter_package(package_id)?
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
+            .map_err(AppError::external)?;
         if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
-            return Err("only managed package versions can be activated".to_string());
+            return Err(AppError::Validation(
+                "only managed package versions can be activated".to_string(),
+            ));
         }
         let versions = self.load_conversation_adapter_package_versions(package_id)?;
         let target = versions
             .iter()
             .find(|candidate| candidate.version == version)
-            .ok_or_else(|| {
-                format!("installed package version not found: {package_id}@{version}")
-            })?;
+            .ok_or_else(|| format!("installed package version not found: {package_id}@{version}"))
+            .map_err(AppError::external)?;
         let target_install_dir = crate::backend::path_utils::expand_path(&target.install_dir)?;
         let validation = crate::backend::conversations::validate_conversation_adapter_package_dir(
             &target_install_dir,
-        )?;
+        )
+        .map_err(AppError::external)?;
         if validation.manifest.package_id != package_id
             || validation.manifest.version != version
             || validation.content_hash != target.content_hash
         {
-            return Err(
+            return Err(AppError::Validation(
                 "installed conversation adapter package version failed immutable validation"
                     .to_string(),
-            );
+            ));
         }
         if dry_run {
             return Ok(
                 json!({"dry_run": true, "package_id": package_id, "version": version, "install_path": target.install_dir}),
             );
         }
-        let preview = crate::backend::conversations::register_external_adapter(
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
                 dry_run: false,
                 yes: true,
             },
-        )?;
-        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+            &settings,
+        )
+        .map_err(AppError::external)?;
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
+            .map_err(AppError::external)?;
         let now = Utc::now().to_rfc3339();
         package.version = version.to_string();
         package.install_dir = target.install_dir.clone();
@@ -905,16 +949,18 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let version_record = target.clone();
-        self.db.block_on(async move {
-            crate::backend::store::activate_conversation_adapter_package_sqlx(
-                &pool,
-                &tenant_id,
-                &adapter,
-                &package,
-                &version_record,
-            )
-            .await
-        })?;
+        self.db
+            .block_on(async move {
+                crate::backend::store::activate_conversation_adapter_package_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter,
+                    &package,
+                    &version_record,
+                )
+                .await
+            })
+            .map_err(AppError::external)?;
         self.runtime.refresh_conversation_adapter_catalog()?;
         Ok(
             json!({"dry_run": false, "activated": true, "package_id": package_id, "version": version}),
@@ -928,14 +974,16 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let adapter_id = adapter_id.to_string();
-        self.db.block_on(async move {
-            crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                &adapter_id,
-            )
-            .await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &adapter_id,
+                )
+                .await
+            })
+            .map_err(|error| error)
     }
 
     pub(crate) fn save_conversation_adapter_package(
@@ -945,12 +993,14 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let package = package.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_package_sqlx(
-                &pool, &tenant_id, &package,
-            )
-            .await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_package_sqlx(
+                    &pool, &tenant_id, &package,
+                )
+                .await
+            })
+            .map_err(|error| error)
     }
 
     pub(crate) fn ensure_conversation_adapter_package_runtime_ready(
@@ -965,7 +1015,7 @@ impl AppService {
         if package.runtime_ready {
             Ok(())
         } else {
-            Err(format_package_not_ready_error(&package))
+            Err(AppError::External(format_package_not_ready_error(&package)))
         }
     }
 
@@ -978,30 +1028,31 @@ impl AppService {
         let evaluated = crate::backend::conversations::validate_conversation_adapter_package_dir(
             &install_dir,
         )
+        .map_err(|error| error)
         .and_then(|validation| {
             if validation.manifest.package_id != package.package_id {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package manifest id {} does not match registered package {}",
                     validation.manifest.package_id, package.package_id
-                ));
+                )));
             }
             if validation.manifest.version != package.version {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package manifest version {} does not match active version {}",
                     validation.manifest.version, package.version
-                ));
+                )));
             }
             let adapter = adapter.ok_or_else(|| {
-                format!(
+                AppError::NotFound(format!(
                     "conversation adapter runtime is not registered: {}",
                     package.adapter_id
-                )
+                ))
             })?;
             if validation.adapter_validation.manifest.id != adapter.id {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter package {} manifest adapter id {} does not match registered adapter {}",
                     package.package_id, validation.adapter_validation.manifest.id, adapter.id
-                ));
+                )));
             }
             if package.origin != ConversationAdapterPackageOrigin::DevOverride {
                 let trusted_hash = package
@@ -1009,16 +1060,16 @@ impl AppService {
                     .as_deref()
                     .or(package.installed_content_hash.as_deref())
                     .ok_or_else(|| {
-                        format!(
+                        AppError::Validation(format!(
                             "conversation adapter package has no trusted hash: {}",
                             package.package_id
-                        )
+                        ))
                     })?;
                 if validation.content_hash != trusted_hash {
-                    return Err(format!(
+                    return Err(AppError::Validation(format!(
                         "conversation adapter package content hash mismatch: {}",
                         package.package_id
-                    ));
+                    )));
                 }
             }
             Ok(validation.content_hash)
@@ -1033,9 +1084,11 @@ impl AppService {
                 package.error_message = None;
             }
             Err(error) => {
+                let error_message = error.to_string();
                 package.runtime_ready = false;
-                package.runtime_gate_status = classify_runtime_gate_error(&install_dir, &error);
-                package.error_message = Some(error);
+                package.runtime_gate_status =
+                    classify_runtime_gate_error(&install_dir, &error_message);
+                package.error_message = Some(error_message);
             }
         }
         package.runtime_validated_at = Some(now.clone());
@@ -1051,21 +1104,21 @@ fn find_developer_conversation_adapter_root(start: &Path) -> AppResult<PathBuf> 
             return Ok(candidate);
         }
     }
-    Err(format!(
+    Err(AppError::NotFound(format!(
         "builtin-assets/adapters was not found from {} or its ancestors",
         start.display()
-    ))
+    )))
 }
 
 fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Vec<PathBuf>> {
     if !root.is_dir() {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter workspace root is not a directory: {}",
             root.display()
-        ));
+        )));
     }
     let mut package_dirs = fs::read_dir(root)
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let name = entry.file_name();
@@ -1091,29 +1144,32 @@ fn promote_conversation_adapter_workspace_package(
 ) -> AppResult<Value> {
     let source_dir = package_dir
         .canonicalize()
-        .map_err(|error| format!("resolve adapter workspace failed: {error}"))?;
+        .map_err(|error| format!("resolve adapter workspace failed: {error}"))
+        .map_err(AppError::external)?;
     let source_validation =
-        crate::backend::conversations::validate_conversation_adapter_package_dir(&source_dir)?;
+        crate::backend::conversations::validate_conversation_adapter_package_dir(&source_dir)
+            .map_err(AppError::external)?;
     let adapter_id = source_validation.adapter_validation.manifest.id.as_str();
     let directory_name = source_dir
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or_default();
     if directory_name != adapter_id {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter workspace directory must match adapter id: expected {adapter_id}, found {directory_name}"
-        ));
+        )));
     }
     if source_validation.manifest.version != source_validation.adapter_validation.manifest.version {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package and adapter versions must match: {} != {}",
             source_validation.manifest.version,
             source_validation.adapter_validation.manifest.version
-        ));
+        )));
     }
     let version = validated_package_version(&source_validation.manifest.version)?;
     let source_version = semver::Version::parse(&version)
-        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))?;
+        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))
+        .map_err(AppError::external)?;
     if let Some(active_package) =
         service.load_conversation_adapter_package_by_adapter(adapter_id)?
     {
@@ -1164,62 +1220,70 @@ fn promote_conversation_adapter_workspace_package(
         }));
     }
 
+    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
     let prepared_dir = package_root.join("prepared").join(short_uuid());
     if let Some(parent) = prepared_dir.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent).map_err(AppError::external)?;
     }
     capabilities::copy_dir(&source_dir, &prepared_dir)?;
     let promotion = (|| {
         let prepared_validation =
-            crate::backend::conversations::validate_conversation_adapter_package_dir(
-                &prepared_dir,
-            )?;
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
+                .map_err(AppError::external)?;
         if prepared_validation.content_hash != source_validation.content_hash {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter workspace changed while its runtime snapshot was being created"
                     .to_string(),
-            );
+            ));
         }
-        crate::backend::conversations::register_external_adapter(
+        crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: prepared_validation.adapter_manifest_path,
                 dry_run: false,
                 yes: true,
             },
-        )?;
+            &settings,
+        )
+        .map_err(AppError::external)?;
 
         let created_version_dir = if version_dir.exists() {
             let existing =
                 crate::backend::conversations::validate_conversation_adapter_package_dir(
                     &version_dir,
-                )?;
+                )
+                .map_err(AppError::external)?;
             if existing.content_hash != source_validation.content_hash {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "conversation adapter runtime revision is immutable: {}",
                     version_dir.display()
-                ));
+                )));
             }
-            fs::remove_dir_all(&prepared_dir).map_err(|error| error.to_string())?;
+            fs::remove_dir_all(&prepared_dir).map_err(AppError::external)?;
             false
         } else {
-            let parent = version_dir.parent().ok_or_else(|| {
-                "conversation adapter runtime has no versions directory".to_string()
-            })?;
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-            fs::rename(&prepared_dir, &version_dir).map_err(|error| error.to_string())?;
+            let parent = version_dir
+                .parent()
+                .ok_or_else(|| "conversation adapter runtime has no versions directory".to_string())
+                .map_err(AppError::external)?;
+            fs::create_dir_all(parent).map_err(AppError::external)?;
+            fs::rename(&prepared_dir, &version_dir).map_err(AppError::external)?;
             true
         };
 
         let final_validation =
-            crate::backend::conversations::validate_conversation_adapter_package_dir(&version_dir)?;
-        let preview = crate::backend::conversations::register_external_adapter(
+            crate::backend::conversations::validate_conversation_adapter_package_dir(&version_dir)
+                .map_err(AppError::external)?;
+        let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: final_validation.adapter_manifest_path.clone(),
                 dry_run: true,
                 yes: true,
             },
-        )?;
-        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)?;
+            &settings,
+        )
+        .map_err(AppError::external)?;
+        let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
+            .map_err(AppError::external)?;
         let previous_package =
             service.load_conversation_adapter_package(&final_validation.manifest.package_id)?;
         let now = Utc::now().to_rfc3339();
@@ -1301,15 +1365,15 @@ fn retain_only_active_workspace_runtime(package_root: &Path, active_dir: &Path) 
     if !versions_dir.is_dir() {
         return Ok(());
     }
-    for entry in fs::read_dir(&versions_dir).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
+    for entry in fs::read_dir(&versions_dir).map_err(AppError::external)? {
+        let entry = entry.map_err(AppError::external)?;
         let path = entry.path();
         if path == active_dir {
             continue;
         }
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(AppError::external)?;
         if file_type.is_dir() {
-            fs::remove_dir_all(path).map_err(|error| error.to_string())?;
+            fs::remove_dir_all(path).map_err(AppError::external)?;
         }
     }
     Ok(())
@@ -1322,7 +1386,7 @@ fn discover_local_conversation_adapter_packages(
         return Ok(Vec::new());
     }
     let mut package_dirs = fs::read_dir(adapter_root)
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let file_name = entry.file_name();
@@ -1398,10 +1462,10 @@ fn reject_conversation_package_task_conflicts(
     if preflight.task_conflicts.is_empty() {
         Ok(())
     } else {
-        Err(format!(
+        Err(AppError::Conflict(format!(
             "conversation adapter package change conflicts with running tasks: {}",
             preflight.task_conflicts.join(", ")
-        ))
+        )))
     }
 }
 
@@ -1474,31 +1538,37 @@ fn validate_managed_package_delete_target(
             Some(std::path::Component::Normal(_))
         )
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package id is not a safe path segment: {package_id}"
-        ));
+        )));
     }
 
     let packages_root = managed_root.join("packages");
     if !install_dir.exists() || !install_dir.starts_with(&packages_root) {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package delete target does not exist in the managed library: {}",
             install_dir.display()
-        ));
+        )));
     }
 
-    let canonical_packages_root = packages_root.canonicalize().map_err(|error| {
-        format!(
-            "resolve managed conversation adapter packages root failed ({}): {error}",
-            packages_root.display()
-        )
-    })?;
-    let canonical_install_dir = install_dir.canonicalize().map_err(|error| {
-        format!(
-            "resolve conversation adapter package install directory failed ({}): {error}",
-            install_dir.display()
-        )
-    })?;
+    let canonical_packages_root = packages_root
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "resolve managed conversation adapter packages root failed ({}): {error}",
+                packages_root.display()
+            )
+        })
+        .map_err(AppError::external)?;
+    let canonical_install_dir = install_dir
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "resolve conversation adapter package install directory failed ({}): {error}",
+                install_dir.display()
+            )
+        })
+        .map_err(AppError::external)?;
     let relative_install = canonical_install_dir
         .strip_prefix(&canonical_packages_root)
         .map_err(|_| {
@@ -1506,7 +1576,8 @@ fn validate_managed_package_delete_target(
                 "conversation adapter package install directory escapes the managed library: {}",
                 install_dir.display()
             )
-        })?;
+        })
+        .map_err(AppError::external)?;
     let package_segment = relative_install
         .components()
         .next()
@@ -1516,22 +1587,26 @@ fn validate_managed_package_delete_target(
         })
         .ok_or_else(|| {
             "conversation adapter package install directory has no package root".to_string()
-        })?;
+        })
+        .map_err(AppError::external)?;
     let package_root = packages_root.join(package_segment);
-    let canonical_package_root = package_root.canonicalize().map_err(|error| {
-        format!(
-            "resolve managed conversation adapter package root failed ({}): {error}",
-            package_root.display()
-        )
-    })?;
+    let canonical_package_root = package_root
+        .canonicalize()
+        .map_err(|error| {
+            format!(
+                "resolve managed conversation adapter package root failed ({}): {error}",
+                package_root.display()
+            )
+        })
+        .map_err(AppError::external)?;
     if canonical_package_root.parent() != Some(canonical_packages_root.as_path())
         || canonical_install_dir == canonical_package_root
         || !canonical_install_dir.starts_with(&canonical_package_root)
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package root escapes the managed library: {}",
             package_root.display()
-        ));
+        )));
     }
 
     Ok(package_root)
@@ -1549,12 +1624,11 @@ fn validate_managed_package_version_delete_target(
     let expected = package_root.join("versions").join(version);
     let canonical_expected = expected
         .canonicalize()
-        .map_err(|error| format!("resolve managed package version directory failed: {error}"))?;
-    let canonical_install = install_dir
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("resolve managed package version directory failed: {error}"))
+        .map_err(AppError::external)?;
+    let canonical_install = install_dir.canonicalize().map_err(AppError::external)?;
     if canonical_install != canonical_expected {
-        return Err("conversation adapter version delete target is not the requested managed version directory".to_string());
+        return Err(AppError::Validation("conversation adapter version delete target is not the requested managed version directory".to_string()));
     }
     Ok(canonical_install)
 }
@@ -1753,6 +1827,7 @@ impl From<ConversationAdapterPackageCatalogEntry> for ConversationScriptCatalogE
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug)]
 struct GitHubCatalogLocation {
     repo_url: String,
@@ -1770,20 +1845,25 @@ fn load_conversation_script_catalog(
         match fetch_catalog_text(&catalog_url) {
             Ok(text) => text,
             Err(error) if catalog_url == DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL => {
-                read_local_default_catalog().map_err(|fallback_error| {
-                    format!("{error}; local default catalog fallback failed: {fallback_error}")
-                })?
+                read_local_default_catalog()
+                    .map_err(|fallback_error| {
+                        format!("{error}; local default catalog fallback failed: {fallback_error}")
+                    })
+                    .map_err(AppError::external)?
             }
             Err(error) => return Err(error),
         }
     } else {
         let path = crate::backend::path_utils::expand_path(&catalog_url)?;
         fs::read_to_string(&path)
-            .map_err(|error| format!("read conversation adapter package catalog failed: {error}"))?
+            .map_err(|error| format!("read conversation adapter package catalog failed: {error}"))
+            .map_err(AppError::external)?
     };
-    let catalog: ConversationScriptCatalog = serde_json::from_str(&text).map_err(|error| {
-        format!("conversation adapter package catalog was not valid JSON: {error}")
-    })?;
+    let catalog: ConversationScriptCatalog = serde_json::from_str(&text)
+        .map_err(|error| {
+            format!("conversation adapter package catalog was not valid JSON: {error}")
+        })
+        .map_err(AppError::external)?;
     validate_conversation_script_catalog(&catalog)?;
     Ok(catalog)
 }
@@ -1795,9 +1875,12 @@ fn fetch_catalog_text(url: &str) -> AppResult<String> {
             "AssetIWeave/0.5 conversation-adapter-package-catalog",
         )
         .call()
-        .map_err(|error| format!("conversation adapter package catalog request failed: {error}"))?;
+        .map_err(|error| format!("conversation adapter package catalog request failed: {error}"))
+        .map_err(AppError::external)?;
     response.into_string().map_err(|error| {
-        format!("conversation adapter package catalog response was not text: {error}")
+        AppError::External(format!(
+            "conversation adapter package catalog response was not text: {error}"
+        ))
     })
 }
 
@@ -1807,16 +1890,18 @@ fn read_local_default_catalog() -> AppResult<String> {
 
 fn validate_conversation_script_catalog(catalog: &ConversationScriptCatalog) -> AppResult<()> {
     if catalog.schema_version != 1 {
-        return Err("conversation adapter package catalog schema_version must be 1".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package catalog schema_version must be 1".to_string(),
+        ));
     }
     let mut seen_ids = HashSet::new();
     for item in &catalog.items {
         validate_conversation_script_catalog_item(item)?;
         if !seen_ids.insert(item.id.clone()) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "duplicate conversation adapter package catalog item: {}",
                 item.id
-            ));
+            )));
         }
     }
     Ok(())
@@ -1826,7 +1911,9 @@ fn validate_conversation_script_catalog_item(
     item: &ConversationScriptCatalogItem,
 ) -> AppResult<()> {
     if item.id.trim().is_empty() {
-        return Err("conversation adapter package catalog item id is required".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package catalog item id is required".to_string(),
+        ));
     }
     let id_path = Path::new(&item.id);
     if item.id == "."
@@ -1838,30 +1925,30 @@ fn validate_conversation_script_catalog_item(
                 || matches!(character, '-' | '_' | '.')
         })
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package catalog item id must be a safe path segment: {}",
             item.id
-        ));
+        )));
     }
     if item.name.trim().is_empty() {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package catalog item name is required: {}",
             item.id
-        ));
+        )));
     }
     if item.version.trim().is_empty() {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "conversation adapter package catalog item version is required: {}",
             item.id
-        ));
+        )));
     }
     validated_package_version(&item.version)?;
     if let Some(adapter_id) = item.adapter_id.as_deref() {
         if adapter_id.trim().is_empty() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package catalog item adapter_id must not be empty: {}",
                 item.id
-            ));
+            )));
         }
     }
     item.manifest_file_name()?;
@@ -2276,14 +2363,20 @@ fn format_package_not_ready_error(package: &ConversationAdapterPackage) -> Strin
 fn validated_package_version(value: &str) -> AppResult<String> {
     semver::Version::parse(value.trim())
         .map(|version| version.to_string())
-        .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))
+        .map_err(|error| {
+            AppError::Validation(format!(
+                "conversation adapter package version must be SemVer: {error}"
+            ))
+        })
 }
 
 fn parse_github_catalog_location(
     source: &ConversationScriptCatalogSource,
 ) -> AppResult<GitHubCatalogLocation> {
     if source.kind != ConversationScriptCatalogSourceKind::Github {
-        return Err("conversation adapter package source must be github".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter package source must be github".to_string(),
+        ));
     }
     let trimmed = source
         .url
@@ -2295,18 +2388,25 @@ fn parse_github_catalog_location(
         .next()
         .unwrap_or_default()
         .trim_end_matches('/');
-    let path = trimmed.strip_prefix("https://github.com/").ok_or_else(|| {
-        "conversation adapter package source only supports https://github.com URLs".to_string()
-    })?;
+    let path = trimmed
+        .strip_prefix("https://github.com/")
+        .ok_or_else(|| {
+            "conversation adapter package source only supports https://github.com URLs".to_string()
+        })
+        .map_err(AppError::external)?;
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return Err("GitHub URL must include owner and repository".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include owner and repository".to_string(),
+        ));
     }
 
     let owner = parts[0];
     let repo = parts[1].trim_end_matches(".git");
     if repo.is_empty() {
-        return Err("GitHub URL must include repository name".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include repository name".to_string(),
+        ));
     }
 
     let mut branch = source.branch.as_deref().and_then(clean_non_empty_string);
@@ -2361,7 +2461,9 @@ fn clean_relative_file_name(value: &str) -> AppResult<String> {
         || trimmed == ".."
         || trimmed.contains(':')
     {
-        return Err(format!("manifest_file must be a file name: {value}"));
+        return Err(AppError::Validation(format!(
+            "manifest_file must be a file name: {value}"
+        )));
     }
     Ok(trimmed.to_string())
 }
@@ -2754,7 +2856,7 @@ mod tests {
         )
         .expect_err("reserved Windows name must be rejected");
 
-        assert!(error.contains("reserved on Windows"));
+        assert!(error.to_string().contains("reserved on Windows"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2786,7 +2888,7 @@ mod tests {
         )
         .expect_err("case-insensitive collision must be rejected");
 
-        assert!(error.contains("colliding paths"));
+        assert!(error.to_string().contains("colliding paths"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2896,9 +2998,11 @@ mod tests {
                 crate::backend::store::upsert_conversation_adapter_sqlx(
                     &pool, &tenant_id, &adapter,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 sqlx::query(
                     r#"
                     INSERT INTO conversation_sync_runs (
@@ -2913,7 +3017,7 @@ mod tests {
                 .bind(&adapter.id)
                 .execute(&pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 AppResult::Ok(())
             })
             .expect("seed preflight records");
@@ -3091,7 +3195,7 @@ mod tests {
             false,
         )
         .expect_err("reject invalid workspace revision");
-        assert!(error.contains("probe failed"));
+        assert!(error.to_string().contains("probe failed"));
         let retained = service
             .load_conversation_adapter_package("com.util6.external-test")
             .expect("load retained package")

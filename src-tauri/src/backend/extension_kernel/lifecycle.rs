@@ -55,6 +55,7 @@ impl fmt::Display for ResourceKey {
 }
 
 impl LifecycleOp {
+    #[cfg(test)]
     pub(crate) fn conflicts_with(self, other: Self) -> bool {
         matches!(
             (self, other),
@@ -82,6 +83,7 @@ impl LifecycleRequestKey {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn conflicts_with(&self, other: &Self) -> bool {
         self.resource.same_package(&other.resource)
             && self.operation.conflicts_with(other.operation)
@@ -89,6 +91,7 @@ impl LifecycleRequestKey {
 }
 
 impl ResourceKey {
+    #[cfg(test)]
     fn same_package(&self, other: &Self) -> bool {
         self.identity.kind == other.identity.kind
             && self.identity.package_id == other.identity.package_id
@@ -122,25 +125,37 @@ impl LifecycleTaskCoordinator {
         task_id: String,
         key: LifecycleRequestKey,
     ) -> Result<LifecycleReservationOutcome, AppError> {
-        let task_spec = TaskSpec::new(TaskKind::ExtensionLifecycle, Some(key.dedup_key()))
-            .with_task_id(task_id.clone())
-            .with_conflict_key(key.conflict_key());
+        self.reserve_for_tenant("default", task_id, key)
+    }
+
+    pub(crate) fn reserve_for_tenant(
+        &self,
+        tenant_id: &str,
+        task_id: String,
+        key: LifecycleRequestKey,
+    ) -> Result<LifecycleReservationOutcome, AppError> {
+        let task_spec = TaskSpec::new(
+            TaskKind::ExtensionLifecycle,
+            Some(format!("{tenant_id}:{}", key.dedup_key())),
+        )
+        .with_task_id(task_id.clone())
+        .with_tenant_id(tenant_id)
+        .with_conflict_key(format!("{tenant_id}:{}", key.conflict_key()));
         match self.runtime.register_external(task_spec)? {
             ExternalRegistrationOutcome::Started(_) => Ok(LifecycleReservationOutcome::Started),
             ExternalRegistrationOutcome::Existing(existing) => {
                 Ok(LifecycleReservationOutcome::Existing(existing.task_id))
             }
-            ExternalRegistrationOutcome::Conflict(existing) => Err(AppError::Extension(
-                super::ExtensionError::Conflict(format!(
+            ExternalRegistrationOutcome::Conflict(existing) => {
+                Err(AppError::from(super::ExtensionError::Conflict(format!(
                     "{} conflicts with {}",
                     key.dedup_key(),
                     existing
                         .dedup_key
                         .as_deref()
                         .unwrap_or("an active lifecycle task")
-                ))
-                .to_string(),
-            )),
+                ))))
+            }
         }
     }
 

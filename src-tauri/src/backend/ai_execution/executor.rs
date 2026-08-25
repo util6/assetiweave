@@ -20,11 +20,9 @@ use crate::backend::operation_log::{log_info, log_warn, LogField};
 
 use super::{
     backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
-    AiExecutionError, AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose,
-    AiExecutionRequest, AiExecutionResult,
+    AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase, AiExecutionProgressSink,
+    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
 };
-
-const DEFAULT_MAX_CONCURRENCY: usize = 2;
 
 pub(crate) type BackendFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AiExecutionResult, AiExecutionError>> + Send + 'a>>;
@@ -169,18 +167,6 @@ pub(crate) struct AgentExecutor {
 
 impl AgentExecutor {
     #[cfg(test)]
-    pub(crate) fn builtin(workspace_root: PathBuf) -> Result<Self, AiExecutionError> {
-        let registry = AgentRegistry::builtin().map_err(|_| AiExecutionError::Protocol {
-            operation: "registry_initialize",
-        })?;
-        Ok(Self::with_backends(
-            Arc::new(registry),
-            Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
-            Arc::new(NativeExecutionBackend::new(workspace_root)),
-            DEFAULT_MAX_CONCURRENCY,
-        ))
-    }
-
     pub(crate) fn new(
         registry: Arc<AgentRegistry>,
         acp: Arc<dyn AgentExecutionBackend>,
@@ -488,6 +474,18 @@ impl AiExecutionProgressSink for ObservedProgressSink {
         fields.push(("phase", format!("{phase:?}").to_ascii_lowercase()));
         log_info("ai_execution.phase", "AI execution phase changed", &fields);
     }
+
+    fn failure_phase(&self) -> Option<AiExecutionPhase> {
+        self.downstream
+            .as_ref()
+            .and_then(|progress| progress.failure_phase())
+    }
+
+    fn set_cleanup_report(&self, report: AiExecutionCleanupReport) {
+        if let Some(downstream) = self.downstream.as_ref() {
+            downstream.set_cleanup_report(report);
+        }
+    }
 }
 
 fn execution_log_fields(
@@ -649,10 +647,6 @@ impl Drop for ActiveExecutionGuard {
 fn cancelled_before_spawn(request: &AiExecutionRequest) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(request.agent_id.as_str()),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -660,10 +654,6 @@ fn timeout_before_spawn(request: &AiExecutionRequest, timeout: Duration) -> AiEx
     AiExecutionError::Timeout {
         program: PathBuf::from(request.agent_id.as_str()),
         timeout,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 

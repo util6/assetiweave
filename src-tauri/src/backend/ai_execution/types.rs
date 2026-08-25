@@ -1,11 +1,4 @@
-use std::{
-    fmt,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{fmt, sync::Arc, time::Duration};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -16,36 +9,50 @@ use super::{normalize_model, normalize_prompt, AiExecutionError};
 
 pub(crate) trait AiExecutionProgressSink: Send + Sync {
     fn set_phase(&self, phase: AiExecutionPhase);
+
+    fn failure_phase(&self) -> Option<AiExecutionPhase> {
+        None
+    }
+
+    fn set_cleanup_report(&self, _report: AiExecutionCleanupReport) {}
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct AiExecutionCleanupReport {
+    pub(crate) process_reaped: bool,
+    pub(crate) workspace_removed: bool,
+    pub(crate) failure_count: usize,
+}
+
+#[derive(Clone)]
 pub(crate) struct AiExecutionCancellation {
-    cancelled: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
+    token: tokio_util::sync::CancellationToken,
 }
 
 impl AiExecutionCancellation {
+    pub(crate) fn from_token(token: tokio_util::sync::CancellationToken) -> Self {
+        Self { token }
+    }
+
     pub(crate) fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-        self.notify.notify_waiters();
+        self.token.cancel();
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.token.is_cancelled()
     }
 
     pub(crate) async fn cancelled(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.is_cancelled() {
-                return;
-            }
-            notified.await;
-        }
+        self.token.cancelled().await;
     }
+}
 
-    pub(super) fn flag(&self) -> &AtomicBool {
-        self.cancelled.as_ref()
+impl Default for AiExecutionCancellation {
+    fn default() -> Self {
+        Self {
+            token: tokio_util::sync::CancellationToken::new(),
+        }
     }
 }
 
@@ -113,6 +120,12 @@ impl AiExecutionRequest {
     pub(crate) fn report_phase(&self, phase: AiExecutionPhase) {
         if let Some(progress) = self.progress.as_ref() {
             progress.set_phase(phase);
+        }
+    }
+
+    pub(crate) fn report_cleanup(&self, report: AiExecutionCleanupReport) {
+        if let Some(progress) = self.progress.as_ref() {
+            progress.set_cleanup_report(report);
         }
     }
 }

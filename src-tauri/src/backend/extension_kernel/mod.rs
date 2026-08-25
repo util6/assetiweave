@@ -2,7 +2,9 @@
 //!
 //! The kernel owns identity, compatibility, trust gates, process invocation,
 //! probing, snapshots, and lifecycle coordination. Conversation and agent
-//! manifests remain domain-owned and are intentionally opaque here.
+//! manifests remain domain-owned and are intentionally opaque here. A domain
+//! package system only supplies kind and inspection; lifecycle side effects
+//! stay in the owning domain workflow.
 
 mod error;
 mod identity;
@@ -17,7 +19,8 @@ pub(crate) use error::ExtensionError;
 pub(crate) use identity::{Compatibility, PackageIdentity, PackageKind};
 #[allow(unused_imports)]
 pub(crate) use launcher::{
-    EnvEntry, ProbeKind, ProbeResult, ProbeSpec, ProcessInvocation, RuntimeProgramKind,
+    EnvEntry, ExtensionLauncher, InvocationLimits, InvocationResult, ProbeKind, ProbeResult,
+    ProbeSpec, ProcessInvocation, RuntimeProgramKind,
 };
 #[allow(unused_imports)]
 pub(crate) use lifecycle::{
@@ -31,19 +34,23 @@ pub(crate) use trust::TrustGate;
 
 use std::path::Path;
 
-use super::runtime::AppError;
+use super::runtime::{AppError, WireError};
 
 /// Domain-specific package interpretation stays outside the kernel.
 pub(crate) trait DomainPackageSystem: Send + Sync {
     fn kind(&self) -> PackageKind;
     fn inspect(&self, dir: &Path) -> Result<InspectedPackage, ExtensionError>;
-    fn on_installed(&self, pkg: &InspectedPackage) -> Result<(), ExtensionError>;
-    fn on_removed(&self, id: &PackageIdentity) -> Result<(), ExtensionError>;
 }
 
 impl From<ExtensionError> for AppError {
     fn from(error: ExtensionError) -> Self {
-        Self::Extension(error.to_string())
+        let view = WireError {
+            code: error.code().to_string(),
+            message: error.public_message(),
+            retryable: error.retryable(),
+            details: error.details(),
+        };
+        Self::from(view)
     }
 }
 
@@ -141,6 +148,21 @@ mod tests {
             assert_eq!(invocation.args, vec!["--version"]);
             assert_eq!(invocation.version_req.as_deref(), Some(">=1"));
         }
+    }
+
+    #[test]
+    fn extension_process_error_wire_is_stable_and_does_not_leak_paths() {
+        let error = AppError::from(ExtensionError::OutputLimitExceeded {
+            package_id: "/Users/util6/private/agent".to_string(),
+            stdout: true,
+            stderr: false,
+        });
+        let view = error.view();
+
+        assert_eq!(view.code, "output_limit_exceeded");
+        assert!(!view.retryable);
+        assert!(!view.message.contains("/Users/util6"));
+        assert_eq!(view.details.unwrap()["stdout"], true);
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use crate::backend::{dto::AppResult, host_paths::HostPlatform};
+use crate::backend::{
+    host_paths::HostPlatform,
+    runtime::{AppError, AppResult},
+};
 use std::{
     ffi::OsString,
     fs,
@@ -67,21 +70,23 @@ impl HostFilesystem {
 
     pub(crate) fn validate_path_segment(&self, segment: &str) -> AppResult<String> {
         if segment.ends_with([' ', '.']) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "path segment must not end with a space or period: {segment}"
-            ));
+            )));
         }
         let segment = segment.trim();
         if segment.is_empty() || matches!(segment, "." | "..") {
-            return Err("path segment must not be empty, '.' or '..'".to_string());
+            return Err(AppError::Validation(
+                "path segment must not be empty, '.' or '..'".to_string(),
+            ));
         }
         if segment
             .chars()
             .any(|character| character.is_control() || r#"<>:"/\|?*"#.contains(character))
         {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "path segment contains a platform-reserved character: {segment}"
-            ));
+            )));
         }
         let reserved_stem = segment
             .split('.')
@@ -98,7 +103,9 @@ impl HostFilesystem {
                 .strip_prefix("LPT")
                 .is_some_and(is_windows_reserved_device_number);
         if is_reserved {
-            return Err(format!("path segment is reserved on Windows: {segment}"));
+            return Err(AppError::Validation(format!(
+                "path segment is reserved on Windows: {segment}"
+            )));
         }
         Ok(segment.to_string())
     }
@@ -115,7 +122,9 @@ impl HostFilesystem {
             || normalized.starts_with("//")
             || (bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic())
         {
-            return Err(format!("path must be portable and relative: {raw}"));
+            return Err(AppError::Validation(format!(
+                "path must be portable and relative: {raw}"
+            )));
         }
 
         let mut path = PathBuf::new();
@@ -137,10 +146,7 @@ impl HostFilesystem {
     }
 
     pub(crate) fn create_symlink(&self, source: &Path, target: &Path) -> AppResult<()> {
-        let kind = if fs::metadata(source)
-            .map_err(|error| error.to_string())?
-            .is_dir()
-        {
+        let kind = if fs::metadata(source)?.is_dir() {
             SymlinkKind::Directory
         } else {
             SymlinkKind::File
@@ -158,7 +164,7 @@ impl HostFilesystem {
     }
 
     pub(crate) fn symlink_kind(&self, path: &Path) -> AppResult<SymlinkKind> {
-        let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        let metadata = fs::symlink_metadata(path)?;
         symlink_kind(path, &metadata)
     }
 
@@ -168,38 +174,41 @@ impl HostFilesystem {
             SymlinkRemoval::File => fs::remove_file(path),
             SymlinkRemoval::Directory => fs::remove_dir(path),
         }
-        .map_err(|error| error.to_string())
+        .map_err(AppError::Io)
     }
 
     pub(crate) fn remove_path(&self, path: &Path) -> AppResult<()> {
-        let metadata = fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        let metadata = fs::symlink_metadata(path)?;
         if metadata.file_type().is_symlink() {
             return self.remove_symlink(path);
         }
         if metadata.is_file() {
-            return fs::remove_file(path).map_err(|error| error.to_string());
+            return fs::remove_file(path).map_err(AppError::Io);
         }
         if metadata.is_dir() {
-            return fs::remove_dir_all(path).map_err(|error| error.to_string());
+            return fs::remove_dir_all(path).map_err(AppError::Io);
         }
-        Err(format!("unsupported filesystem entry: {}", path.display()))
+        Err(AppError::Conflict(format!(
+            "unsupported filesystem entry: {}",
+            path.display()
+        )))
     }
 
     pub(crate) fn copy_dir(&self, source: &Path, target: &Path) -> AppResult<()> {
         for entry in WalkDir::new(source) {
-            let entry = entry.map_err(|error| error.to_string())?;
+            let entry = entry.map_err(|error| AppError::External(error.to_string()))?;
             let relative = entry
                 .path()
                 .strip_prefix(source)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| AppError::External(error.to_string()))?;
             let destination = target.join(relative);
             if entry.file_type().is_dir() {
-                fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+                fs::create_dir_all(&destination)?;
             } else if entry.file_type().is_file() {
                 if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                    fs::create_dir_all(parent)?;
                 }
-                fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
+                fs::copy(entry.path(), destination)?;
             }
         }
         Ok(())
@@ -210,21 +219,21 @@ impl HostFilesystem {
             return Ok(());
         }
         if !source.is_dir() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "backup source is not a directory: {}",
                 source.display()
-            ));
+            )));
         }
 
         for entry in WalkDir::new(source) {
-            let entry = entry.map_err(|error| error.to_string())?;
+            let entry = entry.map_err(|error| AppError::External(error.to_string()))?;
             let relative = entry
                 .path()
                 .strip_prefix(source)
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| AppError::External(error.to_string()))?;
             let destination = target.join(relative);
             if entry.file_type().is_dir() {
-                fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+                fs::create_dir_all(&destination)?;
                 continue;
             }
             if !entry.file_type().is_file() {
@@ -233,27 +242,26 @@ impl HostFilesystem {
 
             if destination.exists() {
                 if !destination.is_file() {
-                    return Err(format!(
+                    return Err(AppError::Conflict(format!(
                         "backup migration target is not a file: {}",
                         destination.display()
-                    ));
+                    )));
                 }
-                let source_bytes = fs::read(entry.path()).map_err(|error| error.to_string())?;
-                let destination_bytes =
-                    fs::read(&destination).map_err(|error| error.to_string())?;
+                let source_bytes = fs::read(entry.path())?;
+                let destination_bytes = fs::read(&destination)?;
                 if source_bytes != destination_bytes {
-                    return Err(format!(
+                    return Err(AppError::Conflict(format!(
                         "backup migration target already has different content: {}",
                         destination.display()
-                    ));
+                    )));
                 }
                 continue;
             }
 
             if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                fs::create_dir_all(parent)?;
             }
-            fs::copy(entry.path(), destination).map_err(|error| error.to_string())?;
+            fs::copy(entry.path(), destination)?;
         }
         Ok(())
     }
@@ -282,7 +290,7 @@ fn symlink_removal(platform: HostPlatform, kind: SymlinkKind) -> SymlinkRemoval 
 
 #[cfg(unix)]
 fn create_symlink_with_kind(source: &Path, target: &Path, _kind: SymlinkKind) -> AppResult<()> {
-    std::os::unix::fs::symlink(source, target).map_err(|error| error.to_string())
+    std::os::unix::fs::symlink(source, target).map_err(AppError::Io)
 }
 
 #[cfg(windows)]
@@ -291,7 +299,7 @@ fn create_symlink_with_kind(source: &Path, target: &Path, kind: SymlinkKind) -> 
         SymlinkKind::Directory => std::os::windows::fs::symlink_dir(source, target),
         SymlinkKind::File => std::os::windows::fs::symlink_file(source, target),
     }
-    .map_err(|error| format_symlink_error(HostPlatform::Windows, error))
+    .map_err(|error| AppError::External(format_symlink_error(HostPlatform::Windows, error)))
 }
 
 #[cfg(any(windows, test))]
@@ -307,7 +315,10 @@ fn format_symlink_error(platform: HostPlatform, error: std::io::Error) -> String
 #[cfg(unix)]
 fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> AppResult<SymlinkKind> {
     if !metadata.file_type().is_symlink() {
-        return Err(format!("target is not a symlink: {}", path.display()));
+        return Err(AppError::Conflict(format!(
+            "target is not a symlink: {}",
+            path.display()
+        )));
     }
     Ok(
         if fs::metadata(path)
@@ -331,7 +342,10 @@ fn symlink_kind(path: &Path, metadata: &fs::Metadata) -> AppResult<SymlinkKind> 
     } else if file_type.is_symlink_file() {
         Ok(SymlinkKind::File)
     } else {
-        Err(format!("target is not a symlink: {}", path.display()))
+        Err(AppError::Conflict(format!(
+            "target is not a symlink: {}",
+            path.display()
+        )))
     }
 }
 
@@ -484,7 +498,9 @@ mod tests {
             .copy_dir(&missing, &target)
             .expect_err("missing traversal root must fail");
 
-        assert!(error.contains("missing") || error.contains("No such file"));
+        assert!(
+            error.to_string().contains("missing") || error.to_string().contains("No such file")
+        );
         let _ = std::fs::remove_dir_all(PathBuf::from(root));
     }
 

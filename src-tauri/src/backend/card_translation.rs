@@ -102,12 +102,23 @@ pub(crate) struct ConversationTranslationModelsResult {
 
 /// Provider-neutral availability check. The action composition layer selects
 /// the configured agent; this function only reports the runtime probe.
+#[cfg(test)]
 pub(crate) fn check_action_availability(
     runtime: &dyn AgentExecutionRuntime,
     action: &crate::backend::ai_execution::composition::ActionId,
 ) -> ActionAvailability {
+    let settings = crate::backend::app_settings::read_app_settings_value()
+        .unwrap_or_else(|_| serde_json::json!({}));
+    check_action_availability_with_settings(runtime, action, &settings)
+}
+
+pub(crate) fn check_action_availability_with_settings(
+    runtime: &dyn AgentExecutionRuntime,
+    action: &crate::backend::ai_execution::composition::ActionId,
+    settings: &serde_json::Value,
+) -> ActionAvailability {
     let Ok((agent_id, _model)) =
-        crate::backend::ai_execution::composition::resolve_agent_for(action)
+        crate::backend::ai_execution::composition::resolve_agent_for(action, settings)
     else {
         return ActionAvailability {
             available: false,
@@ -130,12 +141,23 @@ pub(crate) fn check_action_availability(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn check_opencode_translation_availability(
     runtime: &dyn AgentExecutionRuntime,
 ) -> OpencodeTranslationAvailability {
-    let availability = check_action_availability(
+    let settings = crate::backend::app_settings::read_app_settings_value()
+        .unwrap_or_else(|_| serde_json::json!({}));
+    check_opencode_translation_availability_with_settings(runtime, &settings)
+}
+
+pub(crate) fn check_opencode_translation_availability_with_settings(
+    runtime: &dyn AgentExecutionRuntime,
+    settings: &serde_json::Value,
+) -> OpencodeTranslationAvailability {
+    let availability = check_action_availability_with_settings(
         runtime,
-        &crate::backend::ai_execution::composition::ActionId::new("translation"),
+        &crate::backend::ai_execution::composition::ActionId::new("translation.card"),
+        settings,
     );
     OpencodeTranslationAvailability {
         available: availability.available,
@@ -422,11 +444,15 @@ fn normalize_model(model: &str) -> AppResult<Option<String>> {
 
 fn app_error_from_ai(error: AiExecutionError) -> AppError {
     let view = error.to_view();
-    let message = format!("{}: {}", view.code, view.message);
     match view.code.as_str() {
-        "invalid_prompt" | "invalid_model" => AppError::Validation(message),
-        "cancelled" => AppError::Canceled(message),
-        _ => AppError::Extension(message),
+        "invalid_request" => AppError::Validation(view.message),
+        "cancelled" => AppError::Canceled(view.message),
+        _ => AppError::Domain {
+            code: view.code,
+            message: view.message,
+            retryable: view.retryable,
+            details: None,
+        },
     }
 }
 
@@ -438,14 +464,6 @@ fn opencode_executable_name() -> OsString {
 #[cfg(test)]
 fn opencode_search_candidates(home_dir: Option<&Path>) -> Vec<PathBuf> {
     host_executable_search_candidates(OPENCODE_COMMAND, home_dir)
-}
-
-fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(str::to_string)
 }
 
 fn parse_model_lines(bytes: &[u8]) -> Vec<String> {
@@ -477,6 +495,31 @@ mod tests {
         path::Path,
         sync::{Arc, Mutex},
     };
+
+    #[test]
+    fn ai_model_selection_error_keeps_its_structured_code() {
+        let error = app_error_from_ai(AiExecutionError::ModelSelectionFailed {
+            detail: Some("fixture model is unavailable".to_string()),
+        });
+        let view = error.view();
+
+        assert_eq!(view.code, "model_selection_failed");
+        assert!(!view.retryable);
+        assert!(view.message.contains("fixture model is unavailable"));
+    }
+
+    #[test]
+    fn ai_protocol_detail_keeps_retryability_and_detail() {
+        let error = app_error_from_ai(AiExecutionError::ProtocolDetail {
+            operation: "initialize",
+            detail: "fixture handshake failed".to_string(),
+        });
+        let view = error.view();
+
+        assert_eq!(view.code, "protocol_failed");
+        assert!(view.retryable);
+        assert!(view.message.contains("fixture handshake failed"));
+    }
 
     struct FakeRuntime {
         requests: Mutex<Vec<AiExecutionRequest>>,

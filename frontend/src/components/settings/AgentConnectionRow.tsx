@@ -48,6 +48,10 @@ export function AgentConnectionRow({
 }) {
   const status = statusMeta(connectionState, t);
   const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
+  const lifecycleBlocked = agent.hasSelectableDistribution === false;
+  const lifecycleBlockReason = lifecycleBlocked
+    ? t("settings.agents.distributionUnavailable")
+    : undefined;
   return (
     <article className="group flex flex-wrap items-center gap-3 rounded-xl border border-theme-card-border/60 bg-theme-control/58 px-3.5 py-3 transition-[background,border-color,transform] hover:-translate-y-px hover:border-theme-nav-active-border/60 hover:bg-theme-control-hover/70 sm:flex-nowrap">
       <span
@@ -60,6 +64,7 @@ export function AgentConnectionRow({
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-title-sm font-semibold text-on-surface">{agent.name}</h3>
           <Badge tone={status.tone}>{status.label}</Badge>
+          {lifecycleBlockReason ? <Badge tone="remove">{lifecycleBlockReason}</Badge> : null}
           {connectionState === "not-installed" ? <Info aria-label={t("settings.agents.statusNotInstalled")} className="text-outline" size={15} /> : null}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-code-sm text-outline">
@@ -71,17 +76,17 @@ export function AgentConnectionRow({
       </div>
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
         {view === "market" && onInstall ? (
-          <Button disabled={isManaging} onClick={onInstall} type="button">
+          <Button disabled={isManaging || lifecycleBlocked} onClick={onInstall} title={lifecycleBlockReason} type="button">
             {isManaging ? t("settings.agents.installing") : agent.installed ? (agent.installed.enabled ? t("settings.agents.disable") : t("settings.agents.enable")) : t("settings.agents.install")}
           </Button>
         ) : null}
         {view === "market" && onUpdate && agent.updateAvailable ? (
-          <Button disabled={isManaging} onClick={onUpdate} type="button" variant="outline">
+          <Button disabled={isManaging || lifecycleBlocked} onClick={onUpdate} title={lifecycleBlockReason} type="button" variant="outline">
             {isManaging ? t("settings.agents.installing") : t("settings.agents.update")}
           </Button>
         ) : null}
         {view === "market" && onReinstall && agent.installed ? (
-          <Button disabled={isManaging} onClick={onReinstall} type="button" variant="outline">
+          <Button disabled={isManaging || lifecycleBlocked} onClick={onReinstall} title={lifecycleBlockReason} type="button" variant="outline">
             {isManaging ? t("settings.agents.installing") : t("settings.agents.reinstall")}
           </Button>
         ) : null}

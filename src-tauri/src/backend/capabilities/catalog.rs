@@ -48,7 +48,7 @@ pub(crate) fn skill_backup_root_sqlx(
     })?;
     let root_path = skill_backup_root_path(&tenant_id, sources);
     let root = expand_path(&root_path)?;
-    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&root).map_err(AppError::external)?;
     Ok(root)
 }
 

@@ -21,29 +21,6 @@ pub enum MemoryRunTrigger {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum MemoryRunPhase {
-    Queued,
-    Gates,
-    Context,
-    Phase1,
-    Phase2,
-    Finalizing,
-    Completed,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryRunStatus {
-    Queued,
-    Running,
-    Completed,
-    Failed,
-    Interrupted,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum MemoryDreamNoteStatus {
     Active,
     Promoted,
@@ -290,33 +267,6 @@ pub(crate) struct MemoryDreamQuestionDeltaRow {
     pub available_question_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct MemoryRunRecord {
-    pub id: String,
-    pub kind: MemoryRunKind,
-    pub trigger: MemoryRunTrigger,
-    pub scope: MemoryScope,
-    pub scope_fingerprint: String,
-    pub source_revision_start: i64,
-    pub source_revision_end: Option<i64>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub prompt_version: Option<String>,
-    pub phase: MemoryRunPhase,
-    pub processed_count: i64,
-    pub total_count: i64,
-    pub skipped_count: i64,
-    pub failed_count: i64,
-    pub status: MemoryRunStatus,
-    pub result: Option<Value>,
-    pub error_kind: Option<String>,
-    pub error_message: Option<String>,
-    pub started_at: Option<String>,
-    pub finished_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MemoryDreamNote {
     pub id: String,
@@ -374,12 +324,7 @@ pub(crate) struct MemoryDreamPersistInput {
     pub run_id: String,
     pub note_id: String,
     pub scope: MemoryScope,
-    pub trigger: MemoryRunTrigger,
-    pub source_revision_start: i64,
     pub source_revision_end: i64,
-    pub provider: String,
-    pub model: Option<String>,
-    pub prompt_version: String,
     pub processed_count: usize,
     pub total_count: usize,
     pub markdown: String,

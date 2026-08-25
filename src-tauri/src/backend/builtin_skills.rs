@@ -1,7 +1,7 @@
 use crate::backend::{
-    dto::AppResult,
     models::{AssetKind, Source, SourceKind, SourceOrigin, SourceScannerKind},
     path_utils::normalize_path_for_storage,
+    runtime::{AppError, AppResult},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -154,7 +154,8 @@ pub(crate) struct BuiltinSkillInstallResult {
 }
 
 pub(crate) fn system_skill_root() -> AppResult<PathBuf> {
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(".assetiweave").join("skills").join(".system"))
 }
 
@@ -204,13 +205,16 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
 
     let parent = root
         .parent()
-        .ok_or_else(|| format!("system Skill root has no parent: {}", root.display()))?;
-    fs::create_dir_all(parent).map_err(|error| {
-        format!(
-            "create system Skill parent directory {}: {error}",
-            parent.display()
-        )
-    })?;
+        .ok_or_else(|| format!("system Skill root has no parent: {}", root.display()))
+        .map_err(AppError::external)?;
+    fs::create_dir_all(parent)
+        .map_err(|error| {
+            format!(
+                "create system Skill parent directory {}: {error}",
+                parent.display()
+            )
+        })
+        .map_err(AppError::external)?;
     let suffix = uuid::Uuid::new_v4();
     let staging = parent.join(format!(".system.install-{suffix}"));
     let previous = parent.join(format!(".system.previous-{suffix}"));
@@ -242,21 +246,24 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
             None
         };
         let cleanup_error = remove_path(&staging).err();
-        let mut message = error;
+        let mut message = error.to_string();
         if let Some(rollback_error) = rollback_error {
             message.push_str(&format!("; rollback failed: {rollback_error}"));
         }
         if let Some(cleanup_error) = cleanup_error {
             message.push_str(&format!("; staging cleanup failed: {cleanup_error}"));
         }
-        return Err(message);
+        return Err(AppError::External(message));
     }
     if path_is_present(&previous) {
         if let Err(error) = remove_path(&previous) {
             crate::backend::operation_log::log_warn(
                 "app.startup.skills.cleanup",
                 "failed to remove previous AssetIWeave system Skills",
-                &[("path", previous.display().to_string()), ("error", error)],
+                &[
+                    ("path", previous.display().to_string()),
+                    ("error", error.to_string()),
+                ],
             );
         }
     }
@@ -271,10 +278,12 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
 fn validate_embedded_skills() -> AppResult<()> {
     for embedded in EMBEDDED_SKILLS {
         let skill = std::str::from_utf8(embedded.skill)
-            .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))?;
+            .map_err(|error| format!("decode {}/SKILL.md: {error}", embedded.directory))
+            .map_err(AppError::external)?;
         validate_embedded_skill_frontmatter(skill, embedded.name, embedded.directory)?;
         let manifest: serde_json::Value = serde_json::from_slice(embedded.manifest)
-            .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))?;
+            .map_err(|error| format!("decode {} manifest: {error}", embedded.directory))
+            .map_err(AppError::external)?;
         if manifest.get("id").and_then(serde_json::Value::as_str) != Some(embedded.id)
             || manifest.get("entry").and_then(serde_json::Value::as_str) != Some("SKILL.md")
             || manifest
@@ -282,10 +291,10 @@ fn validate_embedded_skills() -> AppResult<()> {
                 .and_then(serde_json::Value::as_str)
                 != Some(">=3")
         {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "embedded Skill {} has an invalid manifest contract",
                 embedded.directory
-            ));
+            )));
         }
     }
     Ok(())
@@ -302,9 +311,9 @@ fn validate_embedded_skill_frontmatter(
             .map(|(frontmatter, _)| frontmatter)
     });
     let Some(frontmatter) = frontmatter else {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "embedded Skill {directory} has invalid frontmatter"
-        ));
+        )));
     };
 
     let mut name = None;
@@ -321,9 +330,9 @@ fn validate_embedded_skill_frontmatter(
     }
 
     if name != Some(expected_name) || description.is_none_or(str::is_empty) {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "embedded Skill {directory} has invalid frontmatter"
-        ));
+        )));
     }
     Ok(())
 }
@@ -365,7 +374,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
         .collect::<BTreeSet<_>>();
     let mut installed_paths = BTreeSet::new();
     for entry in WalkDir::new(root).follow_links(false) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(AppError::external)?;
         if entry.depth() > 0 && entry.file_type().is_symlink() {
             return Ok(false);
         }
@@ -375,7 +384,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
         let relative = entry
             .path()
             .strip_prefix(root)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         let relative = relative.to_string_lossy().replace('\\', "/");
         if relative == SYSTEM_SKILLS_MARKER {
             continue;
@@ -387,7 +396,7 @@ fn installed_tree_matches(root: &Path, fingerprint: &str) -> AppResult<bool> {
     }
     for file in EMBEDDED_FILES {
         let path = root.join(file.relative_path);
-        if fs::read(&path).map_err(|error| error.to_string())? != file.contents
+        if fs::read(&path).map_err(AppError::external)? != file.contents
             || !executable_mode_matches(&path, file.executable)?
         {
             return Ok(false);
@@ -404,8 +413,9 @@ fn write_embedded_tree(root: &Path, fingerprint: &str) -> AppResult<()> {
         let path = root.join(file.relative_path);
         let parent = path
             .parent()
-            .ok_or_else(|| format!("embedded file has no parent: {}", path.display()))?;
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            .ok_or_else(|| format!("embedded file has no parent: {}", path.display()))
+            .map_err(AppError::external)?;
+        fs::create_dir_all(parent).map_err(AppError::external)?;
         retry_io("write embedded system Skill file", || {
             fs::write(&path, file.contents)
         })?;
@@ -424,7 +434,7 @@ fn remove_path(path: &Path) -> AppResult<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Err(AppError::External(error.to_string())),
     };
     if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
         retry_io(&format!("remove directory {}", path.display()), || {
@@ -458,10 +468,10 @@ where
         }
     }
 
-    Err(format!(
+    Err(AppError::External(format!(
         "{description}: {}",
         last_error.expect("file operation must have an error")
-    ))
+    )))
 }
 
 #[cfg(unix)]
@@ -469,10 +479,10 @@ fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
     use std::os::unix::fs::PermissionsExt;
     if executable {
         let mut permissions = fs::metadata(path)
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+        fs::set_permissions(path, permissions).map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -481,7 +491,7 @@ fn set_executable_if_needed(path: &Path, executable: bool) -> AppResult<()> {
 fn executable_mode_matches(path: &Path, expected: bool) -> AppResult<bool> {
     use std::os::unix::fs::PermissionsExt;
     let executable = fs::metadata(path)
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .permissions()
         .mode()
         & 0o111

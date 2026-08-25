@@ -77,6 +77,29 @@ vi.mock("../../services/cardTranslation", () => ({
   testConversationTranslationConnection: vi.fn(),
 }));
 
+vi.mock("../../services/agentRuntime", () => ({
+  checkAgentConnection: vi.fn().mockResolvedValue({
+    agent_id: "opencode",
+    available: true,
+    installed: true,
+    connected: false,
+    version: null,
+    connection_method: null,
+    error_code: null,
+    error: null,
+  }),
+  listAgentMarket: undefined,
+  listAgentCatalog: vi.fn().mockResolvedValue([]),
+  listAgentModels: vi.fn().mockResolvedValue({
+    agent_id: "opencode",
+    available: true,
+    models: [],
+    current_model_id: null,
+    error_code: null,
+    error: null,
+  }),
+}));
+
 describe("GlobalSettingsDialog", () => {
   beforeEach(() => {
     conversationSyncState.tasks = [];
@@ -201,9 +224,9 @@ describe("GlobalSettingsDialog", () => {
     const geminiOptions = screen.getAllByRole("button", { name: /Gemini CLI/ });
     fireEvent.click(geminiOptions[0]);
 
-    expect(updateSettingMock).toHaveBeenCalledWith("agentCapabilityAssignments", {
-      ...defaultSettings.agentCapabilityAssignments,
-      memory: "gemini",
+    expect(updateSettingMock).toHaveBeenCalledWith("agentAssignments", {
+      ...defaultSettings.agentAssignments,
+      "memory.extraction": { agentId: "gemini", modelId: null },
     });
   });
 
@@ -344,9 +367,12 @@ describe("GlobalSettingsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
     fireEvent.click(screen.getAllByRole("button", { name: new RegExp(agentId === "codex" ? "Codex CLI" : "Claude Code") })[0]);
 
-    expect(updateSettingMock).toHaveBeenCalledWith("agentCapabilityAssignments", {
-      ...defaultSettings.agentCapabilityAssignments,
-      [serviceId]: agentId,
+    expect(updateSettingMock).toHaveBeenCalledWith("agentAssignments", {
+      ...defaultSettings.agentAssignments,
+      [serviceId === "cardTranslation" ? "translation.card" : "prompt.optimization"]: {
+        agentId,
+        modelId: null,
+      },
     });
   });
 

@@ -80,6 +80,25 @@ fn build_plan_exposes_portable_display_paths_separately_from_runtime_paths() {
     );
 }
 
+#[test]
+fn build_plan_with_catalog_rejects_missing_target_provider() {
+    let assets = vec![test_asset("asset-missing-provider")];
+    let mut profile = test_profile("missing-provider", true);
+    profile.target_provider_id = "provider-does-not-exist".to_string();
+    let catalog = crate::backend::target_catalog::TargetCatalog::builtin().expect("catalog");
+
+    let error = build_plan_with_catalog(
+        &assets,
+        &[profile],
+        &[test_mount("asset-missing-provider", "missing-provider")],
+        None,
+        &catalog,
+    )
+    .expect_err("missing provider must fail closed");
+
+    assert!(error.contains("target_provider_missing"));
+}
+
 fn test_asset(id: &str) -> Asset {
     let absolute_path = std::env::temp_dir().join(format!(
         "assetiweave-plan-source-{id}-{}",

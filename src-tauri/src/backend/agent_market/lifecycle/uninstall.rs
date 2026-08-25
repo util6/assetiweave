@@ -81,12 +81,6 @@ pub(crate) async fn run(
             false,
         ));
     }
-    let identity = installation
-        .package_identity()
-        .map_err(|error| market_error("uninstall_failed", error, false))?;
-    package_system
-        .on_removed(&identity)
-        .map_err(|error| market_error("uninstall_failed", error.to_string(), false))?;
     // Capability assignment cleanup is deliberately explicit at the adapter
     // boundary. This service only removes a row after the caller has supplied
     // the requested references; it never invents a replacement assignment.

@@ -49,13 +49,11 @@ impl TranslationTextAggregator {
                 let Some(new_len) = self.text.len().checked_add(text.len()) else {
                     return AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit {
                         limit: self.byte_limit,
-                        legacy_output: None,
                     });
                 };
                 if new_len > self.byte_limit {
                     return AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit {
                         limit: self.byte_limit,
-                        legacy_output: None,
                     });
                 }
                 self.text.push_str(&text);
@@ -242,10 +240,7 @@ mod tests {
 
         assert!(matches!(
             aggregator.apply(text(&session, "6")),
-            AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit {
-                limit: 5,
-                legacy_output: None
-            })
+            AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit { limit: 5 })
         ));
         assert_eq!(aggregator.finish().unwrap(), "12345");
     }

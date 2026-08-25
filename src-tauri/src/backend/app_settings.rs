@@ -1,4 +1,8 @@
-use crate::backend::dto::AppResult;
+use crate::backend::{
+    runtime::AppError,
+    runtime::AppResult,
+    store::{self, Database},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -9,7 +13,7 @@ use std::{
 const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-const SETTINGS_SCHEMA_VERSION: u32 = 2;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
 const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
@@ -33,35 +37,71 @@ struct AppSettingsDocument {
     settings: Value,
 }
 
-pub(crate) fn get_app_settings() -> AppResult<AppSettingsFile> {
-    let paths = app_settings_paths()?;
-    ensure_settings_dirs(&paths)?;
-    let settings = read_normalized_settings_document(&paths.config_path)?.settings;
-    Ok(paths.into_file(settings))
-}
-
-pub(crate) fn save_app_settings(settings: Value) -> AppResult<AppSettingsFile> {
-    let paths = app_settings_paths()?;
-    ensure_settings_dirs(&paths)?;
-    let document = AppSettingsDocument {
-        schema_version: SETTINGS_SCHEMA_VERSION,
-        settings: normalize_settings_paths(settings)?,
-    };
-    write_settings_document(&paths.config_path, &document)?;
-    Ok(paths.into_file(document.settings))
-}
-
 pub(crate) fn read_app_settings_value() -> AppResult<Value> {
+    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
+        return read_app_settings_value_for_database(runtime.db());
+    }
     let paths = app_settings_paths()?;
     if !paths.config_path.exists() {
-        return Ok(json!({}));
+        return canonicalize_settings(json!({}));
     }
     Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
 
-pub(crate) fn conversation_full_sync_on_startup_enabled() -> AppResult<bool> {
+pub(crate) fn get_app_settings_for_database(db: &Database) -> AppResult<AppSettingsFile> {
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let settings = read_app_settings_value_for_database(db)?;
+    Ok(paths.into_file(settings))
+}
+
+pub(crate) fn save_app_settings_for_database(
+    db: &Database,
+    settings: Value,
+) -> AppResult<AppSettingsFile> {
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let settings = canonicalize_settings(settings)?;
+    db.block_on(store::save_app_settings_sqlx(
+        db.pool(),
+        SETTINGS_SCHEMA_VERSION,
+        &settings,
+    ))?;
+    Ok(paths.into_file(settings))
+}
+
+pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
+    db.block_on(load_or_import_app_settings_sqlx(db.pool()))
+}
+
+/// Load the authoritative SQLite settings row. The legacy JSON document is
+/// consulted exactly once, only when the row does not exist yet.
+pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) -> AppResult<Value> {
+    if let Some((schema_version, stored)) = store::load_app_settings_sqlx(pool).await? {
+        if schema_version > SETTINGS_SCHEMA_VERSION {
+            return Err(AppError::Validation(format!(
+                "settings schema version {schema_version} is newer than supported version {SETTINGS_SCHEMA_VERSION}"
+            )));
+        }
+        let settings = canonicalize_settings(stored)?;
+        if schema_version < SETTINGS_SCHEMA_VERSION {
+            store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &settings).await?;
+        }
+        return Ok(settings);
+    }
+
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let imported = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
+    store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &imported).await?;
+    Ok(imported)
+}
+
+pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
+    db: &Database,
+) -> AppResult<bool> {
     Ok(conversation_full_sync_on_startup_enabled_from_value(
-        &read_app_settings_value()?,
+        &read_app_settings_value_for_database(db)?,
     ))
 }
 
@@ -110,13 +150,14 @@ fn app_config_dir() -> AppResult<PathBuf> {
             return Ok(PathBuf::from(home));
         }
     }
-    let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
     Ok(home.join(CONFIG_DIR_NAME))
 }
 
 fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {
-    fs::create_dir_all(&paths.config_dir).map_err(|error| error.to_string())?;
-    fs::create_dir_all(&paths.conversation_adapter_dir).map_err(|error| error.to_string())
+    fs::create_dir_all(&paths.config_dir).map_err(AppError::external)?;
+    Ok(fs::create_dir_all(&paths.conversation_adapter_dir).map_err(AppError::external)?)
 }
 
 fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
@@ -126,15 +167,16 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
         return Ok(document);
     }
 
-    let content = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let content = fs::read_to_string(path).map_err(AppError::external)?;
     let parsed: Value = serde_json::from_str(&content)
-        .map_err(|error| format!("解析设置文件失败: {} ({error})", path.to_string_lossy()))?;
+        .map_err(|error| format!("解析设置文件失败: {} ({error})", path.to_string_lossy()))
+        .map_err(AppError::external)?;
     Ok(normalize_document(parsed))
 }
 
 fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     let mut document = read_settings_document(path)?;
-    let normalized = normalize_settings_paths(document.settings.clone())?;
+    let normalized = canonicalize_settings(document.settings.clone())?;
     let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
     if normalized != document.settings || schema_changed {
         document.settings = normalized;
@@ -153,6 +195,25 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
         &["conversationRuntimeOverrides", "python"][..],
     ] {
         normalize_json_path_setting(&mut settings, path)?;
+    }
+    Ok(settings)
+}
+
+fn canonicalize_settings(settings: Value) -> AppResult<Value> {
+    let mut settings = normalize_settings_paths(settings)?;
+    let Some(root) = settings.as_object_mut() else {
+        return Ok(settings);
+    };
+    // These maps were migration inputs. Canonical action assignments contain
+    // the complete agent/model selection and are the only execution source.
+    root.remove("agentCapabilityAssignments");
+    root.remove("agentModels");
+    if let Some(translation) = root
+        .get_mut("conversationTranslation")
+        .and_then(Value::as_object_mut)
+    {
+        translation.remove("cli");
+        translation.remove("model");
     }
     Ok(settings)
 }
@@ -239,6 +300,11 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "agentCapabilityAssignments".to_string(),
         Value::Object(agent_capabilities),
     );
+    root.insert(
+        "agentAssignments".to_string(),
+        normalize_canonical_agent_assignments(root, cli, &model),
+    );
+    root.insert("settingsSchemaVersion".to_string(), json!(3));
 
     let mut translation = legacy_translation;
     translation.remove("cli");
@@ -272,6 +338,73 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
     memory.insert("minHours".to_string(), json!(min_hours));
     memory.insert("minSessions".to_string(), json!(min_sessions));
     root.insert("memory".to_string(), Value::Object(memory));
+}
+
+fn normalize_canonical_agent_assignments(
+    root: &serde_json::Map<String, Value>,
+    default_agent: &str,
+    runtime_model: &str,
+) -> Value {
+    let legacy = root
+        .get("agentCapabilityAssignments")
+        .and_then(Value::as_object);
+    let agent_models = root.get("agentModels").and_then(Value::as_object);
+    let existing = root.get("agentAssignments").and_then(Value::as_object);
+    let has_canonical_assignments = existing.is_some();
+    let action_sources = [
+        ("translation.card", "cardTranslation"),
+        ("memory.extraction", "memory.extraction"),
+        ("memory.dream", "memory.dream"),
+        ("prompt.optimization", "promptOptimization"),
+    ];
+    let mut assignments = serde_json::Map::new();
+    for (action_id, legacy_id) in action_sources {
+        let existing_assignment = existing
+            .and_then(|values| values.get(action_id))
+            .and_then(Value::as_object);
+        if has_canonical_assignments && existing_assignment.is_none() {
+            continue;
+        }
+        let legacy_agent = legacy
+            .and_then(|values| values.get(legacy_id))
+            .and_then(Value::as_str)
+            .unwrap_or(default_agent);
+        let agent_id = existing_assignment
+            .and_then(|assignment| assignment.get("agentId"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(legacy_agent);
+        let model_id = existing_assignment
+            .and_then(|assignment| assignment.get("modelId"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                agent_models
+                    .and_then(|models| models.get(agent_id))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+            .or_else(|| (agent_id == default_agent).then_some(runtime_model))
+            .filter(|value| !value.is_empty());
+        assignments.insert(
+            action_id.to_string(),
+            json!({ "agentId": agent_id, "modelId": model_id }),
+        );
+    }
+    if let Some(existing) = existing {
+        for key in existing.keys() {
+            if !assignments.contains_key(key) {
+                crate::backend::operation_log::log_warn(
+                    "settings.agent_assignment",
+                    "未知的 Agent action assignment 已隔离",
+                    &[("action", key.clone())],
+                );
+            }
+        }
+    }
+    Value::Object(assignments)
 }
 
 fn normalize_ai_runtime_cli(value: Option<&Value>) -> &'static str {
@@ -363,12 +496,13 @@ fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()
 fn write_settings_document(path: &Path, document: &AppSettingsDocument) -> AppResult<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| "设置文件缺少父目录".to_string())?;
-    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let content = serde_json::to_string_pretty(document).map_err(|error| error.to_string())?;
+        .ok_or_else(|| "设置文件缺少父目录".to_string())
+        .map_err(AppError::external)?;
+    fs::create_dir_all(parent).map_err(AppError::external)?;
+    let content = serde_json::to_string_pretty(document).map_err(AppError::external)?;
     let temp_path = path.with_extension("json.tmp");
-    fs::write(&temp_path, format!("{content}\n")).map_err(|error| error.to_string())?;
-    fs::rename(&temp_path, path).map_err(|error| error.to_string())
+    fs::write(&temp_path, format!("{content}\n")).map_err(AppError::external)?;
+    Ok(fs::rename(&temp_path, path).map_err(AppError::external)?)
 }
 
 fn default_document() -> AppSettingsDocument {
@@ -392,6 +526,12 @@ fn normalize_document(value: Value) -> AppSettingsDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn settings_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn legacy_top_level_settings_are_wrapped() {
@@ -531,5 +671,128 @@ mod tests {
             settings["agentCapabilityAssignments"]["memory.dream"],
             "codex"
         );
+        assert_eq!(settings["settingsSchemaVersion"], 3);
+        assert_eq!(
+            settings["agentAssignments"]["translation.card"]["agentId"],
+            "gemini"
+        );
+        assert_eq!(
+            settings["agentAssignments"]["memory.extraction"]["agentId"],
+            "codex"
+        );
+        assert_eq!(
+            settings["agentAssignments"]["memory.extraction"]["modelId"],
+            "openai/gpt-5-codex"
+        );
+    }
+
+    #[test]
+    fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-migration-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
+        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let config = root.join(CONFIG_FILE_NAME);
+        std::fs::write(
+            &config,
+            serde_json::to_string_pretty(&json!({
+                "schemaVersion": 1,
+                "settings": {
+                    "aiRuntime": { "cli": "gemini", "model": "gemini-2.5-pro" },
+                    "agentModels": { "gemini": "gemini-2.5-pro" },
+                    "agentCapabilityAssignments": { "memory": "gemini" }
+                }
+            }))
+            .expect("encode legacy settings"),
+        )
+        .expect("write legacy settings");
+
+        let db_path = root.join("settings.db");
+        let database = crate::backend::store::Database::open_initialized(&db_path)
+            .expect("open settings database");
+        let imported = read_app_settings_value_for_database(&database).expect("import settings");
+        assert_eq!(
+            imported["agentAssignments"]["memory.extraction"]["agentId"],
+            "gemini"
+        );
+        assert!(imported.get("agentModels").is_none());
+        assert!(imported.get("agentCapabilityAssignments").is_none());
+
+        std::fs::write(
+            &config,
+            serde_json::to_string_pretty(&json!({
+                "settings": {
+                    "aiRuntime": { "cli": "opencode", "model": "changed-after-import" }
+                }
+            }))
+            .expect("encode changed legacy settings"),
+        )
+        .expect("rewrite legacy settings");
+        let reopened = read_app_settings_value_for_database(&database).expect("read settings");
+        assert_eq!(reopened, imported);
+
+        match previous_home {
+            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
+            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-corrupt-file-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
+        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let database = crate::backend::store::Database::open_initialized(&root.join("settings.db"))
+            .expect("open settings database");
+        let expected = canonicalize_settings(json!({
+            "theme": "dark",
+            "agentAssignments": {}
+        }))
+        .expect("canonical settings");
+        save_app_settings_for_database(&database, expected.clone()).expect("save sqlite settings");
+        std::fs::write(root.join(CONFIG_FILE_NAME), "{ invalid json")
+            .expect("write corrupt legacy file");
+
+        let actual = read_app_settings_value_for_database(&database)
+            .expect("read settings from sqlite despite corrupt legacy file");
+        assert_eq!(actual, expected);
+
+        match previous_home {
+            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
+            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+        }
+        std::fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn canonical_settings_do_not_refill_explicitly_unassigned_actions() {
+        let settings = canonicalize_settings(json!({
+            "aiRuntime": { "cli": "opencode", "model": "model/a" },
+            "agentAssignments": {
+                "translation.card": { "agentId": "opencode", "modelId": "model/a" }
+            }
+        }))
+        .expect("canonicalize settings");
+
+        assert!(settings["agentAssignments"]
+            .get("translation.card")
+            .is_some());
+        assert!(settings["agentAssignments"]
+            .get("memory.extraction")
+            .is_none());
+        assert!(settings["agentAssignments"].get("memory.dream").is_none());
+        assert!(settings["agentAssignments"]
+            .get("prompt.optimization")
+            .is_none());
     }
 }

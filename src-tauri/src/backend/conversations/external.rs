@@ -3,21 +3,24 @@ use super::prelude::*;
 pub(super) fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
+    settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
-    run_external_adapter_read_session(adapter, source, None)
+    run_external_adapter_read_session(adapter, source, None, settings)
 }
 
 pub(super) fn read_external_adapter_session(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     session_id: &str,
+    settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
-    run_external_adapter_read_session(adapter, source, Some(session_id))
+    run_external_adapter_read_session(adapter, source, Some(session_id), settings)
 }
 
 pub(super) fn discover_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
+    settings: &Value,
 ) -> AppResult<Option<ExternalAdapterRunResult>> {
     if !adapter
         .capabilities
@@ -28,10 +31,12 @@ pub(super) fn discover_external_adapter_sessions(
     }
     validate_external_adapter_for_method(adapter, source, "list_sessions")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
-        format!(
-            "external conversation adapter has no manifest: {}",
-            adapter.id
-        )
+        AppError::external({
+            format!(
+                "external conversation adapter has no manifest: {}",
+                adapter.id
+            )
+        })
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "list_sessions")?;
@@ -43,11 +48,12 @@ pub(super) fn discover_external_adapter_sessions(
         "source": { "location": source_location, "config": source_config_value(source)? },
         "params": { "cursor": null }
     });
-    let result = run_external_adapter(
+    let result = run_external_adapter_with_settings(
         &validation,
         "list_sessions",
         request,
         Duration::from_millis(DEFAULT_LIST_TIMEOUT_MS),
+        settings,
     )?;
     if !result.snapshot_complete {
         return Ok(None);
@@ -59,13 +65,16 @@ fn run_external_adapter_read_session(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     session_id: Option<&str>,
+    settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
     validate_external_adapter_for_method(adapter, source, "read_session")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
-        format!(
-            "external conversation adapter has no manifest: {}",
-            adapter.id
-        )
+        AppError::external({
+            format!(
+                "external conversation adapter has no manifest: {}",
+                adapter.id
+            )
+        })
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
@@ -77,15 +86,16 @@ fn run_external_adapter_read_session(
         "source": { "location": source_location, "config": source_config_value(source)? },
         "params": { "session_id": session_id }
     });
-    run_external_adapter(
+    run_external_adapter_with_settings(
         &validation,
         "read_session",
         request,
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+        settings,
     )
 }
 
-pub(crate) fn export_external_adapter_markdown(
+pub(crate) fn export_external_adapter_markdown_with_settings(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     detail: &crate::backend::dto::ConversationSessionDetail,
@@ -93,13 +103,16 @@ pub(crate) fn export_external_adapter_markdown(
     content_filter: &crate::backend::dto::ConversationExportContentFilter,
     record_kind: &str,
     default_relative_path: &str,
+    settings: &Value,
 ) -> AppResult<ExternalMarkdownExport> {
     validate_external_adapter_for_method(adapter, source, "export_markdown")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
-        format!(
-            "external conversation adapter has no manifest: {}",
-            adapter.id
-        )
+        AppError::external({
+            format!(
+                "external conversation adapter has no manifest: {}",
+                adapter.id
+            )
+        })
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "export_markdown")?;
@@ -117,19 +130,20 @@ pub(crate) fn export_external_adapter_markdown(
             "default_relative_path": default_relative_path
         }
     });
-    run_external_adapter(
+    Ok(run_external_adapter_with_settings(
         &validation,
         "export_markdown",
         request,
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+        settings,
     )?
     .markdown_export
     .ok_or_else(|| {
-        format!(
+        AppError::NotFound(format!(
             "external conversation adapter {} did not return markdown_export",
             adapter.id
-        )
-    })
+        ))
+    })?)
 }
 
 pub(super) fn resolve_source_location_for_adapter(
@@ -138,8 +152,9 @@ pub(super) fn resolve_source_location_for_adapter(
     if source.location.contains("://") {
         return Ok(source.location.clone());
     }
-    crate::backend::path_utils::expand_path(&source.location)
-        .map(|path| path.to_string_lossy().to_string())
+    Ok(crate::backend::path_utils::expand_path(&source.location)?
+        .to_string_lossy()
+        .to_string())
 }
 
 fn validate_external_adapter_for_method(
@@ -148,38 +163,41 @@ fn validate_external_adapter_for_method(
     method: &str,
 ) -> AppResult<()> {
     if adapter.kind != ConversationAdapterKind::External {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "conversation adapter {} is not a built-in or external adapter",
             adapter.id
-        ));
+        )));
     }
     if !adapter.enabled {
-        return Err(format!("conversation adapter is disabled: {}", adapter.id));
+        return Err(AppError::external(format!(
+            "conversation adapter is disabled: {}",
+            adapter.id
+        )));
     }
     if !matches!(
         adapter.trust_state,
         ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
     ) {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "external conversation adapter is not trusted: {}",
             adapter.id
-        ));
+        )));
     }
     if !adapter.input_kinds.iter().any(|kind| *kind == source.kind) {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "external conversation adapter {} does not support source kind {:?}",
             adapter.id, source.kind
-        ));
+        )));
     }
     if !adapter
         .capabilities
         .iter()
         .any(|capability| capability == method)
     {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "external conversation adapter {} does not declare {method}",
             adapter.id
-        ));
+        )));
     }
     Ok(())
 }
@@ -190,10 +208,10 @@ fn validate_external_adapter_manifest_for_method(
     method: &str,
 ) -> AppResult<()> {
     if validation.manifest.id != adapter.id {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "external conversation adapter manifest id {} does not match registered adapter {}",
             validation.manifest.id, adapter.id
-        ));
+        )));
     }
     if !validation
         .manifest
@@ -201,17 +219,17 @@ fn validate_external_adapter_manifest_for_method(
         .iter()
         .any(|capability| capability == method)
     {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "external conversation adapter {} does not declare {method}",
             adapter.id
-        ));
+        )));
     }
     if let Some(trusted_hash) = adapter.trusted_hash.as_deref() {
         if validation.content_hash != trusted_hash {
-            return Err(format!(
+            return Err(AppError::external(format!(
                 "external conversation adapter trusted hash mismatch: {}",
                 adapter.id
-            ));
+            )));
         }
     }
     Ok(())
@@ -220,7 +238,7 @@ fn validate_external_adapter_manifest_for_method(
 fn source_config_value(source: &ConversationSource) -> AppResult<Option<Value>> {
     match source.config_json.as_deref() {
         Some(text) if !text.trim().is_empty() => Ok(Some(
-            serde_json::from_str::<Value>(text).map_err(|error| error.to_string())?,
+            serde_json::from_str::<Value>(text).map_err(AppError::external)?,
         )),
         _ => Ok(None),
     }
@@ -256,8 +274,7 @@ pub(crate) fn scaffold_external_adapter(
         });
     }
 
-    fs::create_dir_all(request_fixture_path.parent().unwrap())
-        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(request_fixture_path.parent().unwrap()).map_err(AppError::external)?;
     let runtime = scaffold_adapter_runtime(&params)?;
     write_scaffold_adapter_entrypoint(&target_dir, &runtime)?;
     let manifest = ConversationAdapterManifest {
@@ -283,9 +300,9 @@ pub(crate) fn scaffold_external_adapter(
     };
     fs::write(
         &manifest_path,
-        serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?,
+        serde_json::to_string_pretty(&manifest).map_err(AppError::external)?,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     fs::write(
         &request_fixture_path,
         serde_json::to_string_pretty(&json!({
@@ -295,16 +312,16 @@ pub(crate) fn scaffold_external_adapter(
             "source": { "location": "/path/to/source", "config": null },
             "params": { "session_id": "example-session" }
         }))
-        .map_err(|error| error.to_string())?,
+        .map_err(AppError::external)?,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     fs::write(
         &response_fixture_path,
         r#"{"type":"item","item":{"kind":"session","session":{"external_id":"example-session","title":"Example session","project_path":null,"started_at":null,"updated_at":null,"source_locator":null,"source_fingerprint":null,"turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Example question","title":null,"started_at":null,"ended_at":null,"parts":[{"role":"assistant","kind":"text","text":"Example answer","language":null,"command":null,"cwd":null,"status":null,"exit_code":null,"metadata_json":{"content_card":{"type":"answer","format":"markdown"}}}]}]}}}
 {"type":"complete","item":{"session_count":1,"turn_count":1}}
 "#,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     fs::write(
         &export_request_fixture_path,
         serde_json::to_string_pretty(&json!({
@@ -326,16 +343,16 @@ pub(crate) fn scaffold_external_adapter(
                 "default_relative_path": "example/Example-session.md"
             }
         }))
-        .map_err(|error| error.to_string())?,
+        .map_err(AppError::external)?,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     fs::write(
         &export_response_fixture_path,
         r##"{"type":"item","item":{"kind":"markdown_export","content":"# Example session\n\n## 1. Example question\n\n### Answer\n\n```markdown\nExample answer\n```\n","relative_path":"example/Example-session.md"}}
 {"type":"complete","item":{"export_count":1}}
 "##,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     Ok(ExternalAdapterScaffoldResult {
         dry_run: false,
@@ -356,13 +373,13 @@ fn write_scaffold_adapter_entrypoint(
         return Ok(());
     }
     if let Some(parent) = entry_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent).map_err(AppError::external)?;
     }
     fs::write(
         &entry_path,
         scaffold_adapter_entrypoint_template(&runtime.kind),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     #[cfg(unix)]
     if matches!(
         runtime.kind,
@@ -370,10 +387,10 @@ fn write_scaffold_adapter_entrypoint(
     ) {
         use std::os::unix::fs::PermissionsExt;
         let mut permissions = fs::metadata(&entry_path)
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&entry_path, permissions).map_err(|error| error.to_string())?;
+        fs::set_permissions(&entry_path, permissions).map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -396,7 +413,9 @@ fn scaffold_adapter_runtime(
         .unwrap_or(ConversationAdapterRuntimeKind::Node);
     let entry = match params.runtime_entry.as_deref() {
         Some(entry) if entry.trim().is_empty() => {
-            return Err("adapter runtime entry must not be empty".to_string());
+            return Err(AppError::external(
+                "adapter runtime entry must not be empty".to_string(),
+            ));
         }
         Some(entry) => entry.trim().to_string(),
         None => default_scaffold_runtime_entry(&kind).to_string(),
@@ -404,7 +423,9 @@ fn scaffold_adapter_runtime(
     validate_adapter_entry_path("adapter runtime entry", &entry)?;
     let version = match params.runtime_version.as_deref() {
         Some(version) if version.trim().is_empty() => {
-            return Err("adapter runtime version must not be empty".to_string());
+            return Err(AppError::external(
+                "adapter runtime version must not be empty".to_string(),
+            ));
         }
         Some(version) => {
             let version = version.trim().to_string();
@@ -550,15 +571,20 @@ pub(crate) fn validate_external_adapter(
     validate_external_adapter_manifest(&params.manifest_path)
 }
 
-pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -> AppResult<Value> {
+pub(crate) fn register_external_adapter_with_settings(
+    params: ExternalAdapterRegisterParams,
+    settings: &Value,
+) -> AppResult<Value> {
     if !params.dry_run && !params.yes {
-        return Err("conversation.adapter.register requires --yes".to_string());
+        return Err(AppError::external(
+            "conversation.adapter.register requires --yes".to_string(),
+        ));
     }
     let validation = validate_external_adapter_manifest(&params.manifest_path)?;
     let probe = if params.dry_run {
         None
     } else {
-        Some(probe_external_adapter_before_trust(&validation)?)
+        Some(probe_external_adapter_before_trust(&validation, settings)?)
     };
     let now = Utc::now().to_rfc3339();
     let adapter = ConversationAdapter {
@@ -588,8 +614,14 @@ pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -
     }))
 }
 
+#[cfg(test)]
+pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -> AppResult<Value> {
+    register_external_adapter_with_settings(params, &serde_json::json!({}))
+}
+
 fn probe_external_adapter_before_trust(
     validation: &ExternalAdapterValidationResult,
+    settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
     if !validation
         .manifest
@@ -597,10 +629,10 @@ fn probe_external_adapter_before_trust(
         .iter()
         .any(|capability| capability == "probe")
     {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "adapter {} must declare probe before it can be trusted",
             validation.manifest.id
-        ));
+        )));
     }
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
@@ -613,25 +645,29 @@ fn probe_external_adapter_before_trust(
         "source": { "location": manifest_dir, "config": null },
         "params": {}
     });
-    run_external_adapter(
+    Ok(run_external_adapter_with_settings(
         validation,
         "probe",
         request,
         Duration::from_millis(DEFAULT_PROBE_TIMEOUT_MS),
+        settings,
     )
     .map_err(|error| {
-        format!(
+        AppError::External(format!(
             "adapter {} probe failed; refusing to trust: {error}",
             validation.manifest.id
-        )
-    })
+        ))
+    })?)
 }
 
-pub(crate) fn try_run_external_adapter(
+pub(crate) fn try_run_external_adapter_with_settings(
     params: ExternalAdapterTryRunParams,
+    settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
     if !params.yes {
-        return Err("conversation.adapter.try-run requires --yes".to_string());
+        return Err(AppError::external(
+            "conversation.adapter.try-run requires --yes".to_string(),
+        ));
     }
     let validation = validate_external_adapter_manifest(&params.manifest_path)?;
     let method = params.method.trim();
@@ -641,14 +677,20 @@ pub(crate) fn try_run_external_adapter(
         .iter()
         .any(|capability| capability == method)
     {
-        return Err(format!("adapter does not declare capability: {method}"));
+        return Err(AppError::external(format!(
+            "adapter does not declare capability: {method}"
+        )));
     }
     let timeout_ms = match method {
         "probe" => DEFAULT_PROBE_TIMEOUT_MS,
         "list_sessions" => DEFAULT_LIST_TIMEOUT_MS,
         "read_session" => DEFAULT_READ_TIMEOUT_MS,
         "export_markdown" => DEFAULT_READ_TIMEOUT_MS,
-        other => return Err(format!("unsupported adapter method: {other}")),
+        other => {
+            return Err(AppError::external(format!(
+                "unsupported adapter method: {other}"
+            )))
+        }
     };
     let location = params.location.unwrap_or_else(|| ".".to_string());
     let request_params = if method == "export_markdown" {
@@ -675,29 +717,52 @@ pub(crate) fn try_run_external_adapter(
         "source": { "location": location, "config": null },
         "params": request_params
     });
-    run_external_adapter(
+    run_external_adapter_with_settings(
         &validation,
         method,
         request,
         Duration::from_millis(timeout_ms),
+        settings,
     )
 }
 
-pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<ConversationAdapter> {
-    let adapter = value
-        .get("adapter")
-        .cloned()
-        .ok_or_else(|| "registration preview did not include adapter".to_string())?;
-    serde_json::from_value(adapter).map_err(|error| error.to_string())
+#[cfg(test)]
+pub(crate) fn try_run_external_adapter(
+    params: ExternalAdapterTryRunParams,
+) -> AppResult<ExternalAdapterRunResult> {
+    try_run_external_adapter_with_settings(params, &serde_json::json!({}))
 }
 
+pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<ConversationAdapter> {
+    let adapter = value.get("adapter").cloned().ok_or_else(|| {
+        AppError::external({ "registration preview did not include adapter".to_string() })
+    })?;
+    serde_json::from_value(adapter).map_err(AppError::external)
+}
+
+pub(crate) fn list_conversation_adapter_runtime_statuses_with_settings(
+    adapters: &[ConversationAdapter],
+    sources: &[ConversationSource],
+    settings: &Value,
+) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
+    let mut requirements = adapter_runtime_requirements(adapters);
+    super::harvester::append_harvester_runtime_requirements(&mut requirements, sources);
+    Ok(list_adapter_runtime_statuses_with_settings(
+        &requirements,
+        settings,
+    ))
+}
+
+#[cfg(test)]
 pub(crate) fn list_conversation_adapter_runtime_statuses(
     adapters: &[ConversationAdapter],
     sources: &[ConversationSource],
 ) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
-    let mut requirements = adapter_runtime_requirements(adapters);
-    super::harvester::append_harvester_runtime_requirements(&mut requirements, sources);
-    Ok(list_adapter_runtime_statuses(&requirements))
+    list_conversation_adapter_runtime_statuses_with_settings(
+        adapters,
+        sources,
+        &serde_json::json!({}),
+    )
 }
 
 pub(super) fn validate_external_adapter_manifest(
@@ -705,15 +770,18 @@ pub(super) fn validate_external_adapter_manifest(
 ) -> AppResult<ExternalAdapterValidationResult> {
     let path = crate::backend::path_utils::expand_path(manifest_path)?;
     if !path.is_file() {
-        return Err(format!("adapter manifest not found: {}", path.display()));
+        return Err(AppError::external(format!(
+            "adapter manifest not found: {}",
+            path.display()
+        )));
     }
-    let manifest_text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let manifest_text = fs::read_to_string(&path).map_err(AppError::external)?;
     let manifest: ConversationAdapterManifest =
-        serde_json::from_str(&manifest_text).map_err(|error| error.to_string())?;
+        serde_json::from_str(&manifest_text).map_err(AppError::external)?;
     validate_manifest_shape(&manifest)?;
-    let manifest_dir = path
-        .parent()
-        .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
+    let manifest_dir = path.parent().ok_or_else(|| {
+        AppError::external({ "adapter manifest path has no parent directory".to_string() })
+    })?;
     let executable_path = resolve_adapter_entry_path(manifest_dir, &manifest)?;
     let executable_hash = if executable_path.is_file() {
         Some(hash_file(&executable_path)?)
@@ -748,31 +816,38 @@ fn adapter_content_hash(manifest_hash: &str, executable_hash: Option<&str>) -> S
 
 fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<()> {
     if manifest.schema_version != 1 {
-        return Err("adapter schema_version must be 1".to_string());
-    }
-    if manifest.protocol_version != EXTERNAL_ADAPTER_PROTOCOL_VERSION {
-        return Err(format!(
-            "adapter protocol_version must be {EXTERNAL_ADAPTER_PROTOCOL_VERSION}"
+        return Err(AppError::external(
+            "adapter schema_version must be 1".to_string(),
         ));
     }
+    if manifest.protocol_version != EXTERNAL_ADAPTER_PROTOCOL_VERSION {
+        return Err(AppError::external(format!(
+            "adapter protocol_version must be {EXTERNAL_ADAPTER_PROTOCOL_VERSION}"
+        )));
+    }
     if manifest.id.trim().is_empty() {
-        return Err("adapter id is required".to_string());
+        return Err(AppError::external("adapter id is required".to_string()));
     }
     if manifest.name.trim().is_empty() {
-        return Err("adapter name is required".to_string());
+        return Err(AppError::external("adapter name is required".to_string()));
     }
     super::cards::validate_manifest_card_kinds(
         &manifest.id,
         manifest.card_contract_version,
         &manifest.card_kinds,
-    )?;
+    )
+    .map_err(AppError::external)?;
     if manifest.runtime.is_some() && !manifest.command.is_empty() {
-        return Err("adapter manifest must not declare both runtime and command".to_string());
+        return Err(AppError::external(
+            "adapter manifest must not declare both runtime and command".to_string(),
+        ));
     }
     match manifest.runtime.as_ref() {
         Some(runtime) => {
             if runtime.entry.trim().is_empty() {
-                return Err("adapter runtime entry is required".to_string());
+                return Err(AppError::external(
+                    "adapter runtime entry is required".to_string(),
+                ));
             }
             validate_adapter_entry_path("adapter runtime entry", &runtime.entry)?;
             if runtime
@@ -780,14 +855,18 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
                 .as_deref()
                 .is_some_and(|version| version.trim().is_empty())
             {
-                return Err("adapter runtime version must not be empty".to_string());
+                return Err(AppError::external(
+                    "adapter runtime version must not be empty".to_string(),
+                ));
             }
             if let Some(version) = runtime.version.as_deref() {
                 validate_runtime_version_constraint(version)?;
             }
         }
         None if manifest.command.is_empty() || manifest.command[0].trim().is_empty() => {
-            return Err("adapter command must include an executable".to_string());
+            return Err(AppError::external(
+                "adapter command must include an executable".to_string(),
+            ));
         }
         None => validate_adapter_entry_path("adapter command", &manifest.command[0])?,
     }
@@ -796,7 +875,9 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
             capability.as_str(),
             "probe" | "list_sessions" | "read_session" | "export_markdown" | "web_records"
         ) {
-            return Err(format!("unsupported adapter capability: {capability}"));
+            return Err(AppError::external(format!(
+                "unsupported adapter capability: {capability}"
+            )));
         }
     }
     Ok(())
@@ -806,15 +887,17 @@ fn validate_adapter_entry_path(field: &str, raw: &str) -> AppResult<()> {
     let trimmed = raw.trim();
     let path = Path::new(trimmed);
     if path.is_absolute() || looks_like_windows_rooted_path(trimmed) {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "{field} must be a relative path inside the adapter directory"
-        ));
+        )));
     }
     if trimmed
         .split(['/', '\\'])
         .any(|component| component == "..")
     {
-        return Err(format!("{field} must not escape the adapter directory"));
+        return Err(AppError::external(format!(
+            "{field} must not escape the adapter directory"
+        )));
     }
     Ok(())
 }
@@ -827,86 +910,102 @@ fn looks_like_windows_rooted_path(path: &str) -> bool {
     bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
+pub(super) fn run_external_adapter_with_settings(
+    validation: &ExternalAdapterValidationResult,
+    method: &str,
+    request: Value,
+    timeout: Duration,
+    settings: &Value,
+) -> AppResult<ExternalAdapterRunResult> {
+    let manifest = &validation.manifest;
+    let manifest_dir = Path::new(&validation.manifest_path)
+        .parent()
+        .ok_or_else(|| {
+            AppError::external({ "adapter manifest path has no parent directory".to_string() })
+        })?;
+    let execution_runtime = adapter_execution_runtime(manifest);
+    let invocation = match execution_runtime.as_ref() {
+        Some(runtime) => {
+            build_adapter_runtime_invocation_with_settings(manifest_dir, runtime, &[], settings)
+        }
+        None => build_adapter_invocation_with_settings(manifest_dir, manifest, settings)?,
+    };
+    if let Some(runtime) = execution_runtime.as_ref() {
+        ensure_adapter_runtime_available(runtime, &invocation)?;
+    }
+    let request_text = serde_json::to_vec(&request).map_err(AppError::external)?;
+    let output = crate::backend::host_process::run_host_command_blocking(
+        crate::backend::host_process::HostCommandSpec {
+            program: invocation.program.clone(),
+            args: invocation.args.clone(),
+            env: Vec::new(),
+            working_dir: None,
+            stdin: crate::backend::host_process::HostInput::Bytes(
+                request_text.into_iter().chain([b'\n']).collect(),
+            ),
+            timeout,
+            stdout_limit: DEFAULT_MAX_TOTAL_BYTES,
+            stderr_limit: 1024 * 1024,
+        },
+    )
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            format!("adapter program was not found: {}", program.display())
+        }
+        crate::backend::host_process::HostProcessError::Spawn(reason) => {
+            format!(
+                "failed to start adapter {}: {reason}",
+                invocation.display_path.display()
+            )
+        }
+        crate::backend::host_process::HostProcessError::Output(reason) => {
+            format!(
+                "failed to capture adapter {} output: {reason}",
+                invocation.display_path.display()
+            )
+        }
+        crate::backend::host_process::HostProcessError::Timeout { .. } => {
+            format!("adapter timed out after {} ms", timeout.as_millis())
+        }
+        crate::backend::host_process::HostProcessError::Cancelled => {
+            "adapter process was cancelled".to_string()
+        }
+        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            format!("adapter process cleanup failed: {reason}")
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            "adapter output exceeded configured limit".to_string()
+        }
+    })
+    .map_err(AppError::external)?;
+    if output.stdout_truncated || output.stderr_truncated {
+        return Err(AppError::external(format!(
+            "adapter output exceeded configured cap (stdout={} bytes, stderr={} bytes)",
+            DEFAULT_MAX_TOTAL_BYTES,
+            1024 * 1024
+        )));
+    }
+    if !output.status.success() {
+        return Err(AppError::external(format!(
+            "adapter exited with status {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    parse_external_adapter_output_with_manifest(method, output.stdout, output.stderr, manifest)
+}
+
+#[cfg(test)]
 pub(super) fn run_external_adapter(
     validation: &ExternalAdapterValidationResult,
     method: &str,
     request: Value,
     timeout: Duration,
 ) -> AppResult<ExternalAdapterRunResult> {
-    let manifest = &validation.manifest;
-    let manifest_dir = Path::new(&validation.manifest_path)
-        .parent()
-        .ok_or_else(|| "adapter manifest path has no parent directory".to_string())?;
-    let execution_runtime = adapter_execution_runtime(manifest);
-    let invocation = match execution_runtime.as_ref() {
-        Some(runtime) => build_adapter_runtime_invocation(manifest_dir, runtime, &[]),
-        None => build_adapter_invocation(manifest_dir, manifest)?,
-    };
-    if let Some(runtime) = execution_runtime.as_ref() {
-        ensure_adapter_runtime_available(runtime, &invocation)?;
-    }
-    let mut child = Command::new(&invocation.program)
-        .args(&invocation.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            format!(
-                "failed to start adapter {}: {error}",
-                invocation.display_path.display()
-            )
-        })?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| "adapter stdin was not available".to_string())?;
-    let request_text = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-    thread::spawn(move || {
-        let _ = stdin.write_all(&request_text);
-        let _ = stdin.write_all(b"\n");
-    });
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "adapter stdout was not available".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "adapter stderr was not available".to_string())?;
-    let stdout_reader = thread::spawn(move || read_capped(stdout, DEFAULT_MAX_TOTAL_BYTES));
-    let stderr_reader = thread::spawn(move || read_capped(stderr, 1024 * 1024));
-
-    let started = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let stdout = stdout_reader
-                .join()
-                .map_err(|_| "adapter stdout reader panicked".to_string())??;
-            let stderr = stderr_reader
-                .join()
-                .map_err(|_| "adapter stderr reader panicked".to_string())??;
-            if !status.success() {
-                return Err(format!(
-                    "adapter exited with status {status}: {}",
-                    String::from_utf8_lossy(&stderr)
-                ));
-            }
-            return parse_external_adapter_output_with_manifest(method, stdout, stderr, manifest);
-        }
-        if started.elapsed() > timeout {
-            let _ = child.kill();
-            return Err(format!(
-                "adapter timed out after {} ms",
-                timeout.as_millis()
-            ));
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
+    run_external_adapter_with_settings(validation, method, request, timeout, &serde_json::json!({}))
 }
 
+#[cfg(test)]
 pub(super) fn parse_external_adapter_output(
     method: &str,
     stdout: Vec<u8>,
@@ -930,7 +1029,7 @@ fn parse_external_adapter_output_impl(
     stderr: Vec<u8>,
     manifest: Option<&ConversationAdapterManifest>,
 ) -> AppResult<ExternalAdapterRunResult> {
-    let stdout = String::from_utf8(stdout).map_err(|error| error.to_string())?;
+    let stdout = String::from_utf8(stdout).map_err(AppError::external)?;
     let stderr = String::from_utf8_lossy(&stderr).to_string();
     let mut session_descriptors = Vec::new();
     let mut snapshot_complete = false;
@@ -947,8 +1046,12 @@ fn parse_external_adapter_output_impl(
         if line.trim().is_empty() {
             continue;
         }
-        let parsed: ExternalAdapterLine = serde_json::from_str(line)
-            .map_err(|error| format!("invalid adapter NDJSON line {}: {error}", index + 1))?;
+        let parsed: ExternalAdapterLine = serde_json::from_str(line).map_err(|error| {
+            AppError::external(format!(
+                "invalid adapter NDJSON line {}: {error}",
+                index + 1
+            ))
+        })?;
         let is_large_item = parsed.kind == "item"
             && parsed.item.as_ref().is_some_and(|item| {
                 matches!(adapter_item_kind(item), "session" | "markdown_export")
@@ -957,9 +1060,9 @@ fn parse_external_adapter_output_impl(
         match parsed.kind.as_str() {
             "item" => {
                 item_count += 1;
-                let item = parsed
-                    .item
-                    .ok_or_else(|| format!("adapter item line {} missing item", index + 1))?;
+                let item = parsed.item.ok_or_else(|| {
+                    AppError::external({ format!("adapter item line {} missing item", index + 1) })
+                })?;
                 match adapter_item_kind(&item) {
                     "session_descriptor" => {
                         session_descriptors.push(parse_adapter_session_descriptor_item(item)?);
@@ -974,10 +1077,10 @@ fn parse_external_adapter_output_impl(
                     }
                     "markdown_export" => {
                         if markdown_export.is_some() {
-                            return Err(format!(
+                            return Err(AppError::external(format!(
                                 "adapter returned multiple markdown_export items by line {}",
                                 index + 1
-                            ));
+                            )));
                         }
                         markdown_export = Some(parse_adapter_markdown_export_item(item)?);
                     }
@@ -999,7 +1102,7 @@ fn parse_external_adapter_output_impl(
                     .unwrap_or(false);
             }
             "error" => {
-                return Err(format!(
+                return Err(AppError::external(format!(
                     "adapter returned error on line {}: {}",
                     index + 1,
                     parsed
@@ -1007,18 +1110,20 @@ fn parse_external_adapter_output_impl(
                         .map(|value| value.to_string())
                         .or(parsed.message)
                         .unwrap_or_else(|| "unknown adapter error".to_string())
-                ));
+                )));
             }
             other => {
-                return Err(format!(
+                return Err(AppError::external(format!(
                     "unsupported adapter output type on line {}: {other}",
                     index + 1
-                ))
+                )))
             }
         }
     }
     if !saw_complete {
-        return Err("adapter output did not include a complete line".to_string());
+        return Err(AppError::external(
+            "adapter output did not include a complete line".to_string(),
+        ));
     }
     Ok(ExternalAdapterRunResult {
         method: method.to_string(),
@@ -1037,12 +1142,16 @@ fn parse_external_adapter_output_impl(
 fn parse_adapter_session_descriptor_item(item: Value) -> AppResult<ConversationSessionDescriptor> {
     let descriptor_value = item.get("descriptor").cloned().unwrap_or(item);
     let descriptor: ConversationSessionDescriptor =
-        serde_json::from_value(descriptor_value).map_err(|error| error.to_string())?;
+        serde_json::from_value(descriptor_value).map_err(AppError::external)?;
     if descriptor.external_id.trim().is_empty() {
-        return Err("session descriptor external_id is required".to_string());
+        return Err(AppError::external(
+            "session descriptor external_id is required".to_string(),
+        ));
     }
     if descriptor.version_token.trim().is_empty() {
-        return Err("session descriptor version_token is required".to_string());
+        return Err(AppError::external(
+            "session descriptor version_token is required".to_string(),
+        ));
     }
     Ok(descriptor)
 }
@@ -1054,9 +1163,9 @@ pub(super) fn validate_external_adapter_line_size(
 ) -> AppResult<()> {
     validate_external_adapter_item_line_size(line_number, line_bytes)?;
     if line_bytes > DEFAULT_MAX_CONTROL_LINE_BYTES && !is_large_item {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "adapter output line {line_number} exceeds max control line size ({line_bytes} bytes > {DEFAULT_MAX_CONTROL_LINE_BYTES} bytes)"
-        ));
+        )));
     }
     Ok(())
 }
@@ -1066,9 +1175,9 @@ fn validate_external_adapter_item_line_size(
     line_bytes: usize,
 ) -> AppResult<()> {
     if line_bytes > DEFAULT_MAX_ITEM_LINE_BYTES {
-        return Err(format!(
+        return Err(AppError::external(format!(
             "adapter output line {line_number} exceeds max item line size ({line_bytes} bytes > {DEFAULT_MAX_ITEM_LINE_BYTES} bytes)"
-        ));
+        )));
     }
     Ok(())
 }
@@ -1082,12 +1191,16 @@ fn adapter_item_kind(item: &Value) -> &str {
 fn parse_adapter_markdown_export_item(item: Value) -> AppResult<ExternalMarkdownExport> {
     let export_value = item.get("export").cloned().unwrap_or(item);
     let export: ExternalMarkdownExport =
-        serde_json::from_value(export_value).map_err(|error| error.to_string())?;
+        serde_json::from_value(export_value).map_err(AppError::external)?;
     if export.content.is_empty() {
-        return Err("markdown_export content is required".to_string());
+        return Err(AppError::external(
+            "markdown_export content is required".to_string(),
+        ));
     }
     if export.relative_path.trim().is_empty() {
-        return Err("markdown_export relative_path is required".to_string());
+        return Err(AppError::external(
+            "markdown_export relative_path is required".to_string(),
+        ));
     }
     Ok(export)
 }
@@ -1102,7 +1215,7 @@ fn parse_adapter_session_item(
     }
     let session_value = item.get("session").cloned().unwrap_or(item);
     let mut session: NormalizedConversationSession =
-        serde_json::from_value(session_value).map_err(|error| error.to_string())?;
+        serde_json::from_value(session_value).map_err(AppError::external)?;
     let legacy_cards_upgraded = validate_normalized_session(&mut session, manifest)?;
     Ok(Some((session, legacy_cards_upgraded)))
 }
@@ -1112,15 +1225,21 @@ fn validate_normalized_session(
     manifest: Option<&ConversationAdapterManifest>,
 ) -> AppResult<usize> {
     if session.external_id.trim().is_empty() {
-        return Err("normalized session external_id is required".to_string());
+        return Err(AppError::external(
+            "normalized session external_id is required".to_string(),
+        ));
     }
     let mut legacy_cards_upgraded = 0usize;
     for turn in &mut session.turns {
         if turn.external_id.trim().is_empty() {
-            return Err("normalized turn external_id is required".to_string());
+            return Err(AppError::external(
+                "normalized turn external_id is required".to_string(),
+            ));
         }
         if turn.user_text.trim().is_empty() {
-            return Err("normalized turn user_text is required".to_string());
+            return Err(AppError::external(
+                "normalized turn user_text is required".to_string(),
+            ));
         }
         if let Some(manifest) = manifest {
             for part in &mut turn.parts {
@@ -1129,7 +1248,9 @@ fn validate_normalized_session(
                     &manifest.id,
                     manifest.card_contract_version,
                     &manifest.card_kinds,
-                )? {
+                )
+                .map_err(AppError::external)?
+                {
                     legacy_cards_upgraded += 1;
                 }
             }

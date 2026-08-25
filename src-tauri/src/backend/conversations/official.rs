@@ -1,7 +1,7 @@
 use crate::backend::{
     app_settings::conversation_adapter_dir,
-    dto::AppResult,
     models::{ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState},
+    runtime::{AppError, AppResult},
 };
 use chrono::Utc;
 use std::{fs, path::Path};
@@ -74,10 +74,10 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
     let mut adapters = Vec::new();
     for asset in OFFICIAL_ADAPTERS {
         let manifest_path = root.join(asset.manifest);
-        let adapter_dir = manifest_path
-            .parent()
-            .ok_or_else(|| "official adapter manifest has no parent directory".to_string())?;
-        fs::create_dir_all(adapter_dir).map_err(|error| error.to_string())?;
+        let adapter_dir = manifest_path.parent().ok_or_else(|| {
+            AppError::Validation("official adapter manifest has no parent directory".to_string())
+        })?;
+        fs::create_dir_all(adapter_dir)?;
         write_if_missing(&manifest_path, asset.manifest_text.as_bytes())?;
         let package_manifest_path = adapter_dir.join("conversation-adapter-package.json");
         write_if_missing(
@@ -123,18 +123,16 @@ fn write_if_missing(path: &Path, bytes: &[u8]) -> AppResult<()> {
     if path.exists() {
         return Ok(());
     }
-    fs::write(path, bytes).map_err(|error| error.to_string())
+    fs::write(path, bytes).map_err(AppError::from)
 }
 
 #[cfg(unix)]
 fn make_executable(path: &Path) -> AppResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = fs::metadata(path)
-        .map_err(|error| error.to_string())?
-        .permissions();
+    let mut permissions = fs::metadata(path)?.permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).map_err(|error| error.to_string())
+    fs::set_permissions(path, permissions).map_err(AppError::from)
 }
 
 #[cfg(not(unix))]

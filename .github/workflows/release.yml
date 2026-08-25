@@ -48,6 +48,9 @@ jobs:
             exit 1
           fi
 
+      - name: Verify Agent catalog release evidence and upstream metadata
+        run: node scripts/check-agent-catalog-release.mjs --release --network
+
       - name: Create draft release
         id: release_state
         shell: bash

@@ -3,7 +3,7 @@
 //! 负责检查应用随包附带的 CLI / Engine 二进制文件状态，
 //! 并提供将其安装（或创建 Shim 脚本）到系统 PATH 路径及更新用户 Shell 配置文件（如 `.zshrc`, `.profile` 等）的功能。
 
-use crate::backend::dto::AppResult;
+use crate::backend::runtime::{AppError, AppResult};
 use serde::Serialize;
 #[cfg(windows)]
 use std::process::Command;
@@ -53,7 +53,8 @@ pub(crate) fn status(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|error| format!("resolve app resource directory: {error}"))?;
+        .map_err(|error| format!("resolve app resource directory: {error}"))
+        .map_err(AppError::external)?;
     Ok(build_status(&resource_dir, current_path_env()))
 }
 
@@ -62,22 +63,25 @@ pub(crate) fn install(app: &AppHandle) -> AppResult<CliToolsStatus> {
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|error| format!("resolve app resource directory: {error}"))?;
+        .map_err(|error| format!("resolve app resource directory: {error}"))
+        .map_err(AppError::external)?;
     let tools = bundled_tools(&resource_dir);
     if !tools.cli_path.is_file() || !tools.engine_path.is_file() {
-        return Err(format!(
+        return Err(AppError::External(format!(
             "bundled CLI tools are missing from {}",
             tools.dir.display()
-        ));
+        )));
     }
 
     let install_dir = default_install_dir()?;
-    fs::create_dir_all(&install_dir).map_err(|error| {
-        format!(
-            "create CLI install directory {}: {error}",
-            install_dir.display()
-        )
-    })?;
+    fs::create_dir_all(&install_dir)
+        .map_err(|error| {
+            format!(
+                "create CLI install directory {}: {error}",
+                install_dir.display()
+            )
+        })
+        .map_err(AppError::external)?;
     write_shim(&install_dir, CLI_NAME, &tools.cli_path)?;
     write_shim(&install_dir, CLI_ALIAS, &tools.cli_path)?;
     write_shim(&install_dir, ENGINE_NAME, &tools.engine_path)?;
@@ -167,13 +171,15 @@ fn default_install_dir() -> AppResult<PathBuf> {
     {
         dirs::data_local_dir()
             .map(|dir| dir.join("AssetIWeave").join("bin"))
-            .ok_or_else(|| "resolve local application data directory".to_string())
+            .ok_or_else(|| {
+                AppError::NotFound("resolve local application data directory".to_string())
+            })
     }
     #[cfg(not(windows))]
     {
         dirs::home_dir()
             .map(|home| home.join(".local").join("bin"))
-            .ok_or_else(|| "resolve home directory".to_string())
+            .ok_or_else(|| AppError::NotFound("resolve home directory".to_string()))
     }
 }
 
@@ -205,15 +211,19 @@ fn write_shim(install_dir: &Path, tool_name: &str, target: &Path) -> AppResult<(
     let contents = windows_cmd_contents(target);
     #[cfg(not(windows))]
     let contents = unix_shim_contents(target);
-    fs::write(&path, contents).map_err(|error| format!("write {}: {error}", path.display()))?;
+    fs::write(&path, contents)
+        .map_err(|error| format!("write {}: {error}", path.display()))
+        .map_err(AppError::external)?;
     #[cfg(unix)]
     {
         let mut permissions = fs::metadata(&path)
-            .map_err(|error| format!("read {} permissions: {error}", path.display()))?
+            .map_err(|error| format!("read {} permissions: {error}", path.display()))
+            .map_err(AppError::external)?
             .permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&path, permissions)
-            .map_err(|error| format!("set {} executable: {error}", path.display()))?;
+            .map_err(|error| format!("set {} executable: {error}", path.display()))
+            .map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -243,7 +253,8 @@ fn configure_user_path(install_dir: &Path) -> AppResult<()> {
 
 #[cfg(not(windows))]
 fn configure_unix_user_path(install_dir: &Path) -> AppResult<()> {
-    let home = dirs::home_dir().ok_or_else(|| "resolve home directory".to_string())?;
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("resolve home directory".to_string()))?;
     let profiles = shell_profile_paths(&home);
     let path_text = install_dir.to_string_lossy();
     let quoted_path = shell_double_quote(&path_text);
@@ -260,13 +271,16 @@ fn configure_unix_user_path(install_dir: &Path) -> AppResult<()> {
         let existing = fs::read_to_string(profile).unwrap_or_default();
         if !existing.contains(marker) && !existing.contains(path_text.as_ref()) {
             fs::write(profile, format!("{existing}{block}"))
-                .map_err(|error| format!("update shell profile {}: {error}", profile.display()))?;
+                .map_err(|error| format!("update shell profile {}: {error}", profile.display()))
+                .map_err(AppError::external)?;
         }
         wrote_profile = true;
     }
 
     if !wrote_profile {
-        return Err("no writable shell profile was available".to_string());
+        return Err(AppError::External(
+            "no writable shell profile was available".to_string(),
+        ));
     }
     Ok(())
 }
@@ -306,9 +320,11 @@ fn configure_windows_user_path(install_dir: &Path) -> AppResult<()> {
             &script,
         ])
         .status()
-        .map_err(|error| format!("update user PATH: {error}"))?;
+        .map_err(|error| AppError::Process(format!("update user PATH: {error}")))?;
     if !status.success() {
-        return Err(format!("update user PATH exited with {status}"));
+        return Err(AppError::Process(format!(
+            "update user PATH exited with {status}"
+        )));
     }
     Ok(())
 }

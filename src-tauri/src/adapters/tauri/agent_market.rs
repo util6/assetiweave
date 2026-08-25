@@ -3,6 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 
 use crate::backend::agent_market::types::AgentInstallationView;
 use crate::{
@@ -15,8 +16,7 @@ use crate::{
         application::{
             AgentInstallPreview, AgentMarketItemView, AgentUninstallPreview, AppService,
         },
-        dto::AppResult,
-        runtime::AppError,
+        runtime::{AppError, AppResult},
     },
 };
 
@@ -33,7 +33,7 @@ pub(crate) async fn list_agent_market(
         AppService::from_runtime(&runtime).list_agent_market(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn inspect_agent_market_item(
@@ -45,26 +45,31 @@ pub(crate) async fn inspect_agent_market_item(
         AppService::from_runtime(&runtime).inspect_agent_market_item(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) fn refresh_agent_market(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
-    let (snapshot, should_start) = state.background_tasks.begin_agent_market_refresh()?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, should_start) = state
+        .background_tasks
+        .begin_agent_market_refresh_for_tenant(&tenant_id)?;
     let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
     if should_start {
         let tasks = state.background_tasks.clone();
         let task_id = snapshot.id.clone();
         let runtime = state.runtime.clone();
         tauri::async_runtime::spawn(async move {
-            let result = tauri::async_runtime::spawn_blocking(move || {
+            let result = match tauri::async_runtime::spawn_blocking(move || {
                 AppService::from_runtime(&runtime).refresh_agent_market_catalog()
             })
             .await
-            .map_err(|error| error.to_string())
-            .and_then(|result| result);
+            {
+                Ok(result) => result,
+                Err(error) => Err(AppError::External(error.to_string())),
+            };
             if let Ok(snapshot) = tasks.finish_agent_market_refresh(&task_id, result) {
                 let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
             }
@@ -77,15 +82,19 @@ pub(crate) fn get_agent_market_refresh_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
-    state
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    Ok(state
         .background_tasks
-        .agent_market_refresh_snapshot(&task_id)
+        .agent_market_refresh_snapshot_for_tenant(&tenant_id, &task_id)?)
 }
 
 pub(crate) fn list_agent_market_refresh_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>> {
-    state.background_tasks.agent_market_refresh_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    Ok(state
+        .background_tasks
+        .agent_market_refresh_snapshots_for_tenant(&tenant_id)?)
 }
 
 pub(crate) async fn preview_agent_installation(
@@ -97,7 +106,7 @@ pub(crate) async fn preview_agent_installation(
         AppService::from_runtime(&runtime).preview_agent_installation(params)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn list_installed_agents(
@@ -108,7 +117,7 @@ pub(crate) async fn list_installed_agents(
         AppService::from_runtime(&runtime).list_installed_agents()
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn get_installed_agent(
@@ -120,7 +129,7 @@ pub(crate) async fn get_installed_agent(
         AppService::from_runtime(&runtime).get_installed_agent(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn check_agent_runtime(
@@ -132,7 +141,7 @@ pub(crate) async fn check_agent_runtime(
         AppService::from_runtime(&runtime).check_agent_runtime(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn preview_agent_uninstall(
@@ -144,20 +153,26 @@ pub(crate) async fn preview_agent_uninstall(
         AppService::from_runtime(&runtime).preview_agent_uninstall(agent_id)
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) fn get_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    state.background_tasks.agent_lifecycle_snapshot(&task_id)
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    Ok(state
+        .background_tasks
+        .agent_lifecycle_snapshot_for_tenant(&tenant_id, &task_id)?)
 }
 
 pub(crate) fn list_agent_lifecycle_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
-    state.background_tasks.agent_lifecycle_snapshots()
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    Ok(state
+        .background_tasks
+        .agent_lifecycle_snapshots_for_tenant(&tenant_id)?)
 }
 
 pub(crate) fn cancel_agent_lifecycle_task(
@@ -165,7 +180,10 @@ pub(crate) fn cancel_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let snapshot = state.background_tasks.cancel_agent_lifecycle(&task_id)?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let snapshot = state
+        .background_tasks
+        .cancel_agent_lifecycle_for_tenant(&tenant_id, &task_id)?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
 }
@@ -200,15 +218,23 @@ fn start_agent_installation_with_action(
     params: AgentInstallStartRequest,
     action: &str,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
-        params.agent_id.clone(),
-        action.to_string(),
-        Some(params.catalog_version.clone()),
-        Some(params.agent_version.clone()),
-        Some(params.distribution_id.clone()),
-        None,
-        None,
-    )?;
+    if params.action != action {
+        return Err(AppError::Validation(format!(
+            "agent lifecycle action mismatch: expected {action}"
+        )));
+    }
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, cancellation, should_start) =
+        state.background_tasks.begin_agent_lifecycle_for_tenant(
+            &tenant_id,
+            params.agent_id.clone(),
+            action.to_string(),
+            Some(params.catalog_version.clone()),
+            Some(params.agent_version.clone()),
+            Some(params.distribution_id.clone()),
+            None,
+            None,
+        )?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     if !should_start {
         return Ok(snapshot);
@@ -222,15 +248,18 @@ pub(crate) fn start_agent_uninstall(
     state: State<'_, AppState>,
     params: AgentUninstallStartRequest,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
-        params.agent_id.clone(),
-        "uninstall".to_string(),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )?;
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    let (snapshot, cancellation, should_start) =
+        state.background_tasks.begin_agent_lifecycle_for_tenant(
+            &tenant_id,
+            params.agent_id.clone(),
+            "uninstall".to_string(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     if !should_start {
         return Ok(snapshot);
@@ -251,10 +280,10 @@ pub(crate) async fn enable_agent(
             .list_installed_agents()?
             .into_iter()
             .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| "Agent installation disappeared".to_string())
+            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 pub(crate) async fn disable_agent(
@@ -269,10 +298,10 @@ pub(crate) async fn disable_agent(
             .list_installed_agents()?
             .into_iter()
             .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| "Agent installation disappeared".to_string())
+            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| AppError::External(error.to_string()))?
 }
 
 fn spawn_install_worker(
@@ -280,7 +309,7 @@ fn spawn_install_worker(
     state: State<'_, AppState>,
     params: AgentInstallStartRequest,
     task_id: String,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) {
     let tasks = state.background_tasks.clone();
     let phase_tasks = tasks.clone();
@@ -292,10 +321,8 @@ fn spawn_install_worker(
     let result = tasks.spawn_extension_lifecycle(
         &task_id,
         Box::new(move |context| {
-            if context.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
-            let (bridge_stop, bridge) = start_cancellation_bridge(&context, cancellation.clone());
+            let (bridge_stop, bridge, cancellation_flag) =
+                start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
@@ -303,12 +330,14 @@ fn spawn_install_worker(
                 None,
                 Vec::new(),
             );
-            let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-                Err("Agent installation cancelled".to_string())
+            let result = if cancellation.is_cancelled() {
+                Err(AppError::Cancelled(
+                    "Agent installation cancelled".to_string(),
+                ))
             } else {
                 AppService::from_runtime(&runtime).install_agent_with_cancellation_and_progress(
                     params,
-                    Some(cancellation.clone()),
+                    Some(cancellation_flag.clone()),
                     Some(Arc::new(move |phase| {
                         if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                             &phase_task_id,
@@ -337,7 +366,7 @@ fn spawn_install_worker(
                 Err(error) => worker_tasks
                     .finish_agent_lifecycle(
                         &task_id_for_runtime,
-                        Err(AgentMarketError::new("installation_failed", &error, true)),
+                        Err(market_error_from_app(&error)),
                     )
                     .ok(),
             };
@@ -346,16 +375,13 @@ fn spawn_install_worker(
             }
             match result {
                 Ok(outcome) => serde_json::to_value(&outcome.installation)
-                    .map_err(|error| AppError::Legacy(error.to_string())),
-                Err(error) => Err(AppError::Legacy(error)),
+                    .map_err(|error| AppError::External(error.to_string())),
+                Err(error) => Err(error),
             }
         }),
     );
     if let Err(error) = result {
-        let _ = tasks.finish_agent_lifecycle(
-            &task_id,
-            Err(AgentMarketError::new("installation_failed", &error, true)),
-        );
+        let _ = tasks.finish_agent_lifecycle(&task_id, Err(market_error_from_app(&error)));
     }
 }
 
@@ -364,7 +390,7 @@ fn spawn_uninstall_worker(
     state: State<'_, AppState>,
     params: AgentUninstallStartRequest,
     task_id: String,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) {
     let tasks = state.background_tasks.clone();
     let phase_tasks = tasks.clone();
@@ -376,10 +402,8 @@ fn spawn_uninstall_worker(
     let result = tasks.spawn_extension_lifecycle(
         &task_id,
         Box::new(move |context| {
-            if context.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
-            }
-            let (bridge_stop, bridge) = start_cancellation_bridge(&context, cancellation.clone());
+            let (bridge_stop, bridge, cancellation_flag) =
+                start_cancellation_bridge(&context, cancellation.clone());
             let _ = worker_tasks.update_agent_lifecycle(
                 &task_id_for_runtime,
                 crate::backend::agent_market::types::LifecycleTaskPhase::Preparing,
@@ -387,12 +411,12 @@ fn spawn_uninstall_worker(
                 None,
                 Vec::new(),
             );
-            let result = if cancellation.load(std::sync::atomic::Ordering::SeqCst) {
-                Err("Agent uninstall cancelled".to_string())
+            let result = if cancellation.is_cancelled() {
+                Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
                 AppService::from_runtime(&runtime).uninstall_agent_with_cancellation_and_progress(
                     params,
-                    Some(cancellation.clone()),
+                    Some(cancellation_flag.clone()),
                     Some(Arc::new(move |phase| {
                         if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
                             &phase_task_id,
@@ -418,7 +442,7 @@ fn spawn_uninstall_worker(
                 Err(error) => worker_tasks
                     .finish_agent_lifecycle(
                         &task_id_for_runtime,
-                        Err(AgentMarketError::new("uninstall_failed", &error, true)),
+                        Err(market_error_from_app(&error)),
                     )
                     .ok(),
             };
@@ -427,37 +451,70 @@ fn spawn_uninstall_worker(
             }
             match result {
                 Ok(installation) => serde_json::to_value(installation)
-                    .map_err(|error| AppError::Legacy(error.to_string())),
-                Err(error) => Err(AppError::Legacy(error)),
+                    .map_err(|error| AppError::External(error.to_string())),
+                Err(error) => Err(error),
             }
         }),
     );
     if let Err(error) = result {
-        let _ = tasks.finish_agent_lifecycle(
-            &task_id,
-            Err(AgentMarketError::new("uninstall_failed", &error, true)),
-        );
+        let _ = tasks.finish_agent_lifecycle(&task_id, Err(market_error_from_app(&error)));
     }
 }
 
 fn start_cancellation_bridge(
     context: &crate::backend::runtime::tasks::TaskContext,
-    cancellation: Arc<std::sync::atomic::AtomicBool>,
+    cancellation: CancellationToken,
 ) -> (
     Arc<std::sync::atomic::AtomicBool>,
     std::thread::JoinHandle<()>,
+    Arc<std::sync::atomic::AtomicBool>,
 ) {
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stop_for_thread = stop.clone();
+    let worker_cancellation = Arc::new(std::sync::atomic::AtomicBool::new(
+        cancellation.is_cancelled(),
+    ));
+    let worker_cancellation_for_thread = worker_cancellation.clone();
     let task_cancellation = context.cancellation();
     let bridge = std::thread::spawn(move || {
         while !stop_for_thread.load(std::sync::atomic::Ordering::SeqCst) {
             if task_cancellation.is_cancelled() {
-                cancellation.store(true, std::sync::atomic::Ordering::SeqCst);
+                worker_cancellation_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
     });
-    (stop, bridge)
+    (stop, bridge, worker_cancellation)
+}
+
+fn market_error_from_app(error: &AppError) -> AgentMarketError {
+    let view = error.view();
+    let mut market_error = AgentMarketError::new(&view.code, &view.message, view.retryable);
+    market_error.details = view.details;
+    market_error
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::{
+        agent_market::types::AgentMarketErrorView, extension_kernel::ExtensionError,
+    };
+
+    #[test]
+    fn agent_market_error_preserves_structured_extension_details() {
+        let app_error = AppError::from(ExtensionError::OutputLimitExceeded {
+            package_id: "private-agent".to_string(),
+            stdout: true,
+            stderr: false,
+        });
+        let error = market_error_from_app(&app_error);
+        let view = AgentMarketErrorView::from(&error);
+
+        assert_eq!(view.code, "output_limit_exceeded");
+        assert!(!view.retryable);
+        assert_eq!(view.details.as_ref().unwrap()["stdout"], true);
+        assert_eq!(view.details.as_ref().unwrap()["stderr"], false);
+    }
 }

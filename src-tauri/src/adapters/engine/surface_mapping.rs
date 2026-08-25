@@ -87,22 +87,17 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     },
     SurfaceMapping {
         canonical_method: "apply_skill_group_exclusive_mount",
-        tauri_command: Some("apply_skill_group_exclusive_mount"),
-        note: None,
+        tauri_command: None,
+        note: Some("engine-only capability"),
     },
     SurfaceMapping {
         canonical_method: "apply_skill_group_mount",
-        tauri_command: Some("apply_skill_group_mount"),
-        note: None,
+        tauri_command: None,
+        note: Some("engine-only capability"),
     },
     SurfaceMapping {
         canonical_method: "asset.list",
         tauri_command: Some("list_assets"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "cancel_memory_task",
-        tauri_command: Some("cancel_memory_task"),
         note: None,
     },
     SurfaceMapping {
@@ -406,31 +401,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "get_conversation_adapter_package_task",
-        tauri_command: Some("get_conversation_adapter_package_task"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "get_conversation_script_install_task",
-        tauri_command: Some("get_conversation_script_install_task"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "get_conversation_search_index_task",
-        tauri_command: Some("get_conversation_search_index_task"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "get_conversation_sync_task",
-        tauri_command: Some("get_conversation_sync_task"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "get_memory_task",
-        tauri_command: Some("get_memory_task"),
-        note: None,
-    },
-    SurfaceMapping {
         canonical_method: "get_navigation_model",
         tauri_command: Some("get_navigation_model"),
         note: None,
@@ -438,11 +408,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     SurfaceMapping {
         canonical_method: "get_skill_backup_settings",
         tauri_command: Some("get_skill_backup_settings"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "get_skill_backup_task",
-        tauri_command: Some("get_skill_backup_task"),
         note: None,
     },
     SurfaceMapping {
@@ -463,16 +428,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     SurfaceMapping {
         canonical_method: "list_asset_mounts",
         tauri_command: Some("list_asset_mounts"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "list_conversation_sync_tasks",
-        tauri_command: Some("list_conversation_sync_tasks"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "list_memory_tasks",
-        tauri_command: Some("list_memory_tasks"),
         note: None,
     },
     SurfaceMapping {
@@ -617,8 +572,8 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     },
     SurfaceMapping {
         canonical_method: "scan_skill_sources",
-        tauri_command: Some("scan_skill_sources"),
-        note: None,
+        tauri_command: None,
+        note: Some("engine-only capability"),
     },
     SurfaceMapping {
         canonical_method: "schema.get",
@@ -772,8 +727,8 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     },
     SurfaceMapping {
         canonical_method: "source.scan",
-        tauri_command: Some("scan_sources"),
-        note: None,
+        tauri_command: None,
+        note: Some("engine-only capability"),
     },
     SurfaceMapping {
         canonical_method: "start_conversation_search_index_rebuild",
@@ -781,14 +736,19 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "start_memory_task",
-        tauri_command: Some("start_memory_task"),
-        note: None,
-    },
-    SurfaceMapping {
         canonical_method: "system.version",
         tauri_command: None,
         note: Some("engine-only capability"),
+    },
+    SurfaceMapping {
+        canonical_method: "target.catalog.list",
+        tauri_command: Some("list_target_profile_descriptors"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "target.catalog.refresh",
+        tauri_command: Some("refresh_target_profile_descriptors"),
+        note: None,
     },
     SurfaceMapping {
         canonical_method: "tenant.active",

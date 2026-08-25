@@ -13,6 +13,9 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+pub(crate) const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
+pub(crate) const TASK_TERMINAL_LIMIT: usize = 100;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) enum TaskKind {
@@ -21,6 +24,9 @@ pub(crate) enum TaskKind {
     ScriptInstall,
     ExtensionLifecycle,
     AiExecution,
+    AgentMarketRefresh,
+    Memory,
+    RemoteSkillAcquire,
     Scan,
     Backup,
     BatchMount,
@@ -59,24 +65,35 @@ pub(crate) struct TaskProgress {
 pub(crate) struct TaskSpec {
     pub(crate) kind: TaskKind,
     pub(crate) task_id: Option<String>,
+    pub(crate) tenant_id: Option<String>,
     pub(crate) dedup_key: Option<String>,
     pub(crate) conflict_keys: Vec<String>,
     pub(crate) detail: Value,
 }
 
 impl TaskSpec {
-    pub(crate) fn new(kind: TaskKind, dedup_key: Option<String>) -> Self {
+    pub(crate) fn global(kind: TaskKind, dedup_key: Option<String>) -> Self {
         Self {
             kind,
             task_id: None,
+            tenant_id: None,
             dedup_key,
             conflict_keys: Vec::new(),
             detail: Value::Null,
         }
     }
 
+    pub(crate) fn new(kind: TaskKind, dedup_key: Option<String>) -> Self {
+        Self::global(kind, dedup_key)
+    }
+
     pub(crate) fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
         self.task_id = Some(task_id.into());
+        self
+    }
+
+    pub(crate) fn with_tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
         self
     }
 
@@ -99,6 +116,8 @@ impl TaskSpec {
 pub(crate) struct TaskSnapshot {
     pub(crate) task_id: String,
     pub(crate) kind: TaskKind,
+    #[serde(skip)]
+    pub(crate) tenant_id: Option<String>,
     pub(crate) dedup_key: Option<String>,
     pub(crate) state: TaskState,
     pub(crate) progress: Option<TaskProgress>,
@@ -106,6 +125,7 @@ pub(crate) struct TaskSnapshot {
     pub(crate) started_at: String,
     pub(crate) finished_at: Option<String>,
     pub(crate) detail: Value,
+    pub(crate) result: Option<Value>,
 }
 
 pub(crate) struct TaskContext {
@@ -114,6 +134,16 @@ pub(crate) struct TaskContext {
 }
 
 impl TaskContext {
+    pub(crate) fn detached() -> Self {
+        Self {
+            cancellation: CancellationToken::new(),
+            progress: ProgressHandle {
+                task_id: String::new(),
+                runtime: TaskRuntime::new(),
+            },
+        }
+    }
+
     pub(crate) fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
     }
@@ -163,9 +193,10 @@ pub(crate) struct TaskRuntime {
     active: Arc<(Mutex<usize>, Condvar)>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum SpawnOutcome {
-    Started(TaskSnapshot),
-    Existing(TaskSnapshot),
+    Started,
+    Existing,
 }
 
 pub(crate) enum ExternalRegistrationOutcome {
@@ -206,6 +237,7 @@ impl TaskRuntime {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn spawn(&self, spec: TaskSpec, task: TaskFn) -> Result<SpawnOutcome, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(AppError::Canceled(
@@ -221,28 +253,35 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        if let Some(existing) = tasks.get(&task_id) {
-            return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        if tasks.contains_key(&task_id) {
+            return Ok(SpawnOutcome::Existing);
         }
-        if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
-            tasks.values().find(|entry| {
-                entry.snapshot.kind == spec.kind
-                    && entry.snapshot.dedup_key.as_ref() == Some(key)
-                    && entry.snapshot.state.is_active()
-            })
+        if spec.dedup_key.as_ref().is_some_and(|key| {
+            tasks
+                .values()
+                .find(|entry| {
+                    entry.snapshot.kind == spec.kind
+                        && entry.snapshot.tenant_id == spec.tenant_id
+                        && entry.snapshot.dedup_key.as_ref() == Some(key)
+                        && entry.snapshot.state.is_active()
+                })
+                .is_some()
         }) {
-            return Ok(SpawnOutcome::Existing(existing.snapshot.clone()));
+            return Ok(SpawnOutcome::Existing);
         }
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            tenant_id: spec.tenant_id,
             dedup_key: spec.dedup_key,
             state: TaskState::Running,
             progress: None,
             error: None,
             started_at,
             finished_at: None,
-            detail: spec.detail,
+            detail: sanitize_task_detail(spec.detail),
+            result: None,
         };
         tasks.insert(
             task_id.clone(),
@@ -259,7 +298,7 @@ impl TaskRuntime {
         }
 
         self.launch_task(task_id.clone(), cancellation, task)?;
-        Ok(SpawnOutcome::Started(snapshot))
+        Ok(SpawnOutcome::Started)
     }
 
     /// Register an externally-driven task without moving its domain work into
@@ -284,6 +323,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         if let Some(existing) = tasks.get(&task_id) {
             return Ok(ExternalRegistrationOutcome::Existing(
                 existing.snapshot.clone(),
@@ -292,6 +332,7 @@ impl TaskRuntime {
         if let Some(existing) = spec.dedup_key.as_ref().and_then(|key| {
             tasks.values().find(|entry| {
                 entry.snapshot.kind == spec.kind
+                    && entry.snapshot.tenant_id == spec.tenant_id
                     && entry.snapshot.dedup_key.as_ref() == Some(key)
                     && entry.snapshot.state.is_active()
             })
@@ -302,6 +343,7 @@ impl TaskRuntime {
         }
         if let Some(existing) = tasks.values().find(|entry| {
             entry.snapshot.state.is_active()
+                && entry.snapshot.tenant_id == spec.tenant_id
                 && spec
                     .conflict_keys
                     .iter()
@@ -314,13 +356,15 @@ impl TaskRuntime {
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            tenant_id: spec.tenant_id,
             state: TaskState::Pending,
             dedup_key: spec.dedup_key,
             progress: None,
             error: None,
             started_at,
             finished_at: None,
-            detail: spec.detail,
+            detail: sanitize_task_detail(spec.detail),
+            result: None,
         };
         tasks.insert(
             task_id,
@@ -343,6 +387,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -350,6 +395,103 @@ impl TaskRuntime {
             entry.snapshot.state = TaskState::Running;
             entry.started = true;
         }
+        Ok(entry.snapshot.clone())
+    }
+
+    /// Mark a reserved external task as running without claiming its worker
+    /// slot. The adapter can then attach the real closure through
+    /// `start_external_with` while observers see the canonical running state.
+    pub(crate) fn activate_external(
+        &self,
+        task_id: &str,
+        detail: Value,
+    ) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if entry.snapshot.state == TaskState::Pending {
+            entry.snapshot.state = TaskState::Running;
+            entry.snapshot.detail = detail;
+        }
+        Ok(entry.snapshot.clone())
+    }
+
+    pub(crate) fn cancellation_token(&self, task_id: &str) -> AppResult<CancellationToken> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        tasks
+            .get(task_id)
+            .map(|entry| entry.cancellation.clone())
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))
+    }
+
+    pub(crate) fn task_context(&self, task_id: &str) -> AppResult<TaskContext> {
+        Ok(TaskContext {
+            cancellation: self.cancellation_token(task_id)?,
+            progress: ProgressHandle {
+                task_id: task_id.to_string(),
+                runtime: self.clone(),
+            },
+        })
+    }
+
+    pub(crate) fn set_progress(
+        &self,
+        task_id: &str,
+        current: u64,
+        total: Option<u64>,
+        note: Option<&str>,
+    ) -> AppResult<()> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        if entry.snapshot.state.is_active() {
+            if total.is_some_and(|total| current > total) {
+                return Err(AppError::Validation("任务进度不得超过总数".to_string()));
+            }
+            if entry
+                .snapshot
+                .progress
+                .as_ref()
+                .is_some_and(|progress| current < progress.current)
+            {
+                return Err(AppError::Validation("任务进度不得回退".to_string()));
+            }
+            entry.snapshot.progress = Some(TaskProgress {
+                current,
+                total,
+                note: note.map(str::to_string),
+            });
+        }
+        Ok(())
+    }
+
+    /// Replace the adapter projection stored by the canonical task runtime.
+    /// Tauri and Engine adapters must derive their public snapshots from this
+    /// value rather than keeping a second mutable task registry.
+    pub(crate) fn update_detail(&self, task_id: &str, detail: Value) -> AppResult<TaskSnapshot> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        entry.snapshot.detail = sanitize_task_detail(detail);
         Ok(entry.snapshot.clone())
     }
 
@@ -367,12 +509,13 @@ impl TaskRuntime {
                 .tasks
                 .lock()
                 .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
             let entry = tasks
                 .get_mut(task_id)
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
-                entry.snapshot.detail = detail;
+                entry.snapshot.detail = sanitize_task_detail(detail);
             }
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             if should_launch {
@@ -404,6 +547,7 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let entry = tasks
             .get_mut(task_id)
             .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
@@ -416,24 +560,24 @@ impl TaskRuntime {
                 if entry.cancellation.is_cancelled() {
                     entry.snapshot.state = TaskState::Canceled;
                     entry.snapshot.error =
-                        Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                        Some(AppError::Canceled("后台任务已取消".to_string()).view());
                 } else {
                     entry.snapshot.state = TaskState::Succeeded;
-                    entry.snapshot.detail = detail;
+                    entry.snapshot.result = Some(detail);
                 }
             }
             Err(_error) if entry.cancellation.is_cancelled() => {
                 entry.snapshot.state = TaskState::Canceled;
                 entry.snapshot.error =
-                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
             }
             Err(error) if matches!(error, AppError::Canceled(_)) => {
                 entry.snapshot.state = TaskState::Canceled;
-                entry.snapshot.error = Some(error.into());
+                entry.snapshot.error = Some(error.view());
             }
             Err(error) => {
                 entry.snapshot.state = TaskState::Failed;
-                entry.snapshot.error = Some(error.into());
+                entry.snapshot.error = Some(error.view());
             }
         }
         let snapshot = entry.snapshot.clone();
@@ -442,6 +586,7 @@ impl TaskRuntime {
         Ok(snapshot)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove(&self, task_id: &str) -> Option<TaskSnapshot> {
         let removed = self.tasks.lock().ok()?.remove(task_id);
         if removed
@@ -451,6 +596,23 @@ impl TaskRuntime {
             self.release_active_slot();
         }
         removed.map(|entry| entry.snapshot)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_finished_at_for_test(
+        &self,
+        task_id: &str,
+        finished_at: String,
+    ) -> AppResult<()> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        entry.snapshot.finished_at = Some(finished_at);
+        Ok(())
     }
 
     pub(crate) fn has_active_tasks(&self) -> bool {
@@ -486,7 +648,7 @@ impl TaskRuntime {
                 },
             };
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
-                .unwrap_or_else(|_| Err(AppError::Legacy("后台任务发生 panic".to_string())));
+                .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
             let mut release_slot = false;
             if let Ok(mut tasks) = runtime.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
@@ -499,11 +661,11 @@ impl TaskRuntime {
                             Ok(_detail) if cancellation.is_cancelled() => {
                                 entry.snapshot.state = TaskState::Canceled;
                                 entry.snapshot.error =
-                                    Some(AppError::Canceled("后台任务已取消".to_string()).into());
+                                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
                             }
                             Ok(detail) => {
                                 entry.snapshot.state = TaskState::Succeeded;
-                                entry.snapshot.detail = detail;
+                                entry.snapshot.result = Some(detail);
                             }
                             Err(error)
                                 if cancellation.is_cancelled()
@@ -516,12 +678,12 @@ impl TaskRuntime {
                                     } else {
                                         AppError::Canceled("后台任务已取消".to_string())
                                     }
-                                    .into(),
+                                    .view(),
                                 );
                             }
                             Err(error) => {
                                 entry.snapshot.state = TaskState::Failed;
-                                entry.snapshot.error = Some(error.into());
+                                entry.snapshot.error = Some(error.view());
                             }
                         }
                         release_slot = true;
@@ -540,27 +702,32 @@ impl TaskRuntime {
                     entry.snapshot.state = TaskState::Failed;
                     entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
                     entry.snapshot.error =
-                        Some(AppError::Legacy(format!("启动后台任务失败: {error}")).into());
+                        Some(AppError::External(format!("启动后台任务失败: {error}")).view());
                 }
             }
             self.release_active_slot();
-            return Err(AppError::Legacy(format!("启动后台任务失败: {error}")));
+            return Err(AppError::External(format!("启动后台任务失败: {error}")));
         }
         Ok(())
     }
 
     pub(crate) fn get(&self, task_id: &str) -> Option<TaskSnapshot> {
-        self.tasks
-            .lock()
-            .ok()?
-            .get(task_id)
-            .map(|e| e.snapshot.clone())
+        let mut tasks = self.tasks.lock().ok()?;
+        Self::prune_terminal_tasks_locked(&mut tasks);
+        tasks.get(task_id).map(|e| e.snapshot.clone())
+    }
+
+    pub(crate) fn get_for_tenant(&self, tenant_id: &str, task_id: &str) -> Option<TaskSnapshot> {
+        self.get(task_id).filter(|snapshot| {
+            snapshot.tenant_id.is_none() || snapshot.tenant_id.as_deref() == Some(tenant_id)
+        })
     }
 
     pub(crate) fn list(&self, filter: TaskFilter) -> Vec<TaskSnapshot> {
-        let Ok(tasks) = self.tasks.lock() else {
+        let Ok(mut tasks) = self.tasks.lock() else {
             return Vec::new();
         };
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let mut snapshots = tasks
             .values()
             .filter(|entry| filter.kind.is_none_or(|kind| kind == entry.snapshot.kind))
@@ -581,10 +748,20 @@ impl TaskRuntime {
         snapshots
     }
 
+    pub(crate) fn list_for_tenant(&self, tenant_id: &str, filter: TaskFilter) -> Vec<TaskSnapshot> {
+        self.list(filter)
+            .into_iter()
+            .filter(|snapshot| {
+                snapshot.tenant_id.is_none() || snapshot.tenant_id.as_deref() == Some(tenant_id)
+            })
+            .collect()
+    }
+
     pub(crate) fn cancel(&self, task_id: &str) -> CancelOutcome {
         let Ok(mut tasks) = self.tasks.lock() else {
             return CancelOutcome::NotFound;
         };
+        Self::prune_terminal_tasks_locked(&mut tasks);
         let Some(entry) = tasks.get_mut(task_id) else {
             return CancelOutcome::NotFound;
         };
@@ -596,12 +773,15 @@ impl TaskRuntime {
         CancelOutcome::AlreadyFinished(entry.snapshot.clone())
     }
 
-    pub(crate) fn stop_accepting(&self) {
-        self.accepting.store(false, Ordering::Release);
+    pub(crate) fn cancel_for_tenant(&self, tenant_id: &str, task_id: &str) -> CancelOutcome {
+        if self.get_for_tenant(tenant_id, task_id).is_none() {
+            return CancelOutcome::NotFound;
+        }
+        self.cancel(task_id)
     }
 
-    pub(crate) fn shutdown(&self) -> ShutdownReport {
-        self.shutdown_with_grace(Duration::from_secs(5))
+    pub(crate) fn stop_accepting(&self) {
+        self.accepting.store(false, Ordering::Release);
     }
 
     pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
@@ -644,4 +824,53 @@ impl TaskRuntime {
             unfinished_task_ids,
         }
     }
+
+    fn prune_terminal_tasks_locked(tasks: &mut HashMap<String, TaskEntry>) {
+        let now = Utc::now();
+        let retention = chrono::Duration::from_std(TASK_TERMINAL_RETENTION)
+            .unwrap_or_else(|_| chrono::Duration::zero());
+        let mut terminal = tasks
+            .values()
+            .filter(|entry| entry.snapshot.state.is_terminal())
+            .map(|entry| {
+                let finished_at = entry
+                    .snapshot
+                    .finished_at
+                    .as_deref()
+                    .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                    .map(|value| value.with_timezone(&Utc));
+                (entry.snapshot.task_id.clone(), finished_at)
+            })
+            .collect::<Vec<_>>();
+
+        let mut remove_ids = terminal
+            .iter()
+            .filter_map(|(task_id, finished_at)| {
+                finished_at
+                    .is_some_and(|finished_at| now.signed_duration_since(finished_at) >= retention)
+                    .then_some(task_id.clone())
+            })
+            .collect::<Vec<_>>();
+        terminal.retain(|(task_id, _)| !remove_ids.iter().any(|removed| removed == task_id));
+
+        terminal.sort_by(|(_, left), (_, right)| left.cmp(right));
+        let excess = terminal.len().saturating_sub(TASK_TERMINAL_LIMIT);
+        remove_ids.extend(
+            terminal
+                .into_iter()
+                .take(excess)
+                .map(|(task_id, _)| task_id),
+        );
+        for task_id in remove_ids {
+            tasks.remove(&task_id);
+        }
+    }
+}
+
+fn sanitize_task_detail(mut detail: Value) -> Value {
+    if let Some(object) = detail.as_object_mut() {
+        object.remove("result");
+        object.remove("assets");
+    }
+    detail
 }

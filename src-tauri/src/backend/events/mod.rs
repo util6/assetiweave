@@ -5,7 +5,7 @@
 //! ordered range. Otherwise it belongs on the task-progress or transport
 //! channel instead of this closed enum.
 
-use crate::backend::{dto::AppResult, runtime::AppError};
+use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::{Sqlite, Transaction};
@@ -84,7 +84,8 @@ pub(crate) async fn append_outbox_event_sqlx_tx(
     event: &DomainEvent,
 ) -> AppResult<()> {
     let (tenant_id, event_type, source_id, revision_start, revision_end) = event.metadata();
-    let payload = serde_json::to_string(event).map_err(|error| error.to_string())?;
+    let payload =
+        serde_json::to_string(event).map_err(|error| AppError::External(error.to_string()))?;
     let event_id = match event {
         DomainEvent::ConversationSourceCommitted { event_id, .. } => event_id,
     };
@@ -107,7 +108,7 @@ pub(crate) async fn append_outbox_event_sqlx_tx(
     .bind(Utc::now().to_rfc3339())
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::Db)?;
     Ok(())
 }
 
@@ -122,7 +123,6 @@ pub(crate) struct ConsumerCx {
     pub(crate) database: crate::backend::store::Database,
     pub(crate) pool: sqlx::SqlitePool,
     pub(crate) db_path: PathBuf,
-    pub(crate) cancellation: tokio_util::sync::CancellationToken,
     pub(crate) consumer_id: String,
     pub(crate) batch_last_seq: i64,
 }
@@ -136,6 +136,7 @@ pub(crate) struct ConsumerCx {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InitialPosition {
     GenesisZero,
+    #[allow(dead_code)]
     BackfillThenCutoff,
 }
 

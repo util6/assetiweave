@@ -3,17 +3,14 @@ use std::{fmt, path::PathBuf, time::Duration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::backend::agents::types::{AgentId, AgentProtocol};
+use crate::backend::agents::types::AgentId;
 
-use super::{AiCommandOutput, AiExecutionPhase};
+use super::AiExecutionPhase;
 
 #[derive(Debug)]
 pub(crate) enum AiExecutionError {
     AgentNotFound {
         agent_id: AgentId,
-    },
-    UnsupportedProtocol {
-        protocol: AgentProtocol,
     },
     RuntimeUnavailable {
         command_name: String,
@@ -23,29 +20,18 @@ pub(crate) enum AiExecutionError {
         message: String,
     },
     Output {
-        program: PathBuf,
         message: String,
     },
     Timeout {
         program: PathBuf,
         timeout: Duration,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        stdout_truncated: bool,
-        stderr_truncated: bool,
     },
     Cancelled {
         program: PathBuf,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        stdout_truncated: bool,
-        stderr_truncated: bool,
     },
     OutputLimit {
         limit: usize,
-        legacy_output: Option<Box<AiCommandOutput>>,
     },
-    CommandFailed(AiCommandOutput),
     EmptyOutput {
         program: Option<PathBuf>,
     },
@@ -54,7 +40,13 @@ pub(crate) enum AiExecutionError {
     Protocol {
         operation: &'static str,
     },
-    ModelSelectionFailed,
+    ProtocolDetail {
+        operation: &'static str,
+        detail: String,
+    },
+    ModelSelectionFailed {
+        detail: Option<String>,
+    },
     AgentExited {
         code: Option<i32>,
     },
@@ -74,11 +66,6 @@ impl AiExecutionError {
             Self::AgentNotFound { .. } => (
                 "agent_not_found",
                 "The selected AI agent is not registered.",
-                false,
-            ),
-            Self::UnsupportedProtocol { .. } => (
-                "unsupported_protocol",
-                "The selected AI agent protocol is not supported.",
                 false,
             ),
             Self::RuntimeUnavailable { .. } => (
@@ -103,11 +90,6 @@ impl AiExecutionError {
                 "The AI agent exceeded the configured output limit.",
                 false,
             ),
-            Self::CommandFailed(_) => (
-                "agent_exited",
-                "The AI agent process exited unsuccessfully.",
-                false,
-            ),
             Self::EmptyOutput { .. } => ("empty_output", "The AI agent returned no text.", false),
             Self::PermissionDenied => (
                 "permission_denied",
@@ -124,11 +106,31 @@ impl AiExecutionError {
                 "The AI agent protocol operation failed.",
                 true,
             ),
-            Self::ModelSelectionFailed => (
-                "model_selection_failed",
-                "The requested AI model could not be selected.",
-                false,
-            ),
+            Self::ProtocolDetail { detail, .. } => {
+                let detail = crate::backend::runtime::sanitize_public_message(detail);
+                return AiExecutionErrorView {
+                    code: "protocol_failed".to_string(),
+                    message: format!("The AI agent protocol operation failed: {detail}"),
+                    retryable: true,
+                    phase: None,
+                };
+            }
+            Self::ModelSelectionFailed { detail } => {
+                return AiExecutionErrorView {
+                    code: "model_selection_failed".to_string(),
+                    message: detail.as_deref().map_or_else(
+                        || "The requested AI model could not be selected.".to_string(),
+                        |detail| {
+                            format!(
+                                "The requested AI model could not be selected: {}",
+                                crate::backend::runtime::sanitize_public_message(detail)
+                            )
+                        },
+                    ),
+                    retryable: false,
+                    phase: None,
+                };
+            }
             Self::AgentExited { .. } => (
                 "agent_exited",
                 "The AI agent process exited before execution completed.",
@@ -166,9 +168,6 @@ impl fmt::Display for AiExecutionError {
             Self::AgentNotFound { agent_id } => {
                 write!(formatter, "AI agent '{agent_id}' is not registered")
             }
-            Self::UnsupportedProtocol { protocol } => {
-                write!(formatter, "AI agent protocol {protocol:?} is not supported")
-            }
             Self::RuntimeUnavailable { command_name } => write!(
                 formatter,
                 "{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell."
@@ -176,37 +175,19 @@ impl fmt::Display for AiExecutionError {
             Self::Spawn { program, message } => {
                 write!(formatter, "failed to start {}: {message}", program.display())
             }
-            Self::Output { message, .. } => formatter.write_str(message),
-            Self::Timeout {
-                program, timeout, ..
-            } => write!(
+            Self::Output { message } => formatter.write_str(message),
+            Self::Timeout { program, timeout } => write!(
                 formatter,
                 "{} timed out after {} seconds",
                 program.display(),
                 timeout.as_secs()
             ),
-            Self::Cancelled { program, .. } => {
+            Self::Cancelled { program } => {
                 write!(formatter, "{} was cancelled", program.display())
             }
-            Self::OutputLimit {
-                limit,
-                legacy_output,
-            } => match legacy_output {
-                Some(output) => write!(
-                    formatter,
-                    "{} exceeded the configured output limit of {limit} bytes",
-                    output.program.display()
-                ),
-                None => write!(
-                    formatter,
-                    "the AI agent exceeded the configured output limit of {limit} bytes"
-                ),
-            },
-            Self::CommandFailed(output) => write!(
+            Self::OutputLimit { limit } => write!(
                 formatter,
-                "{} failed with status {}",
-                output.program.display(),
-                output.status
+                "the AI agent exceeded the configured output limit of {limit} bytes"
             ),
             Self::EmptyOutput {
                 program: Some(program),
@@ -223,7 +204,13 @@ impl fmt::Display for AiExecutionError {
             Self::Protocol { operation } => {
                 write!(formatter, "the ACP {operation} operation failed")
             }
-            Self::ModelSelectionFailed => {
+            Self::ProtocolDetail { operation, detail } => {
+                write!(formatter, "the ACP {operation} operation failed: {detail}")
+            }
+            Self::ModelSelectionFailed { detail: Some(detail) } => {
+                write!(formatter, "the requested AI model could not be selected: {detail}")
+            }
+            Self::ModelSelectionFailed { detail: None } => {
                 formatter.write_str("the requested AI model could not be selected")
             }
             Self::AgentExited { code: Some(code) } => {
@@ -261,30 +248,28 @@ pub(crate) struct AiExecutionErrorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ai_execution::AiCommandOutput;
-    use std::{path::PathBuf, process::Command};
 
     #[test]
-    #[cfg(unix)]
-    fn public_error_view_has_a_stable_code_and_redacts_process_output() {
-        let status = Command::new("/usr/bin/false")
-            .status()
-            .expect("false command status");
-        let error = AiExecutionError::CommandFailed(AiCommandOutput {
-            program: PathBuf::from("/private/SECRET_PATH/opencode"),
-            status,
-            stdout: b"SECRET_PROMPT_AND_OUTPUT".to_vec(),
-            stderr: b"SECRET_STDERR".to_vec(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-        });
+    fn public_error_view_has_a_stable_code() {
+        let error = AiExecutionError::AgentExited { code: Some(1) };
 
         let view = error.to_view();
         let public_debug = format!("{view:?}");
 
         assert_eq!(view.code, "agent_exited");
-        assert!(!view.retryable);
-        assert!(!public_debug.contains("SECRET"));
+        assert!(view.retryable);
         assert!(!public_debug.contains("/private/"));
+    }
+
+    #[test]
+    fn public_protocol_error_preserves_the_sanitized_agent_message() {
+        let view = AiExecutionError::ProtocolDetail {
+            operation: "prompt",
+            detail: "Free promotion has ended for the selected model.".to_string(),
+        }
+        .to_view();
+
+        assert_eq!(view.code, "protocol_failed");
+        assert!(view.message.contains("Free promotion has ended"));
     }
 }

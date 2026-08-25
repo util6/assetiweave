@@ -1,18 +1,19 @@
 use crate::backend::dto::{
-    AppResult, ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
+    ConversationQuestionDetail, ConversationSessionDetail, ConversationSessionListItem,
 };
 use crate::backend::models::{
     conversation_turn_fingerprint, group_turn_ids_by_question, ConversationPart,
     ConversationSession, ConversationSource, ConversationSyncRun, ConversationSyncStatus,
     ConversationTurn, NormalizedConversationSession,
 };
+use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
 
 use super::{
-    codec::{decode_json, encode_enum, encode_json},
+    codec::{decode_json_app, encode_enum_app, encode_json_app},
     conversation_repo::{
         append_declared_card_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
         map_sqlx_conversation_part, map_sqlx_conversation_question, map_sqlx_conversation_session,
@@ -47,17 +48,17 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     let now = Utc::now().to_rfc3339();
     let sync_run_id = stable_id("web-record-sync", &[&source.id, &now]);
     {
-        let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+        let mut tx = pool.begin().await.map_err(AppError::external)?;
         clear_legacy_conversation_records_for_source_sqlx_tx(&mut tx, tenant_id, &source.id)
             .await?;
-        tx.commit().await.map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(AppError::external)?;
     }
 
     let mut warning_count = 0usize;
     let mut skipped_session_count = 0usize;
     let mut changed_session_count = 0usize;
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
-        let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+        let mut tx = pool.begin().await.map_err(AppError::external)?;
         for normalized in batch {
             let session = web_record_session_from_normalized(source, normalized, &now);
             let change_kind =
@@ -74,7 +75,8 @@ pub(crate) async fn import_web_record_sessions_sqlx(
             }
             let translation_state =
                 load_web_record_part_translation_state_sqlx_tx(&mut tx, tenant_id, &session.id)
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
             delete_web_record_session_sqlx_tx(&mut tx, tenant_id, &session.id).await?;
             insert_web_record_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
 
@@ -113,13 +115,14 @@ pub(crate) async fn import_web_record_sessions_sqlx(
                 change_kind,
                 &now,
             )
-            .await?;
+            .await
+            .map_err(AppError::external)?;
             changed_session_count += 1;
         }
-        tx.commit().await.map_err(|error| error.to_string())?;
+        tx.commit().await.map_err(AppError::external)?;
     }
 
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     sqlx::query(
         r#"
         UPDATE conversation_sources
@@ -132,7 +135,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     .bind(&source.id)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     insert_sync_run_sqlx_tx(
         &mut tx,
         tenant_id,
@@ -150,7 +153,7 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         },
     )
     .await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(AppError::external)?;
 
     Ok(ConversationImportResult {
         source_id: source.id.clone(),
@@ -223,26 +226,32 @@ pub(crate) async fn list_web_record_sessions_sqlx(
     .bind(source_id)
     .bind(needle.as_deref())
     .bind(id_needle.as_deref())
-    .bind(i64::try_from(limit).map_err(|_| format!("invalid web record limit: {limit}"))?)
-    .bind(i64::try_from(offset).map_err(|_| format!("invalid web record offset: {offset}"))?)
+    .bind(
+        i64::try_from(limit)
+            .map_err(|_| format!("invalid web record limit: {limit}"))
+            .map_err(AppError::external)?,
+    )
+    .bind(
+        i64::try_from(offset)
+            .map_err(|_| format!("invalid web record offset: {offset}"))
+            .map_err(AppError::external)?,
+    )
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     rows.iter()
         .map(|row| {
-            let question_count = usize::try_from(
-                row.try_get::<i64, _>(13)
-                    .map_err(|error| error.to_string())?,
-            )
-            .map_err(|_| "invalid web record question count".to_string())?;
-            let turn_count = usize::try_from(
-                row.try_get::<i64, _>(14)
-                    .map_err(|error| error.to_string())?,
-            )
-            .map_err(|_| "invalid web record turn count".to_string())?;
+            let question_count =
+                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
+                    .map_err(|_| "invalid web record question count".to_string())
+                    .map_err(AppError::external)?;
+            let turn_count =
+                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
+                    .map_err(|_| "invalid web record turn count".to_string())
+                    .map_err(AppError::external)?;
             Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row)?,
+                session: map_sqlx_conversation_session(row).map_err(AppError::external)?,
                 question_count,
                 turn_count,
             })
@@ -277,17 +286,19 @@ pub(crate) async fn resolve_web_record_session_id_prefix_sqlx(
     .bind(&like_pattern_domain)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(AppError::external)?;
 
     match rows.len() {
-        0 => Err(format!("no web record session matches prefix \"{input}\"")),
+        0 => Err(AppError::NotFound(format!(
+            "no web record session matches prefix \"{input}\""
+        ))),
         1 => Ok(rows.into_iter().next().unwrap()),
         n => {
             let preview: Vec<&str> = rows.iter().take(5).map(|s| s.as_str()).collect();
-            Err(format!(
+            Err(AppError::Conflict(format!(
                 "ambiguous web record session prefix \"{input}\": {n} sessions match (e.g. {}). Use more characters to narrow down.",
                 preview.join(", ")
-            ))
+            )))
         }
     }
 }
@@ -316,17 +327,19 @@ pub(crate) async fn resolve_web_record_part_id_prefix_sqlx(
     .bind(&like_pattern_domain)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(AppError::external)?;
 
     match rows.len() {
-        0 => Err(format!("no web record part matches prefix \"{input}\"")),
+        0 => Err(AppError::NotFound(format!(
+            "no web record part matches prefix \"{input}\""
+        ))),
         1 => Ok(rows.into_iter().next().unwrap()),
         n => {
             let preview: Vec<&str> = rows.iter().take(5).map(|s| s.as_str()).collect();
-            Err(format!(
+            Err(AppError::Conflict(format!(
                 "ambiguous web record part prefix \"{input}\": {n} parts match (e.g. {}). Use more characters to narrow down.",
                 preview.join(", ")
-            ))
+            )))
         }
     }
 }
@@ -349,9 +362,9 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .bind(session_id)
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| format!("web record session not found: {session_id}"))?;
-    let session = map_sqlx_conversation_session(&session_row)?;
+    .map_err(AppError::external)?
+    .ok_or_else(|| AppError::NotFound(format!("web record session not found: {session_id}")))?;
+    let session = map_sqlx_conversation_session(&session_row).map_err(AppError::external)?;
 
     let question_rows = sqlx::query(
         r#"
@@ -366,7 +379,7 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .bind(session_id)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let questions = question_rows
         .iter()
         .map(map_sqlx_conversation_question)
@@ -388,14 +401,14 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .bind(session_id)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
     for row in &turn_rows {
-        let question_id = row.try_get(11).map_err(|error| error.to_string())?;
+        let question_id = row.try_get(11).map_err(AppError::external)?;
         turns_by_question
             .entry(question_id)
             .or_default()
-            .push(map_sqlx_conversation_turn(row)?);
+            .push(map_sqlx_conversation_turn(row).map_err(AppError::external)?);
     }
 
     let part_rows = sqlx::query(
@@ -413,10 +426,10 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .bind(session_id)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let mut parts_by_turn = BTreeMap::<String, Vec<ConversationPart>>::new();
     for row in &part_rows {
-        let part = map_sqlx_conversation_part(row)?;
+        let part = map_sqlx_conversation_part(row).map_err(AppError::external)?;
         parts_by_turn
             .entry(part.turn_id.clone())
             .or_default()
@@ -430,10 +443,10 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .bind(&session.adapter_id)
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(AppError::external)?
     .unwrap_or_else(|| "[]".to_string());
     let card_kinds: Vec<crate::backend::models::ConversationCardKindDefinition> =
-        decode_json(card_kinds_json)?;
+        decode_json_app(card_kinds_json)?;
     let mut question_details = Vec::with_capacity(questions.len());
     for question in questions {
         let turns = turns_by_question.remove(&question.id).unwrap_or_default();
@@ -475,10 +488,12 @@ pub(crate) async fn update_web_record_part_translation_sqlx(
     .bind(part_id)
     .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     if result.rows_affected() == 0 {
-        return Err(format!("web record part not found: {part_id}"));
+        return Err(AppError::NotFound(format!(
+            "web record part not found: {part_id}"
+        )));
     }
 
     Ok(())
@@ -558,13 +573,13 @@ async fn delete_web_record_session_sqlx_tx(
     .bind(session_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query("DELETE FROM web_record_questions WHERE tenant_id = ?1 AND session_id = ?2")
         .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     sqlx::query(
         r#"
         DELETE FROM web_record_parts
@@ -579,19 +594,19 @@ async fn delete_web_record_session_sqlx_tx(
     .bind(session_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query("DELETE FROM web_record_turns WHERE tenant_id = ?1 AND session_id = ?2")
         .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     sqlx::query("DELETE FROM web_record_sessions WHERE tenant_id = ?1 AND id = ?2")
         .bind(tenant_id)
         .bind(session_id)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -615,17 +630,17 @@ async fn web_record_session_is_unchanged_sqlx_tx(
     .bind(&session.id)
     .fetch_optional(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(AppError::external)?
     else {
         return Ok(false);
     };
 
-    let title: String = row.try_get(0).map_err(|error| error.to_string())?;
-    let started_at: Option<String> = row.try_get(1).map_err(|error| error.to_string())?;
-    let updated_at: Option<String> = row.try_get(2).map_err(|error| error.to_string())?;
-    let source_locator: Option<String> = row.try_get(3).map_err(|error| error.to_string())?;
-    let existing_fingerprint: Option<String> = row.try_get(4).map_err(|error| error.to_string())?;
-    let missing: i64 = row.try_get(5).map_err(|error| error.to_string())?;
+    let title: String = row.try_get(0).map_err(AppError::external)?;
+    let started_at: Option<String> = row.try_get(1).map_err(AppError::external)?;
+    let updated_at: Option<String> = row.try_get(2).map_err(AppError::external)?;
+    let source_locator: Option<String> = row.try_get(3).map_err(AppError::external)?;
+    let existing_fingerprint: Option<String> = row.try_get(4).map_err(AppError::external)?;
+    let missing: i64 = row.try_get(5).map_err(AppError::external)?;
 
     Ok(title == session.title
         && started_at == session.started_at
@@ -649,7 +664,7 @@ async fn web_record_session_exists_sqlx_tx(
     .bind(session_id)
     .fetch_one(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(exists != 0)
 }
 
@@ -671,14 +686,14 @@ async fn web_record_session_turns_are_unchanged_sqlx_tx(
     .bind(session_id)
     .fetch_all(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if rows.len() != normalized.turns.len() {
         return Ok(false);
     }
     for (row, turn) in rows.iter().zip(&normalized.turns) {
-        let external_id: String = row.try_get(0).map_err(|error| error.to_string())?;
-        let fingerprint: String = row.try_get(1).map_err(|error| error.to_string())?;
-        let missing: i64 = row.try_get(2).map_err(|error| error.to_string())?;
+        let external_id: String = row.try_get(0).map_err(AppError::external)?;
+        let fingerprint: String = row.try_get(1).map_err(AppError::external)?;
+        let missing: i64 = row.try_get(2).map_err(AppError::external)?;
         if external_id != turn.external_id
             || fingerprint != conversation_turn_fingerprint(turn)
             || missing != 0
@@ -708,7 +723,7 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     .bind(source_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         DELETE FROM conversation_question_turns
@@ -725,7 +740,7 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     .bind(source_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         DELETE FROM conversation_questions
@@ -740,7 +755,7 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     .bind(source_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         DELETE FROM conversation_parts
@@ -757,7 +772,7 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     .bind(source_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         DELETE FROM conversation_turns
@@ -772,13 +787,13 @@ async fn clear_legacy_conversation_records_for_source_sqlx_tx(
     .bind(source_id)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query("DELETE FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2")
         .bind(tenant_id)
         .bind(source_id)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -811,7 +826,7 @@ async fn insert_web_record_session_sqlx_tx(
     .bind(&session.imported_at)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -843,7 +858,7 @@ async fn insert_web_record_turn_sqlx_tx(
     .bind(&turn.imported_at)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -856,7 +871,11 @@ async fn insert_web_record_parts_sqlx_tx(
 ) -> AppResult<()> {
     for (index, part) in parts.iter().enumerate() {
         let part_id = stable_id("web-record-part", &[turn_id, &index.to_string()]);
-        let content_card_json = part.content_card.as_ref().map(encode_json).transpose()?;
+        let content_card_json = part
+            .content_card
+            .as_ref()
+            .map(encode_json_app)
+            .transpose()?;
         let translated_text = translation_state
             .get(&part_id)
             .filter(|(text, command, _)| text == &part.text && command == &part.command)
@@ -875,8 +894,8 @@ async fn insert_web_record_parts_sqlx_tx(
         .bind(part_id)
         .bind(turn_id)
         .bind(index as i64)
-        .bind(encode_enum(part.role)?)
-        .bind(encode_enum(part.kind)?)
+        .bind(encode_enum_app(part.role)?)
+        .bind(encode_enum_app(part.kind)?)
         .bind(&part.text)
         .bind(&part.language)
         .bind(&part.command)
@@ -890,7 +909,7 @@ async fn insert_web_record_parts_sqlx_tx(
         .bind(&part.source_execution_id)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -912,15 +931,15 @@ async fn load_web_record_part_translation_state_sqlx_tx(
     .bind(session_id)
     .fetch_all(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     rows.iter()
         .map(|row| {
             Ok((
-                row.try_get(0).map_err(|error| error.to_string())?,
+                row.try_get(0).map_err(AppError::external)?,
                 (
-                    row.try_get(1).map_err(|error| error.to_string())?,
-                    row.try_get(2).map_err(|error| error.to_string())?,
-                    row.try_get(3).map_err(|error| error.to_string())?,
+                    row.try_get(1).map_err(AppError::external)?,
+                    row.try_get(2).map_err(AppError::external)?,
+                    row.try_get(3).map_err(AppError::external)?,
                 ),
             ))
         })
@@ -944,7 +963,7 @@ async fn insert_web_record_questions_sqlx_tx(
         let first_turn_id = group
             .turn_ids
             .first()
-            .ok_or_else(|| "empty web record question group".to_string())?;
+            .ok_or_else(|| AppError::Validation("empty web record question group".to_string()))?;
         let question_id = stable_id("web-record-question", &[session_id, first_turn_id]);
         for (order, turn_id) in group.turn_ids.iter().enumerate() {
             sqlx::query(
@@ -961,7 +980,7 @@ async fn insert_web_record_questions_sqlx_tx(
             .bind(order as i64)
             .execute(&mut **tx)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         }
         let aggregate = build_question_aggregate_sqlx_tx(tx, tenant_id, &group.turn_ids).await?;
         sqlx::query(
@@ -982,11 +1001,11 @@ async fn insert_web_record_questions_sqlx_tx(
         .bind(&aggregate.answer_text)
         .bind(&aggregate.code_text)
         .bind(&aggregate.command_text)
-        .bind(encode_enum(group.origin)?)
+        .bind(encode_enum_app(group.origin)?)
         .bind(now)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     }
     Ok(())
 }
@@ -1008,7 +1027,7 @@ async fn build_question_aggregate_sqlx_tx(
         .bind(turn_id)
         .fetch_one(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
         question_text.push(user_text);
         for part in load_web_record_parts_sqlx_tx(tx, tenant_id, turn_id).await? {
             append_declared_card_to_question_aggregate(
@@ -1046,7 +1065,7 @@ async fn load_web_record_parts_sqlx_tx(
     .bind(turn_id)
     .fetch_all(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     rows.iter().map(map_sqlx_conversation_part).collect()
 }
 
@@ -1068,7 +1087,7 @@ async fn insert_sync_run_sqlx_tx(
     .bind(&run.id)
     .bind(&run.source_id)
     .bind(&run.adapter_id)
-    .bind(encode_enum(run.status)?)
+    .bind(encode_enum_app(run.status)?)
     .bind(&run.started_at)
     .bind(&run.finished_at)
     .bind(run.session_count)
@@ -1077,7 +1096,7 @@ async fn insert_sync_run_sqlx_tx(
     .bind(&run.error_message)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(())
 }
 
@@ -1149,7 +1168,9 @@ mod tests {
                 )
                 .await?;
                 let legacy_count_before_import =
-                    count_legacy_conversation_sessions_sqlx(database.pool(), &source.id).await?;
+                    count_legacy_conversation_sessions_sqlx(database.pool(), &source.id)
+                        .await
+                        .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1224,13 +1245,14 @@ mod tests {
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let columns = sqlx::query_scalar::<_, String>(
                     "SELECT name FROM pragma_table_info('web_record_sessions')",
                 )
                 .fetch_all(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1278,7 +1300,8 @@ mod tests {
                         tenant_id,
                         &source,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                     super::super::conversation_repo::import_conversation_sessions_sqlx(
                         database.pool(),
                         tenant_id,
@@ -1286,7 +1309,8 @@ mod tests {
                         &[fixture_session()],
                         false,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 }
 
                 let beta_sessions =
@@ -1299,14 +1323,16 @@ mod tests {
                         20,
                         0,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 let beta_detail =
                     super::super::conversation_repo::load_conversation_session_detail_sqlx(
                         database.pool(),
                         tenant_beta,
                         &beta_sessions[0].session.id,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 let beta_before = (
                     beta_detail.questions[0].turns.len(),
                     beta_detail.questions[0].parts.len(),
@@ -1327,7 +1353,8 @@ mod tests {
                         tenant_beta,
                         &beta_sessions[0].session.id,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 let beta_after = (
                     beta_detail.questions[0].turns.len(),
                     beta_detail.questions[0].parts.len(),
@@ -1342,7 +1369,8 @@ mod tests {
                         20,
                         0,
                     )
-                    .await?
+                    .await
+                    .map_err(AppError::external)?
                     .len();
 
                 AppResult::Ok((beta_before, beta_after, alpha_legacy_count))
@@ -1375,7 +1403,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1383,7 +1412,8 @@ mod tests {
                     &[session.clone()],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 sqlx::query(
                     "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
                 )
@@ -1398,7 +1428,8 @@ mod tests {
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(|error| error.to_string())?;
                 sqlx::query_scalar::<_, String>(
                     "SELECT imported_at FROM web_record_sessions WHERE source_id = ?1",
                 )
@@ -1435,7 +1466,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1443,7 +1475,8 @@ mod tests {
                     &[current_session.clone(), archived_session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1507,7 +1540,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1515,14 +1549,15 @@ mod tests {
                     &[old_session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 sqlx::query(
                     "UPDATE web_record_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
                 )
                 .bind(&source.id)
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let result = import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1537,7 +1572,7 @@ mod tests {
                 .bind(&source.id)
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let metadata_json = sqlx::query_scalar::<_, Option<String>>(
                     r#"
                     SELECT p.metadata_json
@@ -1552,7 +1587,7 @@ mod tests {
                 .bind(&source.id)
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 AppResult::Ok((result, imported_at, metadata_json))
             })
             .expect("refresh normalized web parts through SQLx");
@@ -1592,7 +1627,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1600,7 +1636,8 @@ mod tests {
                     &[first, second],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1649,7 +1686,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1657,7 +1695,8 @@ mod tests {
                     &[fixture_session()],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
                 let fragment = crate::backend::models::conversation_id_fragment(&session_id);
                 let fragment_matches = list_web_record_sessions_sqlx(
@@ -1680,7 +1719,8 @@ mod tests {
                     20,
                     0,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let full_matches = list_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1745,7 +1785,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1753,7 +1794,8 @@ mod tests {
                     &[session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let sessions = list_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1806,7 +1848,8 @@ mod tests {
                         tenant_id,
                         &source,
                     )
-                    .await?;
+                    .await
+                    .map_err(AppError::external)?;
                 }
                 import_web_record_sessions_sqlx(
                     database.pool(),
@@ -1815,7 +1858,8 @@ mod tests {
                     &[alpha_session],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     tenant_beta,
@@ -1872,7 +1916,8 @@ mod tests {
                     0,
                     None,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let beta_page = super::super::conversation_repo::search_conversation_cards_sqlx(
                     database.pool(),
                     tenant_beta,
@@ -1892,7 +1937,8 @@ mod tests {
                     0,
                     None,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 AppResult::Ok((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
             })
             .expect("isolate web records by tenant");
@@ -1939,7 +1985,8 @@ mod tests {
                     TEST_TENANT_ID,
                     &source,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 import_web_record_sessions_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
@@ -1947,7 +1994,8 @@ mod tests {
                     &[first],
                     false,
                 )
-                .await?;
+                .await
+                .map_err(AppError::external)?;
                 let session_id = stable_id("web-record-session", &[&source.id, "web-session-1"]);
                 let initial = load_web_record_session_detail_sqlx(
                     database.pool(),
@@ -2010,6 +2058,7 @@ mod tests {
         .fetch_one(pool)
         .await
         .map_err(|error| error.to_string())
+        .map_err(AppError::External)
     }
 
     fn fixture_source() -> ConversationSource {

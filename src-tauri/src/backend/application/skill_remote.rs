@@ -1,21 +1,51 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 const SKILL_REMOTE_SECURITY_NOTICE: &str =
     "Review remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.";
+
+struct StagingDirectoryGuard {
+    path: PathBuf,
+}
+
+impl Drop for StagingDirectoryGuard {
+    fn drop(&mut self) {
+        let _ = self.cleanup();
+    }
+}
+
+impl StagingDirectoryGuard {
+    fn cleanup(&mut self) -> bool {
+        fs::remove_dir_all(&self.path).is_ok() || !self.path.exists()
+    }
+}
+
+fn report_skill_acquire_phase(phase_sink: Option<&dyn Fn(&str)>, phase: &str) {
+    if let Some(phase_sink) = phase_sink {
+        phase_sink(phase);
+    }
+}
 
 impl AppService {
     pub(crate) fn search_skills(&self, params: SkillSearchParams) -> AppResult<SkillSearchResult> {
         let query = params.query.trim();
         if query.is_empty() {
-            return Err("skill search query is required".to_string());
+            return Err(AppError::Validation(
+                "skill search query is required".to_string(),
+            ));
         }
         let provider = normalize_skill_search_provider(params.provider.as_deref())?;
         let limit = params.limit.unwrap_or(10).clamp(1, 20);
         let (mut candidates, warnings) = match provider.as_str() {
             "github" => github_repository_skill_search(query, limit)?,
             "github-code" => github_code_skill_search(query, limit)?,
-            _ => return Err(format!("unsupported skill search provider: {provider}")),
+            _ => {
+                return Err(AppError::Validation(format!(
+                    "unsupported skill search provider: {provider}"
+                )))
+            }
         };
         let query_terms = search_query_terms(query);
         candidates.sort_by(|left, right| {
@@ -39,8 +69,27 @@ impl AppService {
     }
 
     pub(crate) fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation(params, None)
+    }
+
+    pub(crate) fn acquire_skill_with_cancellation(
+        &self,
+        params: SkillAcquireParams,
+        cancellation: Option<&CancellationToken>,
+    ) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None)
+    }
+
+    pub(crate) fn acquire_skill_with_cancellation_and_progress(
+        &self,
+        params: SkillAcquireParams,
+        cancellation: Option<&CancellationToken>,
+        phase_sink: Option<&dyn Fn(&str)>,
+    ) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
-            return Err("skill acquire requires --yes".to_string());
+            return Err(AppError::Validation(
+                "skill acquire requires --yes".to_string(),
+            ));
         }
         let location = parse_github_skill_location(
             &params.url,
@@ -59,6 +108,7 @@ impl AppService {
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 
         if params.dry_run {
+            report_skill_acquire_phase(phase_sink, "preparing");
             return Ok(json!({
                 "dry_run": true,
                 "provider": "github",
@@ -73,7 +123,13 @@ impl AppService {
             }));
         }
 
-        clone_github_skill(&location, &staging_dir)?;
+        ensure_not_cancelled(cancellation)?;
+        report_skill_acquire_phase(phase_sink, "cloning");
+        let mut staging_guard = StagingDirectoryGuard {
+            path: staging_dir.clone(),
+        };
+        clone_github_skill(&location, &staging_dir, cancellation)?;
+        ensure_not_cancelled(cancellation)?;
         let skill_dir = resolve_cloned_skill_dir(&staging_dir, location.path.as_deref())?;
         let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref());
         let acquired_branch = location
@@ -81,18 +137,26 @@ impl AppService {
             .clone()
             .or_else(|| git_current_branch(&staging_dir))
             .unwrap_or_else(|| "HEAD".to_string());
-        let import_result = self.import_skill(ImportSkillParams {
-            from: skill_dir.to_string_lossy().to_string(),
-            name: Some(name.clone()),
-            dry_run: false,
-        })?;
+        report_skill_acquire_phase(phase_sink, "importing");
+        let import_result = self.import_skill_with_progress(
+            ImportSkillParams {
+                from: skill_dir.to_string_lossy().to_string(),
+                name: Some(name.clone()),
+                dry_run: false,
+            },
+            phase_sink,
+        )?;
+        ensure_not_cancelled(cancellation)?;
         let imported_asset = import_result
             .get("asset")
             .cloned()
-            .ok_or_else(|| "skill import result did not include asset".to_string())
+            .ok_or_else(|| {
+                AppError::Validation("skill import result did not include asset".to_string())
+            })
             .and_then(|value| {
-                serde_json::from_value::<Asset>(value)
-                    .map_err(|error| format!("skill import result asset was invalid: {error}"))
+                serde_json::from_value::<Asset>(value).map_err(|error| {
+                    AppError::Validation(format!("skill import result asset was invalid: {error}"))
+                })
             })?;
         let remote_source = SkillRemoteSource {
             asset_id: imported_asset.id.clone(),
@@ -114,14 +178,22 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let remote_source_to_save = remote_source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_skill_remote_source_sqlx(
-                &pool,
-                &tenant_id,
-                &remote_source_to_save,
-            )
-            .await
-        })?;
+        self.db
+            .block_on(async move {
+                crate::backend::store::upsert_skill_remote_source_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &remote_source_to_save,
+                )
+                .await
+            })
+            .map_err(AppError::external)?;
+        let staging_cleaned = staging_guard.cleanup();
+        if !staging_cleaned {
+            return Err(AppError::Storage(
+                "remote Skill staging cleanup failed".to_string(),
+            ));
+        }
         Ok(json!({
             "dry_run": false,
             "provider": "github",
@@ -132,6 +204,7 @@ impl AppService {
             "name": name,
             "staging_path": staging_dir,
             "skill_path": skill_dir,
+            "staging_cleaned": staging_cleaned,
             "import": import_result,
             "remote_source": remote_source,
             "security_notice": SKILL_REMOTE_SECURITY_NOTICE,
@@ -141,11 +214,14 @@ impl AppService {
     pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
-                .await?;
-            crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
-        })
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
+                    .await?;
+                crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn check_skill_remote_sources(
@@ -171,8 +247,11 @@ impl AppService {
                         &pool, &tenant_id, asset_id,
                     )
                     .await
-                })?
-                .ok_or_else(|| format!("skill remote source not found: {asset_id}"))?]
+                })
+                .map_err(AppError::external)?
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("skill remote source not found: {asset_id}"))
+                })?]
         } else {
             self.list_skill_remote_sources()?
         };
@@ -183,14 +262,16 @@ impl AppService {
             let pool = self.db.pool().clone();
             let tenant_id = self.tenant_id().to_string();
             let source_to_save = source.clone();
-            self.db.block_on(async move {
-                crate::backend::store::update_skill_remote_check_result_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source_to_save,
-                )
-                .await
-            })?;
+            self.db
+                .block_on(async move {
+                    crate::backend::store::update_skill_remote_check_result_sqlx(
+                        &pool,
+                        &tenant_id,
+                        &source_to_save,
+                    )
+                    .await
+                })
+                .map_err(AppError::external)?;
             checked.push(source);
         }
         Ok(checked)
@@ -230,7 +311,9 @@ pub(super) fn normalize_skill_search_provider(provider: Option<&str>) -> AppResu
     {
         "github" => Ok("github".to_string()),
         "github-code" | "github_code" | "code" => Ok("github-code".to_string()),
-        other => Err(format!("unsupported skill search provider: {other}")),
+        other => Err(AppError::Validation(format!(
+            "unsupported skill search provider: {other}"
+        ))),
     }
 }
 
@@ -465,10 +548,14 @@ pub(super) fn github_tree_sha_for_skill_path(
             .get("sha")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| "GitHub tree response did not include root sha".to_string());
+            .ok_or_else(|| {
+                AppError::External("GitHub tree response did not include root sha".to_string())
+            });
     };
     let Some(tree) = value.get("tree").and_then(Value::as_array) else {
-        return Err("GitHub tree response did not include tree entries".to_string());
+        return Err(AppError::External(
+            "GitHub tree response did not include tree entries".to_string(),
+        ));
     };
     tree.iter()
         .find(|entry| {
@@ -477,7 +564,11 @@ pub(super) fn github_tree_sha_for_skill_path(
         })
         .and_then(|entry| entry.get("sha").and_then(Value::as_str))
         .map(str::to_string)
-        .ok_or_else(|| format!("GitHub tree response did not include Skill path: {path}"))
+        .ok_or_else(|| {
+            AppError::External(format!(
+                "GitHub tree response did not include Skill path: {path}"
+            ))
+        })
 }
 
 pub(super) fn skill_search_candidate_from_github_skill_path(
@@ -530,10 +621,10 @@ fn github_get_json(url: &str, context: &str) -> AppResult<Value> {
     }
     let response = request
         .call()
-        .map_err(|error| format!("{context} request failed: {error}"))?;
+        .map_err(|error| AppError::External(format!("{context} request failed: {error}")))?;
     response
         .into_json()
-        .map_err(|error| format!("{context} response was not JSON: {error}"))
+        .map_err(|error| AppError::External(format!("{context} response was not JSON: {error}")))
 }
 
 fn check_skill_remote_source(mut source: SkillRemoteSource) -> SkillRemoteSource {
@@ -583,7 +674,7 @@ fn check_skill_remote_source(mut source: SkillRemoteSource) -> SkillRemoteSource
         }
         Err(error) => {
             source.status = "error".to_string();
-            source.message = Some(error);
+            source.message = Some(error.to_string());
         }
     }
     source
@@ -687,18 +778,22 @@ fn parse_github_skill_location(
         .next()
         .unwrap_or_default()
         .trim_end_matches('/');
-    let path = trimmed
-        .strip_prefix("https://github.com/")
-        .ok_or_else(|| "skill acquire only supports https://github.com URLs".to_string())?;
+    let path = trimmed.strip_prefix("https://github.com/").ok_or_else(|| {
+        AppError::Validation("skill acquire only supports https://github.com URLs".to_string())
+    })?;
     let parts = path.split('/').collect::<Vec<_>>();
     if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
-        return Err("GitHub URL must include owner and repository".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include owner and repository".to_string(),
+        ));
     }
 
     let owner = parts[0];
     let repo = parts[1].trim_end_matches(".git");
     if repo.is_empty() {
-        return Err("GitHub URL must include repository name".to_string());
+        return Err(AppError::Validation(
+            "GitHub URL must include repository name".to_string(),
+        ));
     }
 
     let mut branch = branch_override.and_then(clean_non_empty_string);
@@ -748,15 +843,27 @@ fn clean_skill_subpath(value: &str) -> Option<String> {
     }
 }
 
-fn clone_github_skill(location: &GitHubSkillLocation, target: &Path) -> AppResult<()> {
+fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> AppResult<()> {
+    if cancellation.is_some_and(CancellationToken::is_cancelled) {
+        Err(AppError::Canceled("skill acquire cancelled".to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+fn clone_github_skill(
+    location: &GitHubSkillLocation,
+    target: &Path,
+    cancellation: Option<&CancellationToken>,
+) -> AppResult<()> {
     if target.exists() {
-        return Err(format!(
+        return Err(AppError::Conflict(format!(
             "skill acquire staging path already exists: {}",
             target.display()
-        ));
+        )));
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent)?;
     }
 
     let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -767,18 +874,24 @@ fn clone_github_skill(location: &GitHubSkillLocation, target: &Path) -> AppResul
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_timeout(
+    let output = crate::backend::host_process::run_program_with_cancellation(
         Path::new("git"),
         &command_args,
         None,
         Duration::from_secs(120),
         1024 * 1024,
         256 * 1024,
+        cancellation,
     )
-    .map_err(|error| format!("failed to run git clone: {error:?}"))?;
+    .map_err(|error| match error {
+        crate::backend::host_process::HostProcessError::Cancelled => {
+            AppError::Canceled("skill acquire cancelled".to_string())
+        }
+        error => AppError::Process(format!("failed to run git clone: {error:?}")),
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("git clone failed: {stderr}"));
+        return Err(AppError::Process(format!("git clone failed: {stderr}")));
     }
     Ok(())
 }
@@ -824,10 +937,10 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
         if candidate.join("SKILL.md").is_file() {
             return Ok(candidate);
         }
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "cloned path does not contain SKILL.md: {}",
             candidate.display()
-        ));
+        )));
     }
     if staging_dir.join("SKILL.md").is_file() {
         return Ok(staging_dir.to_path_buf());
@@ -835,7 +948,9 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
 
     let mut candidates = Vec::new();
     for entry in walkdir::WalkDir::new(staging_dir) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(|error| {
+            AppError::Storage(format!("failed to inspect cloned Skill tree: {error}"))
+        })?;
         if !entry.file_type().is_file() {
             continue;
         }
@@ -847,15 +962,17 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
     }
     match candidates.as_slice() {
         [candidate] => Ok(candidate.clone()),
-        [] => Err("cloned repository does not contain SKILL.md".to_string()),
-        many => Err(format!(
+        [] => Err(AppError::Validation(
+            "cloned repository does not contain SKILL.md".to_string(),
+        )),
+        many => Err(AppError::Validation(format!(
             "cloned repository contains multiple skills; pass --path: {}",
             many.iter()
                 .filter_map(|path| path.strip_prefix(staging_dir).ok())
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
-        )),
+        ))),
     }
 }
 

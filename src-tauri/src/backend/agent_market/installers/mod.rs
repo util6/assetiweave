@@ -91,6 +91,7 @@ pub(crate) fn ensure_staging_root(path: &Path) -> Result<(), InstallError> {
 }
 
 pub(crate) fn ensure_inside(root: &Path, candidate: &Path) -> Result<PathBuf, InstallError> {
+    let root_path = root.to_path_buf();
     let root = root
         .canonicalize()
         .map_err(|error| InstallError::Failed(error.to_string()))?;
@@ -99,7 +100,18 @@ pub(crate) fn ensure_inside(root: &Path, candidate: &Path) -> Result<PathBuf, In
             .canonicalize()
             .map_err(|error| InstallError::Failed(error.to_string()))?
     } else {
-        candidate.to_path_buf()
+        let relative = candidate.strip_prefix(&root_path).map_err(|_| {
+            InstallError::ArchiveInvalid("resolved path escapes staging root".to_string())
+        })?;
+        if relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(InstallError::ArchiveInvalid(
+                "resolved path escapes staging root".to_string(),
+            ));
+        }
+        root.join(relative)
     };
     if !candidate.starts_with(&root) {
         return Err(InstallError::ArchiveInvalid(
@@ -132,9 +144,19 @@ pub(crate) fn run_host_command(
         },
     )
     .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled { .. } => InstallError::Cancelled,
+        crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
         crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
-        other => InstallError::Spawn(format!("{other:?}")),
+        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+            InstallError::Spawn(format!("program not found: {}", program.display()))
+        }
+        crate::backend::host_process::HostProcessError::Spawn(reason)
+        | crate::backend::host_process::HostProcessError::Output(reason)
+        | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+            InstallError::Spawn(reason)
+        }
+        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+            InstallError::Spawn("process output exceeded configured limit".to_string())
+        }
     })
 }
 

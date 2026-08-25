@@ -13,6 +13,8 @@
     "source.remove",
     "source.scan",
     "profile.list",
+    "list_target_profile_descriptors",
+    "refresh_target_profile_descriptors",
     "memory.overview",
     "memory.dream.status",
     "memory.dream.preview",
@@ -121,10 +123,6 @@
     "preview_memory_recall",
     "run_memory_recall",
     "verify_memory",
-    "start_memory_task",
-    "get_memory_task",
-    "list_memory_tasks",
-    "cancel_memory_task",
     "list_memory_items",
     "get_memory_item",
     "create_memory_item",
@@ -137,7 +135,6 @@
     "update_skill_backup_settings",
     "backup_skill",
     "backup_skills",
-    "get_skill_backup_task",
     "search_skills",
     "acquire_skill",
     "list_skill_remote_sources",
@@ -223,11 +220,7 @@
     "update_conversation_adapter_package",
     "uninstall_conversation_adapter_package",
     "install_conversation_script",
-    "get_conversation_script_install_task",
-    "get_conversation_adapter_package_task",
     "sync_conversations",
-    "get_conversation_sync_task",
-    "list_conversation_sync_tasks",
     "list_conversation_sessions",
     "get_conversation_session",
     "export_conversation_session",
@@ -237,7 +230,6 @@
     "search_recent_incremental_conversation_records",
     "get_conversation_search_index_status",
     "start_conversation_search_index_rebuild",
-    "get_conversation_search_index_task",
     "export_web_record_session",
     "list_conversation_questions",
     "get_conversation_question",
@@ -706,6 +698,44 @@
       },
       "cli": "assetiweave-cli profile list",
       "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_target_profile_descriptors",
+      "canonical_method": "target.catalog.list",
+      "description": "List target provider descriptors",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "refresh_target_profile_descriptors",
+      "canonical_method": "target.catalog.refresh",
+      "description": "Reload target provider descriptors from the app-owned override directory",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
       "deprecated": false
     },
     {
@@ -6424,262 +6454,6 @@
     },
     {
       "contract_version": 3,
-      "method": "start_memory_task",
-      "canonical_method": "start_memory_task",
-      "description": "Start a desktop Memory background task",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": true,
-      "params_schema": {
-        "required": [
-          "kind"
-        ],
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "auto_dream",
-              "deep_recall",
-              "full_organize"
-            ],
-            "description": "Memory task kind"
-          },
-          "scope": {
-            "type": "object",
-            "properties": {
-              "app_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "source_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "project_path": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "session_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "default": {
-              "app_id": null,
-              "source_id": null,
-              "project_path": null,
-              "session_id": null
-            },
-            "description": "Memory scope"
-          },
-          "trigger": {
-            "type": "string",
-            "enum": [
-              "automatic",
-              "manual"
-            ],
-            "default": "manual",
-            "description": "Automatic or manual trigger"
-          },
-          "dry_run": {
-            "type": "boolean",
-            "default": false,
-            "description": "Preview without AI or writes",
-            "aliases": [
-              "dryRun"
-            ]
-          },
-          "recall": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "exact",
-                  "full"
-                ],
-                "default": "exact"
-              },
-              "scope": {
-                "type": "object",
-                "properties": {
-                  "app_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "source_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "project_path": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "session_id": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  }
-                },
-                "default": {
-                  "app_id": null,
-                  "source_id": null,
-                  "project_path": null,
-                  "session_id": null
-                }
-              },
-              "query": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "since": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "until": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "include_unavailable": {
-                "type": "boolean",
-                "default": false
-              },
-              "limit": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "uint",
-                "minimum": 0
-              },
-              "offset": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "format": "uint",
-                "minimum": 0
-              }
-            },
-            "description": "recall"
-          },
-          "synthesize": {
-            "type": "boolean",
-            "default": false,
-            "description": "synthesize"
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.5.2",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "get_memory_task",
-      "canonical_method": "get_memory_task",
-      "description": "Get one desktop Memory background task",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "task_id"
-        ],
-        "type": "object",
-        "properties": {
-          "task_id": {
-            "type": "string",
-            "description": "Memory task identifier",
-            "aliases": [
-              "taskId"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.5.2",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "list_memory_tasks",
-      "canonical_method": "list_memory_tasks",
-      "description": "List desktop Memory background tasks",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
-      },
-      "cli": null,
-      "since": "0.5.2",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "cancel_memory_task",
-      "canonical_method": "cancel_memory_task",
-      "description": "Cancel one desktop Memory background task",
-      "risk": "write",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "task_id"
-        ],
-        "type": "object",
-        "properties": {
-          "task_id": {
-            "type": "string",
-            "description": "Memory task identifier",
-            "aliases": [
-              "taskId"
-            ]
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.5.2",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
       "method": "list_memory_items",
       "canonical_method": "memory.item.list",
       "description": "List formal Memory items and review candidates with pagination",
@@ -7372,25 +7146,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "get_skill_backup_task",
-      "canonical_method": "get_skill_backup_task",
-      "description": "Get the current desktop Skill backup background task",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
       },
       "cli": null,
       "since": "0.1.0",
@@ -10062,14 +9817,6 @@
             "aliases": [
               "installed_only"
             ]
-          },
-          "includeIncompatible": {
-            "type": "boolean",
-            "default": true,
-            "description": "Include core-incompatible items",
-            "aliases": [
-              "include_incompatible"
-            ]
           }
         },
         "type": "object",
@@ -10280,6 +10027,7 @@
       "params_schema": {
         "required": [
           "agentId",
+          "action",
           "catalogVersion",
           "agentVersion",
           "distributionId",
@@ -10293,6 +10041,10 @@
             "aliases": [
               "agent_id"
             ]
+          },
+          "action": {
+            "type": "string",
+            "description": "install, update or reinstall"
           },
           "catalogVersion": {
             "type": "string",
@@ -11856,44 +11608,6 @@
     },
     {
       "contract_version": 3,
-      "method": "get_conversation_script_install_task",
-      "canonical_method": "get_conversation_script_install_task",
-      "description": "Get the current desktop conversation script install background task",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "get_conversation_adapter_package_task",
-      "canonical_method": "get_conversation_adapter_package_task",
-      "description": "Get the current desktop conversation adapter package background task",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
       "method": "sync_conversations",
       "canonical_method": "conversation.sync",
       "description": "Synchronize conversation sources",
@@ -11955,44 +11669,6 @@
         "type": "object",
         "additionalProperties": false,
         "required": []
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "get_conversation_sync_task",
-      "canonical_method": "get_conversation_sync_task",
-      "description": "Get the current desktop conversation sync background task",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "list_conversation_sync_tasks",
-      "canonical_method": "list_conversation_sync_tasks",
-      "description": "List desktop conversation sync background tasks by record kind",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
       },
       "cli": null,
       "since": "0.1.0",
@@ -12620,27 +12296,8 @@
       "contract_version": 3,
       "method": "start_conversation_search_index_rebuild",
       "canonical_method": "start_conversation_search_index_rebuild",
-      "description": "Start the desktop conversation search index rebuild task",
+      "description": "Rebuild the conversation search index",
       "risk": "write",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [],
-        "properties": {}
-      },
-      "cli": null,
-      "since": "0.1.0",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "get_conversation_search_index_task",
-      "canonical_method": "get_conversation_search_index_task",
-      "description": "Get the current desktop conversation search index rebuild task",
-      "risk": "read",
       "confirmation_required": false,
       "exposure": "app",
       "supports_dry_run": false,

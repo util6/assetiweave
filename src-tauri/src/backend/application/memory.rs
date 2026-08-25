@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
     pub(crate) fn list_memory_items(
@@ -14,7 +15,8 @@ impl AppService {
             .scope
             .as_ref()
             .map(MemoryScope::fingerprint)
-            .transpose()?;
+            .transpose()
+            .map_err(AppError::external)?;
         let filter = MemoryItemFilter {
             kinds: params.kinds,
             statuses: params.statuses,
@@ -26,18 +28,21 @@ impl AppService {
         };
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             let total_count =
-                crate::backend::store::count_memory_items_sqlx(&pool, &tenant_id, &filter).await?;
-            let items =
-                crate::backend::store::list_memory_items_sqlx(&pool, &tenant_id, &filter).await?;
-            Ok(MemoryItemPage {
+                crate::backend::store::count_memory_items_sqlx(&pool, &tenant_id, &filter)
+                    .await
+                    .map_err(AppError::external)?;
+            let items = crate::backend::store::list_memory_items_sqlx(&pool, &tenant_id, &filter)
+                .await
+                .map_err(AppError::external)?;
+            Ok::<MemoryItemPage, AppError>(MemoryItemPage {
                 total_count,
                 items,
                 limit,
                 offset,
             })
-        })
+        })?)
     }
 
     pub(crate) fn get_memory_item(
@@ -48,11 +53,12 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let item_id = params.item_id;
-        self.db.block_on(async move {
+        Ok(self.db.block_on(async move {
             crate::backend::store::load_memory_item_detail_sqlx(&pool, &tenant_id, &item_id)
-                .await?
-                .ok_or_else(|| format!("memory item {item_id} was not found"))
-        })
+                .await
+                .map_err(AppError::external)?
+                .ok_or_else(|| AppError::NotFound(format!("memory item {item_id} was not found")))
+        })?)
     }
 
     pub(crate) fn create_memory_item(
@@ -80,15 +86,18 @@ impl AppService {
         };
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::create_memory_item_sqlx(
-                &pool,
-                &tenant_id,
-                &draft,
-                &params.evidence_ids,
-            )
-            .await
-        })
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::create_memory_item_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &draft,
+                    &params.evidence_ids,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 
     pub(crate) fn update_memory_item(
@@ -102,11 +111,11 @@ impl AppService {
             detail.item.status,
             MemoryItemStatus::Archived | MemoryItemStatus::Rejected | MemoryItemStatus::Superseded
         ) {
-            return Err(format!(
+            return Err(AppError::Conflict(format!(
                 "memory item {} cannot be edited while status is {}",
                 detail.item.id,
                 memory_status_label(detail.item.status)
-            ));
+            )));
         }
         apply_memory_item_changes(
             &mut detail.item,
@@ -135,7 +144,9 @@ impl AppService {
             return Ok(detail);
         }
         if detail.item.status == MemoryItemStatus::Rejected {
-            return Err("rejected memory candidates cannot be archived".to_string());
+            return Err(AppError::Conflict(
+                "rejected memory candidates cannot be archived".to_string(),
+            ));
         }
         detail.item.status = MemoryItemStatus::Archived;
         self.persist_memory_item_update(detail.item, None, MemoryRevisionChangeKind::Status)
@@ -152,10 +163,10 @@ impl AppService {
             return Ok(detail);
         }
         if detail.item.status != MemoryItemStatus::Candidate {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "memory item {} is not a reviewable candidate",
                 detail.item.id
-            ));
+            )));
         }
         apply_memory_item_changes(
             &mut detail.item,
@@ -190,10 +201,10 @@ impl AppService {
             return Ok(detail);
         }
         if detail.item.status != MemoryItemStatus::Candidate {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "memory item {} is not a reviewable candidate",
                 detail.item.id
-            ));
+            )));
         }
         detail.item.status = MemoryItemStatus::Rejected;
         self.persist_memory_item_update(detail.item, None, MemoryRevisionChangeKind::Status)
@@ -204,10 +215,14 @@ impl AppService {
         params: MemoryVerifyParams,
     ) -> AppResult<MemoryVerifyResult> {
         if params.item_ids.is_empty() {
-            return Err("memory.verify requires at least one item id".to_string());
+            return Err(AppError::Validation(
+                "memory.verify requires at least one item id".to_string(),
+            ));
         }
         if params.item_ids.len() > 200 {
-            return Err("memory.verify accepts at most 200 item ids".to_string());
+            return Err(AppError::Validation(
+                "memory.verify accepts at most 200 item ids".to_string(),
+            ));
         }
         let mut unique_ids = Vec::new();
         let mut seen = HashSet::new();
@@ -217,12 +232,13 @@ impl AppService {
                 unique_ids.push(item_id);
             }
         }
-        let source_revision =
-            self.db
-                .block_on(crate::backend::store::load_memory_source_revision_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                ))?;
+        let source_revision = self
+            .db
+            .block_on(crate::backend::store::load_memory_source_revision_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+            ))
+            .map_err(AppError::external)?;
         let mut unchanged_revision = true;
         let mut results = Vec::with_capacity(unique_ids.len());
         for item_id in unique_ids {
@@ -234,13 +250,14 @@ impl AppService {
             unchanged_revision = false;
             let mut reason = None;
             for evidence in &detail.evidence {
-                let evidence_reason =
-                    self.db
-                        .block_on(crate::backend::store::memory_evidence_stale_reason_sqlx(
-                            self.db.pool(),
-                            self.tenant_id(),
-                            evidence,
-                        ))?;
+                let evidence_reason = self
+                    .db
+                    .block_on(crate::backend::store::memory_evidence_stale_reason_sqlx(
+                        self.db.pool(),
+                        self.tenant_id(),
+                        evidence,
+                    ))
+                    .map_err(AppError::external)?;
                 reason = stronger_stale_reason(reason, evidence_reason);
             }
             detail.item.source_revision = source_revision;
@@ -270,16 +287,19 @@ impl AppService {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let evidence_ids = evidence_ids.map(<[String]>::to_vec);
-        self.db.block_on(async move {
-            crate::backend::store::update_memory_item_sqlx(
-                &pool,
-                &tenant_id,
-                &item,
-                evidence_ids.as_deref(),
-                change_kind,
-            )
-            .await
-        })
+        Ok(self
+            .db
+            .block_on(async move {
+                crate::backend::store::update_memory_item_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &item,
+                    evidence_ids.as_deref(),
+                    change_kind,
+                )
+                .await
+            })
+            .map_err(AppError::external)?)
     }
 }
 
@@ -333,16 +353,24 @@ fn apply_memory_item_changes(
 
 fn validate_memory_content(title: &str, content_markdown: &str) -> AppResult<()> {
     if title.trim().is_empty() {
-        return Err("memory item title is required".to_string());
+        return Err(AppError::Validation(
+            "memory item title is required".to_string(),
+        ));
     }
     if title.chars().count() > 240 {
-        return Err("memory item title must not exceed 240 characters".to_string());
+        return Err(AppError::Validation(
+            "memory item title must not exceed 240 characters".to_string(),
+        ));
     }
     if content_markdown.trim().is_empty() {
-        return Err("memory item content is required".to_string());
+        return Err(AppError::Validation(
+            "memory item content is required".to_string(),
+        ));
     }
     if content_markdown.chars().count() > 65_536 {
-        return Err("memory item content must not exceed 65536 characters".to_string());
+        return Err(AppError::Validation(
+            "memory item content must not exceed 65536 characters".to_string(),
+        ));
     }
     Ok(())
 }
@@ -355,7 +383,9 @@ pub(super) fn validate_memory_scope(scope: &MemoryScope) -> AppResult<()> {
         ("session_id", scope.session_id.as_deref(), 512usize),
     ] {
         if value.is_some_and(|value| value.chars().count() > limit) {
-            return Err(format!("memory scope {name} exceeds {limit} characters"));
+            return Err(AppError::Validation(format!(
+                "memory scope {name} exceeds {limit} characters"
+            )));
         }
     }
     Ok(())
@@ -363,32 +393,40 @@ pub(super) fn validate_memory_scope(scope: &MemoryScope) -> AppResult<()> {
 
 fn validate_memory_item_id(item_id: &str) -> AppResult<()> {
     if item_id.trim().is_empty() {
-        return Err("memory item id is required".to_string());
+        return Err(AppError::Validation(
+            "memory item id is required".to_string(),
+        ));
     }
     if item_id.chars().count() > 128 {
-        return Err("memory item id must not exceed 128 characters".to_string());
+        return Err(AppError::Validation(
+            "memory item id must not exceed 128 characters".to_string(),
+        ));
     }
     Ok(())
 }
 
 fn validate_evidence_ids(evidence_ids: &[String]) -> AppResult<()> {
     if evidence_ids.len() > 256 {
-        return Err("memory item cannot reference more than 256 evidence snapshots".to_string());
+        return Err(AppError::Validation(
+            "memory item cannot reference more than 256 evidence snapshots".to_string(),
+        ));
     }
     if evidence_ids
         .iter()
         .any(|id| id.trim().is_empty() || id.chars().count() > 128)
     {
-        return Err("memory evidence ids must be non-empty and at most 128 characters".to_string());
+        return Err(AppError::Validation(
+            "memory evidence ids must be non-empty and at most 128 characters".to_string(),
+        ));
     }
     Ok(())
 }
 
 fn validate_filter_count(name: &str, count: usize) -> AppResult<()> {
     if count > 16 {
-        Err(format!(
+        Err(AppError::Validation(format!(
             "memory item {name} filter accepts at most 16 values"
-        ))
+        )))
     } else {
         Ok(())
     }
@@ -426,6 +464,13 @@ mod tests {
             ),
             Some(MemoryStaleReason::SourceUnavailable)
         );
+    }
+
+    #[test]
+    fn memory_validation_errors_keep_runtime_error_category() {
+        let error = validate_memory_content("", "content").expect_err("empty title rejected");
+
+        assert_eq!(error.code(), "validation_error");
     }
 
     #[test]
@@ -606,9 +651,10 @@ mod tests {
             db,
             db_path: db_path.clone(),
             context,
-            runtime: app_runtime,
+            runtime: app_runtime.clone(),
             agent_runtime_manager: runtime_manager,
             agent_runtime,
+            conversation_adapter_catalog: app_runtime.conversation_adapter_catalog(),
         };
         (service, db_path)
     }

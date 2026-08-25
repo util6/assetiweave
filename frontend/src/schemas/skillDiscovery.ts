@@ -70,6 +70,7 @@ export const skillAcquireResultSchema = z.strictObject({
   name: nonEmptyStringSchema,
   staging_path: nonEmptyStringSchema,
   skill_path: nonEmptyStringSchema,
+  staging_cleaned: z.boolean().optional(),
   security_notice: z.string().nullable().optional(),
   import: z
     .strictObject({

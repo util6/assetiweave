@@ -4,6 +4,16 @@ cancel_app_close_prompt
 complete_app_close
 list_source_assets
 start_conversation_card_translation
+cancel_memory_task
+get_conversation_adapter_package_task
+get_conversation_search_index_task
+get_conversation_script_install_task
+get_conversation_sync_task
+get_memory_task
+get_skill_backup_task
+list_conversation_sync_tasks
+list_memory_tasks
+start_memory_task
 get_ai_execution_task
 list_ai_execution_tasks
 cancel_ai_execution_task
@@ -19,3 +29,19 @@ start_agent_installation
 start_agent_update
 start_agent_reinstallation
 start_agent_uninstall
+# ResidentHost-only long-running catalog workflows; Engine keeps synchronous
+# canonical methods and these commands intentionally remain Tauri-only.
+start_source_scan
+get_source_scan_task
+list_source_scan_tasks
+cancel_source_scan
+start_batch_mount
+get_batch_mount_task
+list_batch_mount_tasks
+cancel_batch_mount
+# Remote Skill task controls use the resident Tauri TaskRuntime; the canonical
+# Engine method `skill.acquire` remains the CLI/API entrypoint.
+start_skill_acquire
+get_skill_acquire_task
+list_skill_acquire_tasks
+cancel_skill_acquire_task

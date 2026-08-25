@@ -50,7 +50,6 @@ import type {
   AssetGroupDetail,
   AssetGroupInput,
   AssetMountStatus,
-  ApplySkillGroupExclusiveMountResult,
   SkillGroupExclusiveMountPreview,
   Source,
   TargetProfile,
@@ -75,7 +74,7 @@ interface SkillGroupsPageProps {
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
   onReady?: () => void;
-  onApplyGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<ApplySkillGroupExclusiveMountResult>;
+  onApplyGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<void>;
   onPreviewGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<SkillGroupExclusiveMountPreview>;
   onRefreshMountStatus: () => Promise<void>;
   onRevealPath: (path: string) => void;

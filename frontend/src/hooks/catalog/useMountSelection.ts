@@ -1,10 +1,12 @@
-import { mountAssetMount, unmountAssetMount } from "../../services/catalog";
+import { mountAssetMount, startBatchMount, unmountAssetMount } from "../../services/catalog";
+import type { BatchMountTaskSnapshot } from "../../services/catalog";
 import type { AssetMountStatus } from "../../types";
 import { getMountDisplayState } from "../../utils/mountState";
 
 export function useMountSelection(
   assetMountStatuses: AssetMountStatus[],
   applyAssetMountStatus: (status: AssetMountStatus) => void,
+  startBackgroundBatchMount?: (params: Parameters<typeof startBatchMount>[0]) => Promise<BatchMountTaskSnapshot>,
 ) {
   async function toggleMountProfile(assetId: string, profileId: string) {
     const physicalStatus = assetMountStatuses.find(
@@ -44,10 +46,23 @@ export function useMountSelection(
     }
   }
 
-  async function setMountProfiles(assetIds: string[], profileId: string, enabled: boolean) {
+  async function setMountProfiles(
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ): Promise<BatchMountTaskSnapshot | null> {
+    if (isTauriRuntime() && startBackgroundBatchMount) {
+      return await startBackgroundBatchMount({
+        mode: "explicit",
+        assetIds,
+        profileId,
+        enabled,
+      });
+    }
     for (const assetId of assetIds) {
       await setMountProfile(assetId, profileId, enabled);
     }
+    return null;
   }
 
   return { setMountProfiles, toggleMountProfile };

@@ -14,10 +14,9 @@ use crate::backend::host_process::{
     resolve_host_executable, run_command_with_timeout, HostProcessError, HostProcessOutput,
 };
 
-use super::types::{
-    AgentCatalogEntry, AgentCommandDefinition, AgentDefinition, AgentDefinitionError, AgentId,
-    AgentProtocol, DeclaredAgentCapabilities,
-};
+use super::types::{AgentCatalogEntry, AgentDefinition, AgentDefinitionError, AgentId};
+#[cfg(test)]
+use super::types::{AgentCommandDefinition, AgentProtocol, DeclaredAgentCapabilities};
 
 #[derive(Debug)]
 pub(crate) struct AgentRegistry {
@@ -65,10 +64,12 @@ impl AgentRegistryHandle {
         self.snapshot.load()
     }
 
+    #[cfg(test)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
     }
 
+    #[cfg(test)]
     pub(crate) fn publish(&self, definitions: Vec<AgentDefinition>) -> Result<u64, String> {
         let next =
             AgentRegistry::from_definitions(definitions).map_err(|error| error.to_string())?;
@@ -373,6 +374,7 @@ impl AgentRegistry {
     }
 }
 
+#[cfg(test)]
 fn builtin_agent<const N: usize>(
     id: &str,
     display_name: &str,
@@ -419,13 +421,17 @@ fn map_host_process_error(kind: ProbeKind, error: HostProcessError) -> AgentProb
         HostProcessError::Timeout { .. } => AgentProbeError::Timeout {
             kind: kind.as_str(),
         },
-        HostProcessError::Spawn(_) => AgentProbeError::SpawnFailed {
+        HostProcessError::MissingProgram { .. } | HostProcessError::Spawn(_) => {
+            AgentProbeError::SpawnFailed {
+                kind: kind.as_str(),
+            }
+        }
+        HostProcessError::Output(_)
+        | HostProcessError::OutputLimitExceeded { .. }
+        | HostProcessError::Cleanup(_) => AgentProbeError::OutputFailed {
             kind: kind.as_str(),
         },
-        HostProcessError::Output(_) => AgentProbeError::OutputFailed {
-            kind: kind.as_str(),
-        },
-        HostProcessError::Cancelled { .. } => AgentProbeError::OutputFailed {
+        HostProcessError::Cancelled => AgentProbeError::OutputFailed {
             kind: kind.as_str(),
         },
     }

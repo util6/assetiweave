@@ -1,9 +1,9 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::{Asset, AssetFormat, AssetKind};
+use crate::backend::runtime::{AppError, AppResult};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
 use super::{
-    codec::{decode_enum, encode_enum},
+    codec::{decode_enum_app, encode_enum_app},
     sql,
 };
 
@@ -15,16 +15,16 @@ pub(crate) async fn load_assets_sqlx(
     let rows = if let Some(kind) = kind {
         sqlx::query(sql::LIST_ASSETS_BY_KIND)
             .bind(tenant_id)
-            .bind(encode_enum(kind)?)
+            .bind(encode_enum_app(kind)?)
             .fetch_all(pool)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AppError::External(error.to_string()))?
     } else {
         sqlx::query(sql::LIST_ASSETS)
             .bind(tenant_id)
             .fetch_all(pool)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(|error| AppError::External(error.to_string()))?
     };
     rows.iter().map(map_sqlx_asset_row).collect()
 }
@@ -39,7 +39,7 @@ pub(crate) async fn load_asset_sqlx(
         .bind(asset_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(|error| AppError::External(error.to_string()))?
         .as_ref()
         .map(map_sqlx_asset_row)
         .transpose()
@@ -47,28 +47,51 @@ pub(crate) async fn load_asset_sqlx(
 
 fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
     Ok(Asset {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        source_id: row.try_get(1).map_err(|error| error.to_string())?,
-        name: row.try_get(2).map_err(|error| error.to_string())?,
-        kind: decode_enum::<AssetKind>(
+        id: row
+            .try_get(0)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        source_id: row
+            .try_get(1)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        name: row
+            .try_get(2)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        kind: decode_enum_app::<AssetKind>(
             row.try_get::<String, _>(3)
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| AppError::External(error.to_string()))?,
         )?,
-        format: decode_enum::<AssetFormat>(
+        format: decode_enum_app::<AssetFormat>(
             row.try_get::<String, _>(4)
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| AppError::External(error.to_string()))?,
         )?,
-        relative_path: row.try_get(5).map_err(|error| error.to_string())?,
-        absolute_path: row.try_get(6).map_err(|error| error.to_string())?,
-        entry_file: row.try_get(7).map_err(|error| error.to_string())?,
-        description: row.try_get(8).map_err(|error| error.to_string())?,
-        content_hash: row.try_get(9).map_err(|error| error.to_string())?,
-        discovered_at: row.try_get(10).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(11).map_err(|error| error.to_string())?,
-        detector_id: row.try_get(12).map_err(|error| error.to_string())?,
+        relative_path: row
+            .try_get(5)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        absolute_path: row
+            .try_get(6)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        entry_file: row
+            .try_get(7)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        description: row
+            .try_get(8)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        content_hash: row
+            .try_get(9)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        discovered_at: row
+            .try_get(10)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        updated_at: row
+            .try_get(11)
+            .map_err(|error| AppError::External(error.to_string()))?,
+        detector_id: row
+            .try_get(12)
+            .map_err(|error| AppError::External(error.to_string()))?,
         detector_version: row
             .try_get::<i64, _>(13)
-            .map_err(|error| error.to_string())? as u32,
+            .map_err(|error| AppError::External(error.to_string()))?
+            as u32,
     })
 }
 
@@ -78,21 +101,24 @@ pub(crate) async fn replace_source_assets_sqlx(
     source_id: &str,
     assets: &[Asset],
 ) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| AppError::External(error.to_string()))?;
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
         .bind(tenant_id)
         .bind(source_id)
         .execute(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| AppError::External(error.to_string()))?;
     for asset in assets {
         sqlx::query(sql::INSERT_ASSET)
             .bind(tenant_id)
             .bind(&asset.id)
             .bind(&asset.source_id)
             .bind(&asset.name)
-            .bind(encode_enum(asset.kind)?)
-            .bind(encode_enum(asset.format)?)
+            .bind(encode_enum_app(asset.kind)?)
+            .bind(encode_enum_app(asset.format)?)
             .bind(&asset.relative_path)
             .bind(&asset.absolute_path)
             .bind(&asset.entry_file)
@@ -104,9 +130,11 @@ pub(crate) async fn replace_source_assets_sqlx(
             .bind(asset.detector_version)
             .execute(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| AppError::External(error.to_string()))?;
     }
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit()
+        .await
+        .map_err(|error| AppError::External(error.to_string()))?;
     Ok(())
 }
 
@@ -122,9 +150,9 @@ pub(crate) async fn update_asset_description_sqlx(
         .bind(&asset.id)
         .execute(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| AppError::External(error.to_string()))?;
     if result.rows_affected() == 0 {
-        return Err(format!("asset not found: {}", asset.id));
+        return Err(AppError::NotFound(format!("asset not found: {}", asset.id)));
     }
     Ok(())
 }

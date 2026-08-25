@@ -2,8 +2,8 @@ use super::schema::{
     build_conversation_schema, register_conversation_tokenizers, ConversationSearchSchema,
     JIEBA_TOKENIZER,
 };
-use crate::backend::dto::AppResult;
 use crate::backend::models::{conversation_id_fragment, conversation_id_search_term};
+use crate::backend::runtime::{AppError, AppResult};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -35,33 +35,8 @@ pub(super) struct ConversationSearchDocument {
 }
 
 impl ConversationSearchDocument {
-    #[cfg(test)]
-    pub(super) fn card(
-        record_kind: &str,
-        session_id: &str,
-        question_id: &str,
-        document_id: &str,
-        card_type: &str,
-        question_title: &str,
-        content: &str,
-    ) -> Self {
-        Self::scoped_card(
-            record_kind,
-            session_id,
-            question_id,
-            document_id,
-            card_type,
-            question_title,
-            content,
-            "",
-            "",
-            "",
-            "",
-            "",
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(super) fn scoped_card(
         record_kind: &str,
         session_id: &str,
@@ -205,10 +180,10 @@ pub(super) struct DiskConversationIndex {
 
 impl DiskConversationIndex {
     pub(super) fn create(path: &Path) -> AppResult<Self> {
-        std::fs::create_dir_all(path).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(path).map_err(AppError::external)?;
         let fields = build_conversation_schema();
         let index =
-            Index::create_in_dir(path, fields.schema.clone()).map_err(|error| error.to_string())?;
+            Index::create_in_dir(path, fields.schema.clone()).map_err(AppError::external)?;
         register_conversation_tokenizers(&index);
         Ok(Self { index, fields })
     }
@@ -222,7 +197,7 @@ impl DiskConversationIndex {
 
     pub(super) fn open(path: &Path) -> AppResult<Self> {
         let fields = build_conversation_schema();
-        let index = Index::open_in_dir(path).map_err(|error| error.to_string())?;
+        let index = Index::open_in_dir(path).map_err(AppError::external)?;
         register_conversation_tokenizers(&index);
         Ok(Self { index, fields })
     }
@@ -240,12 +215,8 @@ fn replace_documents(
     fields: &ConversationSearchSchema,
     documents: &[ConversationSearchDocument],
 ) -> AppResult<()> {
-    let mut writer = index
-        .writer(50_000_000)
-        .map_err(|error| error.to_string())?;
-    writer
-        .delete_all_documents()
-        .map_err(|error| error.to_string())?;
+    let mut writer = index.writer(50_000_000).map_err(AppError::external)?;
+    writer.delete_all_documents().map_err(AppError::external)?;
     for item in documents {
         let mut document = doc!(
                 fields.document_kind => item.document_kind.as_str(),
@@ -270,11 +241,9 @@ fn replace_documents(
         for fragment in &item.id_fragments {
             document.add_text(fields.id_fragment, fragment);
         }
-        writer
-            .add_document(document)
-            .map_err(|error| error.to_string())?;
+        writer.add_document(document).map_err(AppError::external)?;
     }
-    writer.commit().map_err(|error| error.to_string())?;
+    writer.commit().map_err(AppError::external)?;
     Ok(())
 }
 
@@ -285,12 +254,16 @@ fn search_cards(
 ) -> AppResult<ConversationSearchMatches> {
     let query = request.query.trim();
     if query.is_empty() {
-        return Err("conversation search query is required".to_string());
+        return Err(AppError::Validation(
+            "conversation search query is required".to_string(),
+        ));
     }
     if query.chars().count() > 512 {
-        return Err("conversation search query must not exceed 512 characters".to_string());
+        return Err(AppError::Validation(
+            "conversation search query must not exceed 512 characters".to_string(),
+        ));
     }
-    let reader = index.reader().map_err(|error| error.to_string())?;
+    let reader = index.reader().map_err(AppError::external)?;
     let searcher = reader.searcher();
     let mut content_type_counts = BTreeMap::new();
     let mut semantic_role_counts = BTreeMap::new();
@@ -305,11 +278,11 @@ fn search_cards(
             &facet_query,
             &TopDocs::with_limit(searcher.num_docs() as usize).order_by_score(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     for (_, address) in facet_docs {
         let document = searcher
             .doc::<TantivyDocument>(address)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         let document_kind = stored_text(&document, fields.document_kind)?;
         if document_kind == "question" {
             *content_type_counts
@@ -327,7 +300,7 @@ fn search_cards(
     let query = build_card_query(index, fields, query, request)?;
     let total_count = searcher
         .search(&query, &Count)
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     let top_docs = searcher
         .search(
             &query,
@@ -335,12 +308,12 @@ fn search_cards(
                 .and_offset(request.offset)
                 .order_by_score(),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     let mut hits = Vec::with_capacity(top_docs.len());
     for (score, address) in top_docs {
         let document = searcher
             .doc::<TantivyDocument>(address)
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         hits.push(ConversationSearchMatch {
             document_id: stored_text(&document, fields.document_id)?,
             session_id: stored_text(&document, fields.session_id)?,
@@ -462,7 +435,9 @@ fn build_card_query(
         ));
     }
     if lexical_branches.is_empty() {
-        return Err("conversation search query has no searchable terms".to_string());
+        return Err(AppError::Validation(
+            "conversation search query has no searchable terms".to_string(),
+        ));
     }
     let normalized = query.trim().to_lowercase();
     if (2..=15).contains(&normalized.chars().count()) {
@@ -478,10 +453,9 @@ fn build_card_query(
 
 fn tokens_for(index: &Index, tokenizer_name: &str, query: &str) -> AppResult<Vec<String>> {
     let mut tokens = BTreeSet::new();
-    let mut analyzer = index
-        .tokenizers()
-        .get(tokenizer_name)
-        .ok_or_else(|| format!("missing conversation tokenizer: {tokenizer_name}"))?;
+    let mut analyzer = index.tokenizers().get(tokenizer_name).ok_or_else(|| {
+        AppError::External(format!("missing conversation tokenizer: {tokenizer_name}"))
+    })?;
     let mut stream = analyzer.token_stream(query);
     while stream.advance() {
         let text = stream.token().text.trim().to_lowercase();
@@ -548,7 +522,11 @@ fn stored_text(document: &TantivyDocument, field: tantivy::schema::Field) -> App
         .get_first(field)
         .and_then(|value| value.as_str())
         .map(str::to_string)
-        .ok_or_else(|| "conversation search index document is missing a stored field".to_string())
+        .ok_or_else(|| {
+            AppError::External(
+                "conversation search index document is missing a stored field".to_string(),
+            )
+        })
 }
 
 fn score_to_integer(score: f32) -> usize {

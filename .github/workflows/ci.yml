@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Check Agent catalog metadata
+        run: pnpm agent-catalog:check
+
       - name: Type check
         run: pnpm typecheck
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Check module boundaries
         run: bash scripts/check-module-boundaries.sh
+
+      - name: Test module boundary guards
+        run: bash scripts/check-module-boundaries.test.sh
 
       - name: Check surface matrix
         run: bash scripts/gen-surface-matrix.sh --check

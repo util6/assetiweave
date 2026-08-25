@@ -40,6 +40,7 @@ pub(crate) struct AcpProtocol {
     shutdown_tx: Mutex<Option<oneshot::Sender<()>>>,
     actor: Mutex<Option<JoinHandle<()>>>,
     actor_abort: AbortHandle,
+    #[cfg(test)]
     alive: Arc<AtomicBool>,
     shutdown_requested: Arc<AtomicBool>,
 }
@@ -112,6 +113,7 @@ impl AcpProtocol {
                 shutdown_tx: Mutex::new(Some(shutdown_tx)),
                 actor: Mutex::new(Some(actor)),
                 actor_abort,
+                #[cfg(test)]
                 alive,
                 shutdown_requested,
             },
@@ -122,10 +124,12 @@ impl AcpProtocol {
         ))
     }
 
+    #[cfg(test)]
     pub(crate) fn initialize_response(&self) -> &InitializeResponse {
         &self.initialize
     }
 
+    #[cfg(test)]
     pub(crate) fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Acquire)
     }
@@ -135,9 +139,7 @@ impl AcpProtocol {
             .send_request(NewSessionRequest::new(cwd))
             .block_task()
             .await
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::NewSession,
-            })
+            .map_err(|error| request_failed(AcpOperation::NewSession, error))
     }
 
     pub(crate) async fn set_model(
@@ -153,9 +155,7 @@ impl AcpProtocol {
                 operation: AcpOperation::SetModel,
                 timeout,
             })?
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::SetModel,
-            })
+            .map_err(|error| request_failed(AcpOperation::SetModel, error))
     }
 
     pub(crate) async fn prompt(
@@ -172,9 +172,7 @@ impl AcpProtocol {
             ))
             .block_task()
             .await
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::Prompt,
-            })?;
+            .map_err(|error| request_failed(AcpOperation::Prompt, error))?;
         self.event_tx
             .send(AcpRuntimeEvent::TurnCompleted {
                 session_id: completion_session_id,
@@ -183,6 +181,7 @@ impl AcpProtocol {
             .await
             .map_err(|_| AcpError::RequestFailed {
                 operation: AcpOperation::Prompt,
+                message: "the local ACP event stream closed".to_string(),
             })?;
         Ok(response)
     }
@@ -192,7 +191,28 @@ impl AcpProtocol {
             .send_notification(CancelNotification::new(session_id))
             .map_err(|_| AcpError::RequestFailed {
                 operation: AcpOperation::Cancel,
+                message: "the ACP cancellation notification could not be sent".to_string(),
             })
+    }
+
+    /// Send cancellation while the transport is still writable and yield to
+    /// the SDK actor once so the notification write is observed before the
+    /// caller starts closing the session/process. The SDK notification API has
+    /// no response/flush future, so this is the bounded transport boundary we
+    /// can enforce without waiting indefinitely on a non-cooperative agent.
+    pub(crate) async fn cancel_and_wait(
+        &self,
+        session_id: SessionId,
+        timeout: Duration,
+    ) -> Result<(), AcpError> {
+        self.cancel(session_id)?;
+        tokio::time::timeout(timeout, tokio::task::yield_now())
+            .await
+            .map_err(|_| AcpError::RequestTimeout {
+                operation: AcpOperation::Cancel,
+                timeout,
+            })?;
+        Ok(())
     }
 
     pub(crate) async fn close_session(
@@ -213,9 +233,7 @@ impl AcpProtocol {
             .block_task()
             .await
             .map(Some)
-            .map_err(|_| AcpError::RequestFailed {
-                operation: AcpOperation::CloseSession,
-            })
+            .map_err(|error| request_failed(AcpOperation::CloseSession, error))
     }
 
     pub(crate) async fn shutdown(&self, timeout: Duration) -> Result<(), AcpError> {
@@ -325,6 +343,7 @@ pub(crate) enum AcpError {
     },
     RequestFailed {
         operation: AcpOperation,
+        message: String,
     },
     StateUnavailable(&'static str),
     ShutdownTimeout {
@@ -349,7 +368,9 @@ impl fmt::Display for AcpError {
                 "ACP {operation:?} timed out after {} milliseconds",
                 timeout.as_millis()
             ),
-            Self::RequestFailed { operation } => write!(formatter, "ACP {operation:?} failed"),
+            Self::RequestFailed { operation, message } => {
+                write!(formatter, "ACP {operation:?} failed: {message}")
+            }
             Self::StateUnavailable(state) => write!(formatter, "ACP {state} state is unavailable"),
             Self::ShutdownTimeout { timeout } => write!(
                 formatter,
@@ -361,6 +382,21 @@ impl fmt::Display for AcpError {
 }
 
 impl std::error::Error for AcpError {}
+
+fn request_failed(operation: AcpOperation, error: agent_client_protocol::Error) -> AcpError {
+    AcpError::RequestFailed {
+        operation,
+        message: sanitize_protocol_error_message(&error.message),
+    }
+}
+
+fn sanitize_protocol_error_message(message: &str) -> String {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return "the Agent returned an empty protocol error".to_string();
+    }
+    normalized.chars().take(500).collect()
+}
 
 fn build_initialize_request() -> InitializeRequest {
     InitializeRequest::new(ProtocolVersion::V1)

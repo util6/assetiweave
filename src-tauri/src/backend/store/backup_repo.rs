@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::runtime::{AppError, AppResult};
 use sqlx::SqlitePool;
 
 pub(crate) async fn vacuum_database_into_sqlx(
@@ -10,7 +10,7 @@ pub(crate) async fn vacuum_database_into_sqlx(
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| AppError::External(error.to_string()))
 }
 
 pub(crate) async fn checkpoint_database_wal_sqlx(pool: &SqlitePool) -> AppResult<()> {
@@ -18,5 +18,5 @@ pub(crate) async fn checkpoint_database_wal_sqlx(pool: &SqlitePool) -> AppResult
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| AppError::External(error.to_string()))
 }

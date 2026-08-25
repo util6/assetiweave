@@ -17,6 +17,7 @@ import type {
   ConversationSessionDetail,
   ConversationSessionListItem,
   ConversationSource,
+  AppErrorView,
 } from "../types";
 
 export interface ConversationSessionListParams {
@@ -287,7 +288,7 @@ export interface ConversationScriptInstallTaskSnapshot {
   started_at: string;
   finished_at: string | null;
   result: unknown | null;
-  error: string | null;
+  error: AppErrorView | null;
 }
 
 export interface ConversationSyncTaskSnapshot {
@@ -302,7 +303,7 @@ export interface ConversationSyncTaskSnapshot {
   started_at: string;
   finished_at: string | null;
   result: unknown | null;
-  error: string | null;
+  error: AppErrorView | null;
 }
 
 export type ConversationSyncMode = "incremental" | "full";
@@ -338,7 +339,7 @@ export interface ConversationSearchIndexTaskSnapshot {
   started_at: string;
   finished_at: string | null;
   result: unknown | null;
-  error: string | null;
+  error: AppErrorView | null;
 }
 
 export interface ConversationSyncSummaryCounts {

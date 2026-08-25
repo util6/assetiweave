@@ -3,7 +3,8 @@ use super::engine::{
     DiskConversationIndex,
 };
 use crate::backend::{
-    dto::{AppResult, ConversationSearchIndexRebuildReport},
+    dto::ConversationSearchIndexRebuildReport,
+    runtime::{AppError, AppResult},
     store::Database,
 };
 use chrono::{Duration, Utc};
@@ -60,7 +61,9 @@ fn rebuild_conversation_search_index_inner(
         )
         .await?;
         if !acquired {
-            return Err("conversation search index is already being rebuilt".to_string());
+            return Err(AppError::Conflict(
+                "conversation search index is already being rebuilt".to_string(),
+            ));
         }
         crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
             &pool,
@@ -69,7 +72,7 @@ fn rebuild_conversation_search_index_inner(
         .await
     })?;
 
-    let result = (|| {
+    let result: AppResult<ConversationSearchIndexRebuildReport> = (|| {
         let pool = database.pool().clone();
         let tenant_for_load = tenant_id.to_string();
         let rows = database.block_on(async move {
@@ -102,7 +105,7 @@ fn rebuild_conversation_search_index_inner(
             .collect::<Vec<_>>();
 
         let root = conversation_search_index_root(db_path, tenant_id);
-        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&root)?;
         set_private_directory_permissions(&root)?;
         let generation = format!("generation-{}", Uuid::new_v4());
         let temporary_path = root.join(format!("{generation}.tmp"));
@@ -111,10 +114,11 @@ fn rebuild_conversation_search_index_inner(
         set_private_directory_permissions(&temporary_path)?;
         index.replace_documents(&documents)?;
         drop(index);
-        fs::rename(&temporary_path, &generation_path).map_err(|error| error.to_string())?;
+        fs::rename(&temporary_path, &generation_path)?;
         let size_bytes = directory_size(&generation_path)?;
-        let document_count = i64::try_from(documents.len())
-            .map_err(|_| "conversation search document count overflow".to_string())?;
+        let document_count = i64::try_from(documents.len()).map_err(|_| {
+            AppError::External("conversation search document count overflow".to_string())
+        })?;
 
         let pool = database.pool().clone();
         let tenant_for_publish = tenant_id.to_string();
@@ -133,9 +137,9 @@ fn rebuild_conversation_search_index_inner(
         })?;
         if !published {
             let _ = fs::remove_dir_all(&generation_path);
-            return Err(
+            return Err(AppError::Conflict(
                 "conversation data changed during search index rebuild; rebuild again".to_string(),
-            );
+            ));
         }
 
         let report = ConversationSearchIndexRebuildReport {
@@ -153,7 +157,7 @@ fn rebuild_conversation_search_index_inner(
         let pool = database.pool().clone();
         let tenant = tenant_id.to_string();
         let owner = owner.clone();
-        let error = error.clone();
+        let error = error.to_string();
         let _ = database.block_on(async move {
             crate::backend::store::fail_conversation_search_index_rebuild_sqlx(
                 &pool, &tenant, &owner, &error,
@@ -262,8 +266,7 @@ fn set_private_directory_permissions(path: &Path) -> AppResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .map_err(|error| error.to_string())?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     }
     Ok(())
 }
@@ -271,12 +274,18 @@ fn set_private_directory_permissions(path: &Path) -> AppResult<()> {
 fn directory_size(path: &Path) -> AppResult<i64> {
     let mut size = 0_u64;
     for entry in walkdir::WalkDir::new(path) {
-        let entry = entry.map_err(|error| error.to_string())?;
+        let entry = entry.map_err(|error| AppError::External(error.to_string()))?;
         if entry.file_type().is_file() {
-            size = size.saturating_add(entry.metadata().map_err(|error| error.to_string())?.len());
+            size = size.saturating_add(
+                entry
+                    .metadata()
+                    .map_err(|error| AppError::External(error.to_string()))?
+                    .len(),
+            );
         }
     }
-    i64::try_from(size).map_err(|_| "conversation search index size overflow".to_string())
+    i64::try_from(size)
+        .map_err(|_| AppError::External("conversation search index size overflow".to_string()))
 }
 
 fn cleanup_old_generations(root: &Path, active_generation: &str) {

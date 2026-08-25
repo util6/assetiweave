@@ -1,4 +1,5 @@
 use super::prelude::*;
+use crate::backend::runtime::{AppError, AppResult};
 use sha2::{Digest, Sha256};
 
 const RECALL_EXACT_MAX_QUESTIONS: usize = 24;
@@ -12,29 +13,33 @@ impl AppService {
         params: MemoryRecallPreviewParams,
     ) -> AppResult<MemoryRecallPreview> {
         validate_recall_params(&params)?;
-        let source_revision =
-            self.db
-                .block_on(crate::backend::store::load_memory_source_revision_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                ))?;
+        let source_revision = self
+            .db
+            .block_on(crate::backend::store::load_memory_source_revision_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+            ))
+            .map_err(AppError::external)?;
         let (backend, total, refs) = match params.mode {
             MemoryRecallMode::Exact => self.exact_recall_refs(&params)?,
             MemoryRecallMode::Full => {
                 let limit = params.limit.unwrap_or(50).clamp(1, RECALL_FULL_PAGE_MAX);
                 let offset = params.offset.unwrap_or(0);
-                let (total, refs) = self.db.block_on(
-                    crate::backend::store::list_memory_recall_question_refs_sqlx(
-                        self.db.pool(),
-                        self.tenant_id(),
-                        &params.scope,
-                        params.since.as_deref(),
-                        params.until.as_deref(),
-                        params.include_unavailable,
-                        limit,
-                        offset,
-                    ),
-                )?;
+                let (total, refs) = self
+                    .db
+                    .block_on(
+                        crate::backend::store::list_memory_recall_question_refs_sqlx(
+                            self.db.pool(),
+                            self.tenant_id(),
+                            &params.scope,
+                            params.since.as_deref(),
+                            params.until.as_deref(),
+                            params.include_unavailable,
+                            limit,
+                            offset,
+                        ),
+                    )
+                    .map_err(AppError::external)?;
                 ("bounded_sql".to_string(), total, refs)
             }
         };
@@ -181,7 +186,9 @@ impl AppService {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| "exact Memory Recall requires a query".to_string())?;
+            .ok_or_else(|| {
+                AppError::Validation("exact Memory Recall requires a query".to_string())
+            })?;
         let limit = params
             .limit
             .unwrap_or(RECALL_EXACT_MAX_QUESTIONS)
@@ -276,10 +283,10 @@ impl AppService {
                 .into_iter()
                 .find(|detail| detail.question.id == reference.question_id)
                 .ok_or_else(|| {
-                    format!(
+                    AppError::NotFound(format!(
                         "web Recall question {} was not found",
                         reference.question_id
-                    )
+                    ))
                 }),
         }
     }
@@ -399,7 +406,9 @@ fn validate_recall_params(params: &MemoryRecallPreviewParams) -> AppResult<()> {
     if let Some(query) = &params.query {
         let count = query.trim().chars().count();
         if count > 512 {
-            return Err("Memory Recall query must not exceed 512 characters".to_string());
+            return Err(AppError::Validation(
+                "Memory Recall query must not exceed 512 characters".to_string(),
+            ));
         }
     }
     if params.mode == MemoryRecallMode::Exact
@@ -408,10 +417,14 @@ fn validate_recall_params(params: &MemoryRecallPreviewParams) -> AppResult<()> {
             .as_ref()
             .is_none_or(|value| value.trim().is_empty())
     {
-        return Err("exact Memory Recall requires a query".to_string());
+        return Err(AppError::Validation(
+            "exact Memory Recall requires a query".to_string(),
+        ));
     }
     if params.mode == MemoryRecallMode::Full && params.scope == MemoryScope::default() {
-        return Err("full Memory organize requires an explicit scope".to_string());
+        return Err(AppError::Validation(
+            "full Memory organize requires an explicit scope".to_string(),
+        ));
     }
     Ok(())
 }
@@ -437,17 +450,17 @@ mod tests {
             limit: None,
             offset: None,
         };
-        assert!(validate_recall_params(&exact)
-            .expect_err("exact query")
-            .contains("requires a query"));
+        let error = validate_recall_params(&exact).expect_err("exact query");
+        assert!(matches!(error, AppError::Validation(_)));
+        assert!(error.to_string().contains("requires a query"));
         let full = MemoryRecallPreviewParams {
             mode: MemoryRecallMode::Full,
             query: None,
             ..exact
         };
-        assert!(validate_recall_params(&full)
-            .expect_err("full scope")
-            .contains("explicit scope"));
+        let error = validate_recall_params(&full).expect_err("full scope");
+        assert!(matches!(error, AppError::Validation(_)));
+        assert!(error.to_string().contains("explicit scope"));
     }
 
     #[test]

@@ -1,10 +1,10 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::{AssetMount, DeploymentState, DeploymentStrategy};
+use crate::backend::runtime::AppResult;
 use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
 
 use super::{
-    codec::{decode_enum, encode_enum},
+    codec::{decode_enum_app, encode_enum_app},
     sql,
 };
 
@@ -17,8 +17,7 @@ pub(crate) async fn load_asset_mounts_sqlx(
         .bind(tenant_id)
         .bind(asset_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
 
     rows.iter().map(map_sqlx_mount).collect()
 }
@@ -32,8 +31,7 @@ pub(crate) async fn load_enabled_asset_mounts_sqlx(
         .bind(tenant_id)
         .bind(profile_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
 
     rows.iter().map(map_sqlx_mount).collect()
 }
@@ -45,8 +43,7 @@ pub(crate) async fn delete_orphan_asset_mounts_sqlx(
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNTS)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -81,7 +78,7 @@ pub(crate) async fn persist_verified_mount_sqlx(
     state: &DeploymentState,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     upsert_deployment_state_tx(&mut tx, tenant_id, state).await?;
     let mount = set_asset_mount_tx(
         &mut tx,
@@ -92,7 +89,7 @@ pub(crate) async fn persist_verified_mount_sqlx(
         strategy,
     )
     .await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(mount)
 }
 
@@ -104,11 +101,11 @@ pub(crate) async fn persist_verified_unmount_sqlx(
     target_path: &str,
     strategy: DeploymentStrategy,
 ) -> AppResult<AssetMount> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     delete_deployment_state_tx(&mut tx, tenant_id, profile_id, asset_id, target_path).await?;
     let mount =
         set_asset_mount_tx(&mut tx, tenant_id, asset_id, profile_id, false, strategy).await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(mount)
 }
 
@@ -123,8 +120,7 @@ async fn load_asset_mount_sqlx(
         .bind(asset_id)
         .bind(profile_id)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .map(|row| map_sqlx_mount(&row))
         .transpose()
 }
@@ -140,8 +136,7 @@ async fn load_asset_mount_tx(
         .bind(asset_id)
         .bind(profile_id)
         .fetch_optional(&mut **tx)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .map(|row| map_sqlx_mount(&row))
         .transpose()
 }
@@ -181,12 +176,11 @@ async fn upsert_asset_mount_sqlx(
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
-        .bind(encode_enum(mount.strategy)?)
+        .bind(encode_enum_app(mount.strategy)?)
         .bind(&mount.created_at)
         .bind(&mount.updated_at)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -200,12 +194,11 @@ async fn upsert_asset_mount_tx(
         .bind(&mount.asset_id)
         .bind(&mount.profile_id)
         .bind(if mount.enabled { 1_i64 } else { 0_i64 })
-        .bind(encode_enum(mount.strategy)?)
+        .bind(encode_enum_app(mount.strategy)?)
         .bind(&mount.created_at)
         .bind(&mount.updated_at)
         .execute(&mut **tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -219,13 +212,12 @@ async fn upsert_deployment_state_tx(
         .bind(&state.profile_id)
         .bind(&state.asset_id)
         .bind(&state.target_path)
-        .bind(encode_enum(state.strategy)?)
+        .bind(encode_enum_app(state.strategy)?)
         .bind(&state.source_hash)
         .bind(&state.deployed_at)
         .bind(&state.managed_by)
         .execute(&mut **tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -242,25 +234,18 @@ async fn delete_deployment_state_tx(
         .bind(asset_id)
         .bind(target_path)
         .execute(&mut **tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
 fn map_sqlx_mount(row: &SqliteRow) -> AppResult<AssetMount> {
     Ok(AssetMount {
-        asset_id: row.try_get(0).map_err(|error| error.to_string())?,
-        profile_id: row.try_get(1).map_err(|error| error.to_string())?,
-        enabled: row
-            .try_get::<i64, _>(2)
-            .map_err(|error| error.to_string())?
-            == 1,
-        strategy: decode_enum(
-            row.try_get::<String, _>(3)
-                .map_err(|error| error.to_string())?,
-        )?,
-        created_at: row.try_get(4).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(5).map_err(|error| error.to_string())?,
+        asset_id: row.try_get(0)?,
+        profile_id: row.try_get(1)?,
+        enabled: row.try_get::<i64, _>(2)? == 1,
+        strategy: decode_enum_app(row.try_get::<String, _>(3)?)?,
+        created_at: row.try_get(4)?,
+        updated_at: row.try_get(5)?,
     })
 }
 
@@ -425,14 +410,13 @@ mod tests {
         asset_id: &str,
         target_path: &str,
     ) -> AppResult<Option<String>> {
-        sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
+        Ok(sqlx::query_scalar(sql::GET_MANAGED_DEPLOYMENT)
             .bind(tenant_id)
             .bind(profile_id)
             .bind(asset_id)
             .bind(target_path)
             .fetch_optional(pool)
-            .await
-            .map_err(|error| error.to_string())
+            .await?)
     }
 
     async fn insert_asset(pool: &SqlitePool, asset_id: &str) -> AppResult<()> {
@@ -447,8 +431,7 @@ mod tests {
         .bind(asset_id)
         .bind("2026-06-18T00:00:00Z")
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         Ok(())
     }
 

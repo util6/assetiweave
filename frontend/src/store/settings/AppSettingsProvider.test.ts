@@ -13,7 +13,10 @@ import {
   defaultSettings,
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   fontFamilyCss,
+  assignAgentToAction,
+  assignModelToAgentActions,
   normalizeStoredSettings,
+  resolveAgentCapability,
   resolveFontFamilyCss,
 } from "./settingsSchema";
 
@@ -163,9 +166,9 @@ describe("AppSettingsProvider", () => {
         targetLanguage: "French\n\nCanadian",
       },
     });
-    expect(normalized.aiRuntime).toEqual({
-      cli: "gemini",
-      model: "gemini-2.5-pro",
+    expect(normalized.agentAssignments["translation.card"]).toEqual({
+      agentId: "gemini",
+      modelId: "gemini-2.5-pro",
     });
     expect(normalized.conversationTranslation).toEqual({
       promptTemplate: "Translate into {targetLanguage}: {content}",
@@ -221,7 +224,7 @@ describe("AppSettingsProvider", () => {
     expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).not.toContain("{targetLanguage}");
   });
 
-  it("migrates legacy translation runtime settings into the shared AI runtime", () => {
+  it("migrates legacy translation runtime settings into canonical action assignments", () => {
     const settings = normalizeStoredSettings({
       conversationTranslation: {
         cli: "gemini",
@@ -231,14 +234,30 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.aiRuntime).toEqual({
-      cli: "gemini",
-      model: "gemini-2.5-pro",
+    expect(settings.agentAssignments["translation.card"]).toEqual({
+      agentId: "gemini",
+      modelId: "gemini-2.5-pro",
     });
     expect(settings.conversationTranslation).toEqual({
       promptTemplate: defaultSettings.conversationTranslation.promptTemplate,
       provider: "cli",
       targetLanguage: "English",
+    });
+  });
+
+  it("keeps canonical action assignments explicitly unassigned", () => {
+    const settings = normalizeStoredSettings({
+      agentAssignments: {
+        "translation.card": { agentId: "opencode", modelId: "model/a" },
+      },
+    });
+
+    expect(settings.agentAssignments).toEqual({
+      "translation.card": { agentId: "opencode", modelId: "model/a" },
+    });
+    expect(resolveAgentCapability(settings, "memory")).toEqual({
+      agentId: "",
+      model: "",
     });
   });
 
@@ -249,16 +268,59 @@ describe("AppSettingsProvider", () => {
       agentCapabilityAssignments: { memory: "codex" },
     });
 
-    expect(settings.agentCapabilityAssignments).toEqual({
-      cardTranslation: "gemini",
-      memory: "codex",
-      "memory.extraction": "codex",
-      "memory.dream": "codex",
-      promptOptimization: "gemini",
+    expect(settings.agentAssignments).toEqual({
+      "translation.card": { agentId: "gemini", modelId: "gemini-2.5-pro" },
+      "memory.extraction": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "memory.dream": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "prompt.optimization": { agentId: "gemini", modelId: "gemini-2.5-pro" },
     });
-    expect(settings.agentModels).toEqual({
-      codex: "openai/gpt-5-codex",
-      gemini: "gemini-2.5-pro",
+    expect(settings).not.toHaveProperty("agentCapabilityAssignments");
+    expect(settings).not.toHaveProperty("agentModels");
+    expect(settings).not.toHaveProperty("aiRuntime");
+  });
+
+  it("updates canonical action models when the Agent model changes", () => {
+    const assignments = assignModelToAgentActions({
+      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
+      "memory.extraction": { agentId: "opencode", modelId: null },
+      "memory.dream": { agentId: "codex", modelId: "openai/gpt-5" },
+      "prompt.optimization": { agentId: "opencode", modelId: "opencode/expired" },
+    }, "opencode", "opencode/hy3-free");
+
+    expect(assignments["translation.card"]?.modelId).toBe("opencode/hy3-free");
+    expect(assignments["memory.extraction"]?.modelId).toBe("opencode/hy3-free");
+    expect(assignments["prompt.optimization"]?.modelId).toBe("opencode/hy3-free");
+    expect(assignments["memory.dream"]).toEqual({
+      agentId: "codex",
+      modelId: "openai/gpt-5",
+    });
+  });
+
+  it("replaces an action Agent and its model atomically", () => {
+    const assignments = assignAgentToAction({
+      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
+      "memory.extraction": { agentId: "opencode", modelId: null },
+      "memory.dream": { agentId: "opencode", modelId: null },
+      "prompt.optimization": { agentId: "opencode", modelId: null },
+    }, "translation.card", "codex", "openai/gpt-5");
+
+    expect(assignments["translation.card"]).toEqual({
+      agentId: "codex",
+      modelId: "openai/gpt-5",
+    });
+  });
+
+  it("resolves execution from the canonical action assignment", () => {
+    const settings = normalizeStoredSettings({
+      agentAssignments: {
+        "translation.card": { agentId: "opencode", modelId: "opencode/hy3-free" },
+      },
+      agentModels: { opencode: "opencode/expired" },
+    });
+
+    expect(resolveAgentCapability(settings, "cardTranslation")).toEqual({
+      agentId: "opencode",
+      model: "opencode/hy3-free",
     });
   });
 

@@ -311,6 +311,9 @@ function hashDirectory(directory) {
 function listFiles(directory) {
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if ([".DS_Store", "Thumbs.db", "desktop.ini"].includes(entry.name)) {
+      continue;
+    }
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       throw new Error(`package contains a symbolic link: ${entryPath}`);

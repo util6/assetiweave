@@ -36,7 +36,7 @@ impl DomainEventConsumer for TestConsumer {
             std::thread::sleep(self.delay);
         }
         if self.fail {
-            Err(AppError::Legacy("test consumer failure".to_string()))
+            Err(AppError::External("test consumer failure".to_string()))
         } else {
             Ok(())
         }

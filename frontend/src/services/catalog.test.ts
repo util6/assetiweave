@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
-import { backupSkills, getNavigationModel, startSkillBackupTask } from "./catalog";
+import { backupSkills, getNavigationModel, scanSources, startSkillBackupTask } from "./catalog";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const openMock = vi.hoisted(() => vi.fn());
@@ -94,6 +94,13 @@ describe("catalog services", () => {
       "memory.recall",
       "memory.library",
     ]);
+  });
+
+  it("does not expose a synchronous desktop scan fallback", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+
+    await expect(scanSources()).rejects.toThrow("Desktop source scans must use startSourceScan");
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });
 

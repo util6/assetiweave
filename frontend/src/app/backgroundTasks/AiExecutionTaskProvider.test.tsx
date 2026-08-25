@@ -178,5 +178,6 @@ function taskSnapshot(
     finished_at: ["succeeded", "failed", "cancelled"].includes(state) ? updatedAt : null,
     result: state === "succeeded" ? { text: "translated" } : null,
     error: null,
+    cleanup: null,
   };
 }

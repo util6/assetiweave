@@ -1,15 +1,15 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::{
     Asset, AssetGroup, AssetGroupDetail, AssetGroupMemberOrigin, AssetGroupResolvedMember,
     AssetGroupRules, AssetKind,
 };
+use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    codec::{decode_enum, decode_json, encode_enum, encode_json},
+    codec::{decode_enum_app, decode_json_app, encode_enum_app, encode_json_app},
     sql,
 };
 
@@ -52,9 +52,11 @@ pub(crate) async fn load_skill_group_detail_sqlx(
 ) -> AppResult<AssetGroupDetail> {
     let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
-        .ok_or_else(|| format!("asset group not found: {group_id}"))?;
+        .ok_or_else(|| AppError::NotFound(format!("asset group not found: {group_id}")))?;
     if group.asset_kind != AssetKind::Skill {
-        return Err("only skill groups are supported".to_string());
+        return Err(AppError::Validation(
+            "only skill groups are supported".to_string(),
+        ));
     }
     let manual_members = load_group_members_sqlx(pool, tenant_id).await?;
     build_group_detail(group, assets, &manual_members)
@@ -66,7 +68,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
     group: &AssetGroup,
 ) -> AppResult<()> {
     validate_asset_group(group)?;
-    let icon_svg = group.icon_svg.as_ref().map(encode_json).transpose()?;
+    let icon_svg = group.icon_svg.as_ref().map(encode_json_app).transpose()?;
     sqlx::query(sql::UPSERT_ASSET_GROUP)
         .bind(tenant_id)
         .bind(&group.id)
@@ -79,7 +81,7 @@ pub(crate) async fn upsert_asset_group_sqlx(
                 .filter(|value| !value.is_empty()),
         )
         .bind(group.color.trim())
-        .bind(encode_enum(group.asset_kind)?)
+        .bind(encode_enum_app(group.asset_kind)?)
         .bind(
             group
                 .display_icon
@@ -90,12 +92,11 @@ pub(crate) async fn upsert_asset_group_sqlx(
         .bind(icon_svg)
         .bind(if group.enabled { 1 } else { 0 })
         .bind(group.sort_order)
-        .bind(encode_json(&normalize_rules(&group.rules))?)
+        .bind(encode_json_app(&normalize_rules(&group.rules))?)
         .bind(&group.created_at)
         .bind(&group.updated_at)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
@@ -104,20 +105,18 @@ pub(crate) async fn delete_asset_group_sqlx(
     tenant_id: &str,
     group_id: &str,
 ) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     sqlx::query(sql::DELETE_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     sqlx::query(sql::DELETE_ASSET_GROUP)
         .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -130,9 +129,11 @@ pub(crate) async fn replace_asset_group_members_sqlx(
 ) -> AppResult<()> {
     let group = load_asset_group_sqlx(pool, tenant_id, group_id)
         .await?
-        .ok_or_else(|| format!("asset group not found: {group_id}"))?;
+        .ok_or_else(|| AppError::NotFound(format!("asset group not found: {group_id}")))?;
     if group.asset_kind != AssetKind::Skill {
-        return Err("only skill groups are supported".to_string());
+        return Err(AppError::Validation(
+            "only skill groups are supported".to_string(),
+        ));
     }
 
     let skill_asset_ids = assets
@@ -150,19 +151,18 @@ pub(crate) async fn replace_asset_group_members_sqlx(
         .iter()
         .find(|asset_id| !skill_asset_ids.contains(**asset_id))
     {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "asset is not a scanned skill: {missing_or_invalid}"
-        ));
+        )));
     }
 
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     sqlx::query(sql::DELETE_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .bind(group_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     for asset_id in deduped {
         sqlx::query(sql::INSERT_ASSET_GROUP_MEMBER)
             .bind(tenant_id)
@@ -170,10 +170,9 @@ pub(crate) async fn replace_asset_group_members_sqlx(
             .bind(asset_id)
             .bind(&now)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     }
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -184,20 +183,25 @@ pub(crate) async fn delete_orphan_asset_group_members_sqlx(
     sqlx::query(sql::DELETE_ORPHAN_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
 pub(crate) fn validate_asset_group(group: &AssetGroup) -> AppResult<()> {
     if group.name.trim().is_empty() {
-        return Err("asset group name is required".to_string());
+        return Err(AppError::Validation(
+            "asset group name is required".to_string(),
+        ));
     }
     if group.asset_kind != AssetKind::Skill {
-        return Err("only skill groups are supported".to_string());
+        return Err(AppError::Validation(
+            "only skill groups are supported".to_string(),
+        ));
     }
     if group.color.trim().is_empty() {
-        return Err("asset group color is required".to_string());
+        return Err(AppError::Validation(
+            "asset group color is required".to_string(),
+        ));
     }
     build_glob_set(&group.rules.relative_path_globs).map(|_| ())
 }
@@ -256,10 +260,9 @@ async fn load_asset_groups_by_kind_sqlx(
 ) -> AppResult<Vec<AssetGroup>> {
     let rows = sqlx::query(sql::LIST_ASSET_GROUPS_BY_KIND)
         .bind(tenant_id)
-        .bind(encode_enum(kind)?)
+        .bind(encode_enum_app(kind)?)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     rows.iter().map(map_sqlx_asset_group_row).collect()
 }
 
@@ -272,8 +275,7 @@ async fn load_asset_group_sqlx(
         .bind(tenant_id)
         .bind(group_id)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     row.as_ref().map(map_sqlx_asset_group_row).transpose()
 }
 
@@ -284,16 +286,11 @@ async fn load_group_members_sqlx(
     let rows = sqlx::query(sql::LIST_ASSET_GROUP_MEMBERS)
         .bind(tenant_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     let mut grouped = BTreeMap::new();
     for row in rows {
-        let group_id = row
-            .try_get::<String, _>(0)
-            .map_err(|error| error.to_string())?;
-        let asset_id = row
-            .try_get::<String, _>(1)
-            .map_err(|error| error.to_string())?;
+        let group_id = row.try_get::<String, _>(0)?;
+        let asset_id = row.try_get::<String, _>(1)?;
         grouped
             .entry(group_id)
             .or_insert_with(BTreeSet::new)
@@ -303,30 +300,23 @@ async fn load_group_members_sqlx(
 }
 
 fn map_sqlx_asset_group_row(row: &SqliteRow) -> AppResult<AssetGroup> {
-    let rules_payload: String = row.try_get(9).map_err(|error| error.to_string())?;
+    let rules_payload: String = row.try_get(9)?;
     Ok(AssetGroup {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        name: row.try_get(1).map_err(|error| error.to_string())?,
-        description: row.try_get(2).map_err(|error| error.to_string())?,
-        color: row.try_get(3).map_err(|error| error.to_string())?,
-        asset_kind: decode_enum(
-            row.try_get::<String, _>(4)
-                .map_err(|error| error.to_string())?,
-        )?,
-        display_icon: row.try_get(5).map_err(|error| error.to_string())?,
+        id: row.try_get(0)?,
+        name: row.try_get(1)?,
+        description: row.try_get(2)?,
+        color: row.try_get(3)?,
+        asset_kind: decode_enum_app(row.try_get::<String, _>(4)?)?,
+        display_icon: row.try_get(5)?,
         icon_svg: row
-            .try_get::<Option<String>, _>(6)
-            .map_err(|error| error.to_string())?
-            .map(decode_json)
+            .try_get::<Option<String>, _>(6)?
+            .map(decode_json_app)
             .transpose()?,
-        enabled: row
-            .try_get::<i64, _>(7)
-            .map_err(|error| error.to_string())?
-            == 1,
-        sort_order: row.try_get(8).map_err(|error| error.to_string())?,
-        rules: decode_json(rules_payload)?,
-        created_at: row.try_get(10).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(11).map_err(|error| error.to_string())?,
+        enabled: row.try_get::<i64, _>(7)? == 1,
+        sort_order: row.try_get(8)?,
+        rules: decode_json_app(rules_payload)?,
+        created_at: row.try_get(10)?,
+        updated_at: row.try_get(11)?,
     })
 }
 
@@ -371,9 +361,12 @@ fn build_glob_set(patterns: &[String]) -> AppResult<Option<GlobSet>> {
 
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        builder.add(Glob::new(&pattern).map_err(|error| error.to_string())?);
+        builder.add(Glob::new(&pattern).map_err(|error| AppError::Validation(error.to_string()))?);
     }
-    builder.build().map(Some).map_err(|error| error.to_string())
+    builder
+        .build()
+        .map(Some)
+        .map_err(|error| AppError::Validation(error.to_string()))
 }
 
 fn normalize_string_list(values: &[String]) -> Vec<String> {
@@ -526,8 +519,7 @@ mod tests {
                     .bind("missing-skill")
                     .bind("2026-01-01T00:00:00Z")
                     .execute(database.pool())
-                    .await
-                    .map_err(|error| error.to_string())?;
+                    .await?;
                 delete_orphan_asset_group_members_sqlx(database.pool(), "default").await?;
                 let cleaned_detail =
                     load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)

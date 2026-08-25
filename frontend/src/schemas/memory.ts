@@ -121,7 +121,12 @@ export const memoryTaskSnapshotSchema: z.ZodType<MemoryTaskSnapshot> = z.object(
   started_at: z.string().min(1),
   finished_at: z.string().nullable(),
   result: z.unknown().nullable(),
-  error: z.string().nullable(),
+  error: z.object({
+    code: z.string(),
+    message: z.string(),
+    retryable: z.boolean(),
+    details: z.unknown().optional(),
+  }).nullable(),
 });
 
 export const memoryItemSchema = z.object({

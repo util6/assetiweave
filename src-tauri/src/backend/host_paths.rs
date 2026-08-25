@@ -1,4 +1,4 @@
-use crate::backend::dto::AppResult;
+use crate::backend::runtime::AppResult;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,13 +38,16 @@ pub(crate) struct HostDirectories {
 
 impl HostDirectories {
     pub(crate) fn current() -> AppResult<Self> {
-        let home = dirs::home_dir().ok_or("无法确定用户主目录")?;
+        let home = dirs::home_dir().ok_or_else(|| {
+            crate::backend::runtime::AppError::NotFound("无法确定用户主目录".to_string())
+        })?;
         Ok(Self {
             config: dirs::config_dir().unwrap_or_else(|| home.clone()),
             local_data: dirs::data_local_dir().unwrap_or_else(|| home.clone()),
             data: dirs::data_dir().unwrap_or_else(|| home.clone()),
             cache: dirs::cache_dir().unwrap_or_else(|| home.clone()),
-            workspace: std::env::current_dir().map_err(|error| error.to_string())?,
+            workspace: std::env::current_dir()
+                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
             home,
         })
     }
@@ -187,7 +190,9 @@ impl HostPathResolver {
     fn parse(&self, raw: &str) -> AppResult<PathSpec> {
         let raw = raw.trim();
         if raw.is_empty() {
-            return Err("path must not be empty".to_string());
+            return Err(crate::backend::runtime::AppError::Validation(
+                "path must not be empty".to_string(),
+            ));
         }
 
         for (prefix, anchor) in [
@@ -441,16 +446,19 @@ mod tests {
         let resolver = macos_resolver();
 
         let stored = resolver
-            .normalize_input("specs/requirements.md")
+            .normalize_input("agent-docs/feature-plans/runtime-extension-refactor/00-overview.md")
             .expect("normalize workspace path");
 
-        assert_eq!(stored.as_str(), "specs/requirements.md");
+        assert_eq!(
+            stored.as_str(),
+            "agent-docs/feature-plans/runtime-extension-refactor/00-overview.md"
+        );
         assert_eq!(
             resolver
                 .resolve(&stored)
                 .expect("resolve workspace path")
                 .as_path(),
-            Path::new("/workspace/assetiweave/specs/requirements.md")
+            Path::new("/workspace/assetiweave/agent-docs/feature-plans/runtime-extension-refactor/00-overview.md")
         );
     }
 

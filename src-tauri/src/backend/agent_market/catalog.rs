@@ -1,6 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
-use chrono::DateTime;
+use chrono::{DateTime, NaiveDate};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -10,6 +10,44 @@ const CATALOG_SCHEMA: &str = "assetiweave.agent-market/v1";
 const MAX_CATALOG_BYTES: usize = 5 * 1024 * 1024;
 const BUNDLED_CATALOG: &str =
     include_str!("../../../../builtin-assets/agent-market/catalog-v1.json");
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct CatalogRevision {
+    pub(crate) date: NaiveDate,
+    pub(crate) sequence: u32,
+}
+
+impl CatalogRevision {
+    pub(crate) fn parse(value: &str) -> Result<Self, CatalogError> {
+        let mut parts = value.split('.');
+        let year = parts
+            .next()
+            .and_then(|part| part.parse::<i32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion year is invalid".to_string()))?;
+        let month = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion month is invalid".to_string()))?;
+        let day = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion day is invalid".to_string()))?;
+        let sequence = parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .ok_or_else(|| {
+                CatalogError::Invalid("catalogVersion sequence is invalid".to_string())
+            })?;
+        if parts.next().is_some() {
+            return Err(CatalogError::Invalid(
+                "catalogVersion must use YYYY.MM.DD.N".to_string(),
+            ));
+        }
+        let date = NaiveDate::from_ymd_opt(year, month, day)
+            .ok_or_else(|| CatalogError::Invalid("catalogVersion date is invalid".to_string()))?;
+        Ok(Self { date, sequence })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CatalogError {
@@ -57,6 +95,10 @@ impl CatalogService {
         Arc::clone(&self.catalog)
     }
 
+    pub(crate) fn revision(&self) -> Result<CatalogRevision, CatalogError> {
+        CatalogRevision::parse(&self.catalog.catalog_version)
+    }
+
     pub(crate) fn item(&self, agent_id: &str) -> Option<&CatalogItem> {
         self.catalog.items.iter().find(|item| item.id == agent_id)
     }
@@ -68,19 +110,27 @@ impl CatalogService {
         action: &str,
     ) -> String {
         let mut hasher = Sha256::new();
-        hasher.update(self.catalog.catalog_version.as_bytes());
-        hasher.update([0]);
         hasher.update(item.id.as_bytes());
         hasher.update([0]);
-        hasher.update(item.version.as_bytes());
-        hasher.update([0]);
-        hasher.update(distribution_id.as_bytes());
+        if let Some(distribution) = item
+            .distributions
+            .iter()
+            .find(|distribution| distribution.id() == distribution_id)
+        {
+            hasher.update(
+                serde_json::to_vec(distribution)
+                    .expect("validated catalog distribution must serialize"),
+            );
+        } else {
+            hasher.update(distribution_id.as_bytes());
+        }
         hasher.update([0]);
         hasher.update(action.as_bytes());
         hex_lower(&hasher.finalize())[..24].to_string()
     }
 }
 
+#[cfg(test)]
 pub(crate) fn bundled_catalog() -> Result<Catalog, CatalogError> {
     parse_catalog(BUNDLED_CATALOG.as_bytes())
 }
@@ -109,6 +159,7 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
             "catalog version must be a fixed non-empty value".to_string(),
         ));
     }
+    CatalogRevision::parse(&catalog.catalog_version)?;
     DateTime::parse_from_rfc3339(&catalog.generated_at)
         .map_err(|_| CatalogError::Invalid("generatedAt must be RFC3339".to_string()))?;
     let mut item_ids = HashSet::new();
@@ -120,14 +171,6 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
             )));
         }
         item.validate_basic().map_err(CatalogError::Invalid)?;
-        if item.core_compatibility.min.trim().is_empty()
-            || item.core_compatibility.max_exclusive.trim().is_empty()
-        {
-            return Err(CatalogError::Invalid(format!(
-                "missing core compatibility for {}",
-                item.id
-            )));
-        }
         if item.verification.evidence_id.is_none()
             && matches!(
                 item.verification.status,
@@ -184,6 +227,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::agent_market::types::AgentMarketProtocol;
 
     #[test]
     fn bundled_catalog_contains_all_initial_agents_without_execution_commands() {
@@ -196,16 +240,25 @@ mod tests {
         for id in [
             "opencode",
             "gemini",
-            "kiro",
             "antigravity",
             "claude",
             "codex",
-            "hermes",
             "pi",
             "qoder",
         ] {
             assert!(ids.contains(id), "missing {id}");
         }
+        let antigravity = catalog
+            .items
+            .iter()
+            .find(|item| item.id == "antigravity")
+            .expect("Antigravity catalog item");
+        assert_eq!(antigravity.protocol, AgentMarketProtocol::Native);
+        assert!(matches!(
+            antigravity.distributions.as_slice(),
+            [Distribution::System { command_candidates, .. }]
+                if command_candidates == &["agy".to_string()]
+        ));
         let json = serde_json::to_string(&catalog).expect("catalog json");
         assert!(!json.contains("npx -y"));
         assert!(!json.contains("latest"));
@@ -226,9 +279,64 @@ mod tests {
         let service = CatalogService::bundled().expect("bundled catalog");
         let item = service.item("opencode").expect("OpenCode item");
         let first = service.preview_token(item, item.distributions[0].id(), "install");
-        let second =
-            service.preview_token(item, item.distributions.last().unwrap().id(), "install");
+        let second = service.preview_token(
+            item,
+            &format!("{}-alternate", item.distributions[0].id()),
+            "install",
+        );
         assert_ne!(first, second);
         assert_eq!(first.len(), 24);
+    }
+
+    #[test]
+    fn preview_token_is_bound_to_exact_lifecycle_action() {
+        let service = CatalogService::bundled().expect("bundled catalog");
+        let item = service.item("opencode").expect("OpenCode item");
+        let install = service.preview_token(item, item.distributions[0].id(), "install");
+        let update = service.preview_token(item, item.distributions[0].id(), "update");
+        let reinstall = service.preview_token(item, item.distributions[0].id(), "reinstall");
+
+        assert_ne!(install, update);
+        assert_ne!(update, reinstall);
+        assert_ne!(install, reinstall);
+    }
+
+    #[test]
+    fn preview_token_ignores_observational_catalog_and_agent_versions() {
+        let catalog = bundled_catalog().expect("bundled catalog");
+        let service = CatalogService::from_catalog(catalog.clone());
+        let item = service.item("opencode").expect("OpenCode item");
+        let distribution_id = item.distributions[0].id().to_string();
+        let token = service.preview_token(item, &distribution_id, "install");
+
+        let mut changed = catalog;
+        changed.catalog_version = "2099.01.01.1".to_string();
+        changed.items[0].version = "999.0.0".to_string();
+        let changed_service = CatalogService::from_catalog(changed);
+        let changed_item = changed_service.item("opencode").expect("OpenCode item");
+
+        assert_eq!(
+            token,
+            changed_service.preview_token(changed_item, &distribution_id, "install")
+        );
+    }
+
+    #[test]
+    fn bundled_opencode_keeps_cli_model_discovery_in_its_runtime_definition() {
+        let service = CatalogService::bundled().expect("bundled catalog");
+        let item = service.item("opencode").expect("OpenCode item");
+
+        assert!(item.capabilities.model_discovery);
+        let model_discovery_args = match &item.distributions[0] {
+            Distribution::Binary {
+                model_discovery_args,
+                ..
+            } => model_discovery_args,
+            other => panic!("unexpected OpenCode distribution: {other:?}"),
+        };
+        assert_eq!(
+            model_discovery_args.as_deref(),
+            Some(["models".to_string()].as_slice())
+        );
     }
 }

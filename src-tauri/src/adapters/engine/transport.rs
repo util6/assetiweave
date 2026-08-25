@@ -4,6 +4,7 @@
 //! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
 
 use super::{policy, protocol, registry as command_registry, runtime};
+use crate::backend::runtime::AppError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
@@ -82,6 +83,8 @@ pub(crate) struct EngineError {
     /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
     details: Option<Value>,
+    /// 是否建议调用方重试
+    retryable: bool,
 }
 
 pub(crate) fn run_stdio() -> Result<(), String> {
@@ -215,7 +218,7 @@ impl EngineError {
         match failure {
             command_registry::DispatchFailure::InvalidParams(message) => Self::internal(message),
             command_registry::DispatchFailure::OpenService(message) => Self::internal(message),
-            command_registry::DispatchFailure::App(message) => Self::from_app(message),
+            command_registry::DispatchFailure::App(error) => Self::from_app(error),
             command_registry::DispatchFailure::Serialize(message) => Self::internal(message),
         }
     }
@@ -227,6 +230,7 @@ impl EngineError {
             message: message.to_string(),
             hint: Some("install the CLI and Engine from the same AssetIWeave release".to_string()),
             details: Some(details),
+            retryable: false,
         }
     }
 
@@ -237,6 +241,7 @@ impl EngineError {
             message: format!("unknown engine method: {method}"),
             hint: Some("run `assetiweave-cli schema` to list supported methods".to_string()),
             details: Some(json!({ "method": method })),
+            retryable: false,
         }
     }
 
@@ -250,6 +255,7 @@ impl EngineError {
                 "method": method,
                 "risk": risk
             })),
+            retryable: false,
         }
     }
 
@@ -265,6 +271,7 @@ impl EngineError {
                 "method": method,
                 "violations": violations
             })),
+            retryable: false,
         }
     }
 
@@ -278,6 +285,7 @@ impl EngineError {
                     .to_string(),
             ),
             details: Some(failure.details),
+            retryable: false,
         }
     }
 
@@ -288,6 +296,7 @@ impl EngineError {
             message,
             hint,
             details: None,
+            retryable: false,
         }
     }
 
@@ -298,27 +307,40 @@ impl EngineError {
             message,
             hint: None,
             details: None,
+            retryable: false,
         }
     }
 
-    fn from_app(message: String) -> Self {
-        let kind = if message.contains("not found") {
-            "not_found"
-        } else if message.contains("already exists")
-            || message.contains("ambiguous")
-            || message.contains("requires --yes")
-            || message.contains("enabled mounts")
-        {
-            "conflict"
-        } else {
-            "operation_error"
+    fn from_app(error: AppError) -> Self {
+        let view = error.view();
+        let kind = match view.code.as_str() {
+            "validation_error" => "validation",
+            "not_found" => "not_found",
+            "conflict" => "conflict",
+            "cancelled" => "cancelled",
+            "timeout" => "timeout",
+            "storage_error" => "storage",
+            "process_error" => "process",
+            "extension_error"
+            | "manifest_invalid"
+            | "incompatible"
+            | "trust_rejected"
+            | "program_not_found"
+            | "launch_failed"
+            | "probe_failed"
+            | "output_limit_exceeded"
+            | "nonzero_exit"
+            | "cleanup_failed" => "extension",
+            "external_error" => "external",
+            _ => "operation_error",
         };
         Self {
             kind: kind.to_string(),
-            code: kind.to_string(),
-            message,
+            code: view.code,
+            message: view.message,
             hint: None,
-            details: None,
+            details: view.details,
+            retryable: view.retryable,
         }
     }
 }
@@ -349,6 +371,34 @@ mod tests {
         assert_eq!(error.kind, "unknown_method");
         assert_eq!(error.code, "unknown_method");
         assert!(error.hint.as_deref().unwrap_or_default().contains("schema"));
+    }
+
+    #[test]
+    fn engine_error_preserves_same_code_as_tauri() {
+        let app_error = AppError::Validation("bad input".to_string());
+        let tauri_view = app_error.view();
+        let engine_error = EngineError::from_app(app_error);
+
+        assert_eq!(engine_error.code, tauri_view.code);
+        assert_eq!(engine_error.retryable, tauri_view.retryable);
+        assert_eq!(engine_error.message, tauri_view.message);
+    }
+
+    #[test]
+    fn engine_error_preserves_structured_extension_details() {
+        let app_error = AppError::from(
+            crate::backend::extension_kernel::ExtensionError::OutputLimitExceeded {
+                package_id: "private-agent".to_string(),
+                stdout: true,
+                stderr: false,
+            },
+        );
+        let tauri_view = app_error.view();
+        let engine_error = EngineError::from_app(app_error);
+
+        assert_eq!(engine_error.code, tauri_view.code);
+        assert_eq!(engine_error.retryable, tauri_view.retryable);
+        assert_eq!(engine_error.details, tauri_view.details);
     }
 
     #[test]
@@ -646,6 +696,15 @@ mod tests {
         let remote_list = remotes.as_array().expect("remote list array");
         assert_eq!(remote_list.len(), 1);
         assert_eq!(remote_list[0]["asset_id"], value["import"]["asset"]["id"]);
+        assert_eq!(value["staging_cleaned"], json!(true));
+        let staging_path = backup_root.join("staging");
+        assert!(
+            !staging_path.exists()
+                || fs::read_dir(&staging_path)
+                    .expect("read staging root")
+                    .next()
+                    .is_none()
+        );
         fs::remove_dir_all(home).ok();
         fs::remove_dir_all(backup_root).ok();
         fs::remove_dir_all(repo).ok();
@@ -929,6 +988,35 @@ mod tests {
     }
 
     #[test]
+    fn engine_search_index_rebuild_executes_the_canonical_workflow() {
+        let _guard = env_lock().lock().expect("env lock");
+        let home = unique_temp_dir("assetiweave-engine-search-index-home");
+        let db_path = home.join("app.db");
+        fs::create_dir_all(&home).expect("create temp home");
+        set_test_home(&home);
+        env::set_var("ASSETIWEAVE_DB_PATH", &db_path);
+
+        let report = dispatch(EngineRequest {
+            method: "start_conversation_search_index_rebuild".to_string(),
+            params: json!({}),
+        })
+        .expect("rebuild search index through Engine");
+        let status = dispatch(EngineRequest {
+            method: "get_conversation_search_index_status".to_string(),
+            params: json!({}),
+        })
+        .expect("read rebuilt search index status");
+
+        env::remove_var("ASSETIWEAVE_DB_PATH");
+        env::remove_var("HOME");
+        assert!(report["generation"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        assert_eq!(status["health"], json!("ready"));
+        fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
     fn schema_lists_every_cli_and_tauri_command_method() {
         let schema = command_registry::schema_index();
         let methods = schema["methods"].as_array().expect("methods array");
@@ -982,12 +1070,15 @@ mod tests {
             fs::read_to_string(workspace_root.join("src-tauri/src/adapters/tauri/commands.rs"))
                 .expect("read Tauri commands");
         let mut tauri_handlers = extract_tauri_handler_methods(&tauri_command_source);
-        for method in desktop_only_tauri_methods() {
-            tauri_handlers.remove(method);
+        let desktop_only = desktop_only_tauri_methods();
+        for method in &desktop_only {
+            tauri_handlers.remove(*method);
         }
         let registered = command_registry::command_specs()
             .iter()
-            .filter(|spec| command_registry::is_app_method(spec.method))
+            .filter(|spec| {
+                command_registry::is_app_method(spec.method) && !desktop_only.contains(spec.method)
+            })
             .map(|spec| spec.method.to_string())
             .collect::<BTreeSet<_>>();
 
@@ -1274,7 +1365,7 @@ mod tests {
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
-        assert_eq!(error.kind, "operation_error");
+        assert_eq!(error.kind, "validation");
         assert!(error
             .message
             .contains("only AssetIWeave backup library skills"));
@@ -1300,7 +1391,8 @@ mod tests {
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
         env::remove_var("HOME");
-        assert_eq!(error.kind, "operation_error");
+        assert_eq!(error.kind, "conflict");
+        assert_eq!(error.code, "conflict");
         assert!(error.message.contains("cannot be deleted"));
         fs::remove_dir_all(home).ok();
     }
@@ -1433,14 +1525,23 @@ mod tests {
             "cancel_app_close_prompt",
             "complete_app_close",
             "copy_prompt_card_to_clipboard",
+            "cancel_memory_task",
             "get_ai_execution_task",
             "get_agent_lifecycle_task",
             "get_agent_market_refresh_task",
             "get_cli_tools_status",
+            "get_conversation_adapter_package_task",
+            "get_conversation_search_index_task",
+            "get_conversation_script_install_task",
+            "get_conversation_sync_task",
+            "get_memory_task",
+            "get_skill_backup_task",
             "install_cli_tools",
             "list_ai_execution_tasks",
             "list_agent_lifecycle_tasks",
             "list_agent_market_refresh_tasks",
+            "list_conversation_sync_tasks",
+            "list_memory_tasks",
             "list_source_assets",
             "set_app_window_icon",
             "start_conversation_card_translation",
@@ -1448,6 +1549,23 @@ mod tests {
             "start_agent_reinstallation",
             "start_agent_uninstall",
             "start_agent_update",
+            "start_memory_task",
+            "start_source_scan",
+            "get_source_scan_task",
+            "list_source_scan_tasks",
+            "cancel_source_scan",
+            "start_batch_mount",
+            "get_batch_mount_task",
+            "list_batch_mount_tasks",
+            "cancel_batch_mount",
+            "start_skill_acquire",
+            "get_skill_acquire_task",
+            "list_skill_acquire_tasks",
+            "cancel_skill_acquire_task",
+            "apply_skill_group_mount",
+            "apply_skill_group_exclusive_mount",
+            "scan_sources",
+            "scan_skill_sources",
         ])
     }
 

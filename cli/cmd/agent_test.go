@@ -44,6 +44,9 @@ func TestAgentInstallYesCallsConfirmedEngineRun(t *testing.T) {
 	if !ok || params["yes"] != true {
 		t.Fatalf("params = %#v, want explicit Engine confirmation", client.params)
 	}
+	if params["action"] != "install" {
+		t.Fatalf("params[action] = %#v, want install", params["action"])
+	}
 }
 
 func TestAgentCheckDefaultsToBoundedRuntimeMethod(t *testing.T) {

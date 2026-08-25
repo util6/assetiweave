@@ -1,6 +1,7 @@
 use crate::backend::{
-    dto::{AppResult, AssetMountObservation, AssetMountStatus, PhysicalMountStateDto},
+    dto::{AssetMountObservation, AssetMountStatus, PhysicalMountStateDto},
     models::{Asset, DeploymentState, TargetProfile},
+    runtime::{AppError, AppResult},
 };
 use chrono::Utc;
 #[cfg(test)]
@@ -9,8 +10,8 @@ use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 #[cfg(test)]
-use super::codec::decode_enum;
-use super::{codec::encode_enum, sql};
+use super::codec::decode_enum_app;
+use super::{codec::encode_enum_app, sql};
 
 async fn upsert_asset_mount_observations_connection(
     conn: &mut SqliteConnection,
@@ -24,12 +25,11 @@ async fn upsert_asset_mount_observations_connection(
             .bind(&observation.profile_id)
             .bind(&observation.target_dir)
             .bind(&observation.target_path)
-            .bind(encode_enum(observation.state)?)
+            .bind(encode_enum_app(observation.state)?)
             .bind(&observation.linked_source)
             .bind(&observation.observed_at)
             .execute(&mut *conn)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     }
     Ok(())
 }
@@ -40,9 +40,9 @@ pub(crate) async fn upsert_asset_mount_observations_sqlx(
     tenant_id: &str,
     observations: &[AssetMountObservation],
 ) -> AppResult<()> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
     upsert_asset_mount_observations_connection(&mut tx, tenant_id, observations).await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -62,16 +62,18 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
         .iter()
         .map(|profile| (profile.id.as_str(), profile))
         .collect::<HashMap<_, _>>();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await?;
 
     upsert_asset_mount_observations_connection(&mut tx, tenant_id, observations).await?;
     for status in statuses {
         let asset = asset_by_id
             .get(status.asset_id.as_str())
-            .ok_or_else(|| format!("asset not found: {}", status.asset_id))?;
+            .ok_or_else(|| AppError::NotFound(format!("asset not found: {}", status.asset_id)))?;
         let profile = profile_by_id
             .get(status.profile_id.as_str())
-            .ok_or_else(|| format!("profile not found: {}", status.profile_id))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!("profile not found: {}", status.profile_id))
+            })?;
         let enabled = matches!(status.state, PhysicalMountStateDto::Mounted);
 
         if enabled {
@@ -89,13 +91,12 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
                 .bind(&state.profile_id)
                 .bind(&state.asset_id)
                 .bind(&state.target_path)
-                .bind(encode_enum(state.strategy)?)
+                .bind(encode_enum_app(state.strategy)?)
                 .bind(&state.source_hash)
                 .bind(&state.deployed_at)
                 .bind(&state.managed_by)
                 .execute(&mut *tx)
-                .await
-                .map_err(|error| error.to_string())?;
+                .await?;
         } else {
             sqlx::query(sql::DELETE_DEPLOYMENT_STATE)
                 .bind(tenant_id)
@@ -103,8 +104,7 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
                 .bind(&asset.id)
                 .bind(&status.target_path)
                 .execute(&mut *tx)
-                .await
-                .map_err(|error| error.to_string())?;
+                .await?;
         }
 
         let now = Utc::now().to_rfc3339();
@@ -113,27 +113,24 @@ pub(crate) async fn persist_asset_mount_snapshot_sqlx(
             .bind(&asset.id)
             .bind(&profile.id)
             .fetch_optional(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
         sqlx::query(sql::UPSERT_ASSET_MOUNT)
             .bind(tenant_id)
             .bind(&asset.id)
             .bind(&profile.id)
             .bind(enabled)
-            .bind(encode_enum(profile.deployment_strategy)?)
+            .bind(encode_enum_app(profile.deployment_strategy)?)
             .bind(created_at.unwrap_or_else(|| now.clone()))
             .bind(now)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     }
 
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
         .bind(tenant_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -145,8 +142,7 @@ pub(crate) async fn load_asset_mount_observations_sqlx(
     let rows = sqlx::query(sql::LIST_ASSET_MOUNT_OBSERVATIONS)
         .bind(tenant_id)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
 
     rows.iter().map(map_sqlx_observation).collect()
 }
@@ -159,24 +155,20 @@ pub(crate) async fn delete_orphan_asset_mount_observations_sqlx(
     sqlx::query(sql::DELETE_ORPHAN_ASSET_MOUNT_OBSERVATIONS)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     Ok(())
 }
 
 #[cfg(test)]
 fn map_sqlx_observation(row: &SqliteRow) -> AppResult<AssetMountObservation> {
     Ok(AssetMountObservation {
-        asset_id: row.try_get(0).map_err(|error| error.to_string())?,
-        profile_id: row.try_get(1).map_err(|error| error.to_string())?,
-        target_dir: row.try_get(2).map_err(|error| error.to_string())?,
-        target_path: row.try_get(3).map_err(|error| error.to_string())?,
-        state: decode_enum(
-            row.try_get::<String, _>(4)
-                .map_err(|error| error.to_string())?,
-        )?,
-        linked_source: row.try_get(5).map_err(|error| error.to_string())?,
-        observed_at: row.try_get(6).map_err(|error| error.to_string())?,
+        asset_id: row.try_get(0)?,
+        profile_id: row.try_get(1)?,
+        target_dir: row.try_get(2)?,
+        target_path: row.try_get(3)?,
+        state: decode_enum_app(row.try_get::<String, _>(4)?)?,
+        linked_source: row.try_get(5)?,
+        observed_at: row.try_get(6)?,
     })
 }
 
@@ -294,7 +286,7 @@ mod tests {
             ))
             .expect("load observations after rollback");
 
-        assert!(error.contains("asset not found: missing-asset"));
+        assert!(error.to_string().contains("asset not found: missing-asset"));
         assert!(observations.is_empty());
         drop(database);
         cleanup_database(&db_path);
@@ -329,8 +321,7 @@ mod tests {
         .bind(asset_id)
         .bind("2026-06-18T00:00:00Z")
         .execute(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
         Ok(())
     }
 

@@ -6,7 +6,6 @@
 
 mod app_runtime;
 mod error;
-mod locks;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]
@@ -15,9 +14,9 @@ pub(crate) use app_runtime::{
     RuntimeRole, ShutdownReport, ShutdownState,
 };
 #[allow(unused_imports)]
-pub(crate) use error::{AppError, AppErrorView, AppResult};
-#[allow(unused_imports)]
-pub(crate) use locks::{PlanScopeGuard, RuntimeLocks};
+pub(crate) use error::{
+    sanitize_details, sanitize_public_message, AppError, AppErrorView, AppResult, WireError,
+};
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,5 @@
 use super::*;
 use std::{
-    collections::BTreeSet,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -10,30 +9,12 @@ use std::{
 };
 
 #[test]
-fn plan_scope_lock_orders_keys_and_blocks_conflicts() {
-    let locks = Arc::new(RuntimeLocks::default());
-    let mut keys = BTreeSet::new();
-    keys.insert("profile:b".to_string());
-    keys.insert("path:a".to_string());
-    let guard = locks.acquire_plan_scope(keys).expect("scope");
-    let other = locks.clone();
-    let joined = thread::spawn(move || {
-        let mut keys = BTreeSet::new();
-        keys.insert("path:a".to_string());
-        let _guard = other.acquire_plan_scope(keys).expect("other scope");
-    });
-    thread::sleep(Duration::from_millis(20));
-    assert!(!joined.is_finished());
-    drop(guard);
-    joined.join().expect("joined");
-}
-
-#[test]
 fn task_runtime_deduplicates_and_cancels_cooperatively() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
-            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string())),
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("source-1".to_string()))
+                .with_task_id("scan-task"),
             Box::new(|context| {
                 while !context.is_cancelled() {
                     std::thread::sleep(Duration::from_millis(2));
@@ -43,8 +24,8 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
         )
         .expect("spawn");
     let id = match outcome {
-        tasks::SpawnOutcome::Started(snapshot) => snapshot.task_id,
-        tasks::SpawnOutcome::Existing(_) => panic!("first task deduplicated"),
+        tasks::SpawnOutcome::Started => "scan-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("first task deduplicated"),
     };
     let second = tasks
         .spawn(
@@ -52,7 +33,7 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
             Box::new(|_| Ok(serde_json::Value::Null)),
         )
         .expect("dedup");
-    assert!(matches!(second, tasks::SpawnOutcome::Existing(_)));
+    assert!(matches!(second, tasks::SpawnOutcome::Existing));
     assert!(matches!(
         tasks.cancel(&id),
         tasks::CancelOutcome::Requested(_)
@@ -120,6 +101,110 @@ fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
         .expect("complete external task");
     assert_eq!(finished.state, tasks::TaskState::Canceled);
     assert!(!tasks.has_active_tasks());
+}
+
+#[test]
+fn task_runtime_prunes_terminal_tasks_globally_and_preserves_active_tasks() {
+    let tasks = tasks::TaskRuntime::new();
+    let active = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, Some("active-scan".to_string()))
+                .with_task_id("active-scan"),
+        )
+        .expect("register active task");
+    assert!(matches!(
+        active,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks
+        .start_external("active-scan")
+        .expect("start active task");
+
+    for index in 0..101 {
+        let task_id = format!("terminal-{index}");
+        let kind = if index % 2 == 0 {
+            tasks::TaskKind::Scan
+        } else {
+            tasks::TaskKind::BatchMount
+        };
+        tasks
+            .register_external(tasks::TaskSpec::new(kind, None).with_task_id(task_id.clone()))
+            .expect("register terminal task");
+        tasks.start_external(&task_id).expect("start terminal task");
+        tasks
+            .complete_external(&task_id, Ok(serde_json::Value::Null))
+            .expect("finish terminal task");
+    }
+
+    let snapshots = tasks.list(tasks::TaskFilter::default());
+    assert_eq!(
+        snapshots
+            .iter()
+            .filter(|snapshot| snapshot.state.is_terminal())
+            .count(),
+        100
+    );
+    assert!(snapshots
+        .iter()
+        .any(|snapshot| snapshot.task_id == "active-scan"));
+    assert!(tasks.get("terminal-0").is_none());
+}
+
+#[test]
+fn task_runtime_get_prunes_expired_terminal_tasks_before_dedup_and_projection_reads() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("expired-rebuild"),
+        )
+        .expect("register task");
+    tasks.start_external("expired-rebuild").expect("start task");
+    tasks
+        .complete_external("expired-rebuild", Ok(serde_json::json!({"done": true})))
+        .expect("finish task");
+    tasks
+        .set_finished_at_for_test(
+            "expired-rebuild",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        )
+        .expect("age task");
+
+    assert!(tasks.get("expired-rebuild").is_none());
+    let replacement = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
+                .with_task_id("replacement-rebuild"),
+        )
+        .expect("register replacement task");
+    assert!(matches!(
+        replacement,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+}
+
+#[test]
+fn task_runtime_progress_is_bounded_and_monotonic() {
+    let tasks = tasks::TaskRuntime::new();
+    let registered = tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::BatchMount, None).with_task_id("progress-task"),
+        )
+        .expect("register progress task");
+    assert!(matches!(
+        registered,
+        tasks::ExternalRegistrationOutcome::Started(_)
+    ));
+    tasks.start_external("progress-task").expect("start task");
+    tasks
+        .set_progress("progress-task", 1, Some(3), Some("first"))
+        .expect("set initial progress");
+    assert!(tasks
+        .set_progress("progress-task", 0, Some(3), Some("backward"))
+        .is_err());
+    assert!(tasks
+        .set_progress("progress-task", 4, Some(3), Some("overflow"))
+        .is_err());
 }
 
 #[test]
@@ -199,7 +284,8 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
-            tasks::TaskSpec::new(tasks::TaskKind::Backup, Some("slow".to_string())),
+            tasks::TaskSpec::new(tasks::TaskKind::Backup, Some("slow".to_string()))
+                .with_task_id("slow-task"),
             Box::new(|_| {
                 std::thread::sleep(Duration::from_millis(150));
                 Ok(serde_json::Value::Null)
@@ -207,8 +293,8 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
         )
         .expect("spawn slow task");
     let task_id = match outcome {
-        tasks::SpawnOutcome::Started(snapshot) => snapshot.task_id,
-        tasks::SpawnOutcome::Existing(_) => panic!("slow task unexpectedly deduplicated"),
+        tasks::SpawnOutcome::Started => "slow-task".to_string(),
+        tasks::SpawnOutcome::Existing => panic!("slow task unexpectedly deduplicated"),
     };
 
     let started = std::time::Instant::now();

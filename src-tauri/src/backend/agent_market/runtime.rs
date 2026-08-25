@@ -77,20 +77,6 @@ impl crate::backend::extension_kernel::DomainPackageSystem for AgentPackageSyste
             install_dir: dir.to_path_buf(),
         })
     }
-
-    fn on_installed(
-        &self,
-        _pkg: &crate::backend::extension_kernel::InspectedPackage,
-    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
-        Ok(())
-    }
-
-    fn on_removed(
-        &self,
-        _id: &crate::backend::extension_kernel::PackageIdentity,
-    ) -> Result<(), crate::backend::extension_kernel::ExtensionError> {
-        Ok(())
-    }
 }
 
 #[derive(Clone)]
@@ -122,12 +108,9 @@ impl AgentRuntimeManager {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn registry(&self) -> AgentRuntimeRegistry {
         self.registry.clone()
-    }
-
-    pub(crate) fn repository(&self) -> &AgentInstallationRepository {
-        &self.repository
     }
 
     pub(crate) fn runtime(&self) -> Arc<dyn AgentExecutionRuntime> {
@@ -165,9 +148,7 @@ impl AgentRuntimeManager {
                 let inspected = package_system
                     .inspect(&install_dir)
                     .map_err(|error| error.to_string())?;
-                package_system
-                    .on_installed(&inspected)
-                    .map_err(|error| error.to_string())?;
+                let _ = inspected;
                 definition_from_installation(installation)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -331,6 +312,7 @@ struct ResolvedDefinition {
     protocol: String,
 }
 
+#[cfg(test)]
 pub(crate) fn definition_json(
     agent_id: &str,
     display_name: &str,

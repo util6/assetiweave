@@ -186,6 +186,19 @@ describe("AgentSettingsPanel", () => {
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
   });
 
+  it("lists catalog versions without compatibility gating", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    const item = createMarketItem("opencode", false);
+    listAgentMarketMock.mockResolvedValue([item]);
+
+    renderPanel();
+
+    const row = (await screen.findByRole("heading", { name: "OpenCode" })).closest("article");
+    const install = within(row as HTMLElement).getByRole("button", { name: "安装" });
+    expect((install as HTMLButtonElement).disabled).toBe(false);
+    expect(within(row as HTMLElement).queryByText("当前版本不兼容")).toBeNull();
+  });
+
   it("shows only installed Agents and the three compact ACP settings actions", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     listAgentMarketMock.mockResolvedValue([
@@ -242,7 +255,6 @@ function createMarketItem(id: string, installed: boolean) {
     description: "Fixture Agent",
     protocol: "acp",
     version: "1.0.0",
-    coreCompatible: true,
     capabilities: {
       purposes: ["text"],
       textPrompt: true,

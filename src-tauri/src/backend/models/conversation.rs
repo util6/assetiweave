@@ -35,6 +35,7 @@ pub enum ConversationAdapterTrustState {
 }
 
 impl crate::backend::extension_kernel::TrustGate for ConversationAdapterTrustState {
+    #[cfg(test)]
     fn can_enable(&self) -> bool {
         matches!(self, Self::BuiltIn | Self::Trusted)
     }
@@ -43,6 +44,7 @@ impl crate::backend::extension_kernel::TrustGate for ConversationAdapterTrustSta
         matches!(self, Self::Changed)
     }
 
+    #[cfg(test)]
     fn integrity_changed(&self) -> bool {
         matches!(self, Self::Changed | Self::Untrusted)
     }

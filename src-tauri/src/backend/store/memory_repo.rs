@@ -1,4 +1,3 @@
-use crate::backend::dto::AppResult;
 use crate::backend::models::{
     MemoryDreamCandidateDraft, MemoryDreamCursor, MemoryDreamNote, MemoryDreamNoteDetail,
     MemoryDreamNoteStatus, MemoryDreamPersistInput, MemoryDreamQuestionDeltaRow, MemoryDreamState,
@@ -8,6 +7,7 @@ use crate::backend::models::{
     MemoryRevisionChangeKind, MemoryRunKind, MemoryRunTrigger, MemoryScope,
     NewMemoryEvidenceSnapshot, NewMemoryItem,
 };
+use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row as SqlxRow, Sqlite, SqlitePool, Transaction};
@@ -75,9 +75,9 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
         .bind(until)
         .fetch_one(pool)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .try_get(0)
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     const RECALL_PAGE_SQL: &str = r#"
       WITH all_questions AS (
         SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
@@ -113,13 +113,19 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
         .bind(if include_unavailable { 1_i64 } else { 0_i64 })
         .bind(since)
         .bind(until)
-        .bind(i64::try_from(limit).map_err(|_| "invalid Recall limit".to_string())?)
-        .bind(i64::try_from(offset).map_err(|_| "invalid Recall offset".to_string())?)
+        .bind(
+            i64::try_from(limit)
+                .map_err(|_| AppError::Validation("invalid Recall limit".to_string()))?,
+        )
+        .bind(
+            i64::try_from(offset)
+                .map_err(|_| AppError::Validation("invalid Recall offset".to_string()))?,
+        )
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
-    let total =
-        usize::try_from(total_count).map_err(|_| "invalid Recall question count".to_string())?;
+        .map_err(AppError::external)?;
+    let total = usize::try_from(total_count)
+        .map_err(|_| AppError::Validation("invalid Recall question count".to_string()))?;
     let selected = rows
         .iter()
         .map(map_memory_recall_question_ref)
@@ -146,7 +152,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
         .build_query_scalar::<i64>()
         .fetch_one(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
 
     let mut page = QueryBuilder::<Sqlite>::new(
         "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,q.question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
@@ -154,16 +160,23 @@ async fn list_session_memory_recall_question_refs_sqlx(
     page.push_bind(tenant_id);
     push_session_recall_scope(&mut page, scope, since, until, include_unavailable);
     page.push(" ORDER BY q.created_at DESC,s.id,q.question_index,q.id LIMIT ");
-    page.push_bind(i64::try_from(limit).map_err(|_| "invalid Recall limit".to_string())?);
+    page.push_bind(
+        i64::try_from(limit)
+            .map_err(|_| AppError::Validation("invalid Recall limit".to_string()))?,
+    );
     page.push(" OFFSET ");
-    page.push_bind(i64::try_from(offset).map_err(|_| "invalid Recall offset".to_string())?);
+    page.push_bind(
+        i64::try_from(offset)
+            .map_err(|_| AppError::Validation("invalid Recall offset".to_string()))?,
+    );
     let rows = page
         .build()
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     Ok((
-        usize::try_from(total_count).map_err(|_| "invalid Recall question count".to_string())?,
+        usize::try_from(total_count)
+            .map_err(|_| AppError::Validation("invalid Recall question count".to_string()))?,
         rows.iter()
             .map(map_memory_recall_question_ref)
             .collect::<AppResult<Vec<_>>>()?,
@@ -201,33 +214,19 @@ fn push_session_recall_scope(
 }
 
 fn map_memory_recall_question_ref(row: &SqliteRow) -> AppResult<MemoryRecallQuestionRef> {
-    let kind: String = row
-        .try_get("record_kind")
-        .map_err(|error| error.to_string())?;
+    let kind: String = row.try_get("record_kind").map_err(AppError::external)?;
     Ok(MemoryRecallQuestionRef {
         record_kind: if kind == "web" {
             MemoryEvidenceRecordKind::Web
         } else {
             MemoryEvidenceRecordKind::Session
         },
-        source_id: row
-            .try_get("source_id")
-            .map_err(|error| error.to_string())?,
-        session_id: row
-            .try_get("session_id")
-            .map_err(|error| error.to_string())?,
-        session_title: row
-            .try_get("session_title")
-            .map_err(|error| error.to_string())?,
-        project_path: row
-            .try_get("project_path")
-            .map_err(|error| error.to_string())?,
-        question_id: row
-            .try_get("question_id")
-            .map_err(|error| error.to_string())?,
-        question_index: row
-            .try_get("question_index")
-            .map_err(|error| error.to_string())?,
+        source_id: row.try_get("source_id").map_err(AppError::external)?,
+        session_id: row.try_get("session_id").map_err(AppError::external)?,
+        session_title: row.try_get("session_title").map_err(AppError::external)?,
+        project_path: row.try_get("project_path").map_err(AppError::external)?,
+        question_id: row.try_get("question_id").map_err(AppError::external)?,
+        question_index: row.try_get("question_index").map_err(AppError::external)?,
     })
 }
 
@@ -244,13 +243,15 @@ pub(crate) async fn create_memory_recall_run_sqlx(
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let scope_json = encode_json(scope)?;
-    let fingerprint = scope.fingerprint()?;
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let fingerprint = scope.fingerprint().map_err(AppError::external)?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let locked: i64 = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM memory_runs WHERE tenant_id=?1 AND scope_fingerprint=?2 AND status IN ('queued','running') AND kind IN ('auto_dream','deep_recall','full_organize'))",
-    ).bind(tenant_id).bind(&fingerprint).fetch_one(&mut *tx).await.map_err(|error| error.to_string())?;
+    ).bind(tenant_id).bind(&fingerprint).fetch_one(&mut *tx).await.map_err(AppError::external)?;
     if locked == 1 {
-        return Err("memory scope is already locked by another running task".to_string());
+        return Err(AppError::Validation(
+            "memory scope is already locked by another running task".to_string(),
+        ));
     }
     sqlx::query(
         r#"INSERT INTO memory_runs (
@@ -260,9 +261,9 @@ pub(crate) async fn create_memory_recall_run_sqlx(
         ) VALUES (?1,?2,?3,'user_question',?4,?5,?6,?7,?8,'memory-recall-v1','phase1',0,?9,0,0,'running',?10,?10,?10)"#,
     ).bind(tenant_id).bind(run_id).bind(encode_enum(kind)?).bind(scope_json).bind(fingerprint)
       .bind(source_revision).bind(provider).bind(model)
-      .bind(i64::try_from(total_count).map_err(|_| "invalid Recall total".to_string())?)
-      .bind(now).execute(&mut *tx).await.map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())
+      .bind(i64::try_from(total_count).map_err(|_| AppError::Validation("invalid Recall total".to_string()))?)
+      .bind(now).execute(&mut *tx).await.map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)
 }
 
 pub(crate) async fn persist_memory_extraction_sqlx(
@@ -283,13 +284,15 @@ pub(crate) async fn persist_memory_extraction_sqlx(
     let now_text = now.to_rfc3339();
     let expires_at = (now + chrono::Duration::days(30)).to_rfc3339();
     let scope_json = encode_json(scope)?;
-    let fingerprint = scope.fingerprint()?;
-    let raw_json = serde_json::to_string(raw_memories).map_err(|error| error.to_string())?;
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let fingerprint = scope.fingerprint().map_err(AppError::external)?;
+    let raw_json = serde_json::to_string(raw_memories).map_err(AppError::external)?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let running: i64 = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_runs WHERE tenant_id=?1 AND id=?2 AND status='running')")
-        .bind(tenant_id).bind(run_id).fetch_one(&mut *tx).await.map_err(|error| error.to_string())?;
+        .bind(tenant_id).bind(run_id).fetch_one(&mut *tx).await.map_err(AppError::external)?;
     if running != 1 {
-        return Err(format!("Memory Recall run {run_id} is not running"));
+        return Err(AppError::Conflict(format!(
+            "Memory Recall run {run_id} is not running"
+        )));
     }
     sqlx::query(
         r#"INSERT INTO memory_extractions (
@@ -301,20 +304,35 @@ pub(crate) async fn persist_memory_extraction_sqlx(
     .bind(tenant_id)
     .bind(&id)
     .bind(run_id)
-    .bind(i64::try_from(batch_index).map_err(|_| "invalid extraction batch".to_string())?)
+    .bind(
+        i64::try_from(batch_index)
+            .map_err(|_| AppError::Validation("invalid extraction batch".to_string()))?,
+    )
     .bind(scope_json)
     .bind(fingerprint)
     .bind(raw_json)
     .bind(session_summary)
-    .bind(i64::try_from(question_count).map_err(|_| "invalid extraction questions".to_string())?)
-    .bind(i64::try_from(input_char_count).map_err(|_| "invalid extraction input".to_string())?)
-    .bind(i64::try_from(evidence.len()).map_err(|_| "invalid extraction evidence".to_string())?)
-    .bind(i64::try_from(attempt_count).map_err(|_| "invalid extraction attempts".to_string())?)
+    .bind(
+        i64::try_from(question_count)
+            .map_err(|_| AppError::Validation("invalid extraction questions".to_string()))?,
+    )
+    .bind(
+        i64::try_from(input_char_count)
+            .map_err(|_| AppError::Validation("invalid extraction input".to_string()))?,
+    )
+    .bind(
+        i64::try_from(evidence.len())
+            .map_err(|_| AppError::Validation("invalid extraction evidence".to_string()))?,
+    )
+    .bind(
+        i64::try_from(attempt_count)
+            .map_err(|_| AppError::Validation("invalid extraction attempts".to_string()))?,
+    )
     .bind(expires_at)
     .bind(&now_text)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let mut seen = HashSet::new();
     for (sort_order, item) in evidence.iter().enumerate() {
         validate_evidence(&item.snapshot)?;
@@ -337,21 +355,22 @@ pub(crate) async fn persist_memory_extraction_sqlx(
             .bind(&now_text)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
-        let evidence_id: String = row.try_get(0).map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
+        let evidence_id: String = row.try_get(0).map_err(AppError::external)?;
         if !seen.insert(evidence_id.clone()) {
             continue;
         }
-        let order = i64::try_from(sort_order).map_err(|_| "invalid evidence order".to_string())?;
+        let order = i64::try_from(sort_order)
+            .map_err(|_| AppError::Validation("invalid evidence order".to_string()))?;
         sqlx::query("INSERT INTO memory_extraction_evidence (tenant_id,extraction_id,evidence_id,sort_order) VALUES (?1,?2,?3,?4)")
-            .bind(tenant_id).bind(&id).bind(&evidence_id).bind(order).execute(&mut *tx).await.map_err(|error| error.to_string())?;
+            .bind(tenant_id).bind(&id).bind(&evidence_id).bind(order).execute(&mut *tx).await.map_err(AppError::external)?;
         sqlx::query("INSERT OR IGNORE INTO memory_run_evidence (tenant_id,run_id,evidence_id,sort_order) VALUES (?1,?2,?3,?4)")
-            .bind(tenant_id).bind(run_id).bind(evidence_id).bind(order).execute(&mut *tx).await.map_err(|error| error.to_string())?;
+            .bind(tenant_id).bind(run_id).bind(evidence_id).bind(order).execute(&mut *tx).await.map_err(AppError::external)?;
     }
     sqlx::query("UPDATE memory_runs SET processed_count=processed_count+?1, updated_at=?2 WHERE tenant_id=?3 AND id=?4")
-        .bind(i64::try_from(question_count).map_err(|_| "invalid processed count".to_string())?)
-        .bind(&now_text).bind(tenant_id).bind(run_id).execute(&mut *tx).await.map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+        .bind(i64::try_from(question_count).map_err(|_| AppError::Validation("invalid processed count".to_string()))?)
+        .bind(&now_text).bind(tenant_id).bind(run_id).execute(&mut *tx).await.map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)?;
     Ok(MemoryExtraction {
         id,
         run_id: run_id.to_string(),
@@ -386,7 +405,7 @@ pub(crate) async fn load_memory_run_evidence_sqlx(
     .bind(run_id)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     rows.iter().map(map_memory_evidence).collect()
 }
 
@@ -400,7 +419,7 @@ pub(crate) async fn persist_memory_recall_success_sqlx(
     failed_count: usize,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let running: i64 = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM memory_runs WHERE tenant_id=?1 AND id=?2 AND status='running')",
     )
@@ -408,9 +427,11 @@ pub(crate) async fn persist_memory_recall_success_sqlx(
     .bind(run_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if running != 1 {
-        return Err(format!("Memory Recall run {run_id} is not running"));
+        return Err(AppError::Conflict(format!(
+            "Memory Recall run {run_id} is not running"
+        )));
     }
     for (draft, evidence_ids) in candidates {
         insert_memory_item_tx(&mut tx, tenant_id, draft, evidence_ids).await?;
@@ -421,18 +442,23 @@ pub(crate) async fn persist_memory_recall_success_sqlx(
           WHERE tenant_id=?5 AND id=?6 AND status='running'"#,
     )
     .bind(source_revision)
-    .bind(i64::try_from(failed_count).map_err(|_| "invalid failure count".to_string())?)
+    .bind(
+        i64::try_from(failed_count)
+            .map_err(|_| AppError::Validation("invalid failure count".to_string()))?,
+    )
     .bind(encode_json(result)?)
     .bind(now)
     .bind(tenant_id)
     .bind(run_id)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if updated.rows_affected() != 1 {
-        return Err(format!("Memory Recall run {run_id} could not be completed"));
+        return Err(AppError::Conflict(format!(
+            "Memory Recall run {run_id} could not be completed"
+        )));
     }
-    tx.commit().await.map_err(|error| error.to_string())
+    tx.commit().await.map_err(AppError::external)
 }
 
 pub(crate) async fn fail_memory_recall_run_sqlx(
@@ -446,7 +472,7 @@ pub(crate) async fn fail_memory_recall_run_sqlx(
     sqlx::query("UPDATE memory_runs SET phase='completed',status=?1,error_kind=?2,error_message=?3,finished_at=?4,updated_at=?4 WHERE tenant_id=?5 AND id=?6")
       .bind(if cancelled { "cancelled" } else { "failed" })
       .bind(if cancelled { "cancelled" } else { "recall_failed" })
-      .bind(message).bind(now).bind(tenant_id).bind(run_id).execute(pool).await.map_err(|error| error.to_string())?;
+      .bind(message).bind(now).bind(tenant_id).bind(run_id).execute(pool).await.map_err(AppError::external)?;
     Ok(())
 }
 
@@ -457,11 +483,11 @@ pub(crate) async fn set_memory_run_phase_sqlx(
     phase: &str,
 ) -> AppResult<()> {
     if !matches!(phase, "phase1" | "phase2" | "finalizing") {
-        return Err("invalid Memory run phase".to_string());
+        return Err(AppError::Validation("invalid Memory run phase".to_string()));
     }
     sqlx::query("UPDATE memory_runs SET phase=?1,updated_at=?2 WHERE tenant_id=?3 AND id=?4 AND status='running'")
         .bind(phase).bind(Utc::now().to_rfc3339()).bind(tenant_id).bind(run_id)
-        .execute(pool).await.map_err(|error| error.to_string())?;
+        .execute(pool).await.map_err(AppError::external)?;
     Ok(())
 }
 
@@ -485,7 +511,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
         .bind(&evidence.session_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     match missing {
         None => return Ok(Some(MemoryStaleReason::EvidenceMissing)),
         Some(1) => return Ok(Some(MemoryStaleReason::SourceUnavailable)),
@@ -506,7 +532,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
             .bind(part_id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .map(|row| memory_evidence_part_texts(&row))
             .transpose()?
     } else if let Some(turn_id) = &evidence.turn_id {
@@ -523,7 +549,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
             .bind(turn_id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .map(|value| vec![value])
     } else if let Some(question_id) = &evidence.question_id {
         let sql = match evidence.record_kind {
@@ -539,7 +565,7 @@ pub(crate) async fn memory_evidence_stale_reason_sqlx(
             .bind(question_id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .map(|value| vec![value])
     } else {
         None
@@ -558,7 +584,7 @@ fn memory_evidence_part_texts(row: &SqliteRow) -> AppResult<Vec<String>> {
     for key in ["command", "text"] {
         if let Some(value) = row
             .try_get::<Option<String>, _>(key)
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .filter(|value| !value.trim().is_empty())
         {
             base_values.push(value);
@@ -567,14 +593,14 @@ fn memory_evidence_part_texts(row: &SqliteRow) -> AppResult<Vec<String>> {
     let mut enriched_values = base_values.clone();
     if let Some(value) = row
         .try_get::<Option<String>, _>("status")
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
         .filter(|value| !value.trim().is_empty())
     {
         enriched_values.push(format!("status: {value}"));
     }
     if let Some(value) = row
         .try_get::<Option<i64>, _>("exit_code")
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
     {
         enriched_values.push(format!("exit_code: {value}"));
     }
@@ -664,7 +690,7 @@ pub(crate) async fn load_memory_dream_state_sqlx(
     tenant_id: &str,
     scope: &MemoryScope,
 ) -> AppResult<Option<MemoryDreamState>> {
-    let scope_fingerprint = scope.fingerprint()?;
+    let scope_fingerprint = scope.fingerprint().map_err(AppError::external)?;
     let row = sqlx::query(
         r#"
         SELECT s.scope_json, s.scope_fingerprint, s.last_successful_run_id,
@@ -680,32 +706,31 @@ pub(crate) async fn load_memory_dream_state_sqlx(
     .bind(&scope_fingerprint)
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     row.map(|row| {
-        let stored_scope: MemoryScope = decode_json(
-            row.try_get::<String, _>(0)
-                .map_err(|error| error.to_string())?,
-        )?;
+        let stored_scope: MemoryScope =
+            decode_json(row.try_get::<String, _>(0).map_err(AppError::external)?)?;
         let session_cursor = row
             .try_get::<Option<String>, _>(5)
-            .map_err(|error| error.to_string())?
+            .map_err(AppError::external)?
             .map(|value| {
-                serde_json::from_str::<MemoryDreamCursor>(&value)
-                    .map_err(|error| format!("invalid memory dream cursor: {error}"))
+                serde_json::from_str::<MemoryDreamCursor>(&value).map_err(|error| {
+                    AppError::Validation(format!("invalid memory dream cursor: {error}"))
+                })
             })
             .transpose()?;
         Ok(MemoryDreamState {
             scope: stored_scope,
-            scope_fingerprint: row.try_get(1).map_err(|error| error.to_string())?,
-            last_successful_run_id: row.try_get(2).map_err(|error| error.to_string())?,
-            last_successful_at: row.try_get(3).map_err(|error| error.to_string())?,
-            source_revision_cursor: row.try_get(4).map_err(|error| error.to_string())?,
+            scope_fingerprint: row.try_get(1).map_err(AppError::external)?,
+            last_successful_run_id: row.try_get(2).map_err(AppError::external)?,
+            last_successful_at: row.try_get(3).map_err(AppError::external)?,
+            source_revision_cursor: row.try_get(4).map_err(AppError::external)?,
             session_cursor,
-            next_gate_at: row.try_get(6).map_err(|error| error.to_string())?,
-            last_error_kind: row.try_get(7).map_err(|error| error.to_string())?,
-            last_error_message: row.try_get(8).map_err(|error| error.to_string())?,
-            updated_at: row.try_get(9).map_err(|error| error.to_string())?,
+            next_gate_at: row.try_get(6).map_err(AppError::external)?,
+            last_error_kind: row.try_get(7).map_err(AppError::external)?,
+            last_error_message: row.try_get(8).map_err(AppError::external)?,
+            updated_at: row.try_get(9).map_err(AppError::external)?,
         })
     })
     .transpose()
@@ -720,8 +745,8 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
     row_limit: usize,
 ) -> AppResult<Vec<MemoryDreamQuestionDeltaRow>> {
     let cursor_key = cursor.map(|cursor| cursor.session_sort_key.as_str());
-    let row_limit =
-        i64::try_from(row_limit).map_err(|_| "memory dream row limit is invalid".to_string())?;
+    let row_limit = i64::try_from(row_limit)
+        .map_err(|_| AppError::Validation("memory dream row limit is invalid".to_string()))?;
     let rows = sqlx::query(
         r#"
         WITH session_candidates AS (
@@ -792,40 +817,44 @@ pub(crate) async fn load_memory_dream_delta_rows_sqlx(
     .bind(row_limit)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     rows.into_iter()
         .map(|row| {
             let record_kind = match row
                 .try_get::<String, _>(0)
-                .map_err(|error| error.to_string())?
+                .map_err(AppError::external)?
                 .as_str()
             {
                 "session" => MemoryEvidenceRecordKind::Session,
                 "web" => MemoryEvidenceRecordKind::Web,
-                value => return Err(format!("invalid memory record kind: {value}")),
+                value => {
+                    return Err(AppError::Validation(format!(
+                        "invalid memory record kind: {value}"
+                    )))
+                }
             };
             let input_char_count = usize::try_from(
-                row.try_get::<i64, _>(10)
-                    .map_err(|error| error.to_string())?,
+                row.try_get::<i64, _>(10).map_err(AppError::external)?,
             )
-            .map_err(|_| "invalid memory dream input character count".to_string())?;
+            .map_err(|_| {
+                AppError::Validation("invalid memory dream input character count".to_string())
+            })?;
             let available_question_count = usize::try_from(
-                row.try_get::<i64, _>(11)
-                    .map_err(|error| error.to_string())?,
+                row.try_get::<i64, _>(11).map_err(AppError::external)?,
             )
-            .map_err(|_| "invalid memory dream question count".to_string())?;
+            .map_err(|_| AppError::Validation("invalid memory dream question count".to_string()))?;
             Ok(MemoryDreamQuestionDeltaRow {
                 record_kind,
-                session_id: row.try_get(1).map_err(|error| error.to_string())?,
-                source_id: row.try_get(2).map_err(|error| error.to_string())?,
-                adapter_id: row.try_get(3).map_err(|error| error.to_string())?,
-                project_path: row.try_get(4).map_err(|error| error.to_string())?,
-                title: row.try_get(5).map_err(|error| error.to_string())?,
-                imported_at: row.try_get(6).map_err(|error| error.to_string())?,
-                session_sort_key: row.try_get(7).map_err(|error| error.to_string())?,
-                question_id: row.try_get(8).map_err(|error| error.to_string())?,
-                question_index: row.try_get(9).map_err(|error| error.to_string())?,
+                session_id: row.try_get(1).map_err(AppError::external)?,
+                source_id: row.try_get(2).map_err(AppError::external)?,
+                adapter_id: row.try_get(3).map_err(AppError::external)?,
+                project_path: row.try_get(4).map_err(AppError::external)?,
+                title: row.try_get(5).map_err(AppError::external)?,
+                imported_at: row.try_get(6).map_err(AppError::external)?,
+                session_sort_key: row.try_get(7).map_err(AppError::external)?,
+                question_id: row.try_get(8).map_err(AppError::external)?,
+                question_index: row.try_get(9).map_err(AppError::external)?,
                 input_char_count,
                 available_question_count,
             })
@@ -855,7 +884,7 @@ pub(crate) async fn has_active_memory_scope_lock_sqlx(
     .bind(exclude_run_id)
     .fetch_one(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(value == 1)
 }
 
@@ -889,7 +918,7 @@ pub(crate) async fn interrupt_stale_memory_runs_sqlx(
     .bind(tenant_id)
     .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(result.rows_affected())
 }
 
@@ -918,14 +947,20 @@ pub(crate) async fn list_memory_dream_notes_sqlx(
         query.push_bind(scope_fingerprint);
     }
     query.push(" ORDER BY created_at DESC, id ASC LIMIT ");
-    query.push_bind(i64::try_from(limit).map_err(|_| "invalid Dream limit".to_string())?);
+    query.push_bind(
+        i64::try_from(limit)
+            .map_err(|_| AppError::Validation("invalid Dream limit".to_string()))?,
+    );
     query.push(" OFFSET ");
-    query.push_bind(i64::try_from(offset).map_err(|_| "invalid Dream offset".to_string())?);
+    query.push_bind(
+        i64::try_from(offset)
+            .map_err(|_| AppError::Validation("invalid Dream offset".to_string()))?,
+    );
     let rows = query
         .build()
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     rows.iter().map(map_memory_dream_note).collect()
 }
 
@@ -954,8 +989,8 @@ pub(crate) async fn count_memory_dream_notes_sqlx(
         .build_query_scalar::<i64>()
         .fetch_one(pool)
         .await
-        .map_err(|error| error.to_string())?;
-    usize::try_from(count).map_err(|_| "invalid Dream count".to_string())
+        .map_err(AppError::external)?;
+    usize::try_from(count).map_err(|_| AppError::Validation("invalid Dream count".to_string()))
 }
 
 pub(crate) async fn load_memory_dream_note_detail_sqlx(
@@ -975,7 +1010,7 @@ pub(crate) async fn load_memory_dream_note_detail_sqlx(
     .bind(note_id)
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let Some(note_row) = note_row else {
         return Ok(None);
     };
@@ -996,7 +1031,7 @@ pub(crate) async fn load_memory_dream_note_detail_sqlx(
     .bind(note_id)
     .fetch_all(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     Ok(Some(MemoryDreamNoteDetail {
         note: map_memory_dream_note(&note_row)?,
         evidence: evidence_rows
@@ -1019,13 +1054,15 @@ pub(crate) async fn archive_memory_dream_note_sqlx(
     .bind(note_id)
     .execute(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if result.rows_affected() == 0 {
-        return Err(format!("memory Dream note {note_id} was not found"));
+        return Err(AppError::NotFound(format!(
+            "memory Dream note {note_id} was not found"
+        )));
     }
     load_memory_dream_note_detail_sqlx(pool, tenant_id, note_id)
         .await?
-        .ok_or_else(|| format!("memory Dream note {note_id} was not found"))
+        .ok_or_else(|| AppError::NotFound(format!("memory Dream note {note_id} was not found")))
 }
 
 pub(crate) async fn promote_memory_dream_note_sqlx(
@@ -1035,7 +1072,9 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
     candidates: &[MemoryDreamCandidateDraft],
 ) -> AppResult<Vec<MemoryItemDetail>> {
     if candidates.is_empty() {
-        return Err("memory Dream note contains no promotable bullets".to_string());
+        return Err(AppError::Validation(
+            "memory Dream note contains no promotable bullets".to_string(),
+        ));
     }
     for candidate in candidates {
         validate_item_values(
@@ -1047,7 +1086,7 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
         )?;
     }
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let note_row = sqlx::query(
         r#"
         SELECT run_id, scope_json, scope_fingerprint, source_revision, status
@@ -1059,16 +1098,16 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
     .bind(note_id)
     .fetch_optional(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| format!("memory Dream note {note_id} was not found"))?;
-    let run_id: String = note_row.try_get(0).map_err(|error| error.to_string())?;
-    let scope_json: String = note_row.try_get(1).map_err(|error| error.to_string())?;
-    let scope_fingerprint: String = note_row.try_get(2).map_err(|error| error.to_string())?;
-    let source_revision: i64 = note_row.try_get(3).map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?
+    .ok_or_else(|| AppError::NotFound(format!("memory Dream note {note_id} was not found")))?;
+    let run_id: String = note_row.try_get(0).map_err(AppError::external)?;
+    let scope_json: String = note_row.try_get(1).map_err(AppError::external)?;
+    let scope_fingerprint: String = note_row.try_get(2).map_err(AppError::external)?;
+    let source_revision: i64 = note_row.try_get(3).map_err(AppError::external)?;
     let status: MemoryDreamNoteStatus = decode_enum(
         note_row
             .try_get::<String, _>(4)
-            .map_err(|error| error.to_string())?,
+            .map_err(AppError::external)?,
     )?;
     if status == MemoryDreamNoteStatus::Promoted {
         let item_ids = sqlx::query_scalar::<_, String>(
@@ -1078,8 +1117,8 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
         .bind(note_id)
         .fetch_all(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
-        tx.commit().await.map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
+        tx.commit().await.map_err(AppError::external)?;
         let mut details = Vec::new();
         for item_id in item_ids {
             if let Some(detail) = load_memory_item_detail_sqlx(pool, tenant_id, &item_id).await? {
@@ -1089,7 +1128,9 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
         return Ok(details);
     }
     if status == MemoryDreamNoteStatus::Archived {
-        return Err("archived Memory Dream notes cannot be promoted".to_string());
+        return Err(AppError::Validation(
+            "archived Memory Dream notes cannot be promoted".to_string(),
+        ));
     }
     let evidence_ids = sqlx::query_scalar::<_, String>(
         "SELECT evidence_id FROM memory_dream_note_evidence WHERE tenant_id = ?1 AND dream_note_id = ?2 ORDER BY sort_order, evidence_id",
@@ -1098,7 +1139,7 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
     .bind(note_id)
     .fetch_all(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     let mut item_ids = Vec::new();
     for candidate in candidates {
         let item_id = Uuid::new_v4().to_string();
@@ -1127,7 +1168,7 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
         .bind(&now)
         .execute(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
         sqlx::query(
             r#"
             INSERT INTO memory_item_revisions (
@@ -1150,7 +1191,7 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
         .bind(&now)
         .execute(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
         for (sort_order, evidence_id) in evidence_ids.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO memory_item_evidence (tenant_id, item_id, evidence_id, sort_order) VALUES (?1, ?2, ?3, ?4)",
@@ -1158,10 +1199,10 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
             .bind(tenant_id)
             .bind(&item_id)
             .bind(evidence_id)
-            .bind(i64::try_from(sort_order).map_err(|_| "invalid evidence order".to_string())?)
+            .bind(i64::try_from(sort_order).map_err(|_| AppError::Validation("invalid evidence order".to_string()))?)
             .execute(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
         }
         item_ids.push(item_id);
     }
@@ -1173,15 +1214,17 @@ pub(crate) async fn promote_memory_dream_note_sqlx(
     .bind(note_id)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)?;
 
     let mut details = Vec::new();
     for item_id in item_ids {
         details.push(
             load_memory_item_detail_sqlx(pool, tenant_id, &item_id)
                 .await?
-                .ok_or_else(|| format!("promoted Memory item {item_id} was not found"))?,
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("promoted Memory item {item_id} was not found"))
+                })?,
         );
     }
     Ok(details)
@@ -1200,11 +1243,11 @@ pub(crate) async fn create_memory_dream_run_sqlx(
     total_count: usize,
 ) -> AppResult<()> {
     let scope_json = encode_json(scope)?;
-    let scope_fingerprint = scope.fingerprint()?;
+    let scope_fingerprint = scope.fingerprint().map_err(AppError::external)?;
     let total_count = i64::try_from(total_count)
-        .map_err(|_| "memory dream total count is invalid".to_string())?;
+        .map_err(|_| AppError::Validation("memory dream total count is invalid".to_string()))?;
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let locked = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT EXISTS(
@@ -1219,9 +1262,11 @@ pub(crate) async fn create_memory_dream_run_sqlx(
     .bind(&scope_fingerprint)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if locked == 1 {
-        return Err("memory scope is already locked by another running task".to_string());
+        return Err(AppError::Validation(
+            "memory scope is already locked by another running task".to_string(),
+        ));
     }
     sqlx::query(
         r#"
@@ -1247,8 +1292,8 @@ pub(crate) async fn create_memory_dream_run_sqlx(
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())
+    .map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)
 }
 
 pub(crate) async fn finish_memory_dream_error_sqlx(
@@ -1262,9 +1307,9 @@ pub(crate) async fn finish_memory_dream_error_sqlx(
     cancelled: bool,
 ) -> AppResult<()> {
     let scope_json = encode_json(scope)?;
-    let scope_fingerprint = scope.fingerprint()?;
+    let scope_fingerprint = scope.fingerprint().map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     sqlx::query(
         r#"
         UPDATE memory_runs
@@ -1281,7 +1326,7 @@ pub(crate) async fn finish_memory_dream_error_sqlx(
     .bind(run_id)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         INSERT INTO memory_dream_states (
@@ -1303,8 +1348,8 @@ pub(crate) async fn finish_memory_dream_error_sqlx(
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
-    tx.commit().await.map_err(|error| error.to_string())
+    .map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)
 }
 
 pub(crate) async fn persist_memory_dream_success_sqlx(
@@ -1313,15 +1358,16 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     input: &MemoryDreamPersistInput,
 ) -> AppResult<String> {
     if input.markdown.chars().count() > 6144 {
-        return Err("memory dream note exceeds 6144 characters".to_string());
+        return Err(AppError::Validation(
+            "memory dream note exceeds 6144 characters".to_string(),
+        ));
     }
     let scope_json = encode_json(&input.scope)?;
-    let scope_fingerprint = input.scope.fingerprint()?;
-    let cursor_json =
-        serde_json::to_string(&input.cursor_end).map_err(|error| error.to_string())?;
-    let output_json = serde_json::to_string(&input.output).map_err(|error| error.to_string())?;
+    let scope_fingerprint = input.scope.fingerprint().map_err(AppError::external)?;
+    let cursor_json = serde_json::to_string(&input.cursor_end).map_err(AppError::external)?;
+    let output_json = serde_json::to_string(&input.output).map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
 
     let run_exists = sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(SELECT 1 FROM memory_runs WHERE tenant_id = ?1 AND id = ?2 AND status = 'running')",
@@ -1330,9 +1376,12 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     .bind(&input.run_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if run_exists != 1 {
-        return Err(format!("memory dream run {} is not running", input.run_id));
+        return Err(AppError::Conflict(format!(
+            "memory dream run {} is not running",
+            input.run_id
+        )));
     }
 
     let mut evidence_ids = Vec::with_capacity(input.evidence.len());
@@ -1358,8 +1407,8 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
             .bind(&now)
             .fetch_one(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
-        let evidence_id: String = row.try_get(0).map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
+        let evidence_id: String = row.try_get(0).map_err(AppError::external)?;
         if seen_evidence_ids.insert(evidence_id.clone()) {
             evidence_ids.push((evidence.reference.as_str(), evidence_id));
         }
@@ -1372,10 +1421,10 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
         .bind(tenant_id)
         .bind(&input.run_id)
         .bind(evidence_id)
-        .bind(i64::try_from(sort_order).map_err(|_| "invalid evidence order".to_string())?)
+        .bind(i64::try_from(sort_order).map_err(|_| AppError::Validation("invalid evidence order".to_string()))?)
         .execute(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     }
 
     sqlx::query(
@@ -1393,14 +1442,23 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     .bind(&scope_json)
     .bind(&scope_fingerprint)
     .bind(&input.markdown)
-    .bind(i64::try_from(input.session_count).map_err(|_| "invalid session count".to_string())?)
-    .bind(i64::try_from(input.question_count).map_err(|_| "invalid question count".to_string())?)
-    .bind(i64::try_from(evidence_ids.len()).map_err(|_| "invalid evidence count".to_string())?)
+    .bind(
+        i64::try_from(input.session_count)
+            .map_err(|_| AppError::Validation("invalid session count".to_string()))?,
+    )
+    .bind(
+        i64::try_from(input.question_count)
+            .map_err(|_| AppError::Validation("invalid question count".to_string()))?,
+    )
+    .bind(
+        i64::try_from(evidence_ids.len())
+            .map_err(|_| AppError::Validation("invalid evidence count".to_string()))?,
+    )
     .bind(input.source_revision_end)
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     for (sort_order, (_, evidence_id)) in evidence_ids.iter().enumerate() {
         sqlx::query(
             "INSERT INTO memory_dream_note_evidence (tenant_id, dream_note_id, evidence_id, sort_order) VALUES (?1, ?2, ?3, ?4)",
@@ -1408,10 +1466,10 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
         .bind(tenant_id)
         .bind(&input.note_id)
         .bind(evidence_id)
-        .bind(i64::try_from(sort_order).map_err(|_| "invalid evidence order".to_string())?)
+        .bind(i64::try_from(sort_order).map_err(|_| AppError::Validation("invalid evidence order".to_string()))?)
         .execute(&mut *tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     }
 
     sqlx::query(
@@ -1424,15 +1482,21 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
         "#,
     )
     .bind(input.source_revision_end)
-    .bind(i64::try_from(input.processed_count).map_err(|_| "invalid processed count".to_string())?)
-    .bind(i64::try_from(input.total_count).map_err(|_| "invalid total count".to_string())?)
+    .bind(
+        i64::try_from(input.processed_count)
+            .map_err(|_| AppError::Validation("invalid processed count".to_string()))?,
+    )
+    .bind(
+        i64::try_from(input.total_count)
+            .map_err(|_| AppError::Validation("invalid total count".to_string()))?,
+    )
     .bind(output_json)
     .bind(&now)
     .bind(tenant_id)
     .bind(&input.run_id)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     sqlx::query(
         r#"
@@ -1462,12 +1526,13 @@ pub(crate) async fn persist_memory_dream_success_sqlx(
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(AppError::external)?;
     Ok(input.note_id.clone())
 }
 
+#[cfg(test)]
 pub(crate) async fn upsert_memory_evidence_snapshot_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1496,7 +1561,7 @@ pub(crate) async fn upsert_memory_evidence_snapshot_sqlx(
         .bind(now)
         .fetch_one(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     map_memory_evidence(&row)
 }
 
@@ -1506,12 +1571,12 @@ pub(crate) async fn create_memory_item_sqlx(
     draft: &NewMemoryItem,
     evidence_ids: &[String],
 ) -> AppResult<MemoryItemDetail> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
     let item_id = insert_memory_item_tx(&mut tx, tenant_id, draft, evidence_ids).await?;
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(AppError::external)?;
     load_memory_item_detail_sqlx(pool, tenant_id, &item_id)
         .await?
-        .ok_or_else(|| format!("created memory item {item_id} was not found"))
+        .ok_or_else(|| AppError::NotFound(format!("created memory item {item_id} was not found")))
 }
 
 async fn insert_memory_item_tx(
@@ -1525,7 +1590,7 @@ async fn insert_memory_item_tx(
     let revision_id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let scope_json = encode_json(&draft.scope)?;
-    let scope_fingerprint = draft.scope.fingerprint()?;
+    let scope_fingerprint = draft.scope.fingerprint().map_err(AppError::external)?;
     let kind = encode_enum(draft.kind)?;
     let status = encode_enum(draft.status)?;
     let origin = encode_enum(draft.origin)?;
@@ -1564,7 +1629,7 @@ async fn insert_memory_item_tx(
     .bind(&now)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     sqlx::query(
         r#"
@@ -1598,7 +1663,7 @@ async fn insert_memory_item_tx(
     .bind(&now)
     .execute(&mut **tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     let mut seen = HashSet::new();
     for (sort_order, evidence_id) in evidence_ids
@@ -1625,11 +1690,11 @@ async fn insert_memory_item_tx(
         .bind(sort_order as i64)
         .execute(&mut **tx)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
         if result.rows_affected() != 1 {
-            return Err(format!(
+            return Err(AppError::NotFound(format!(
                 "memory evidence {evidence_id} was not found for tenant {tenant_id}"
-            ));
+            )));
         }
     }
 
@@ -1646,7 +1711,7 @@ pub(crate) async fn load_memory_item_detail_sqlx(
         .bind(item_id)
         .fetch_optional(pool)
         .await
-        .map_err(|error| error.to_string())?
+        .map_err(AppError::external)?
     else {
         return Ok(None);
     };
@@ -1655,13 +1720,13 @@ pub(crate) async fn load_memory_item_detail_sqlx(
         .bind(item_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     let revision_rows = sqlx::query(LOAD_MEMORY_ITEM_REVISIONS_SQL)
         .bind(tenant_id)
         .bind(item_id)
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
 
     Ok(Some(MemoryItemDetail {
         item: map_memory_item(&item_row)?,
@@ -1694,7 +1759,7 @@ pub(crate) async fn list_memory_items_sqlx(
         .build()
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     rows.iter().map(map_memory_item).collect()
 }
 
@@ -1711,9 +1776,9 @@ pub(crate) async fn count_memory_items_sqlx(
         .build()
         .fetch_one(pool)
         .await
-        .map_err(|error| error.to_string())?;
-    let count: i64 = row.try_get(0).map_err(|error| error.to_string())?;
-    usize::try_from(count).map_err(|error| error.to_string())
+        .map_err(AppError::external)?;
+    let count: i64 = row.try_get(0).map_err(AppError::external)?;
+    usize::try_from(count).map_err(AppError::external)
 }
 
 pub(crate) async fn update_memory_item_sqlx(
@@ -1731,13 +1796,13 @@ pub(crate) async fn update_memory_item_sqlx(
         item.confidence,
     )?;
     let scope_json = encode_json(&item.scope)?;
-    let scope_fingerprint = item.scope.fingerprint()?;
+    let scope_fingerprint = item.scope.fingerprint().map_err(AppError::external)?;
     let kind = encode_enum(item.kind)?;
     let status = encode_enum(item.status)?;
     let origin = encode_enum(item.origin)?;
     let stale_reason = encode_optional_enum(item.stale_reason)?;
     let now = Utc::now().to_rfc3339();
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
 
     let result = sqlx::query(
         r#"
@@ -1781,9 +1846,12 @@ pub(crate) async fn update_memory_item_sqlx(
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if result.rows_affected() != 1 {
-        return Err(format!("memory item {} was not found", item.id));
+        return Err(AppError::NotFound(format!(
+            "memory item {} was not found",
+            item.id
+        )));
     }
 
     let revision_number = sqlx::query_scalar::<_, i64>(
@@ -1797,7 +1865,7 @@ pub(crate) async fn update_memory_item_sqlx(
     .bind(&item.id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         r#"
         INSERT INTO memory_item_revisions (
@@ -1831,7 +1899,7 @@ pub(crate) async fn update_memory_item_sqlx(
     .bind(&now)
     .execute(&mut *tx)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
 
     if let Some(evidence_ids) = evidence_ids {
         sqlx::query("DELETE FROM memory_item_evidence WHERE tenant_id = ?1 AND item_id = ?2")
@@ -1839,7 +1907,7 @@ pub(crate) async fn update_memory_item_sqlx(
             .bind(&item.id)
             .execute(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
 
         let mut seen = HashSet::new();
         for (sort_order, evidence_id) in evidence_ids
@@ -1866,19 +1934,19 @@ pub(crate) async fn update_memory_item_sqlx(
             .bind(sort_order as i64)
             .execute(&mut *tx)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
             if result.rows_affected() != 1 {
-                return Err(format!(
+                return Err(AppError::NotFound(format!(
                     "memory evidence {evidence_id} was not found for tenant {tenant_id}"
-                ));
+                )));
             }
         }
     }
 
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await.map_err(AppError::external)?;
     load_memory_item_detail_sqlx(pool, tenant_id, &item.id)
         .await?
-        .ok_or_else(|| format!("updated memory item {} was not found", item.id))
+        .ok_or_else(|| AppError::NotFound(format!("updated memory item {} was not found", item.id)))
 }
 
 fn push_enum_filter<T: serde::Serialize + Copy>(
@@ -1917,123 +1985,115 @@ fn push_memory_item_filter(
 
 fn map_memory_item(row: &SqliteRow) -> AppResult<MemoryItem> {
     Ok(MemoryItem {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        kind: decode_enum(row.try_get(1).map_err(|error| error.to_string())?)?,
-        status: decode_enum(row.try_get(2).map_err(|error| error.to_string())?)?,
-        title: row.try_get(3).map_err(|error| error.to_string())?,
-        content_markdown: row.try_get(4).map_err(|error| error.to_string())?,
-        scope: decode_json(row.try_get(5).map_err(|error| error.to_string())?)?,
-        scope_fingerprint: row.try_get(6).map_err(|error| error.to_string())?,
-        origin: decode_enum(row.try_get(7).map_err(|error| error.to_string())?)?,
-        origin_run_id: row.try_get(8).map_err(|error| error.to_string())?,
-        origin_dream_note_id: row.try_get(9).map_err(|error| error.to_string())?,
-        origin_extraction_id: row.try_get(10).map_err(|error| error.to_string())?,
-        confidence: row.try_get(11).map_err(|error| error.to_string())?,
-        supersedes_item_id: row.try_get(12).map_err(|error| error.to_string())?,
-        source_revision: row.try_get(13).map_err(|error| error.to_string())?,
-        verified_revision: row.try_get(14).map_err(|error| error.to_string())?,
-        stale_reason: decode_optional_enum(row.try_get(15).map_err(|error| error.to_string())?)?,
-        created_at: row.try_get(16).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(17).map_err(|error| error.to_string())?,
+        id: row.try_get(0).map_err(AppError::external)?,
+        kind: decode_enum(row.try_get(1).map_err(AppError::external)?)?,
+        status: decode_enum(row.try_get(2).map_err(AppError::external)?)?,
+        title: row.try_get(3).map_err(AppError::external)?,
+        content_markdown: row.try_get(4).map_err(AppError::external)?,
+        scope: decode_json(row.try_get(5).map_err(AppError::external)?)?,
+        scope_fingerprint: row.try_get(6).map_err(AppError::external)?,
+        origin: decode_enum(row.try_get(7).map_err(AppError::external)?)?,
+        origin_run_id: row.try_get(8).map_err(AppError::external)?,
+        origin_dream_note_id: row.try_get(9).map_err(AppError::external)?,
+        origin_extraction_id: row.try_get(10).map_err(AppError::external)?,
+        confidence: row.try_get(11).map_err(AppError::external)?,
+        supersedes_item_id: row.try_get(12).map_err(AppError::external)?,
+        source_revision: row.try_get(13).map_err(AppError::external)?,
+        verified_revision: row.try_get(14).map_err(AppError::external)?,
+        stale_reason: decode_optional_enum(row.try_get(15).map_err(AppError::external)?)?,
+        created_at: row.try_get(16).map_err(AppError::external)?,
+        updated_at: row.try_get(17).map_err(AppError::external)?,
     })
 }
 
 fn map_memory_dream_note(row: &SqliteRow) -> AppResult<MemoryDreamNote> {
     Ok(MemoryDreamNote {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        run_id: row.try_get(1).map_err(|error| error.to_string())?,
-        scope: decode_json(
-            row.try_get::<String, _>(2)
-                .map_err(|error| error.to_string())?,
-        )?,
-        scope_fingerprint: row.try_get(3).map_err(|error| error.to_string())?,
-        markdown: row.try_get(4).map_err(|error| error.to_string())?,
-        session_count: usize::try_from(
-            row.try_get::<i64, _>(5)
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|_| "invalid Dream session count".to_string())?,
-        question_count: usize::try_from(
-            row.try_get::<i64, _>(6)
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|_| "invalid Dream question count".to_string())?,
-        evidence_count: usize::try_from(
-            row.try_get::<i64, _>(7)
-                .map_err(|error| error.to_string())?,
-        )
-        .map_err(|_| "invalid Dream evidence count".to_string())?,
-        source_revision: row.try_get(8).map_err(|error| error.to_string())?,
-        status: decode_enum(
-            row.try_get::<String, _>(9)
-                .map_err(|error| error.to_string())?,
-        )?,
-        created_at: row.try_get(10).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(11).map_err(|error| error.to_string())?,
+        id: row.try_get(0).map_err(AppError::external)?,
+        run_id: row.try_get(1).map_err(AppError::external)?,
+        scope: decode_json(row.try_get::<String, _>(2).map_err(AppError::external)?)?,
+        scope_fingerprint: row.try_get(3).map_err(AppError::external)?,
+        markdown: row.try_get(4).map_err(AppError::external)?,
+        session_count: usize::try_from(row.try_get::<i64, _>(5).map_err(AppError::external)?)
+            .map_err(|_| AppError::Validation("invalid Dream session count".to_string()))?,
+        question_count: usize::try_from(row.try_get::<i64, _>(6).map_err(AppError::external)?)
+            .map_err(|_| AppError::Validation("invalid Dream question count".to_string()))?,
+        evidence_count: usize::try_from(row.try_get::<i64, _>(7).map_err(AppError::external)?)
+            .map_err(|_| AppError::Validation("invalid Dream evidence count".to_string()))?,
+        source_revision: row.try_get(8).map_err(AppError::external)?,
+        status: decode_enum(row.try_get::<String, _>(9).map_err(AppError::external)?)?,
+        created_at: row.try_get(10).map_err(AppError::external)?,
+        updated_at: row.try_get(11).map_err(AppError::external)?,
     })
 }
 
 fn map_memory_evidence(row: &SqliteRow) -> AppResult<MemoryEvidenceSnapshot> {
     Ok(MemoryEvidenceSnapshot {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        record_kind: decode_enum(row.try_get(1).map_err(|error| error.to_string())?)?,
-        source_id: row.try_get(2).map_err(|error| error.to_string())?,
-        session_id: row.try_get(3).map_err(|error| error.to_string())?,
-        question_id: row.try_get(4).map_err(|error| error.to_string())?,
-        turn_id: row.try_get(5).map_err(|error| error.to_string())?,
-        part_id: row.try_get(6).map_err(|error| error.to_string())?,
-        block_id: row.try_get(7).map_err(|error| error.to_string())?,
-        content_hash: row.try_get(8).map_err(|error| error.to_string())?,
-        excerpt: row.try_get(9).map_err(|error| error.to_string())?,
-        translated_excerpt: row.try_get(10).map_err(|error| error.to_string())?,
-        event_time: row.try_get(11).map_err(|error| error.to_string())?,
-        source_revision: row.try_get(12).map_err(|error| error.to_string())?,
-        source_unavailable: row
-            .try_get::<i64, _>(13)
-            .map_err(|error| error.to_string())?
-            == 1,
-        created_at: row.try_get(14).map_err(|error| error.to_string())?,
-        updated_at: row.try_get(15).map_err(|error| error.to_string())?,
+        id: row.try_get(0).map_err(AppError::external)?,
+        record_kind: decode_enum(row.try_get(1).map_err(AppError::external)?)?,
+        source_id: row.try_get(2).map_err(AppError::external)?,
+        session_id: row.try_get(3).map_err(AppError::external)?,
+        question_id: row.try_get(4).map_err(AppError::external)?,
+        turn_id: row.try_get(5).map_err(AppError::external)?,
+        part_id: row.try_get(6).map_err(AppError::external)?,
+        block_id: row.try_get(7).map_err(AppError::external)?,
+        content_hash: row.try_get(8).map_err(AppError::external)?,
+        excerpt: row.try_get(9).map_err(AppError::external)?,
+        translated_excerpt: row.try_get(10).map_err(AppError::external)?,
+        event_time: row.try_get(11).map_err(AppError::external)?,
+        source_revision: row.try_get(12).map_err(AppError::external)?,
+        source_unavailable: row.try_get::<i64, _>(13).map_err(AppError::external)? == 1,
+        created_at: row.try_get(14).map_err(AppError::external)?,
+        updated_at: row.try_get(15).map_err(AppError::external)?,
     })
 }
 
 fn map_memory_revision(row: &SqliteRow) -> AppResult<MemoryItemRevision> {
     Ok(MemoryItemRevision {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        item_id: row.try_get(1).map_err(|error| error.to_string())?,
-        revision_number: row.try_get(2).map_err(|error| error.to_string())?,
-        change_kind: decode_enum(row.try_get(3).map_err(|error| error.to_string())?)?,
-        kind: decode_enum(row.try_get(4).map_err(|error| error.to_string())?)?,
-        status: decode_enum(row.try_get(5).map_err(|error| error.to_string())?)?,
-        title: row.try_get(6).map_err(|error| error.to_string())?,
-        content_markdown: row.try_get(7).map_err(|error| error.to_string())?,
-        scope: decode_json(row.try_get(8).map_err(|error| error.to_string())?)?,
-        scope_fingerprint: row.try_get(9).map_err(|error| error.to_string())?,
-        origin: decode_enum(row.try_get(10).map_err(|error| error.to_string())?)?,
-        confidence: row.try_get(11).map_err(|error| error.to_string())?,
-        supersedes_item_id: row.try_get(12).map_err(|error| error.to_string())?,
-        source_revision: row.try_get(13).map_err(|error| error.to_string())?,
-        verified_revision: row.try_get(14).map_err(|error| error.to_string())?,
-        stale_reason: decode_optional_enum(row.try_get(15).map_err(|error| error.to_string())?)?,
-        changed_at: row.try_get(16).map_err(|error| error.to_string())?,
+        id: row.try_get(0).map_err(AppError::external)?,
+        item_id: row.try_get(1).map_err(AppError::external)?,
+        revision_number: row.try_get(2).map_err(AppError::external)?,
+        change_kind: decode_enum(row.try_get(3).map_err(AppError::external)?)?,
+        kind: decode_enum(row.try_get(4).map_err(AppError::external)?)?,
+        status: decode_enum(row.try_get(5).map_err(AppError::external)?)?,
+        title: row.try_get(6).map_err(AppError::external)?,
+        content_markdown: row.try_get(7).map_err(AppError::external)?,
+        scope: decode_json(row.try_get(8).map_err(AppError::external)?)?,
+        scope_fingerprint: row.try_get(9).map_err(AppError::external)?,
+        origin: decode_enum(row.try_get(10).map_err(AppError::external)?)?,
+        confidence: row.try_get(11).map_err(AppError::external)?,
+        supersedes_item_id: row.try_get(12).map_err(AppError::external)?,
+        source_revision: row.try_get(13).map_err(AppError::external)?,
+        verified_revision: row.try_get(14).map_err(AppError::external)?,
+        stale_reason: decode_optional_enum(row.try_get(15).map_err(AppError::external)?)?,
+        changed_at: row.try_get(16).map_err(AppError::external)?,
     })
 }
 
 fn validate_evidence(draft: &NewMemoryEvidenceSnapshot) -> AppResult<()> {
     if draft.session_id.trim().is_empty() {
-        return Err("memory evidence session_id is required".to_string());
+        return Err(AppError::Validation(
+            "memory evidence session_id is required".to_string(),
+        ));
     }
     if draft.block_id.trim().is_empty() {
-        return Err("memory evidence block_id is required".to_string());
+        return Err(AppError::Validation(
+            "memory evidence block_id is required".to_string(),
+        ));
     }
     if draft.content_hash.trim().is_empty() {
-        return Err("memory evidence content_hash is required".to_string());
+        return Err(AppError::Validation(
+            "memory evidence content_hash is required".to_string(),
+        ));
     }
     if draft.excerpt.chars().count() > 8192 {
-        return Err("memory evidence excerpt exceeds 8192 characters".to_string());
+        return Err(AppError::Validation(
+            "memory evidence excerpt exceeds 8192 characters".to_string(),
+        ));
     }
     if draft.source_revision < 0 {
-        return Err("memory evidence source_revision cannot be negative".to_string());
+        return Err(AppError::Validation(
+            "memory evidence source_revision cannot be negative".to_string(),
+        ));
     }
     Ok(())
 }
@@ -2056,16 +2116,24 @@ fn validate_item_values(
     confidence: Option<f64>,
 ) -> AppResult<()> {
     if title.trim().is_empty() {
-        return Err("memory item title is required".to_string());
+        return Err(AppError::Validation(
+            "memory item title is required".to_string(),
+        ));
     }
     if content_markdown.trim().is_empty() {
-        return Err("memory item content is required".to_string());
+        return Err(AppError::Validation(
+            "memory item content is required".to_string(),
+        ));
     }
     if source_revision < 0 || verified_revision < 0 || verified_revision > source_revision {
-        return Err("memory item revisions are invalid".to_string());
+        return Err(AppError::Validation(
+            "memory item revisions are invalid".to_string(),
+        ));
     }
     if confidence.is_some_and(|confidence| !(0.0..=1.0).contains(&confidence)) {
-        return Err("memory item confidence must be between 0 and 1".to_string());
+        return Err(AppError::Validation(
+            "memory item confidence must be between 0 and 1".to_string(),
+        ));
     }
     Ok(())
 }
@@ -2104,8 +2172,8 @@ mod tests {
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
-                AppResult::Ok((first, second, count))
+                .map_err(AppError::external)?;
+                Ok::<_, AppError>((first, second, count))
             })
             .expect("deduplicate evidence");
 
@@ -2149,7 +2217,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let evidence = upsert_memory_evidence_snapshot_sqlx(
                     database.pool(),
                     "default",
@@ -2169,8 +2237,8 @@ mod tests {
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
-                AppResult::Ok((error, tenant_b_count))
+                .map_err(AppError::external)?;
+                Ok::<_, AppError>((error, tenant_b_count))
             })
             .expect("verify tenant boundary");
 
@@ -2199,14 +2267,19 @@ mod tests {
                     "default",
                     &MemoryItemFilter {
                         statuses: vec![MemoryItemStatus::Active],
-                        scope_fingerprint: Some(test_item().scope.fingerprint()?),
+                        scope_fingerprint: Some(
+                            test_item()
+                                .scope
+                                .fingerprint()
+                                .map_err(AppError::external)?,
+                        ),
                         stale_only: true,
                         limit: 10,
                         ..MemoryItemFilter::default()
                     },
                 )
                 .await?;
-                AppResult::Ok(filtered)
+                Ok::<_, AppError>(filtered)
             })
             .expect("filter memory items");
 
@@ -2268,7 +2341,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let default_evidence = upsert_memory_evidence_snapshot_sqlx(
                     database.pool(),
                     "default",
@@ -2302,7 +2375,7 @@ mod tests {
                 .expect_err("cross-tenant replacement evidence must fail");
                 load_memory_item_detail_sqlx(database.pool(), "default", &item_id)
                     .await?
-                    .ok_or_else(|| "memory item disappeared".to_string())
+                    .ok_or_else(|| AppError::external("memory item disappeared"))
             })
             .expect("verify update rollback");
 
@@ -2368,13 +2441,13 @@ mod tests {
                     &scope,
                 )
                 .await?
-                .ok_or_else(|| "Dream state disappeared".to_string())?;
+                .ok_or_else(|| AppError::external("Dream state disappeared"))?;
                 let run_two_evidence = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM memory_run_evidence WHERE tenant_id = 'default' AND run_id = 'dream-run-2'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 assert_eq!(
                     state_after_failure
                         .session_cursor
@@ -2392,19 +2465,19 @@ mod tests {
                 .await?;
                 let state = load_memory_dream_state_sqlx(database.pool(), "default", &scope)
                     .await?
-                    .ok_or_else(|| "Dream state was not saved".to_string())?;
+                    .ok_or_else(|| AppError::external("Dream state was not saved"))?;
                 let completed_runs = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM memory_runs WHERE tenant_id = 'default' AND status = 'completed'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let notes = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM memory_dream_notes WHERE tenant_id = 'default'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
 
                 assert_eq!(state.last_successful_run_id.as_deref(), Some("dream-run-2"));
                 assert_eq!(
@@ -2416,7 +2489,7 @@ mod tests {
                 );
                 assert_eq!(completed_runs, 2);
                 assert_eq!(notes, 2);
-                AppResult::Ok(())
+                Ok::<_, AppError>(())
             })
             .expect("persist and retry Dream transactions");
         cleanup(database, &db_path);
@@ -2469,16 +2542,16 @@ mod tests {
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let status: String = sqlx::query_scalar(
                     "SELECT status FROM memory_runs WHERE tenant_id='default' AND id='recall-run-1'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 assert_eq!(item_count, 0);
                 assert_eq!(status, "running");
-                AppResult::Ok(())
+                Ok::<_, AppError>(())
             })
             .expect("verify Recall finalization rollback");
         cleanup(database, &db_path);
@@ -2499,7 +2572,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 sqlx::query(
                     r#"WITH RECURSIVE ids(value) AS (
                       VALUES(0) UNION ALL SELECT value+1 FROM ids WHERE value<99999
@@ -2514,7 +2587,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let scope = MemoryScope {
                     app_id: Some("codex".to_string()),
                     project_path: Some("~/performance".to_string()),
@@ -2555,7 +2628,7 @@ mod tests {
                     p95 < std::time::Duration::from_millis(350),
                     "100k Recall page p95 was {p95:?}"
                 );
-                AppResult::Ok(())
+                Ok::<_, AppError>(())
             })
             .expect("measure 100k Recall page");
         cleanup(database, &db_path);
@@ -2574,7 +2647,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 sqlx::query(
                     r#"INSERT INTO conversation_turns (
                       tenant_id,id,session_id,external_id,turn_index,user_text,fingerprint,missing,imported_at
@@ -2583,7 +2656,7 @@ mod tests {
                 )
                 .execute(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let snapshot = upsert_memory_evidence_snapshot_sqlx(
                     database.pool(),
                     "default",
@@ -2609,24 +2682,24 @@ mod tests {
                     None
                 );
                 sqlx::query("UPDATE conversation_turns SET user_text='changed' WHERE tenant_id='default' AND id='fresh-turn'")
-                    .execute(database.pool()).await.map_err(|error| error.to_string())?;
+                    .execute(database.pool()).await.map_err(AppError::external)?;
                 assert_eq!(
                     memory_evidence_stale_reason_sqlx(database.pool(), "default", &snapshot).await?,
                     Some(crate::backend::models::MemoryStaleReason::EvidenceChanged)
                 );
                 sqlx::query("DELETE FROM conversation_turns WHERE tenant_id='default' AND id='fresh-turn'")
-                    .execute(database.pool()).await.map_err(|error| error.to_string())?;
+                    .execute(database.pool()).await.map_err(AppError::external)?;
                 assert_eq!(
                     memory_evidence_stale_reason_sqlx(database.pool(), "default", &snapshot).await?,
                     Some(crate::backend::models::MemoryStaleReason::EvidenceMissing)
                 );
                 sqlx::query("UPDATE conversation_sessions SET missing=1 WHERE tenant_id='default' AND id='fresh-session'")
-                    .execute(database.pool()).await.map_err(|error| error.to_string())?;
+                    .execute(database.pool()).await.map_err(AppError::external)?;
                 assert_eq!(
                     memory_evidence_stale_reason_sqlx(database.pool(), "default", &snapshot).await?,
                     Some(crate::backend::models::MemoryStaleReason::SourceUnavailable)
                 );
-                AppResult::Ok(())
+                Ok::<_, AppError>(())
             })
             .expect("verify freshness reasons");
         cleanup(database, &db_path);
@@ -2660,12 +2733,7 @@ mod tests {
             run_id: run_id.to_string(),
             note_id: note_id.to_string(),
             scope: scope.clone(),
-            trigger: crate::backend::models::MemoryRunTrigger::Manual,
-            source_revision_start: cursor_offset.saturating_sub(1) as i64,
             source_revision_end: cursor_offset as i64,
-            provider: "opencode".to_string(),
-            model: None,
-            prompt_version: "memory-auto-dream-v1".to_string(),
             processed_count: 1,
             total_count: 1,
             markdown: format!(

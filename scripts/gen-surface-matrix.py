@@ -15,7 +15,7 @@ CONTRACT = ROOT / "cli/internal/schema/contract.json"
 TAURI_COMMANDS = ROOT / "src-tauri/src/adapters/tauri/commands.rs"
 ENGINE_REGISTRY = ROOT / "src-tauri/src/adapters/engine/registry.rs"
 EXEMPTIONS = ROOT / "scripts/surface-matrix-exemptions.txt"
-MARKDOWN = ROOT / "docs/generated/surface-matrix.md"
+MARKDOWN = ROOT / "agent-docs/generated/surface-matrix.md"
 RUST = ROOT / "src-tauri/src/adapters/engine/surface_mapping.rs"
 
 

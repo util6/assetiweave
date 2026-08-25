@@ -47,6 +47,12 @@ export interface AiExecutionErrorView {
   phase: AiExecutionPhase | null;
 }
 
+export interface AiExecutionCleanupReport {
+  process_reaped: boolean;
+  workspace_removed: boolean;
+  failure_count: number;
+}
+
 export interface AiExecutionTaskSnapshot {
   id: string;
   purpose: "translation" | "connection_test";
@@ -58,6 +64,7 @@ export interface AiExecutionTaskSnapshot {
   finished_at: string | null;
   result: { text: string } | null;
   error: AiExecutionErrorView | null;
+  cleanup: AiExecutionCleanupReport | null;
 }
 
 export interface ConversationCardTranslationRequest {

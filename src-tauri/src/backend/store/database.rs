@@ -1,21 +1,23 @@
-use crate::backend::dto::AppResult;
 #[cfg(test)]
 use crate::backend::path_utils::ensure_app_library_dirs;
+use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::target_catalog::TargetCatalog;
 use sqlx::{
     migrate::Migrator,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
     AssertSqlSafe, Row, SqlitePool,
 };
+#[cfg(test)]
 use std::{
     collections::BTreeSet,
-    future::Future,
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
-    time::Duration,
+    path::PathBuf,
+    sync::{Mutex, OnceLock},
 };
+use std::{future::Future, path::Path, sync::Arc, time::Duration};
 use tokio::runtime::Runtime;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+#[cfg(test)]
 static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Clone)]
@@ -41,9 +43,7 @@ impl Database {
         let runtime = build_runtime()?;
         let pool = runtime.block_on(open_migrated_pool(db_path))?;
         let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
-        let mut initialized_paths = initialized_paths
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let mut initialized_paths = initialized_paths.lock().map_err(AppError::external)?;
         if !initialized_paths.contains(db_path) {
             ensure_app_library_dirs()?;
             runtime.block_on(seed_defaults_sqlx(&pool))?;
@@ -86,7 +86,7 @@ pub(crate) async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> Ap
     .bind(tenant_id)
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(AppError::external)?
     .flatten();
     Ok(status.unwrap_or_else(|| "等待首次扫描".to_string()))
 }
@@ -101,32 +101,36 @@ pub(crate) async fn count_rows(
             .bind(tenant_id)
             .fetch_one(pool)
             .await
-            .map_err(|error| error.to_string())?,
+            .map_err(AppError::external)?,
         "assets" => sqlx::query_scalar("SELECT COUNT(*) FROM assets WHERE tenant_id = ?1")
             .bind(tenant_id)
             .fetch_one(pool)
             .await
-            .map_err(|error| error.to_string())?,
+            .map_err(AppError::external)?,
         "profiles" => sqlx::query_scalar("SELECT COUNT(*) FROM profiles WHERE tenant_id = ?1")
             .bind(tenant_id)
             .fetch_one(pool)
             .await
-            .map_err(|error| error.to_string())?,
+            .map_err(AppError::external)?,
         "navigation_state" => {
             sqlx::query_scalar("SELECT COUNT(*) FROM navigation_state WHERE tenant_id = ?1")
                 .bind(tenant_id)
                 .fetch_one(pool)
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(AppError::external)?
         }
         "app_shortcut_items" => {
             sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items WHERE tenant_id = ?1")
                 .bind(tenant_id)
                 .fetch_one(pool)
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(AppError::external)?
         }
-        other => return Err(format!("unsupported count table: {other}")),
+        other => {
+            return Err(AppError::Validation(format!(
+                "unsupported count table: {other}"
+            )))
+        }
     };
     Ok(count as usize)
 }
@@ -141,7 +145,7 @@ pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
         Ok(())
     })
     .join()
-    .map_err(|_| "SQLx migration worker panicked".to_string())?
+    .map_err(|_| AppError::Process("SQLx migration worker panicked".to_string()))?
 }
 
 pub(crate) fn build_runtime() -> AppResult<Runtime> {
@@ -150,7 +154,7 @@ pub(crate) fn build_runtime() -> AppResult<Runtime> {
         .thread_name("aiw-rt")
         .enable_time()
         .build()
-        .map_err(|error| error.to_string())
+        .map_err(AppError::external)
 }
 
 pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
@@ -165,30 +169,46 @@ pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> 
         .max_connections(5)
         .connect_with(options)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
 
     if is_untracked_legacy_database(&pool).await? {
         upgrade_legacy_schema(&pool).await?;
     }
     repair_known_modified_catalog_release_migration(&pool).await?;
-    MIGRATOR
-        .run(&pool)
-        .await
-        .map_err(|error| error.to_string())?;
+    MIGRATOR.run(&pool).await.map_err(AppError::external)?;
     Ok(pool)
 }
 
+#[cfg(test)]
 pub(crate) async fn seed_defaults_sqlx(pool: &SqlitePool) -> AppResult<()> {
+    let catalog = TargetCatalog::builtin()?;
+    seed_defaults_sqlx_with_catalog(pool, &catalog).await
+}
+
+pub(crate) async fn seed_defaults_sqlx_with_catalog(
+    pool: &SqlitePool,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     super::tenant_repo::ensure_local_identity_sqlx(pool).await?;
     let tenant_id = super::tenant_repo::DEFAULT_TENANT_ID;
 
-    seed_tenant_defaults_sqlx(pool, tenant_id).await?;
+    seed_tenant_defaults_sqlx_with_catalog(pool, tenant_id, catalog).await?;
     normalize_all_tenant_paths_sqlx(pool).await?;
 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+    let catalog = TargetCatalog::builtin()?;
+    seed_tenant_defaults_sqlx_with_catalog(pool, tenant_id, &catalog).await
+}
+
+pub(crate) async fn seed_tenant_defaults_sqlx_with_catalog(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     if count_rows(pool, tenant_id, "sources").await? == 0 {
         for source in crate::backend::defaults::default_sources_for_tenant(tenant_id) {
             super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?;
@@ -199,26 +219,28 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
     normalize_existing_sources_sqlx(pool, tenant_id).await?;
 
     if count_rows(pool, tenant_id, "profiles").await? == 0 {
-        for profile in crate::backend::defaults::default_profiles() {
+        for profile in crate::backend::defaults::default_profiles_from_catalog(catalog) {
             super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
     } else {
-        ensure_default_profiles_sqlx(pool, tenant_id).await?;
+        ensure_default_profiles_sqlx(pool, tenant_id, catalog).await?;
     }
     normalize_existing_profiles_sqlx(pool, tenant_id).await?;
-    normalize_default_profiles_sqlx(pool, tenant_id).await?;
+    normalize_default_profiles_sqlx(pool, tenant_id, catalog).await?;
 
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
         super::menu_repo::seed_navigation_model_sqlx(pool, tenant_id, &default_navigation_model)
-            .await?;
+            .await
+            .map_err(AppError::external)?;
     } else {
         super::menu_repo::ensure_navigation_model_items_sqlx(
             pool,
             tenant_id,
             &default_navigation_model,
         )
-        .await?;
+        .await
+        .map_err(AppError::external)?;
     }
 
     if count_rows(pool, tenant_id, "app_shortcut_items").await? == 0 {
@@ -240,9 +262,13 @@ pub(crate) async fn seed_tenant_defaults_sqlx(pool: &SqlitePool, tenant_id: &str
     Ok(())
 }
 
-async fn ensure_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
+async fn ensure_default_profiles_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
     let existing_profiles = super::profile_repo::load_profiles_sqlx(pool, tenant_id).await?;
-    for profile in crate::backend::defaults::default_profiles() {
+    for profile in crate::backend::defaults::default_profiles_from_catalog(catalog) {
         if existing_profiles
             .iter()
             .any(|existing| existing.id == profile.id)
@@ -272,7 +298,7 @@ async fn ensure_library_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppRe
 
 async fn ensure_system_skill_source_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
     let source = crate::backend::builtin_skills::system_skill_source()?;
-    super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await
+    Ok(super::source_repo::upsert_source_sqlx(pool, tenant_id, &source).await?)
 }
 
 async fn normalize_existing_sources_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
@@ -293,7 +319,7 @@ async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> AppResult<()> {
     let tenant_ids = sqlx::query_scalar::<_, String>("SELECT id FROM tenants")
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     for tenant_id in tenant_ids {
         if tenant_id == super::tenant_repo::DEFAULT_TENANT_ID {
             continue;
@@ -305,14 +331,27 @@ async fn normalize_all_tenant_paths_sqlx(pool: &SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
-async fn normalize_default_profiles_sqlx(pool: &SqlitePool, tenant_id: &str) -> AppResult<()> {
-    let defaults = crate::backend::defaults::default_profiles();
+async fn normalize_default_profiles_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    catalog: &TargetCatalog,
+) -> AppResult<()> {
+    let defaults = crate::backend::defaults::default_profiles_from_catalog(catalog);
+    let previous_defaults =
+        crate::backend::defaults::default_profiles_from_catalog(&TargetCatalog::builtin()?);
     for mut profile in super::profile_repo::load_profiles_sqlx(pool, tenant_id).await? {
         let Some(default_profile) = defaults.iter().find(|candidate| candidate.id == profile.id)
         else {
             continue;
         };
-        if legacy_profile_target_paths(&profile.id).contains(&profile.target_paths) {
+        let matches_previous_catalog = previous_defaults
+            .iter()
+            .find(|candidate| candidate.id == profile.id)
+            .is_some_and(|candidate| candidate.target_paths == profile.target_paths);
+        if matches_previous_catalog
+            || legacy_profile_target_paths(&profile.id).contains(&profile.target_paths)
+        {
+            profile.target_provider_id = default_profile.target_provider_id.clone();
             profile.target_paths = default_profile.target_paths.clone();
             super::profile_repo::upsert_profile_sqlx(pool, tenant_id, &profile).await?;
         }
@@ -349,7 +388,7 @@ async fn table_exists(pool: &SqlitePool, table: &str) -> AppResult<bool> {
             .bind(table)
             .fetch_one(pool)
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(AppError::external)?;
     Ok(count == 1)
 }
 
@@ -359,7 +398,7 @@ async fn upgrade_legacy_schema(pool: &SqlitePool) -> AppResult<()> {
             sqlx::query(*statement)
                 .execute(pool)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
         }
     }
     Ok(())
@@ -374,7 +413,7 @@ async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> A
     )
     .fetch_optional(pool)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     if checksum.as_deref() != Some(KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM) {
         return Ok(());
     }
@@ -382,23 +421,20 @@ async fn repair_known_modified_catalog_release_migration(pool: &SqlitePool) -> A
         return Ok(());
     }
 
-    let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
+    let mut transaction = pool.begin().await.map_err(AppError::external)?;
     sqlx::query(
         "UPDATE _sqlx_migrations SET checksum = X'E75F75A803B17920C2E1498962D6DCB8A34167DE66AAB216FBC2F4CA056A383E0600CAEFE44633CDA48A0F9FE61DC581' WHERE version = 202607150002",
     )
     .execute(&mut *transaction)
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(AppError::external)?;
     sqlx::query(
         "INSERT OR IGNORE INTO _sqlx_migrations (version, description, success, checksum, execution_time) VALUES (202607160001, 'conversation adapter catalog release source', 1, X'39DC30B774A3C414B1AC69B49F0036E713F2B75A973B8F75A5E796064373FE4170FC9E2B3305509DF928C85A26C5736E', 0)",
     )
     .execute(&mut *transaction)
     .await
-    .map_err(|error| error.to_string())?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| error.to_string())
+    .map_err(AppError::external)?;
+    transaction.commit().await.map_err(AppError::external)
 }
 
 const KNOWN_MODIFIED_CATALOG_RELEASE_DETAILS_CHECKSUM: &str =
@@ -409,12 +445,12 @@ async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> AppResul
     let rows = sqlx::query(AssertSqlSafe(statement))
         .fetch_all(pool)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(AppError::external)?;
     rows.iter()
         .map(|row| row.try_get::<String, _>("name"))
         .collect::<Result<Vec<_>, _>>()
         .map(|columns| columns.iter().any(|candidate| candidate == column))
-        .map_err(|error| error.to_string())
+        .map_err(AppError::external)
 }
 
 const LEGACY_COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -592,7 +628,7 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 29);
+        assert_eq!(migration_count, 30);
         cleanup_database(&db_path);
     }
 
@@ -667,7 +703,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 29);
+        assert_eq!(migration_count, 30);
         cleanup_database(&db_path);
     }
 
@@ -728,7 +764,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 29);
+        assert_eq!(migration_count, 30);
         cleanup_database(&db_path);
     }
 
@@ -760,22 +796,22 @@ mod tests {
                 let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
                     .fetch_one(database.pool())
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
                 let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
                     .fetch_one(database.pool())
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
                 let navigation_count =
                     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
                         .fetch_one(database.pool())
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(AppError::external)?;
                 let shortcut_count =
                     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
                         .fetch_one(database.pool())
                         .await
-                        .map_err(|error| error.to_string())?;
-                AppResult::Ok((
+                        .map_err(AppError::external)?;
+                Ok::<_, AppError>((
                     source_count,
                     profile_count,
                     navigation_count,
@@ -806,7 +842,7 @@ mod tests {
                 )
                 .fetch_one(reopened.pool())
                 .await
-                .map_err(|error| error.to_string())
+                .map_err(AppError::external)
             })
             .expect("query preserved adapter");
 
@@ -839,32 +875,34 @@ mod tests {
                 let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
                     .fetch_one(reopened.pool())
                     .await
-                    .map_err(|error| error.to_string())?;
+                    .map_err(AppError::external)?;
                 let shortcut_count =
                     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
                         .fetch_one(reopened.pool())
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(AppError::external)?;
                 let codex_accent = sqlx::query_scalar::<_, String>(
                     "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
                 )
                 .fetch_one(reopened.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let hermes_accent = sqlx::query_scalar::<_, String>(
                     "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
                 )
                 .fetch_one(reopened.pool())
                 .await
-                .map_err(|error| error.to_string())?;
-                AppResult::Ok((profile_count, shortcut_count, codex_accent, hermes_accent))
+                .map_err(AppError::external)?;
+                Ok::<_, AppError>((profile_count, shortcut_count, codex_accent, hermes_accent))
             })
             .expect("query restored app defaults");
 
-        assert_eq!(
-            profile_count,
-            crate::backend::defaults::default_profiles().len() as i64
-        );
+        let expected_profile_count = crate::backend::defaults::default_profiles_from_catalog(
+            &crate::backend::target_catalog::TargetCatalog::builtin_for_tests()
+                .expect("builtin target descriptors"),
+        )
+        .len() as i64;
+        assert_eq!(profile_count, expected_profile_count);
         assert_eq!(
             shortcut_count,
             crate::backend::defaults::default_app_shortcuts().len() as i64
@@ -886,25 +924,25 @@ mod tests {
                     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
                         .fetch_one(database.pool())
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(AppError::external)?;
                 let tenant_count =
                     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
                         .fetch_one(database.pool())
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(AppError::external)?;
                 let membership_count = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(AppError::external)?;
                 let active_tenant_id = sqlx::query_scalar::<_, String>(
                     "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
                 )
                 .fetch_one(database.pool())
                 .await
-                .map_err(|error| error.to_string())?;
-                AppResult::Ok((
+                .map_err(AppError::external)?;
+                Ok::<_, AppError>((
                     principal_count,
                     tenant_count,
                     membership_count,

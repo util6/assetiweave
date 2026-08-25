@@ -51,15 +51,14 @@ func newCmdAgentMarketRefresh(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdAgentMarketList(f *cmdutil.Factory) *cobra.Command {
 	var query, protocol string
-	var installedOnly, includeIncompatible bool
+	var installedOnly bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List curated Agent Market items",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			params := map[string]any{
-				"installedOnly":       installedOnly,
-				"includeIncompatible": includeIncompatible,
+				"installedOnly": installedOnly,
 			}
 			if query != "" {
 				params["query"] = query
@@ -73,7 +72,6 @@ func newCmdAgentMarketList(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&query, "query", "", "search Agent id, name or description")
 	cmd.Flags().StringVar(&protocol, "protocol", "", "protocol filter: acp or native")
 	cmd.Flags().BoolVar(&installedOnly, "installed-only", false, "only list installed Agents")
-	cmd.Flags().BoolVar(&includeIncompatible, "include-incompatible", true, "include core-incompatible catalog items")
 	return cmd
 }
 
@@ -167,6 +165,7 @@ func newCmdAgentLifecycle(f *cmdutil.Factory, defaultAction, use, short string) 
 			}
 			return callAndPrint(cmd, f, schema.MethodAgentInstallRun, map[string]any{
 				"agentId":        args[0],
+				"action":         defaultAction,
 				"catalogVersion": preview.CatalogVersion,
 				"agentVersion":   preview.TargetVersion,
 				"distributionId": preview.Selected.DistributionID,

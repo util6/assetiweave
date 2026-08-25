@@ -7,7 +7,7 @@ use super::{
     AgentRuntimeManager,
 };
 
-/// Materialize only Agent IDs selected by the legacy settings model.
+/// Materialize only Agent IDs selected by the canonical settings model.
 /// Package-manager based entries are intentionally left for explicit Market
 /// installation, so an upgrade never performs network installation.
 pub(crate) async fn migrate_legacy_assignments(
@@ -16,32 +16,27 @@ pub(crate) async fn migrate_legacy_assignments(
     tenant_id: &str,
     scope_key: &str,
 ) -> Result<Vec<String>, String> {
-    let settings = crate::backend::app_settings::read_app_settings_value()?;
+    let settings = crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool)
+        .await
+        .map_err(|error| error.to_string())?;
     let catalog = crate::backend::agent_market::CatalogCache::best_available()
         .map_err(|error| error.to_string())?;
     let catalog_version = catalog.catalog().catalog_version.clone();
 
     let mut agent_ids = BTreeSet::new();
     if let Some(assignments) = settings
-        .get("agentCapabilityAssignments")
+        .get("agentAssignments")
         .and_then(serde_json::Value::as_object)
     {
-        for agent_id in assignments.values().filter_map(serde_json::Value::as_str) {
+        for agent_id in assignments.values().filter_map(|assignment| {
+            assignment
+                .get("agentId")
+                .and_then(serde_json::Value::as_str)
+        }) {
             let trimmed = agent_id.trim();
             if !trimmed.is_empty() {
                 agent_ids.insert(trimmed.to_string());
             }
-        }
-    }
-    if let Some(legacy_cli) = settings
-        .get("aiRuntime")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|value| value.get("cli"))
-        .and_then(serde_json::Value::as_str)
-    {
-        let legacy_cli = legacy_cli.trim();
-        if !legacy_cli.is_empty() {
-            agent_ids.insert(legacy_cli.to_string());
         }
     }
     if agent_ids.is_empty() {
@@ -81,6 +76,7 @@ pub(crate) async fn migrate_legacy_assignments(
 
     let mut notices = Vec::new();
     let runtime_root = super::default_runtime_root().map_err(|error| error.to_string())?;
+    let settings_pool = pool.clone();
     let lifecycle = AgentLifecycleService::new(pool, manager, runtime_root)
         .map_err(|error| error.to_string())?;
     for agent_id in agent_ids {
@@ -108,13 +104,14 @@ pub(crate) async fn migrate_legacy_assignments(
         };
         let request = AgentInstallStartRequest {
             agent_id: item.id.clone(),
+            action: "install".to_string(),
             catalog_version: catalog_version.clone(),
             agent_version: item.version.clone(),
             distribution_id: distribution.id().to_string(),
             preview_token: catalog.preview_token(item, distribution.id(), "install"),
         };
         match lifecycle
-            .install_with_cancellation(tenant_id, request, None)
+            .install_with_cancellation_and_progress(tenant_id, request, None, None)
             .await
         {
             Ok(outcome) => {
@@ -150,7 +147,13 @@ pub(crate) async fn migrate_legacy_assignments(
         .as_object_mut()
         .expect("migration scopes object")
         .insert(scope_id.clone(), marker);
-    crate::backend::app_settings::save_app_settings(updated_settings.clone())?;
+    crate::backend::store::save_app_settings_sqlx(
+        &settings_pool,
+        crate::backend::app_settings::SETTINGS_SCHEMA_VERSION,
+        &updated_settings,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(
         updated_settings["agentMarketMigration"]["scopes"]
             [migration_scope_id(scope_key, tenant_id)]["notices"]

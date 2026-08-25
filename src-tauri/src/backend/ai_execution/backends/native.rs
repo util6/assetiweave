@@ -1,11 +1,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
     time::Instant,
 };
 
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::backend::{
@@ -13,7 +12,14 @@ use crate::backend::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
         types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
-    ai_execution::{AiExecutionError, AiExecutionPhase, AiExecutionRequest, AiExecutionResult},
+    ai_execution::{
+        AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase, AiExecutionRequest,
+        AiExecutionResult,
+    },
+    extension_kernel::{
+        EnvEntry, ExtensionLauncher, InvocationLimits, ProbeKind, ProbeSpec, ProcessInvocation,
+        RuntimeProgramKind,
+    },
     host_process::resolve_host_executable,
     operation_log::log_info,
 };
@@ -63,6 +69,11 @@ impl NativeExecutionBackend {
         }
         request.report_phase(AiExecutionPhase::Closing);
         let cleanup = guard.cleanup().await;
+        request.report_cleanup(AiExecutionCleanupReport {
+            process_reaped: cleanup.process_reaped,
+            workspace_removed: cleanup.workspace_removed,
+            failure_count: usize::from(!cleanup.process_reaped || !cleanup.workspace_removed),
+        });
         request.report_phase(AiExecutionPhase::CleaningUp);
 
         let cleanup_fields = vec![
@@ -79,12 +90,10 @@ impl NativeExecutionBackend {
             &cleanup_fields,
         );
 
-        if !cleanup.process_reaped || !cleanup.workspace_removed {
-            if outcome.is_ok() {
-                return Err(AiExecutionError::CleanupFailed {
-                    failures: vec!["process or workspace cleanup failed".to_string()],
-                });
-            }
+        if (!cleanup.process_reaped || !cleanup.workspace_removed) && outcome.is_ok() {
+            return Err(AiExecutionError::CleanupFailed {
+                failures: vec!["process or workspace cleanup failed".to_string()],
+            });
         }
 
         outcome
@@ -111,28 +120,49 @@ impl NativeExecutionBackend {
             .map(|p| p.args.clone())
             .unwrap_or_else(|| vec!["--version".to_string()]);
 
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&probe_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let env = definition
+            .env
+            .iter()
+            .map(|entry| EnvEntry {
+                key: entry.name.clone(),
+                value: entry.value.clone(),
+            })
+            .collect::<Vec<_>>();
+        let invocation = ProcessInvocation {
+            kind: RuntimeProgramKind::Executable,
+            entry: program.to_string_lossy().to_string(),
+            args: Vec::new(),
+            env: env.clone(),
+            working_dir: None,
+            version_req: None,
+            immutable_install_dir: PathBuf::from("."),
+        };
+        let probe = ProbeSpec {
+            program: Some(program.to_string_lossy().to_string()),
+            args: probe_args,
+            env,
+            timeout: std::time::Duration::from_secs(5),
+            output_limit: 64 * 1024,
+            kind: ProbeKind::Availability,
+        };
+        let result = ExtensionLauncher::default()
+            .probe(
+                &invocation,
+                &probe,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| AiExecutionError::Output {
+                message: error.to_string(),
+            })?;
 
-        let output = cmd.output().await.map_err(|e| AiExecutionError::Output {
-            program: PathBuf::from(command_name),
-            message: format!("failed to execute probe: {e}"),
-        })?;
-
-        if output.status.success() {
+        if result.available {
             Ok(())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             Err(AiExecutionError::Output {
-                program: PathBuf::from(command_name),
-                message: if stderr.is_empty() {
-                    "probe command exited with non-zero status".to_string()
-                } else {
-                    stderr.trim().to_string()
-                },
+                message: result
+                    .error
+                    .unwrap_or_else(|| "probe command exited with non-zero status".to_string()),
             })
         }
     }
@@ -158,16 +188,49 @@ impl NativeExecutionBackend {
             .map(|p| p.args.clone())
             .unwrap_or_else(|| vec!["models".to_string()]);
 
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(&model_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        let invocation = ProcessInvocation {
+            kind: RuntimeProgramKind::Executable,
+            entry: program.to_string_lossy().to_string(),
+            args: model_args,
+            env: definition
+                .env
+                .iter()
+                .map(|entry| EnvEntry {
+                    key: entry.name.clone(),
+                    value: entry.value.clone(),
+                })
+                .collect(),
+            working_dir: None,
+            version_req: None,
+            immutable_install_dir: PathBuf::from("."),
+        };
+        let output = ExtensionLauncher::default()
+            .invoke(
+                &invocation,
+                crate::backend::host_process::HostInput::Null,
+                InvocationLimits {
+                    timeout: std::time::Duration::from_secs(5),
+                    stdout_limit: 1024 * 1024,
+                    stderr_limit: 64 * 1024,
+                },
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| AiExecutionError::Output {
+                message: error.to_string(),
+            })?;
 
-        let output = cmd.output().await.map_err(|e| AiExecutionError::Output {
-            program: PathBuf::from(command_name),
-            message: format!("failed to execute model discovery: {e}"),
-        })?;
+        if output.stdout_truncated || output.stderr_truncated {
+            return Err(AiExecutionError::Output {
+                message: "model discovery output exceeded the configured limit".to_string(),
+            });
+        }
+        if !output.status.success() {
+            return Err(AiExecutionError::Output {
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+        let _discovery_elapsed = output.elapsed;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let models = parse_agy_models(&stdout);
@@ -258,7 +321,6 @@ async fn run_native_execution(
         request.prompt.clone(),
         "--output-format".to_string(),
         "stream-json".to_string(),
-        "--dangerously-skip-permissions".to_string(),
         "--print-timeout".to_string(),
         "10m".to_string(),
     ];
@@ -301,56 +363,70 @@ async fn run_native_execution(
 
     request.report_phase(AiExecutionPhase::Prompting);
 
-    let mut lines = BufReader::new(stdout).lines();
+    let mut stdout = stdout;
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut pending_line = Vec::new();
+    let mut output_bytes = 0_usize;
     let mut accumulated_text = String::new();
     let mut result_response = String::new();
     let mut result_error: Option<String> = None;
 
-    while let Ok(Some(line)) = lines.next_line().await {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
+    loop {
+        let read = stdout
+            .read(&mut buffer)
+            .await
+            .map_err(|error| AiExecutionError::Output {
+                message: format!("failed to read native agent output: {error}"),
+            })?;
+        if read == 0 {
+            break;
         }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            let event = v.get("event").and_then(|e| e.as_str()).unwrap_or("");
-            match event {
-                "step_update" => {
-                    if let Some(step) = v.get("step_update") {
-                        let step_type =
-                            step.get("step_type").and_then(|s| s.as_str()).unwrap_or("");
-                        if step_type == "agent_response" {
-                            if let Some(delta) = step.get("text_delta").and_then(|d| d.as_str()) {
-                                accumulated_text.push_str(delta);
-                            }
-                        }
-                    }
-                }
-                "result" => {
-                    if let Some(res) = v.get("result") {
-                        let status = res.get("status").and_then(|s| s.as_str()).unwrap_or("");
-                        if status == "SUCCESS" {
-                            if let Some(resp) = res.get("response").and_then(|r| r.as_str()) {
-                                result_response = resp.to_string();
-                            }
-                        } else if status == "ERROR" {
-                            let err = res
-                                .get("error")
-                                .and_then(|e| e.as_str())
-                                .unwrap_or("agy execution returned an error");
-                            result_error = Some(err.to_string());
-                        }
-                    }
-                }
-                _ => {}
-            }
+        output_bytes = output_bytes.saturating_add(read);
+        if output_bytes > request.limits.text_bytes {
+            return Err(AiExecutionError::OutputLimit {
+                limit: request.limits.text_bytes,
+            });
+        }
+        pending_line.extend_from_slice(&buffer[..read]);
+
+        while let Some(newline) = pending_line.iter().position(|byte| *byte == b'\n') {
+            let line = pending_line.drain(..=newline).collect::<Vec<_>>();
+            process_native_line(
+                &line[..line.len().saturating_sub(1)],
+                &mut accumulated_text,
+                &mut result_response,
+                &mut result_error,
+            )?;
         }
     }
 
+    if !pending_line.is_empty() {
+        process_native_line(
+            &pending_line,
+            &mut accumulated_text,
+            &mut result_response,
+            &mut result_error,
+        )?;
+    }
+
+    let exit = guard
+        .process
+        .as_ref()
+        .expect("process exists")
+        .wait_for_exit()
+        .await
+        .ok_or(AiExecutionError::AgentExited { code: None })?;
+    if !exit.success {
+        if let Some(wait_error) = exit.wait_error {
+            return Err(AiExecutionError::Output {
+                message: format!("failed to wait for native agent: {wait_error}"),
+            });
+        }
+        return Err(AiExecutionError::AgentExited { code: exit.code });
+    }
+
     if let Some(err) = result_error {
-        return Err(AiExecutionError::Output {
-            program: PathBuf::from(&definition.command),
-            message: err,
-        });
+        return Err(AiExecutionError::Output { message: err });
     }
 
     let text = if !accumulated_text.is_empty() {
@@ -361,7 +437,6 @@ async fn run_native_execution(
 
     if text.is_empty() {
         return Err(AiExecutionError::Output {
-            program: PathBuf::from(&definition.command),
             message: "agent produced empty response text".to_string(),
         });
     }
@@ -375,10 +450,91 @@ async fn run_native_execution(
     })
 }
 
+fn process_native_line(
+    line: &[u8],
+    accumulated_text: &mut String,
+    result_response: &mut String,
+    result_error: &mut Option<String>,
+) -> Result<(), AiExecutionError> {
+    let line = line.strip_suffix(b"\r").unwrap_or(line);
+    let line = std::str::from_utf8(line).map_err(|error| AiExecutionError::Output {
+        message: format!("native agent output was not valid UTF-8: {error}"),
+    })?;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).map_err(|error| {
+        AiExecutionError::Output {
+            message: format!("native agent emitted invalid JSON: {error}"),
+        }
+    })?;
+    let event = value
+        .get("event")
+        .and_then(|event| event.as_str())
+        .unwrap_or("");
+    match event {
+        "step_update" => {
+            if let Some(step) = value.get("step_update") {
+                let step_type = step
+                    .get("step_type")
+                    .and_then(|step_type| step_type.as_str())
+                    .unwrap_or("");
+                if is_native_tool_activity(step_type) {
+                    return Err(if step_type.to_ascii_lowercase().contains("permission") {
+                        AiExecutionError::PermissionDenied
+                    } else {
+                        AiExecutionError::ToolUseDenied
+                    });
+                }
+                if step_type == "agent_response" {
+                    if let Some(delta) = step.get("text_delta").and_then(|delta| delta.as_str()) {
+                        accumulated_text.push_str(delta);
+                    }
+                }
+            }
+        }
+        "permission" | "permission_request" | "permission_requested" => {
+            return Err(AiExecutionError::PermissionDenied);
+        }
+        "tool_call" | "tool_use" | "tool_activity" => {
+            return Err(AiExecutionError::ToolUseDenied);
+        }
+        "result" => {
+            if let Some(result) = value.get("result") {
+                let status = result
+                    .get("status")
+                    .and_then(|status| status.as_str())
+                    .unwrap_or("");
+                if status == "SUCCESS" {
+                    if let Some(response) = result
+                        .get("response")
+                        .and_then(|response| response.as_str())
+                    {
+                        *result_response = response.to_string();
+                    }
+                } else if status == "ERROR" {
+                    let error = result
+                        .get("error")
+                        .and_then(|error| error.as_str())
+                        .unwrap_or("native agent execution returned an error");
+                    *result_error = Some(error.to_string());
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn is_native_tool_activity(step_type: &str) -> bool {
+    let step_type = step_type.to_ascii_lowercase();
+    step_type.contains("tool") || step_type.contains("permission")
+}
+
 fn create_workspace(root: &Path) -> Result<PathBuf, AiExecutionError> {
     let workspace = root.join(format!("exec-{}", Uuid::new_v4()));
     fs::create_dir_all(&workspace).map_err(|error| AiExecutionError::Output {
-        program: workspace.clone(),
         message: format!("could not create execution workspace: {error}"),
     })?;
     Ok(workspace)
@@ -387,10 +543,6 @@ fn create_workspace(root: &Path) -> Result<PathBuf, AiExecutionError> {
 fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(&definition.command),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -398,10 +550,6 @@ fn timeout_error(definition: &AgentDefinition, timeout: std::time::Duration) -> 
     AiExecutionError::Timeout {
         program: PathBuf::from(&definition.command),
         timeout,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
     }
 }
 
@@ -442,5 +590,31 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "gemini-3.7-flash-high");
         assert_eq!(models[0].label, "gemini-3.7-flash-high");
+    }
+
+    #[test]
+    fn native_text_execution_rejects_tool_and_permission_events() {
+        let mut text = String::new();
+        let mut response = String::new();
+        let mut error = None;
+
+        assert!(matches!(
+            process_native_line(
+                br#"{"event":"tool_call"}"#,
+                &mut text,
+                &mut response,
+                &mut error,
+            ),
+            Err(AiExecutionError::ToolUseDenied)
+        ));
+        assert!(matches!(
+            process_native_line(
+                br#"{"event":"permission_request"}"#,
+                &mut text,
+                &mut response,
+                &mut error,
+            ),
+            Err(AiExecutionError::PermissionDenied)
+        ));
     }
 }

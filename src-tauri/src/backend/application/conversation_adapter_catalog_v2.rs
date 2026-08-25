@@ -25,10 +25,14 @@ impl AppService {
             .map(str::trim)
             .filter(|version| !version.is_empty())
             .ok_or_else(|| {
-                "conversation adapter package release version is required".to_string()
+                AppError::Validation(
+                    "conversation adapter package release version is required".to_string(),
+                )
             })?;
         Version::parse(version).map_err(|error| {
-            format!("conversation adapter package release version must be SemVer: {error}")
+            AppError::Validation(format!(
+                "conversation adapter package release version must be SemVer: {error}"
+            ))
         })?;
         let catalog_url = normalized_catalog_v2_url(params.catalog_url.as_deref());
         let releases = self.list_conversation_adapter_package_releases(
@@ -42,16 +46,16 @@ impl AppService {
             .into_iter()
             .find(|release| release.version == version)
             .ok_or_else(|| {
-                format!(
+                AppError::NotFound(format!(
                     "conversation adapter package release not found: {}@{}",
                     params.package_id, version
-                )
+                ))
             })?;
         if !release_is_core_compatible(&release) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "conversation adapter package release is not compatible with this Core: {}@{} ({})",
                 release.package_id, release.version, release.core_compatibility
-            ));
+            )));
         }
         let spec = ConversationAdapterPackageInstallSpec {
             id: release.package_id.clone(),
@@ -92,9 +96,9 @@ impl AppService {
         let catalog_url = normalized_catalog_v2_url(params.catalog_url.as_deref());
         let package_id = params.package_id.trim();
         if package_id.is_empty() {
-            return Err(
+            return Err(AppError::Validation(
                 "conversation adapter package release list requires package_id".to_string(),
-            );
+            ));
         }
         let mut releases =
             self.load_cached_conversation_adapter_catalog_releases(&catalog_url, Some(package_id))?;
@@ -127,14 +131,18 @@ impl AppService {
             Ok(CatalogFetchResult::Text { text, etag }) => (text, etag),
             Err(error) if catalog_url == DEFAULT_CATALOG_V2_URL => (
                 bundled_catalog_document("index.json")
-                    .ok_or_else(|| format!("{error}; bundled Catalog v2 index is missing"))?
+                    .ok_or_else(|| {
+                        AppError::External(format!("{error}; bundled Catalog v2 index is missing"))
+                    })?
                     .to_string(),
                 None,
             ),
             Err(error) => return Err(error),
         };
         let index: CatalogV2Index = serde_json::from_str(&index_text).map_err(|error| {
-            format!("conversation adapter Catalog v2 index is invalid: {error}")
+            AppError::Validation(format!(
+                "conversation adapter Catalog v2 index is invalid: {error}"
+            ))
         })?;
         validate_catalog_v2_index(&index)?;
 
@@ -145,15 +153,17 @@ impl AppService {
             let history_text = match fetch_catalog_document(&history_url, None) {
                 Ok(CatalogFetchResult::Text { text, .. }) => text,
                 Ok(CatalogFetchResult::NotModified) => {
-                    return Err("unexpected 304 for uncached Catalog v2 history".to_string());
+                    return Err(AppError::External(
+                        "unexpected 304 for uncached Catalog v2 history".to_string(),
+                    ));
                 }
                 Err(error) if catalog_url == DEFAULT_CATALOG_V2_URL => {
                     let bundled_path = format!("history/{}.json", package.package_id);
                     bundled_catalog_document(&bundled_path)
                         .ok_or_else(|| {
-                            format!(
+                            AppError::External(format!(
                                 "{error}; bundled Catalog v2 history is missing: {bundled_path}"
-                            )
+                            ))
                         })?
                         .to_string()
                 }
@@ -161,10 +171,10 @@ impl AppService {
             };
             let history: CatalogV2History =
                 serde_json::from_str(&history_text).map_err(|error| {
-                    format!(
+                    AppError::Validation(format!(
                         "conversation adapter Catalog v2 history is invalid ({}): {error}",
                         package.package_id
-                    )
+                    ))
                 })?;
             validate_catalog_v2_history(&package, &history)?;
             for release in history.releases.clone() {
@@ -185,9 +195,10 @@ impl AppService {
                 crate::backend::store::upsert_conversation_adapter_catalog_release_sqlx(
                     &pool, &tenant_id, release,
                 )
-                .await?;
+                .await
+                .map_err(|error| error)?;
             }
-            AppResult::Ok(())
+            Ok::<(), AppError>(())
         })?;
         sort_releases_newest_first(&mut releases);
         Ok(releases)
@@ -266,15 +277,19 @@ impl AppService {
         let package_id = params.package_id.trim();
         let mut package = self
             .load_conversation_adapter_package(package_id)?
-            .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))?;
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "conversation adapter package not found: {package_id}"
+                ))
+            })?;
         if package.origin
             != crate::backend::models::ConversationAdapterPackageOrigin::ManagedRelease
             && params.update_policy
                 != crate::backend::models::ConversationPackageUpdatePolicy::PinExact
         {
-            return Err(
+            return Err(AppError::Validation(
                 "local, Git, dev, built-in, and legacy packages must remain pinned".to_string(),
-            );
+            ));
         }
         package.update_policy = params.update_policy;
         package.updated_at = Utc::now().to_rfc3339();
@@ -291,15 +306,17 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let catalog_url = catalog_url.to_string();
         let package_id = package_id.map(str::to_string);
-        self.db.block_on(async move {
-            crate::backend::store::list_conversation_adapter_catalog_releases_sqlx(
-                &pool,
-                &tenant_id,
-                &catalog_url,
-                package_id.as_deref(),
-            )
-            .await
-        })
+        self.db
+            .block_on(async move {
+                crate::backend::store::list_conversation_adapter_catalog_releases_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &catalog_url,
+                    package_id.as_deref(),
+                )
+                .await
+            })
+            .map_err(|error| error)
     }
 }
 
@@ -407,12 +424,12 @@ impl CatalogV2Release {
                 .adapter_manifest
                 .map(|value| serde_json::to_string(&value))
                 .transpose()
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| AppError::Validation(error.to_string()))?,
             source_json: self
                 .source
                 .map(|source| serde_json::to_string(&source))
                 .transpose()
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| AppError::Validation(error.to_string()))?,
             etag,
             fetched_at: fetched_at.to_string(),
         })
@@ -429,7 +446,11 @@ fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFet
         let path = crate::backend::path_utils::expand_path(url)?;
         return fs::read_to_string(&path)
             .map(|text| CatalogFetchResult::Text { text, etag: None })
-            .map_err(|error| format!("read conversation adapter Catalog v2 failed: {error}"));
+            .map_err(|error| {
+                AppError::Storage(format!(
+                    "read conversation adapter Catalog v2 failed: {error}"
+                ))
+            });
     }
     let mut request = ureq::get(url).set(
         "User-Agent",
@@ -441,15 +462,15 @@ fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFet
     match request.call() {
         Ok(response) => {
             let etag = response.header("ETag").map(str::to_string);
-            let text = response
-                .into_string()
-                .map_err(|error| format!("Catalog v2 response was not text: {error}"))?;
+            let text = response.into_string().map_err(|error| {
+                AppError::External(format!("Catalog v2 response was not text: {error}"))
+            })?;
             Ok(CatalogFetchResult::Text { text, etag })
         }
         Err(ureq::Error::Status(304, _)) => Ok(CatalogFetchResult::NotModified),
-        Err(error) => Err(format!(
+        Err(error) => Err(AppError::External(format!(
             "conversation adapter Catalog v2 request failed: {error}"
-        )),
+        ))),
     }
 }
 
@@ -469,7 +490,9 @@ fn resolve_catalog_document_url(index_url: &str, history_url: &str) -> AppResult
         return url::Url::parse(index_url)
             .and_then(|url| url.join(history_url))
             .map(|url| url.to_string())
-            .map_err(|error| format!("resolve Catalog v2 history URL failed: {error}"));
+            .map_err(|error| {
+                AppError::Validation(format!("resolve Catalog v2 history URL failed: {error}"))
+            });
     }
     let index_path = crate::backend::path_utils::expand_path(index_url)?;
     Ok(index_path
@@ -482,22 +505,24 @@ fn resolve_catalog_document_url(index_url: &str, history_url: &str) -> AppResult
 
 fn validate_catalog_v2_index(index: &CatalogV2Index) -> AppResult<()> {
     if index.schema_version != 2 {
-        return Err("conversation adapter Catalog index schema_version must be 2".to_string());
+        return Err(AppError::Validation(
+            "conversation adapter Catalog index schema_version must be 2".to_string(),
+        ));
     }
     let mut ids = HashSet::new();
     for package in &index.packages {
         validate_catalog_package_id(&package.package_id)?;
         if !ids.insert(package.package_id.clone()) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "duplicate Catalog v2 package: {}",
                 package.package_id
-            ));
+            )));
         }
         if package.history_url.trim().is_empty() {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "Catalog v2 history URL is required: {}",
                 package.package_id
-            ));
+            )));
         }
         for version in [
             package.stable_version.as_deref(),
@@ -507,7 +532,9 @@ fn validate_catalog_v2_index(index: &CatalogV2Index) -> AppResult<()> {
         .flatten()
         {
             Version::parse(version).map_err(|error| {
-                format!("Catalog v2 latest version must be SemVer ({version}): {error}")
+                AppError::Validation(format!(
+                    "Catalog v2 latest version must be SemVer ({version}): {error}"
+                ))
             })?;
         }
     }
@@ -519,36 +546,36 @@ fn validate_catalog_v2_history(
     history: &CatalogV2History,
 ) -> AppResult<()> {
     if history.schema_version != 2 || history.package_id != package.package_id {
-        return Err(format!(
+        return Err(AppError::Validation(format!(
             "Catalog v2 history identity mismatch: {}",
             package.package_id
-        ));
+        )));
     }
     let mut versions = HashSet::new();
     for release in &history.releases {
         Version::parse(&release.version).map_err(|error| {
-            format!(
+            AppError::Validation(format!(
                 "Catalog v2 release version must be SemVer ({}): {error}",
                 release.version
-            )
+            ))
         })?;
         VersionReq::parse(&release.core_compatibility).map_err(|error| {
-            format!(
+            AppError::Validation(format!(
                 "Catalog v2 Core compatibility is invalid ({}): {error}",
                 release.version
-            )
+            ))
         })?;
         if !versions.insert(release.version.clone()) {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "duplicate Catalog v2 release: {}@{}",
                 history.package_id, release.version
-            ));
+            )));
         }
         if release.runtime_protocol != "stdio-ndjson-v1" {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "unsupported Catalog v2 runtime protocol: {}",
                 release.runtime_protocol
-            ));
+            )));
         }
         if release.artifact_url.trim().is_empty()
             || release.artifact_sha256.len() != 64
@@ -557,10 +584,10 @@ fn validate_catalog_v2_history(
                 .chars()
                 .all(|value| value.is_ascii_hexdigit())
         {
-            return Err(format!(
+            return Err(AppError::Validation(format!(
                 "Catalog v2 artifact metadata is invalid: {}@{}",
                 history.package_id, release.version
-            ));
+            )));
         }
     }
     for (channel, expected) in [
@@ -579,10 +606,10 @@ fn validate_catalog_v2_history(
                 .iter()
                 .any(|release| release.channel == channel && release.version == expected)
             {
-                return Err(format!(
+                return Err(AppError::Validation(format!(
                     "Catalog v2 latest channel version is missing: {}@{}",
                     history.package_id, expected
-                ));
+                )));
             }
         }
     }
@@ -599,7 +626,9 @@ fn validate_catalog_package_id(value: &str) -> AppResult<()> {
                 || matches!(character, '-' | '_' | '.')
         })
     {
-        Err(format!("Catalog v2 package_id is unsafe: {value}"))
+        Err(AppError::Validation(format!(
+            "Catalog v2 package_id is unsafe: {value}"
+        )))
     } else {
         Ok(())
     }

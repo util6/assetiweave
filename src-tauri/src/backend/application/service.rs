@@ -10,10 +10,6 @@ pub(crate) struct AppService {
         std::sync::Arc<crate::backend::agent_market::AgentRuntimeManager>,
     pub(super) agent_runtime:
         std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
-}
-
-pub(crate) struct AgentAppService {
-    pub(super) _service: AppService,
-    pub(super) agent_runtime:
-        std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
+    pub(super) conversation_adapter_catalog:
+        std::sync::Arc<crate::backend::conversations::ConversationAdapterCatalog>,
 }

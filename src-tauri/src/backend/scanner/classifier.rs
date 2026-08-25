@@ -7,8 +7,6 @@ pub(super) fn classify_asset(
     format: AssetFormat,
 ) -> AssetKind {
     let context = super::detector::DetectionCtx {
-        source,
-        path,
         relative_path,
         format,
     };
