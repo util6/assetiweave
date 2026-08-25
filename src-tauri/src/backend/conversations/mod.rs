@@ -1,5 +1,5 @@
 pub(crate) mod cards;
-pub(crate) const CONVERSATION_PAYLOAD_POLICY_VERSION: u32 = 9;
+pub(crate) const CONVERSATION_PAYLOAD_POLICY_VERSION: u32 = 10;
 mod external;
 mod harvester;
 mod io_utils;

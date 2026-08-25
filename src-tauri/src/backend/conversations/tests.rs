@@ -1891,7 +1891,7 @@ fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
 
 #[cfg(unix)]
 #[test]
-fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands() {
+fn official_codex_adapter_separates_skill_context_and_projects_aggregated_commands() {
     if !command_available("node") || !command_available("sqlite3") {
         return;
     }
@@ -1961,7 +1961,6 @@ fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands
             "plan".to_string(),
             "command".to_string(),
             "command".to_string(),
-            "command".to_string(),
             "skill".to_string(),
         ]
     );
@@ -1986,16 +1985,32 @@ fn official_codex_adapter_separates_skill_context_and_splits_aggregated_commands
             .and_then(|card| card.renderer.as_deref()),
         Some("markdown")
     );
-    assert_eq!(parts[3].command.as_deref(), Some("cargo fmt --check"));
-    assert_eq!(parts[4].command.as_deref(), Some("cargo test"));
-    assert_ne!(parts[3].source_execution_id, parts[4].source_execution_id);
     assert_eq!(
-        parts[5].command.as_deref(),
+        parts[3].command.as_deref(),
+        Some("cargo fmt --check && cargo test")
+    );
+    let shell_projection = parts[3]
+        .metadata_json
+        .as_deref()
+        .and_then(|metadata| serde_json::from_str::<Value>(metadata).ok())
+        .and_then(|metadata| metadata.get("shell_execution_projection").cloned())
+        .expect("Codex shell projection metadata");
+    assert_eq!(
+        shell_projection["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|node| node["command"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["cargo fmt --check", "cargo test"]
+    );
+    assert_eq!(
+        parts[4].command.as_deref(),
         Some("/tmp/test-skill/SKILL.md")
     );
-    assert_eq!(parts[5].cwd.as_deref(), Some("/tmp"));
-    assert_eq!(parts[6].role, ConversationPartRole::System);
-    assert_eq!(parts[6].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
+    assert_eq!(parts[4].cwd.as_deref(), Some("/tmp"));
+    assert_eq!(parts[5].role, ConversationPartRole::System);
+    assert_eq!(parts[5].text.as_deref(), Some("/tmp/test-skill/SKILL.md"));
 }
 
 #[cfg(unix)]

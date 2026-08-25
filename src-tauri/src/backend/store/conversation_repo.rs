@@ -2566,14 +2566,15 @@ pub(super) fn project_question_content_nodes(
     card_kinds: &[ConversationCardKindDefinition],
 ) -> AppResult<Vec<ConversationContentNode>> {
     project_conversation_content_nodes(question_id, question_turns, parts, |part| {
-        let card =
-            crate::backend::projection::conversation_cards::project_conversation_content_card(
-                part, adapter_id, card_kinds,
-            )?;
-        Ok(card
-            .map(ConversationContentNodeCandidate::from)
-            .into_iter()
-            .collect())
+        crate::backend::projection::conversation_cards::project_conversation_content_cards(
+            part, adapter_id, card_kinds,
+        )
+        .map(|cards| {
+            cards
+                .into_iter()
+                .map(ConversationContentNodeCandidate::from)
+                .collect()
+        })
     })
     .map_err(AppError::external)
 }

@@ -3447,6 +3447,141 @@ fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_nodes() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-codex-shell-projection-app-service-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create Codex shell projection root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let session_id = upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false);
+    let initial = service
+        .list_conversation_questions(ConversationQuestionListParams {
+            session_id,
+            query: None,
+            limit: Some(10),
+            offset: Some(0),
+        })
+        .expect("load Codex shell projection question");
+    let question_id = initial[0].question.id.clone();
+    let turn_id = initial[0].turns[0].id.clone();
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let raw_command = "printf '%s\\n' '--- inspect ---'; rg 'quoted && value' ./src | sed 's/;/|/' && git status --short > /tmp/status.txt";
+    let projection_metadata = serde_json::json!({
+        "shell_execution_projection": {
+            "schema_version": 1,
+            "nodes": [
+                {"command": "rg 'quoted && value' ./src | sed 's/;/|/'", "command_label": "inspect"},
+                {"command": "git status --short > /tmp/status.txt", "command_label": "status"}
+            ]
+        }
+    })
+    .to_string();
+    service
+        .db
+        .block_on(async move {
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, command_label, metadata_json,
+                    content_card_json, source_execution_id
+                )
+                VALUES (?1, 'codex-shell-command-part', ?2, 1, 'tool', 'command', NULL, NULL,
+                    ?3, '/tmp/project', 'failed', 1, 'exec', ?4,
+                    '{"schema_version":1,"kind":"codex.command","renderer":"command"}',
+                    'codex-shell-execution')
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&turn_id)
+            .bind(raw_command)
+            .bind(projection_metadata)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, command_label, metadata_json,
+                    content_card_json, source_execution_id
+                )
+                VALUES (?1, 'codex-shell-result-part', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
+                    NULL, '/tmp/project', 'failed', 1, NULL, NULL,
+                    '{"schema_version":1,"kind":"codex.result","renderer":"terminal_output"}',
+                    'codex-shell-execution')
+                "#,
+            )
+            .bind(&tenant_id)
+            .bind(&turn_id)
+            .execute(&pool)
+            .await
+            .map_err(AppError::external)?;
+            AppResult::Ok(())
+        })
+        .expect("insert raw Codex shell execution fixture");
+
+    let detail = service
+        .get_conversation_question(ConversationQuestionGetParams { question_id })
+        .expect("reload Codex shell projection through AppService");
+    assert_eq!(detail.parts.len(), 3);
+    assert_eq!(
+        detail
+            .parts
+            .iter()
+            .filter(|part| part.id == "codex-shell-command-part")
+            .count(),
+        1
+    );
+    let command_nodes = detail
+        .projected_content_nodes
+        .iter()
+        .filter(|node| node.part_id == "codex-shell-command-part")
+        .collect::<Vec<_>>();
+    assert_eq!(command_nodes.len(), 2);
+    assert_eq!(
+        command_nodes
+            .iter()
+            .map(|node| node.content.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "rg 'quoted && value' ./src | sed 's/;/|/'",
+            "git status --short > /tmp/status.txt"
+        ]
+    );
+    assert_eq!(
+        command_nodes
+            .iter()
+            .map(|node| node.command_label.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("inspect"), Some("status")]
+    );
+    assert!(command_nodes
+        .iter()
+        .all(|node| node.source_execution_id.as_deref() == Some("codex-shell-execution")));
+    assert_eq!(
+        detail
+            .projected_content_nodes
+            .iter()
+            .filter(|node| node.part_id == "codex-shell-result-part")
+            .count(),
+        1
+    );
+    assert_eq!(
+        detail
+            .cards
+            .iter()
+            .filter(|card| card.part_id == "codex-shell-command-part")
+            .count(),
+        1
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_history() {
     let root = std::env::temp_dir().join(format!(

@@ -1,19 +1,27 @@
 import path from "node:path";
 
-export const PAYLOAD_POLICY_VERSION = 11;
+export const PAYLOAD_POLICY_VERSION = 12;
+
+const SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION = 1;
 
 const SUCCESS_STATUSES = new Set(["success", "succeeded", "completed", "complete", "done", "ok"]);
 const FAILURE_STATUS = /^(error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/i;
 
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined && entry !== ""),
+  );
+}
+
 /**
- * Classifies and trims execution payloads. Aggregated shell commands are expanded in place so
- * every persisted command Part represents exactly one top-level command. Result/command
- * association is performed only with an exact source_execution_id.
+ * Classifies and trims execution payloads. A shell execution remains one persisted command Part;
+ * display-only command fragments are recorded as a deterministic projection in metadata. Result/
+ * command association is performed only with an exact source_execution_id.
  */
 export function normalizeSessionPayload(session) {
   for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
     const originalParts = Array.isArray(turn?.parts) ? turn.parts : [];
-    const parts = splitAggregatedShellCommandParts(originalParts);
+    const parts = annotateShellExecutionProjectionParts(originalParts);
     turn.parts = parts;
     const commands = new Map();
     const invocations = new Map();
@@ -178,7 +186,7 @@ function decodeDiffPath(value) {
   return candidate.replace(/^[ab]\//, "") || null;
 }
 
-function splitAggregatedShellCommandParts(parts) {
+function annotateShellExecutionProjectionParts(parts) {
   const resultsByExecutionId = new Map();
   for (const part of parts) {
     const executionId = executionIdOf(part);
@@ -187,85 +195,37 @@ function splitAggregatedShellCommandParts(parts) {
     }
   }
 
-  const splitExecutions = new Map();
-  const expanded = parts.flatMap((part) => {
+  for (const part of parts) {
     if (!part || typeof part !== "object" || !isCommandPart(part) || typeof part.command !== "string") {
-      return [part];
+      continue;
     }
     const executionId = executionIdOf(part);
     const metadata = parseMetadata(part.metadata_json);
     const peer = executionId ? resultsByExecutionId.get(executionId) ?? null : null;
     const executionKind = classifyExecution(part, metadata, peer, parseMetadata(peer?.metadata_json));
-    if (executionKind !== "shell") return [part];
+    if (executionKind !== "shell") continue;
 
-    const rawCommands = splitTopLevelShellCommands(part.command);
-    if (rawCommands.length < 2) return [part];
-
+    const projectionNodes = [];
     let pendingCommandLabel = null;
-    const commands = [];
-    for (const command of rawCommands) {
+    for (const command of splitTopLevelShellCommands(part.command)) {
       const separator = parseSeparatorPrintCommand(command);
       if (separator) {
         pendingCommandLabel = separator.label;
         continue;
       }
-      commands.push({
+      projectionNodes.push(compactObject({
         command,
-        commandLabel: pendingCommandLabel ?? part.command_label ?? null,
-      });
+        command_label: pendingCommandLabel ?? part.command_label ?? null,
+      }));
       pendingCommandLabel = null;
     }
-    if (commands.length === 1) {
-      // Retain the original execution ID so its Result remains exactly paired.
-      return [{
-        ...part,
-        command: commands[0].command,
-        command_label: commands[0].commandLabel,
-      }];
-    } else if (commands.length === 0) {
-      return [];
-    }
-
-    const commandCount = commands.length;
-    const lastExecutionId = executionId ? splitExecutionId(executionId, commandCount) : null;
-    if (executionId) {
-      splitExecutions.set(executionId, { commandCount, lastExecutionId });
-    }
-    return commands.map(({ command, commandLabel }, index) => {
-      const commandPart = {
-        ...part,
-        command,
-        command_label: commandLabel,
-        source_execution_id: executionId ? splitExecutionId(executionId, index + 1) : null,
-      };
-      writeMetadata(commandPart, {
-        ...metadata,
-        ...(executionId ? { source_execution_parent_id: executionId } : {}),
-        command_index: index + 1,
-        command_count: commandCount,
-      });
-      return commandPart;
-    });
-  });
-
-  for (const part of expanded) {
-    if (!part || typeof part !== "object" || isCommandPart(part)) continue;
-    const executionId = executionIdOf(part);
-    const split = executionId ? splitExecutions.get(executionId) : null;
-    if (!split) continue;
-    part.source_execution_id = split.lastExecutionId;
-    writeMetadata(part, {
-      ...parseMetadata(part.metadata_json),
-      source_execution_parent_id: executionId,
-      command_index: split.commandCount,
-      command_count: split.commandCount,
-    });
+    metadata.shell_execution_projection = {
+      schema_version: SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION,
+      nodes: projectionNodes,
+    };
+    writeMetadata(part, metadata);
   }
-  return expanded;
-}
-
-function splitExecutionId(executionId, commandIndex) {
-  return `${executionId}:command:${commandIndex}`;
+  return parts;
 }
 
 /**

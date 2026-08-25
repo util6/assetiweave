@@ -1,0 +1,78 @@
+{
+  "session_id": "48d4ef52",
+  "historical_card_ids": [
+    "e356e87a",
+    "4ebc2319",
+    "877ef979",
+    "14d7ef7f"
+  ],
+  "expected_persisted_part_ids": [
+    "e356e87a",
+    "4ebc2319"
+  ],
+  "session": {
+    "external_id": "48d4ef52",
+    "title": "脱敏 Codex Shell Execution 投影场景",
+    "project_path": "/workspace/sanitized",
+    "started_at": "2026-08-10T00:00:00Z",
+    "updated_at": "2026-08-10T00:00:02Z",
+    "source_locator": "fixture://codex/48d4ef52",
+    "source_fingerprint": "fixture-codex-48d4ef52",
+    "turns": [
+      {
+        "external_id": "turn-48d4ef52",
+        "turn_index": 0,
+        "user_text": "检查脱敏项目状态",
+        "title": null,
+        "started_at": "2026-08-10T00:00:00Z",
+        "ended_at": "2026-08-10T00:00:02Z",
+        "parts": [
+          {
+            "id": "e356e87a",
+            "role": "tool",
+            "kind": "command",
+            "text": null,
+            "language": null,
+            "command": "printf '%s\\n' '--- inspect ---'; rg 'quoted && value' ./src | sed 's/;/|/' && git status --short > /tmp/status.txt",
+            "cwd": "/workspace/sanitized",
+            "status": "failed",
+            "exit_code": 1,
+            "command_label": "exec",
+            "source_execution_id": "execution-48d4ef52",
+            "content_card": {
+              "schema_version": 1,
+              "kind": "codex.command",
+              "renderer": "command"
+            },
+            "metadata_json": {
+              "type": "command",
+              "execution_kind": "shell"
+            }
+          },
+          {
+            "id": "4ebc2319",
+            "role": "tool",
+            "kind": "tool",
+            "text": "Error: sanitized command failed",
+            "language": null,
+            "command": null,
+            "cwd": null,
+            "status": "failed",
+            "exit_code": 1,
+            "command_label": null,
+            "source_execution_id": "execution-48d4ef52",
+            "content_card": {
+              "schema_version": 1,
+              "kind": "codex.result",
+              "renderer": "terminal_output"
+            },
+            "metadata_json": {
+              "type": "result",
+              "execution_kind": "shell"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

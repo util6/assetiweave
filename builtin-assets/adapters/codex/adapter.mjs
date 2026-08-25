@@ -19,7 +19,7 @@ import { normalizeSessionPayload } from "./payload-policy.mjs";
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 
 /** 标识当前 Codex 内容卡片的 Schema 版本号，用于增量 Token 生成与缓存失效判定 */
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v16";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v17";
 
 /** 单条 Part 节点的文本最大字符数上限 (96KB)，超长则触发截断规则 */
 const MAX_PART_TEXT_CHARS = 96 * 1024;

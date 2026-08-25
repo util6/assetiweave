@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { PAYLOAD_POLICY_VERSION } from "../builtin-assets/adapters/codex/payload-policy.mjs";
+import {
+  normalizeSessionPayload,
+  PAYLOAD_POLICY_VERSION,
+} from "../builtin-assets/adapters/codex/payload-policy.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const adapterPath = path.join(repositoryRoot, "builtin-assets/adapters/codex/adapter.mjs");
@@ -315,7 +318,7 @@ test("Codex adapter preserves source execution IDs across interleaved command re
   }
 });
 
-test("Codex adapter omits decorative printf separators from aggregated command cards", () => {
+test("Codex adapter keeps one raw Shell Execution while projecting separator labels", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-command-separators-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -344,7 +347,7 @@ test("Codex adapter omits decorative printf separators from aggregated command c
         payload: {
           type: "custom_tool_call_output",
           call_id: "call-status",
-          output: "Script completed\nWall time 0.1 seconds\nOutput:\nclean",
+          output: "Error: failed",
         },
       }),
     ].join("\n"));
@@ -356,21 +359,143 @@ test("Codex adapter omits decorative printf separators from aggregated command c
 
     const session = readFixtureSession(fixtureRoot);
     const parts = session.turns[0].parts;
-    assert.deepEqual(parts.map((part) => part.command), [
-      "git status --short",
-      "git diff --cached --stat",
-    ]);
-    assert.deepEqual(parts.map((part) => part.command_label ?? null), [
-      "status",
-      "staged diff stat",
-    ]);
-    assert.deepEqual(parts.map((part) => part.source_execution_id), [
-      "call-status:command:1",
-      "call-status:command:2",
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, command);
+    assert.equal(parts[0].source_execution_id, "call-status");
+    assert.equal(parts[1].source_execution_id, "call-status");
+    assert.equal(parts[1].text, "Error: failed");
+    const projection = JSON.parse(parts[0].metadata_json).shell_execution_projection;
+    assert.deepEqual(projection.nodes, [
+      { command: "git status --short", command_label: "status" },
+      { command: "git diff --cached --stat", command_label: "staged diff stat" },
     ]);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
+});
+
+test("Codex adapter keeps a pure printf separator as raw evidence without a command node", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-pure-separator-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const command = "printf '%s\\n' '--- diagnostics ---'";
+    writeFileSync(rolloutPath, [
+      event("2026-08-10T00:00:00Z", "user", "显示诊断分隔符"),
+      JSON.stringify({
+        timestamp: "2026-08-10T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-pure-separator",
+          input: `const r = await tools.exec_command(${JSON.stringify({ cmd: command })}); text(r.output);`,
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-10T00:00:01Z');`,
+    ].join("\n"));
+
+    const [part] = readFixtureSession(fixtureRoot).turns[0].parts;
+    assert.equal(part.command, command);
+    assert.equal(part.source_execution_id, "call-pure-separator");
+    assert.deepEqual(JSON.parse(part.metadata_json).shell_execution_projection.nodes, []);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter preserves complex raw shell syntax and exact execution pairing", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-raw-shell-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const command = [
+      "printf '%s\\n' '--- inspect ---'",
+      "printf '%s' \"quoted && value\" | sed 's/quoted/quoted;still/'",
+      "cat <<'EOF'",
+      "a line with && ; | > and \\\"quotes\\\"",
+      "EOF",
+      "printf '%s\\n' '--- finish ---'",
+      "git status --short > /tmp/status.txt",
+    ].join("\n");
+    const resultText = "Error: failed";
+    writeFileSync(rolloutPath, [
+      event("2026-08-10T00:00:00Z", "user", "检查复杂命令"),
+      JSON.stringify({
+        timestamp: "2026-08-10T00:00:01Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "exec",
+          call_id: "call-raw-shell",
+          input: `const r = await tools.exec_command(${JSON.stringify({ cmd: command, workdir: "/tmp/project" })}); text(r.output);`,
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-10T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-raw-shell",
+          output: resultText,
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-10T00:00:02Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, command);
+    assert.equal(parts[0].source_execution_id, "call-raw-shell");
+    assert.equal(parts[1].source_execution_id, "call-raw-shell");
+    assert.equal(parts[1].text, resultText);
+    const projection = JSON.parse(parts[0].metadata_json).shell_execution_projection;
+    assert.equal(projection.nodes.length, 1);
+    assert.equal(projection.nodes[0].command, command);
+    assert.equal(projection.nodes[0].command_label, "exec");
+    assert.equal(projection.nodes[0].command.includes("quoted && value"), true);
+    assert.equal(projection.nodes[0].command.includes("sed 's/quoted/quoted;still/'"), true);
+    assert.equal(projection.nodes[0].command.includes("git status --short > /tmp/status.txt"), true);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex historical 48d4ef52 fixture retains one raw execution for four legacy cards", () => {
+  const fixturePath = path.join(
+    repositoryRoot,
+    "scripts/fixtures/codex/48d4ef52-shell-execution.json",
+  );
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
+  assert.equal(fixture.session_id, "48d4ef52");
+  assert.deepEqual(fixture.historical_card_ids, [
+    "e356e87a",
+    "4ebc2319",
+    "877ef979",
+    "14d7ef7f",
+  ]);
+
+  const session = normalizeSessionPayload(structuredClone(fixture.session));
+  const parts = session.turns[0].parts;
+  assert.deepEqual(parts.map((part) => part.id), fixture.expected_persisted_part_ids);
+  assert.equal(parts.filter((part) => part.kind === "command").length, 1);
+  assert.equal(parts[0].command, fixture.session.turns[0].parts[0].command);
+  assert.equal(parts[0].source_execution_id, "execution-48d4ef52");
+  assert.equal(parts[1].source_execution_id, "execution-48d4ef52");
+  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
+    {
+      command: "rg 'quoted && value' ./src | sed 's/;/|/'",
+      command_label: "inspect",
+    },
+    { command: "git status --short > /tmp/status.txt", command_label: "exec" },
+  ]);
 });
 
 test("Codex adapter removes successful structured execution output", () => {
