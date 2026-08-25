@@ -1330,14 +1330,14 @@ pub(crate) async fn list_conversation_sessions_sqlx(
               OR (?5 IS NOT NULL AND instr(lower(s.id), ?5) > 0)
               OR EXISTS (
                   SELECT 1
-                  FROM conversation_questions q
-                  WHERE q.tenant_id = s.tenant_id
-                    AND q.session_id = s.id
+                  FROM conversation_question_fts f
+                  WHERE f.tenant_id = s.tenant_id
+                    AND f.session_id = s.id
                     AND (
-                        instr(lower(q.question_text), ?4) > 0
-                        OR instr(lower(q.answer_text), ?4) > 0
-                        OR instr(lower(q.code_text), ?4) > 0
-                        OR instr(lower(q.command_text), ?4) > 0
+                        instr(lower(f.question_text), ?4) > 0
+                        OR instr(lower(f.answer_text), ?4) > 0
+                        OR instr(lower(f.code_text), ?4) > 0
+                        OR instr(lower(f.command_text), ?4) > 0
                     )
               )
           )
@@ -1447,8 +1447,9 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
 ) -> AppResult<ConversationQuestionDetail> {
     let question_row = sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title, question_text, answer_text,
-               code_text, command_text, grouping_origin, created_at, updated_at
+        SELECT id, session_id, question_index, title,
+               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
+               grouping_origin, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -1609,13 +1610,23 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
         &session_id,
     )
     .await?;
-    let cards = project_conversation_cards(&parts, &adapter_id, &card_kinds)?;
-    let cards_by_part = cards
-        .into_iter()
-        .map(|card| (card.part_id.clone(), card))
+    let cards = parts.iter().try_fold(Vec::new(), |mut projected, part| {
+        projected.extend(
+            crate::backend::projection::conversation_cards::project_conversation_content_cards(
+                part,
+                &adapter_id,
+                &card_kinds,
+            )
+            .map_err(AppError::external)?,
+        );
+        Ok::<_, AppError>(projected)
+    })?;
+    let parts_by_id = parts
+        .iter()
+        .map(|part| (part.id.as_str(), part))
         .collect::<BTreeMap<_, _>>();
 
-    let mut locators = Vec::with_capacity(turns.len() + cards_by_part.len());
+    let mut locators = Vec::with_capacity(turns.len() + cards.len());
     for turn in &turns {
         locators.push(conversation_question_block_locator(
             record_kind,
@@ -1624,8 +1635,8 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
             turn,
         ));
     }
-    for part in &parts {
-        if let Some(card) = cards_by_part.get(&part.id) {
+    for card in &cards {
+        if let Some(part) = parts_by_id.get(card.part_id.as_str()) {
             locators.push(conversation_card_block_locator(
                 record_kind,
                 &session_id,
@@ -1677,6 +1688,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         });
     }
 
+    let part_id = conversation_part_id_for_block_id(block_id);
     let row = sqlx::query(AssertSqlSafe(format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
@@ -1693,7 +1705,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         turns = tables.turns,
     )))
     .bind(tenant_id)
-    .bind(block_id)
+    .bind(part_id)
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
@@ -1710,20 +1722,30 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         &session_id,
     )
     .await?;
-    let card = project_conversation_cards(&[part.clone()], &adapter_id, &card_kinds)?
-        .into_iter()
-        .next()
+    let cards = crate::backend::projection::conversation_cards::project_conversation_content_cards(
+        &part,
+        &adapter_id,
+        &card_kinds,
+    )
+    .map_err(AppError::external)?;
+    let card = cards
+        .iter()
+        .find(|card| card.card_id == block_id)
+        .or_else(|| (block_id == part.id).then(|| cards.first()).flatten())
         .ok_or_else(|| {
             AppError::external({
                 format!("conversation block is not a readable content card: {block_id}")
             })
         })?;
-    let locator =
-        conversation_card_block_locator(record_kind, &session_id, &question_id, &part, &card);
+    let mut locator =
+        conversation_card_block_locator(record_kind, &session_id, &question_id, &part, card);
+    if block_id == part.id {
+        locator.block_id = block_id.to_string();
+    }
     Ok(ConversationBlockDetail {
         locator,
-        content: card.body,
-        translated_content: card.translated_body,
+        content: card.body.clone(),
+        translated_content: card.translated_body.clone(),
     })
 }
 
@@ -2137,8 +2159,9 @@ async fn load_conversation_question_details_for_session_sqlx(
         load_conversation_card_projection_context_sqlx(pool, tenant_id, session_id).await?;
     let question_rows = sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title, question_text, answer_text,
-               code_text, command_text, grouping_origin, created_at, updated_at
+        SELECT id, session_id, question_index, title,
+               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
+               grouping_origin, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND session_id = ?2
         ORDER BY question_index ASC
@@ -2428,10 +2451,14 @@ fn conversation_card_block_locator(
         session_id: session_id.to_string(),
         question_id: question_id.to_string(),
         turn_id: part.turn_id.clone(),
-        block_id: part.id.clone(),
+        block_id: card.card_id.clone(),
         part_id: Some(part.id.clone()),
         kind: card.kind.clone(),
-        semantic_role: card.semantic_role.clone(),
+        semantic_role: card.semantic_role.clone().or_else(|| {
+            card.kind
+                .rsplit_once('.')
+                .map(|(_, value)| value.to_string())
+        }),
         renderer: card.renderer,
         role: card.role.clone(),
         content_length: card.body.chars().count(),
@@ -2442,20 +2469,19 @@ fn conversation_card_block_locator(
     }
 }
 
+fn conversation_part_id_for_block_id(block_id: &str) -> &str {
+    block_id
+        .rsplit_once("-node-")
+        .filter(|(_, order)| !order.is_empty() && order.chars().all(|value| value.is_ascii_digit()))
+        .map(|(part_id, _)| part_id)
+        .unwrap_or(block_id)
+}
+
 fn conversation_record_kind_label(record_kind: ConversationRecordKind) -> &'static str {
     match record_kind {
         ConversationRecordKind::Session => "session",
         ConversationRecordKind::Web => "web",
     }
-}
-
-pub(super) fn project_conversation_cards(
-    parts: &[ConversationPart],
-    adapter_id: &str,
-    card_kinds: &[ConversationCardKindDefinition],
-) -> AppResult<Vec<crate::backend::dto::ConversationCard>> {
-    project_conversation_legacy_cards_and_nodes(parts, adapter_id, card_kinds)
-        .map(|(cards, _)| cards)
 }
 
 pub(super) fn project_conversation_legacy_cards_and_nodes(
@@ -2773,12 +2799,9 @@ pub(crate) async fn search_conversation_cards_sqlx(
         }
 
         for question in questions_by_session.remove(&session.id).unwrap_or_default() {
-            let question_title = question
-                .title
-                .clone()
-                .filter(|title| !title.trim().is_empty())
-                .unwrap_or_else(|| first_line(&question.question_text));
-            for turn in turns_by_question.remove(&question.id).unwrap_or_default() {
+            let question_turns = turns_by_question.remove(&question.id).unwrap_or_default();
+            let question_title = search_question_title_from_turns(&question, &question_turns);
+            for turn in question_turns {
                 let question_block_id = format!("{}-question", turn.id);
                 if include_questions {
                     push_search_hit_if_matching(
@@ -2804,6 +2827,7 @@ pub(crate) async fn search_conversation_cards_sqlx(
                 for part in parts_by_turn.remove(&turn.id).unwrap_or_default() {
                     for entry in search_entries_for_part(
                         &part,
+                        &session.adapter_id,
                         adapter_card_kinds
                             .get(&session.adapter_id)
                             .map(Vec::as_slice)
@@ -2862,6 +2886,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     matches: crate::backend::search::conversation::ConversationSearchMatches,
 ) -> AppResult<ConversationSearchPage> {
     let tables = record_kind.tables();
+    let adapter_card_kinds = load_search_adapter_card_kinds_sqlx(pool, tenant_id).await?;
     let session_ids = matches
         .hits
         .iter()
@@ -2893,7 +2918,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     .flatten()
     .map(|item| (item.id.clone(), item))
     .collect::<BTreeMap<_, _>>();
-    let turns = load_search_turns_sqlx(
+    let turns_by_question = load_search_turns_sqlx(
         pool,
         tenant_id,
         tables,
@@ -2901,11 +2926,13 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
         source_id,
         Some(&session_ids_json),
     )
-    .await?
-    .into_values()
-    .flatten()
-    .map(|item| (item.id.clone(), item))
-    .collect::<BTreeMap<_, _>>();
+    .await?;
+    let turns = turns_by_question
+        .values()
+        .flatten()
+        .cloned()
+        .map(|item| (item.id.clone(), item))
+        .collect::<BTreeMap<_, _>>();
     let parts = load_search_parts_sqlx(
         pool,
         tenant_id,
@@ -2948,11 +2975,13 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                 "conversation search index hydration missed a question".to_string()
             })
         })?;
-        let question_title = question
-            .title
-            .clone()
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| first_line(&question.question_text));
+        let question_title = search_question_title_from_turns(
+            question,
+            turns_by_question
+                .get(&question.id)
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+        );
         let (part_id, text) = if matched.card_type == "question" {
             let turn = turns.get(&matched.turn_id).ok_or_else(|| {
                 AppError::external({
@@ -2966,17 +2995,30 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                     "conversation search index hydration missed a part".to_string()
                 })
             })?;
-            let card = resolved_content_card_for_part(part).ok_or_else(|| {
-                AppError::external({
-                    "conversation search index hydration missed a declared card".to_string()
-                })
-            })?;
-            if card.kind != matched.card_type || part.id != matched.document_id {
+            let cards =
+                crate::backend::projection::conversation_cards::project_conversation_content_cards(
+                    part,
+                    &session.session.adapter_id,
+                    adapter_card_kinds
+                        .get(&session.session.adapter_id)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                )
+                .map_err(AppError::external)?;
+            let card = cards
+                .iter()
+                .find(|card| card.card_id == matched.document_id)
+                .ok_or_else(|| {
+                    AppError::external({
+                        "conversation search index hydration missed a projected card".to_string()
+                    })
+                })?;
+            if card.kind != matched.card_type || card.part_id != part.id {
                 return Err(AppError::Validation(
                     "conversation search index hydration found stale card metadata".to_string(),
                 ));
             }
-            (Some(part.id.clone()), card.body)
+            (Some(part.id.clone()), card.body.clone())
         };
         let card_type = content_card_type_value(&matched.card_type)
             .or_else(|| {
@@ -4126,16 +4168,42 @@ async fn rebuild_question_aggregate_sqlx_tx(
     let mut answer_text = Vec::new();
     let mut code_text = Vec::new();
     let mut command_text = Vec::new();
+    let adapter_id = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT s.adapter_id
+        FROM conversation_questions q
+        JOIN conversation_sessions s
+          ON s.tenant_id = q.tenant_id AND s.id = q.session_id
+        WHERE q.tenant_id = ?1 AND q.id = ?2
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(question_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    let card_kinds_json = sqlx::query_scalar::<_, String>(
+        "SELECT card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&adapter_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(AppError::external)?
+    .unwrap_or_else(|| "[]".to_string());
+    let card_kinds: Vec<ConversationCardKindDefinition> = decode_json(card_kinds_json)?;
 
     for turn in &turns {
         question_text.push(turn.user_text.clone());
         for part in load_turn_parts_sqlx_tx(tx, tenant_id, &turn.id).await? {
-            append_declared_card_to_question_aggregate(
+            append_projected_cards_to_question_aggregate(
                 &part,
+                &adapter_id,
+                &card_kinds,
                 &mut answer_text,
                 &mut code_text,
                 &mut command_text,
-            );
+            )?;
         }
     }
 
@@ -4370,8 +4438,9 @@ async fn load_conversation_question_sqlx_tx(
 ) -> AppResult<Option<ConversationQuestion>> {
     sqlx::query(
         r#"
-        SELECT id, session_id, question_index, title, question_text, answer_text,
-               code_text, command_text, grouping_origin, created_at, updated_at
+        SELECT id, session_id, question_index, title,
+               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
+               grouping_origin, created_at, updated_at
         FROM conversation_questions
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -4761,8 +4830,9 @@ async fn load_search_questions_sqlx(
 ) -> AppResult<BTreeMap<String, Vec<ConversationQuestion>>> {
     let query = format!(
         r#"
-        SELECT q.id, q.session_id, q.question_index, q.title, q.question_text,
-               q.answer_text, q.code_text, q.command_text, q.grouping_origin,
+        SELECT q.id, q.session_id, q.question_index, q.title,
+               '' AS question_text, '' AS answer_text, '' AS code_text, '' AS command_text,
+               q.grouping_origin,
                q.created_at, q.updated_at
         FROM {questions} q
         JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id
@@ -4913,6 +4983,34 @@ pub(super) fn append_declared_card_to_question_aggregate(
         // original Part/Card only; question aggregates must not duplicate them.
         _ => {}
     }
+}
+
+pub(super) fn append_projected_cards_to_question_aggregate(
+    part: &ConversationPart,
+    adapter_id: &str,
+    card_kinds: &[ConversationCardKindDefinition],
+    answer_text: &mut Vec<String>,
+    code_text: &mut Vec<String>,
+    command_text: &mut Vec<String>,
+) -> AppResult<()> {
+    let cards = crate::backend::projection::conversation_cards::project_conversation_content_cards(
+        part, adapter_id, card_kinds,
+    )
+    .map_err(AppError::external)?;
+    for card in cards {
+        let semantic_role = card
+            .semantic_role
+            .as_deref()
+            .or_else(|| card.kind.rsplit_once('.').map(|(_, value)| value))
+            .unwrap_or(card.kind.as_str());
+        match semantic_role {
+            "answer" => answer_text.push(card.body),
+            "code" => code_text.push(card.body),
+            "command" => command_text.push(card.body),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn resolved_content_card_for_part(
@@ -5072,25 +5170,37 @@ fn search_highlight_segments(
 
 fn search_entries_for_part(
     part: &ConversationPart,
+    adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> Vec<ConversationSearchEntry> {
-    resolved_content_card_for_part(part)
-        .map(|card| {
-            let semantic_role = card.semantic_role.clone().or_else(|| {
+    crate::backend::projection::conversation_cards::project_conversation_content_cards(
+        part, adapter_id, card_kinds,
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .map(|card| {
+        let semantic_role = card
+            .semantic_role
+            .clone()
+            .or_else(|| {
                 card_kinds
                     .iter()
                     .find(|definition| definition.id == card.kind)
                     .and_then(|definition| definition.semantic_role.clone())
+            })
+            .or_else(|| {
+                card.kind
+                    .rsplit_once('.')
+                    .map(|(_, value)| value.to_string())
             });
-            ConversationSearchEntry {
-                card_type: ConversationSearchCardType::new(card.kind),
-                block_id: part.id.clone(),
-                text: card.body,
-                semantic_role,
-            }
-        })
-        .into_iter()
-        .collect()
+        ConversationSearchEntry {
+            card_type: ConversationSearchCardType::new(card.kind),
+            block_id: card.card_id,
+            text: card.body,
+            semantic_role,
+        }
+    })
+    .collect()
 }
 
 async fn load_search_adapter_card_kinds_sqlx(
@@ -5175,6 +5285,24 @@ fn first_line(text: &str) -> String {
     }
 }
 
+fn search_question_title_from_turns(
+    question: &ConversationQuestion,
+    turns: &[ConversationTurn],
+) -> String {
+    question
+        .title
+        .clone()
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| {
+            turns
+                .iter()
+                .map(|turn| turn.user_text.as_str())
+                .find(|text| !text.trim().is_empty())
+                .map(first_line)
+        })
+        .unwrap_or_else(|| "Untitled question".to_string())
+}
+
 fn stable_id(prefix: &str, parts: &[&str]) -> String {
     let mut hasher = Sha256::new();
     for part in parts {
@@ -5255,6 +5383,59 @@ mod tests {
         assert_eq!(answer_text, vec!["answer"]);
         assert!(code_text.is_empty());
         assert!(command_text.is_empty());
+    }
+
+    #[test]
+    fn question_aggregate_projects_shell_execution_nodes_for_fts_compatibility() {
+        let part = ConversationPart {
+            id: "conversation-part-shell".to_string(),
+            turn_id: "conversation-turn-shell".to_string(),
+            part_index: 0,
+            role: ConversationPartRole::Tool,
+            kind: ConversationPartKind::Command,
+            text: None,
+            language: None,
+            command: Some("raw shell command".to_string()),
+            cwd: None,
+            status: None,
+            exit_code: None,
+            command_label: None,
+            source_execution_id: Some("execution-shell".to_string()),
+            content_card: Some(ConversationContentCardDescriptor {
+                schema_version: 1,
+                kind: "fixture.command".to_string(),
+                renderer: Some("command".to_string()),
+            }),
+            metadata_json: Some(
+                serde_json::json!({
+                    "shell_execution_projection": {
+                        "schema_version": 1,
+                        "nodes": [
+                            {"command": "printf first", "command_label": "first"},
+                            {"command": "printf second", "command_label": "second"}
+                        ]
+                    }
+                })
+                .to_string(),
+            ),
+            translated_text: None,
+        };
+        let mut answer_text = Vec::new();
+        let mut code_text = Vec::new();
+        let mut command_text = Vec::new();
+        append_projected_cards_to_question_aggregate(
+            &part,
+            "fixture",
+            &[],
+            &mut answer_text,
+            &mut code_text,
+            &mut command_text,
+        )
+        .expect("project shell execution nodes into FTS fields");
+
+        assert_eq!(command_text, vec!["printf first", "printf second"]);
+        assert!(answer_text.is_empty());
+        assert!(code_text.is_empty());
     }
 
     #[test]

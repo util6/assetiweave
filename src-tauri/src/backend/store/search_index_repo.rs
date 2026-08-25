@@ -1,12 +1,13 @@
 use crate::backend::{
     dto::SearchRetrievalMode,
+    models::ConversationPart,
     runtime::{AppError, AppResult},
 };
 use chrono::Utc;
 use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
-const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 3;
+const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 4;
 const CONVERSATION_SEARCH_TOKENIZER_VERSION: &str = "tantivy-jieba-0.20.0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,7 +224,7 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let question_sql = format!(
             r#"
-            SELECT s.id, q.id, t.id, q.title, q.question_text, t.user_text,
+            SELECT s.id, q.id, t.id, q.title, t.user_text,
                    s.adapter_id, s.source_id, {project_path}
             FROM {sessions} s
             JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
@@ -243,8 +244,8 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             .fetch_all(pool)
             .await?
         {
-            let question_text: String = row.try_get(4)?;
             let turn_id: String = row.try_get(2)?;
+            let user_text: String = row.try_get(4)?;
             documents.push(ConversationSearchIndexDocumentRow {
                 document_kind: "question".to_string(),
                 record_kind: tables.record_kind.to_string(),
@@ -255,19 +256,20 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                 block_id: format!("{turn_id}-question"),
                 card_kind: String::new(),
                 semantic_role: String::new(),
-                question_title: search_question_title(row.try_get(3)?, &question_text),
-                content: row.try_get(5)?,
-                adapter_id: row.try_get(6)?,
-                source_id: row.try_get(7)?,
-                project_path: row.try_get(8)?,
+                question_title: search_question_title(row.try_get(3)?, &user_text),
+                content: user_text,
+                adapter_id: row.try_get(5)?,
+                source_id: row.try_get(6)?,
+                project_path: row.try_get(7)?,
             });
         }
 
         let part_sql = format!(
             r#"
-            SELECT s.id, q.id, t.id, p.id, q.title, q.question_text,
-                   p.text, p.language, p.command, p.cwd, p.status, p.exit_code,
-                   p.metadata_json, p.content_card_json,
+            SELECT s.id, q.id, t.id, p.id, q.title, t.user_text,
+                   p.part_index, p.role, p.kind, p.text, p.language, p.command, p.cwd,
+                   p.status, p.exit_code, p.metadata_json, p.content_card_json,
+                   p.translated_text, p.source_execution_id, p.command_label,
                    s.adapter_id, s.source_id, {project_path},
                    COALESCE(a.card_kinds_json, '[]')
             FROM {sessions} s
@@ -291,57 +293,75 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             .fetch_all(pool)
             .await?
         {
-            let text: Option<String> = row.try_get(6)?;
-            let language: Option<String> = row.try_get(7)?;
-            let command: Option<String> = row.try_get(8)?;
-            let cwd: Option<String> = row.try_get(9)?;
-            let status: Option<String> = row.try_get(10)?;
-            let exit_code: Option<i32> = row.try_get(11)?;
-            let metadata: Option<String> = row.try_get(12)?;
-            let content_card_json: Option<String> = row.try_get(13)?;
-            let card_kinds_json: String = row.try_get(17)?;
+            let part = map_search_part(&row)?;
+            let card_kinds_json: String = row.try_get(23)?;
             let card_kinds = serde_json::from_str::<
                 Vec<crate::backend::models::ConversationCardKindDefinition>,
             >(&card_kinds_json)
             .unwrap_or_default();
-            let Some(card) = crate::backend::projection::conversation_cards::project_persisted_content_card(
-                crate::backend::projection::conversation_cards::PersistedConversationCardProjectionSource {
-                    content_card_json: content_card_json.as_deref(),
-                    metadata_json: metadata.as_deref(),
-                    text: text.as_deref(),
-                    language: language.as_deref(),
-                    command: command.as_deref(),
-                    cwd: cwd.as_deref(),
-                    status: status.as_deref(),
-                    exit_code,
-                },
-                &card_kinds,
-            )
-            .map_err(AppError::external)?
-            else {
-                continue;
-            };
-            let part_id: String = row.try_get(3)?;
-            let question_text: String = row.try_get(5)?;
-            documents.push(ConversationSearchIndexDocumentRow {
-                document_kind: "card".to_string(),
-                record_kind: tables.record_kind.to_string(),
-                session_id: row.try_get(0)?,
-                question_id: row.try_get(1)?,
-                turn_id: row.try_get(2)?,
-                part_id: part_id.clone(),
-                block_id: part_id.clone(),
-                card_kind: card.kind,
-                semantic_role: card.semantic_role.unwrap_or_default(),
-                question_title: search_question_title(row.try_get(4)?, &question_text),
-                content: card.body,
-                adapter_id: row.try_get(14)?,
-                source_id: row.try_get(15)?,
-                project_path: row.try_get(16)?,
-            });
+            let adapter_id: String = row.try_get(20)?;
+            let cards =
+                crate::backend::projection::conversation_cards::project_conversation_content_cards(
+                    &part,
+                    &adapter_id,
+                    &card_kinds,
+                )
+                .map_err(AppError::external)?;
+            let question_title = search_question_title(row.try_get(4)?, row.try_get(5)?);
+            for card in cards {
+                let card_kind = card.kind;
+                let semantic_role = card
+                    .semantic_role
+                    .or_else(|| {
+                        card_kind
+                            .rsplit_once('.')
+                            .map(|(_, value)| value.to_string())
+                    })
+                    .unwrap_or_default();
+                documents.push(ConversationSearchIndexDocumentRow {
+                    document_kind: "card".to_string(),
+                    record_kind: tables.record_kind.to_string(),
+                    session_id: row.try_get(0)?,
+                    question_id: row.try_get(1)?,
+                    turn_id: row.try_get(2)?,
+                    part_id: part.id.clone(),
+                    block_id: card.card_id,
+                    card_kind,
+                    semantic_role,
+                    question_title: question_title.clone(),
+                    content: card.body,
+                    adapter_id: row.try_get(20)?,
+                    source_id: row.try_get(21)?,
+                    project_path: row.try_get(22)?,
+                });
+            }
         }
     }
     Ok(documents)
+}
+
+fn map_search_part(row: &sqlx::sqlite::SqliteRow) -> AppResult<ConversationPart> {
+    Ok(ConversationPart {
+        id: row.try_get(3)?,
+        turn_id: row.try_get(2)?,
+        part_index: row.try_get(6)?,
+        role: super::codec::decode_enum(row.try_get::<String, _>(7)?)?,
+        kind: super::codec::decode_enum(row.try_get::<String, _>(8)?)?,
+        text: row.try_get(9)?,
+        language: row.try_get(10)?,
+        command: row.try_get(11)?,
+        cwd: row.try_get(12)?,
+        status: row.try_get(13)?,
+        exit_code: row.try_get(14)?,
+        metadata_json: row.try_get(15)?,
+        command_label: row.try_get(19)?,
+        source_execution_id: row.try_get(18)?,
+        content_card: row
+            .try_get::<Option<String>, _>(16)?
+            .map(super::codec::decode_json)
+            .transpose()?,
+        translated_text: row.try_get(17)?,
+    })
 }
 
 #[cfg(test)]

@@ -3094,6 +3094,42 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     fs::create_dir_all(&root).expect("create temp search index query directory");
     let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
     upsert_conversation_export_fixture(&service, &root, vec![], None, false);
+    execute_test_sql(
+        &service,
+        "UPDATE conversation_questions SET title = NULL, question_text = 'stale-question-snapshot', answer_text = 'stale-answer-snapshot', code_text = 'stale-code-snapshot', command_text = 'stale-command-snapshot'",
+    )
+    .expect("seed stale question compatibility snapshot");
+    let stale_legacy = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "stale-answer-snapshot".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::answer()],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: None,
+            include_cards: None,
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(20),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search without stale question snapshot fields");
+    assert_eq!(stale_legacy.total_count, 0);
+    assert!(service
+        .list_conversation_sessions(ConversationSessionListParams {
+            adapter_id: None,
+            source_id: None,
+            query: Some("stale-answer-snapshot".to_string()),
+            limit: Some(20),
+            offset: Some(0),
+        })
+        .expect("list sessions without stale question snapshot fields")
+        .is_empty());
     let legacy = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -3116,6 +3152,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         .expect("search SQLite projection before the derived index exists");
     assert_eq!(legacy.backend, "legacy_scan");
     assert_eq!(legacy.total_count, 1);
+    assert_eq!(legacy.hits[0].question_title, "Export this");
     let report = service
         .rebuild_conversation_search_index()
         .expect("rebuild conversation search index");
@@ -3146,6 +3183,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     assert_eq!(result.total_count, 1);
     assert_eq!(result.hits[0].part_id, legacy.hits[0].part_id);
     assert_eq!(result.hits[0].card_type, legacy.hits[0].card_type);
+    assert_eq!(result.hits[0].question_title, "Export this");
     assert_eq!(result.hits[0].snippet, legacy.hits[0].snippet);
     assert_eq!(
         result.hits[0].card_type,
@@ -3490,7 +3528,7 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
                     command, cwd, status, exit_code, command_label, metadata_json,
                     content_card_json, source_execution_id
                 )
-                VALUES (?1, 'codex-shell-command-part', ?2, 1, 'tool', 'command', NULL, NULL,
+                VALUES (?1, 'conversation-part-codex-shell-command', ?2, 1, 'tool', 'command', NULL, NULL,
                     ?3, '/tmp/project', 'failed', 1, 'exec', ?4,
                     '{"schema_version":1,"kind":"codex.command","renderer":"command"}',
                     'codex-shell-execution')
@@ -3510,7 +3548,7 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
                     command, cwd, status, exit_code, command_label, metadata_json,
                     content_card_json, source_execution_id
                 )
-                VALUES (?1, 'codex-shell-result-part', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
+                VALUES (?1, 'conversation-part-codex-shell-result', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
                     NULL, '/tmp/project', 'failed', 1, NULL, NULL,
                     '{"schema_version":1,"kind":"codex.result","renderer":"terminal_output"}',
                     'codex-shell-execution')
@@ -3533,14 +3571,14 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
         detail
             .parts
             .iter()
-            .filter(|part| part.id == "codex-shell-command-part")
+            .filter(|part| part.id == "conversation-part-codex-shell-command")
             .count(),
         1
     );
     let command_nodes = detail
         .projected_content_nodes
         .iter()
-        .filter(|node| node.part_id == "codex-shell-command-part")
+        .filter(|node| node.part_id == "conversation-part-codex-shell-command")
         .collect::<Vec<_>>();
     assert_eq!(command_nodes.len(), 2);
     assert_eq!(
@@ -3567,7 +3605,7 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
         detail
             .projected_content_nodes
             .iter()
-            .filter(|node| node.part_id == "codex-shell-result-part")
+            .filter(|node| node.part_id == "conversation-part-codex-shell-result")
             .count(),
         1
     );
@@ -3575,9 +3613,165 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
         detail
             .cards
             .iter()
-            .filter(|card| card.part_id == "codex-shell-command-part")
+            .filter(|card| card.part_id == "conversation-part-codex-shell-command")
             .count(),
         1
+    );
+
+    execute_test_sql(
+        &service,
+        &format!(
+            r#"
+            INSERT INTO conversation_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text, language,
+                command, cwd, status, exit_code, metadata_json, translated_text,
+                content_card_json, source_execution_id, command_label
+            ) VALUES (
+                'default', 'conversation-part-legacy-split-a', '{0}', 3, 'tool', 'command',
+                NULL, NULL, 'printf legacy split first', NULL, NULL, NULL, NULL, NULL,
+                '{{"schema_version":1,"kind":"codex.command","renderer":"command"}}',
+                'legacy-split-execution', NULL
+            );
+            INSERT INTO conversation_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text, language,
+                command, cwd, status, exit_code, metadata_json, translated_text,
+                content_card_json, source_execution_id, command_label
+            ) VALUES (
+                'default', 'conversation-part-legacy-split-b', '{0}', 4, 'tool', 'command',
+                NULL, NULL, 'printf legacy split second', NULL, NULL, NULL, NULL, NULL,
+                '{{"schema_version":1,"kind":"codex.command","renderer":"command"}}',
+                'legacy-split-execution', NULL
+            )
+            "#,
+            detail.turns[0].id
+        ),
+    )
+    .expect("seed historical split command parts");
+    let historical_split_search = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "legacy split second".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+                "codex.command",
+            )],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: Some(false),
+            include_cards: Some(true),
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(10),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search historical split command Part");
+    assert_eq!(historical_split_search.total_count, 1);
+    assert_eq!(
+        historical_split_search.hits[0].block_id,
+        "conversation-part-legacy-split-b"
+    );
+    assert_eq!(
+        historical_split_search.hits[0].part_id.as_deref(),
+        Some("conversation-part-legacy-split-b")
+    );
+
+    let command_search = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "git status --short".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+                "codex.command",
+            )],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: Some(false),
+            include_cards: Some(true),
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(10),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search projected shell command node");
+    assert_eq!(command_search.total_count, 1);
+    assert_eq!(
+        command_search.hits[0].block_id,
+        "conversation-part-codex-shell-command-node-1"
+    );
+    assert_eq!(
+        command_search.hits[0].part_id.as_deref(),
+        Some("conversation-part-codex-shell-command")
+    );
+    assert!(command_search.hits[0]
+        .snippet
+        .contains("git status --short > /tmp/status.txt"));
+
+    let blocks = service
+        .list_conversation_blocks(ConversationBlockListParams {
+            question_id: detail.question.id.clone(),
+        })
+        .expect("list projected shell command locators");
+    let command_blocks = blocks
+        .iter()
+        .filter(|block| block.part_id.as_deref() == Some("conversation-part-codex-shell-command"))
+        .collect::<Vec<_>>();
+    assert_eq!(command_blocks.len(), 2);
+    assert_eq!(
+        command_blocks
+            .iter()
+            .map(|block| block.block_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "conversation-part-codex-shell-command-node-0",
+            "conversation-part-codex-shell-command-node-1"
+        ]
+    );
+    let status_block = service
+        .get_conversation_block(ConversationBlockGetParams {
+            block_id: "conversation-part-codex-shell-command-node-1".to_string(),
+        })
+        .expect("load projected shell command node");
+    assert_eq!(status_block.content, "git status --short > /tmp/status.txt");
+
+    let report = service
+        .rebuild_conversation_search_index()
+        .expect("rebuild projected shell search index");
+    assert_eq!(report.document_count, 7);
+    let indexed_command_search = service
+        .search_conversation_records(ConversationSearchParams {
+            record_kind: Some("session".to_string()),
+            adapter_id: None,
+            source_id: None,
+            project_path: None,
+            query: "git status --short".to_string(),
+            content_types: vec![crate::backend::dto::ConversationSearchCardType::new(
+                "codex.command",
+            )],
+            card_kinds: Vec::new(),
+            semantic_roles: Vec::new(),
+            include_questions: Some(false),
+            include_cards: Some(true),
+            since: None,
+            until: None,
+            timeline: false,
+            limit: Some(10),
+            offset: Some(0),
+            search_options: None,
+        })
+        .expect("search projected shell command node in Tantivy");
+    assert_eq!(indexed_command_search.backend, "tantivy");
+    assert_eq!(indexed_command_search.total_count, 1);
+    assert_eq!(
+        indexed_command_search.hits[0].block_id,
+        "conversation-part-codex-shell-command-node-1"
     );
     let _ = fs::remove_dir_all(root);
 }
