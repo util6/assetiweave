@@ -12,7 +12,7 @@ import {
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type { ConversationContentController } from "./useConversationContentController";
-import type { ConversationQuestionDetail } from "../../types";
+import type { ConversationContentNode, ConversationQuestionDetail } from "../../types";
 
 const now = "2026-08-16T00:00:00Z";
 const t: Translator = (key, params?: TranslationParams) => interpolate(messages.zh[key] ?? key, params);
@@ -78,6 +78,28 @@ const question: ConversationQuestionDetail = {
       metadata_json: JSON.stringify({ content_card: { type: "tool" } }),
     },
   ],
+  question_turns: [
+    {
+      question_id: "question-1",
+      turn_id: "turn-1",
+      turn_order: 0,
+      assignment_origin: "auto_merged",
+      assigned_at: now,
+      updated_at: now,
+    },
+    {
+      question_id: "question-1",
+      turn_id: "turn-2",
+      turn_order: 1,
+      assignment_origin: "auto_merged",
+      assigned_at: now,
+      updated_at: now,
+    },
+  ],
+  projected_content_nodes: [
+    projectedNode("part-1", "turn-1", "answer", "First answer"),
+    projectedNode("part-2", "turn-2", "tool", "legacy tool output"),
+  ],
 };
 
 describe("ConversationTurn", () => {
@@ -85,13 +107,13 @@ describe("ConversationTurn", () => {
     const models = buildConversationTurnPresentations(question);
     expect(models).toHaveLength(2);
     expect(models[0]?.promptBlockId).toBe("turn-1-question");
-    expect(models[0]?.blocks[0]?.id).toBe("part-1-answer");
-    expect(models[1]?.blocks[0]?.id).toBe("part-2-tool");
-    expect(collectConversationTurnBlocks(models).map((block) => block.id)).toEqual(["part-1-answer", "part-2-tool"]);
+    expect(models[0]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-1-node-0" } });
+    expect(models[1]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-2-node-0" } });
+    expect(collectConversationTurnBlocks(models).map((block) => block.id)).toEqual(["part-1-node-0", "part-2-node-0"]);
 
     const index = buildConversationBlockTurnIndex(models);
     expect(index.get("turn-1-question")).toBe("turn-1");
-    expect(index.get("part-2-tool")).toBe("turn-2");
+    expect(index.get("part-2-node-0")).toBe("turn-2");
   });
 
   it("keeps prompt, split, empty, and content card presentation inside one memoized turn", () => {
@@ -124,6 +146,104 @@ describe("ConversationTurn", () => {
     expect(html).toContain('data-conversation-turn-id="turn-1"');
     expect(html).toContain("First question");
     expect(html).toContain("First answer");
-    expect(html).toContain('data-conversation-card-id="part-1-answer"');
+    expect(html).toContain('data-conversation-card-id="part-1-node-0"');
+  });
+
+  it("renders multiple projected command nodes from one source execution", () => {
+    const executionQuestion: ConversationQuestionDetail = {
+      ...question,
+      turns: [question.turns[0]!],
+      question_turns: [question.question_turns[0]!],
+      projected_content_nodes: [
+        executionNode("part-shell", "shell-command-1", "command", "printf one", 0),
+        executionNode("part-shell", "shell-command-2", "command", "printf two", 1),
+        executionNode("part-shell", "shell-result", "result", "one\ntwo", 2),
+      ],
+    };
+
+    const [model] = buildConversationTurnPresentations(executionQuestion);
+    expect(model?.displayNodes).toHaveLength(1);
+    expect(model?.displayNodes?.[0]).toMatchObject({
+      type: "execution",
+      sourceExecutionId: "shell-execution",
+      commands: [
+        { id: "part-shell-node-0" },
+        { id: "part-shell-node-1" },
+      ],
+      results: [{ id: "part-shell-node-2" }],
+    });
   });
 });
+
+function projectedNode(
+  partId: string,
+  turnId: string,
+  semanticRole: "answer" | "tool",
+  content: string,
+): ConversationContentNode {
+  return {
+    node_id: `${partId}-node-0`,
+    locator: {
+      question_id: "question-1",
+      turn_id: turnId,
+      part_id: partId,
+      node_order: 0,
+    },
+    question_id: "question-1",
+    turn_id: turnId,
+    part_id: partId,
+    turn_order: turnId === "turn-1" ? 0 : 1,
+    part_order: 0,
+    node_order: 0,
+    node_type: semanticRole,
+    semantic_role: semanticRole,
+    renderer: semanticRole === "answer" ? "markdown" : "plain",
+    role: semanticRole === "answer" ? "assistant" : "tool",
+    content,
+    language: null,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    source_execution_id: null,
+    command_label: null,
+    translated_content: null,
+    legacy_anchor_ids: [],
+  };
+}
+
+function executionNode(
+  partId: string,
+  _label: string,
+  semanticRole: "command" | "result",
+  content: string,
+  nodeOrder: number,
+): ConversationContentNode {
+  return {
+    node_id: `${partId}-node-${nodeOrder}`,
+    locator: {
+      question_id: "question-1",
+      turn_id: "turn-1",
+      part_id: partId,
+      node_order: nodeOrder,
+    },
+    question_id: "question-1",
+    turn_id: "turn-1",
+    part_id: partId,
+    turn_order: 0,
+    part_order: 0,
+    node_order: nodeOrder,
+    node_type: semanticRole,
+    semantic_role: semanticRole,
+    renderer: semanticRole === "command" ? "command" : "terminal_output",
+    role: "tool",
+    content,
+    language: null,
+    cwd: null,
+    status: null,
+    exit_code: semanticRole === "result" ? 0 : null,
+    source_execution_id: "shell-execution",
+    command_label: null,
+    translated_content: null,
+    legacy_anchor_ids: [],
+  };
+}

@@ -15,6 +15,7 @@ import {
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   type ConversationCard,
   type ConversationCardRenderer,
+  type ConversationContentNode,
   type LegacyConversationContentNode,
   type ConversationContentType,
   type ConversationContentVisibility,
@@ -88,6 +89,7 @@ export type ConversationDisplayNode =
       type: "execution";
       turnId: string;
       sourceExecutionId: string;
+      commands?: ConversationContentBlock[];
       command?: ConversationContentBlock;
       results: ConversationContentBlock[];
     };
@@ -107,6 +109,53 @@ export function buildConversationContentBlocks(
     return cards.map(conversationCardToBlock);
   }
   return parts.flatMap(createDeclaredContentBlock);
+}
+
+export function buildConversationContentBlocksFromNodes(
+  nodes: ConversationContentNode[],
+): ConversationContentBlock[] {
+  return nodes.map(conversationContentNodeToBlock);
+}
+
+/**
+ * Groups projected nodes by their source execution without reconstructing a Card index.
+ * A single source execution may contain multiple projected command nodes.
+ */
+export function buildConversationDisplayNodesFromNodes(
+  nodes: ConversationContentNode[],
+): ConversationDisplayNode[] {
+  const displayNodes: ConversationDisplayNode[] = [];
+  const executions = new Map<string, Extract<ConversationDisplayNode, { type: "execution" }>>();
+
+  for (const node of nodes) {
+    const block = conversationContentNodeToBlock(node);
+    if (!node.source_execution_id) {
+      displayNodes.push({ type: "card", turnId: node.turn_id, block });
+      continue;
+    }
+
+    const executionKey = `${node.turn_id}:${node.source_execution_id}`;
+    let execution = executions.get(executionKey);
+    if (!execution) {
+      execution = {
+        type: "execution",
+        turnId: node.turn_id,
+        sourceExecutionId: node.source_execution_id,
+        commands: [],
+        results: [],
+      };
+      executions.set(executionKey, execution);
+      displayNodes.push(execution);
+    }
+
+    if (block.type === "result") {
+      execution.results.push(block);
+    } else {
+      execution.commands?.push(block);
+    }
+  }
+
+  return displayNodes;
 }
 
 export function buildConversationDisplayNodes(
@@ -167,6 +216,26 @@ function conversationCardToBlock(card: ConversationCard): ConversationContentBlo
   };
 }
 
+function conversationContentNodeToBlock(node: ConversationContentNode): ConversationContentBlock {
+  return {
+    id: node.node_id,
+    kind: node.node_type,
+    partId: node.part_id,
+    type: conversationCardPresentationKind(node.node_type, node.semantic_role),
+    renderer: node.renderer,
+    legacyAnchorIds: node.legacy_anchor_ids,
+    role: node.role,
+    text: node.content,
+    language: node.language,
+    cwd: node.cwd,
+    status: node.status,
+    exitCode: node.exit_code,
+    commandLabel: node.command_label,
+    translatedText: node.translated_content,
+    format: node.renderer === "markdown" ? "markdown" : "plain",
+  };
+}
+
 export function ConversationContentCards({
   activeBlockId,
   blocks,
@@ -210,21 +279,23 @@ export function ConversationContentCards({
         ? [node]
         : [];
     }
-    const command = node.command && (visibility[node.command.type] ?? true)
-      ? node.command
-      : undefined;
+    const commands = (node.commands ?? (node.command ? [node.command] : [])).filter((block) => (
+      visibility[block.type] ?? true
+    ));
     const results = node.results.filter((block) => (
       (visibility[block.type] ?? true) && shouldDisplayContentBlock(block)
     ));
-    if (command && results.length === 0) {
-      return [{ type: "card", turnId: node.turnId, block: command }];
+    if (commands.length > 0 && results.length === 0) {
+      return commands.map((command) => ({ type: "card", turnId: node.turnId, block: command }));
     }
-    return command || results.length > 0 ? [{ ...node, command, results }] : [];
+    return commands.length > 0 || results.length > 0
+      ? [{ ...node, commands, command: commands[0], results }]
+      : [];
   });
   const visibleBlocks = visibleNodes.flatMap((node) => (
     node.type === "card"
       ? [node.block]
-      : [...(node.command ? [node.command] : []), ...node.results]
+      : [...(node.commands ?? (node.command ? [node.command] : [])), ...node.results]
   ));
   const fallbackController = useConversationContentController({
     blocks: visibleBlocks,
@@ -268,7 +339,7 @@ export function ConversationContentCards({
               </span>
             </header>
             <div className="grid gap-3 p-3">
-              {node.command ? renderContentCard(node.command) : null}
+              {(node.commands ?? (node.command ? [node.command] : [])).map(renderContentCard)}
               {node.results.map(renderContentCard)}
             </div>
           </section>

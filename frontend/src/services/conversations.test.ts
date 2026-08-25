@@ -60,6 +60,27 @@ describe("conversation services", () => {
     });
   });
 
+  it("searches browser previews from projected content nodes", async () => {
+    vi.stubGlobal("window", {});
+    invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
+
+    await expect(searchConversationRecords({
+      content_types: ["command"],
+      include_cards: true,
+      include_questions: false,
+      limit: 20,
+      query: "sync --source",
+      record_kind: "session",
+    })).resolves.toMatchObject({
+      hits: [expect.objectContaining({
+        block_id: "preview-part-2-node-0",
+        card_type: "command",
+        part_id: "preview-part-2",
+      })],
+      total_count: 1,
+    });
+  });
+
   it("reports preview runtime diagnostics without calling Tauri", async () => {
     vi.stubGlobal("window", {});
 

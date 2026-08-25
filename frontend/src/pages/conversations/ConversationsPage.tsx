@@ -39,7 +39,6 @@ import {
 } from "../../components/apps/AppShortcutIcon";
 import type { NotificationMessage } from "../../components/notifications/NotificationBanner";
 import {
-  buildConversationContentBlocks,
   conversationCardColor,
   conversationCardLabel,
   conversationCardDomId,
@@ -127,6 +126,10 @@ import type {
 } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { conversationIdFragment } from "../../utils/conversationIds";
+import {
+  conversationQuestionPreview,
+  conversationQuestionTitle,
+} from "../../utils/conversationProjection";
 import type { ConversationNavigationTarget } from "../../router/navigationTargets";
 
 export { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
@@ -388,7 +391,7 @@ export function ConversationsPage({
 
   useEffect(() => {
     const kinds = sessionDetail?.questions.flatMap((question) =>
-      question.cards?.map((card) => conversationCardPresentationKind(card.kind, card.semantic_role)) ?? []
+      question.projected_content_nodes.map((node) => conversationCardPresentationKind(node.node_type, node.semantic_role))
     ) ?? [];
     if (kinds.length === 0) return;
     ensureContentVisibility(kinds);
@@ -1164,14 +1167,14 @@ export function resolveConversationNavigationTarget(
     if (question.turns.some((turn) => `${turn.id}-question` === target.blockId)) {
       return { blockFound: true, blockId: target.blockId, cardType: "question", questionId: question.question.id };
     }
-    const block = buildConversationContentBlocks(question.parts, question.cards).find(
-      (candidate) => candidate.id === target.blockId || candidate.legacyAnchorIds?.includes(target.blockId ?? ""),
+    const block = question.projected_content_nodes.find(
+      (candidate) => candidate.node_id === target.blockId || candidate.legacy_anchor_ids.includes(target.blockId ?? ""),
     );
     if (block) {
       return {
         blockFound: true,
-        blockId: block.id,
-        cardType: block.kind ?? block.type,
+        blockId: block.node_id,
+        cardType: block.node_type,
         questionId: question.question.id,
       };
     }
@@ -1271,7 +1274,7 @@ export function conversationContentTypesForQuestions(
 ): ConversationContentType[] {
   return Array.from(new Set(
     questions.flatMap((question) =>
-      buildConversationContentBlocks(question.parts, question.cards).map((block) => block.type)
+      question.projected_content_nodes.map((node) => conversationCardPresentationKind(node.node_type, node.semantic_role))
     ),
   ));
 }
@@ -1400,9 +1403,7 @@ function sortConversationQuestions(
     let primary = 0;
 
     if (sortBy === "title") {
-      primary = (left.question.title ?? left.question.question_text).localeCompare(
-        right.question.title ?? right.question.question_text,
-      );
+      primary = (conversationQuestionTitle(left) ?? "").localeCompare(conversationQuestionTitle(right) ?? "");
     } else if (sortBy === "updated") {
       primary = compareOptionalDate(left.question.updated_at, right.question.updated_at);
     } else {
@@ -2477,8 +2478,8 @@ function QuestionListItem({
   selectedForExport: boolean;
   t: Translator;
 }) {
-  const title = question.question.title || firstLine(question.question.question_text, t);
-  const answerPreview = firstLine(question.question.answer_text || question.question.command_text || question.question.code_text, t);
+  const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
+  const answerPreview = conversationQuestionPreview(question) ?? t("conversation.markdown.empty");
 
   return (
     <article className={`conversation-row flex h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`} data-selected={selected}>
@@ -2553,7 +2554,7 @@ export function QuestionPreview({
   translationSettings?: ResolvedConversationTranslationSettings;
   visibility?: ConversationContentVisibility;
 }) {
-  const title = question.question.title || firstLine(question.question.question_text, t);
+  const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
   const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
   const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
   const previewScrollRef = useRef<HTMLDivElement>(null);

@@ -1,6 +1,5 @@
 import type {
-  ConversationCard,
-  LegacyConversationContentNode,
+  ConversationContentNode,
   ConversationQuestionDetail,
   ConversationTurn,
 } from "../../../../types";
@@ -9,74 +8,106 @@ const FIXTURE_TIMESTAMP = "2026-08-16T00:00:00.000Z";
 const TURN_COUNT = 80;
 
 export interface RenderingStressFixture extends ConversationQuestionDetail {
-  cards: ConversationCard[];
-  content_nodes: LegacyConversationContentNode[];
+  projected_content_nodes: ConversationContentNode[];
 }
 
 export function createConversationRenderingStressFixture(): RenderingStressFixture {
   const turns = Array.from({ length: TURN_COUNT }, (_, index) => createTurn(index));
-  const cards: ConversationCard[] = [];
-  const contentNodes: LegacyConversationContentNode[] = [];
+  const projectedContentNodes: ConversationContentNode[] = [];
 
-  const appendCard = (turnId: string, card: Omit<ConversationCard, "card_id" | "part_id" | "legacy_anchor_ids">) => {
-    const cardIndex = cards.length;
-    const cardId = `stress-card-${String(cardIndex + 1).padStart(3, "0")}`;
-    cards.push({
-      ...card,
-      card_id: cardId,
-      part_id: `stress-part-${String(cardIndex + 1).padStart(3, "0")}`,
-      legacy_anchor_ids: [`${cardId}-legacy`],
+  const appendNode = (turnId: string, node: Omit<ConversationContentNode, "node_id" | "locator" | "question_id" | "turn_id" | "part_id" | "turn_order" | "node_order" | "legacy_anchor_ids">) => {
+    const nodeIndex = projectedContentNodes.length;
+    const partId = `stress-part-${String(nodeIndex + 1).padStart(3, "0")}`;
+    const nodeId = `${partId}-node-0`;
+    const turn = turns.find((candidate) => candidate.id === turnId)!;
+    projectedContentNodes.push({
+      ...node,
+      node_id: nodeId,
+      locator: {
+        question_id: "rendering-stress-question",
+        turn_id: turnId,
+        part_id: partId,
+        node_order: 0,
+      },
+      question_id: "rendering-stress-question",
+      turn_id: turnId,
+      part_id: partId,
+      node_order: 0,
+      turn_order: turn.turn_index,
+      legacy_anchor_ids: [`${nodeId}-legacy`],
     });
-    contentNodes.push({ card_index: cardIndex, turn_id: turnId, type: "card" });
   };
 
   turns.forEach((turn, index) => {
-    appendCard(turn.id, {
-      adapter_id: "fixture",
-      body: createMarkdownAnswer(index),
-      kind: "fixture.answer",
+    appendNode(turn.id, {
+      node_type: "fixture.answer",
+      semantic_role: "answer",
       renderer: "markdown",
       role: "assistant",
-      semantic_role: "answer",
+      content: createMarkdownAnswer(index),
+      part_order: 0,
+      language: null,
+      cwd: null,
+      status: null,
+      exit_code: null,
+      source_execution_id: null,
+      command_label: null,
+      translated_content: null,
     });
 
     if (index < 24) {
-      appendCard(turn.id, {
-        adapter_id: "fixture",
-        body: ["const renderTurn = () => {", `  return \"turn ${index + 1}\";`, "};"].join("\n"),
-        kind: "fixture.code",
+      appendNode(turn.id, {
+        node_type: "fixture.code",
+        semantic_role: "code",
         language: "ts",
         renderer: "code",
         role: "assistant",
-        semantic_role: "code",
+        content: ["const renderTurn = () => {", `  return \"turn ${index + 1}\";`, "};"].join("\n"),
+        part_order: 1,
+        cwd: null,
+        status: null,
+        exit_code: null,
+        source_execution_id: null,
+        command_label: null,
+        translated_content: null,
       });
-      appendCard(turn.id, {
-        adapter_id: "fixture",
-        body: `assetiweave-cli conversation render --turn ${index + 1}`,
-        command_label: `render-${index + 1}`,
-        kind: "fixture.command",
+      appendNode(turn.id, {
+        node_type: "fixture.command",
+        semantic_role: "command",
         renderer: "command",
         role: "tool",
-        semantic_role: "command",
+        content: `assetiweave-cli conversation render --turn ${index + 1}`,
+        part_order: 2,
+        language: null,
+        cwd: null,
+        status: null,
+        exit_code: null,
+        source_execution_id: null,
+        command_label: `render-${index + 1}`,
+        translated_content: null,
       });
     }
 
     if (index < 32) {
-      appendCard(turn.id, {
-        adapter_id: "fixture",
-        body: index < 12 ? createDiff(index) : createResult(index),
-        kind: "fixture.result",
+      appendNode(turn.id, {
+        node_type: "fixture.result",
+        semantic_role: "result",
         renderer: index < 12 ? "diff" : "terminal_output",
         role: "tool",
-        semantic_role: "result",
+        content: index < 12 ? createDiff(index) : createResult(index),
+        part_order: 3,
+        language: null,
+        cwd: null,
         status: "completed",
+        exit_code: null,
+        source_execution_id: null,
+        command_label: null,
+        translated_content: null,
       });
     }
   });
 
   return {
-    cards,
-    content_nodes: contentNodes,
     parts: [],
     question: {
       answer_text: "Deterministic rendering stress fixture",
@@ -91,7 +122,16 @@ export function createConversationRenderingStressFixture(): RenderingStressFixtu
       title: "Rendering stress fixture",
       updated_at: FIXTURE_TIMESTAMP,
     },
+    question_turns: turns.map((turn, turnOrder) => ({
+      question_id: "rendering-stress-question",
+      turn_id: turn.id,
+      turn_order: turnOrder,
+      assignment_origin: "imported",
+      assigned_at: FIXTURE_TIMESTAMP,
+      updated_at: FIXTURE_TIMESTAMP,
+    })),
     turns,
+    projected_content_nodes: projectedContentNodes,
   };
 }
 

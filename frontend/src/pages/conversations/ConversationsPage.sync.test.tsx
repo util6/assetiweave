@@ -300,7 +300,7 @@ describe("ConversationsPage sync scope", () => {
       const targetSession = recordKind === "web" ? webConversationSession : conversationSession;
       const targetDetail = { ...conversationSessionDetail, session: targetSession };
       const navigationTarget: ConversationNavigationTarget = {
-        blockId: "part-export-target-answer-answer",
+        blockId: "part-export-target-answer-node-0",
         nonce: `target-${recordKind}`,
         questionId: "question-export-target",
         recordKind,
@@ -321,7 +321,7 @@ describe("ConversationsPage sync scope", () => {
         expect(recordKind === "web" ? getWebRecordSessionMock : getConversationSessionMock).toHaveBeenCalledWith(targetSession.id);
       });
       const targetCard = await waitFor(() => {
-        const element = document.querySelector('[data-conversation-card-id="part-export-target-answer-answer"]');
+        const element = document.querySelector('[data-conversation-card-id="part-export-target-answer-node-0"]');
         expect(element).toBeTruthy();
         return element as HTMLElement;
       });
@@ -1198,6 +1198,44 @@ const conversationSessionDetail: ConversationSessionDetail = {
           user_text: "Can this be exported?",
         },
       ],
+      question_turns: [
+        {
+          question_id: "question-export-target",
+          turn_id: "turn-export-target",
+          turn_order: 0,
+          assignment_origin: "imported",
+          assigned_at: "2026-06-15T00:00:00Z",
+          updated_at: "2026-06-15T00:00:00Z",
+        },
+      ],
+      projected_content_nodes: [{
+        node_id: "part-export-target-answer-node-0",
+        locator: {
+          question_id: "question-export-target",
+          turn_id: "turn-export-target",
+          part_id: "part-export-target-answer",
+          node_order: 0,
+        },
+        question_id: "question-export-target",
+        turn_id: "turn-export-target",
+        part_id: "part-export-target-answer",
+        turn_order: 0,
+        part_order: 0,
+        node_order: 0,
+        node_type: "answer",
+        semantic_role: "answer",
+        renderer: "markdown",
+        role: "assistant",
+        content: "Export-ready answer.",
+        language: null,
+        cwd: null,
+        status: null,
+        exit_code: null,
+        source_execution_id: null,
+        command_label: null,
+        translated_content: null,
+        legacy_anchor_ids: [],
+      }],
     },
   ],
   session: conversationSession,

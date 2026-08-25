@@ -23,6 +23,7 @@ import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/A
 import type {
   AppShortcut,
   ConversationAdapter,
+  ConversationContentNode,
   ConversationQuestionDetail,
   ConversationSearchHit,
   ConversationSessionDetail,
@@ -271,6 +272,8 @@ describe("MarkdownContent", () => {
           user_text: "Imported context without assistant content",
         },
       ],
+      question_turns: [],
+      projected_content_nodes: [],
       parts: [],
     };
 
@@ -826,7 +829,7 @@ describe("MarkdownContent", () => {
     const html = renderToStaticMarkup(
       <QuestionPreview
         activeSearchTarget={{
-          blockId: "part-1-answer",
+          blockId: "part-1-node-0",
           cardType: "answer",
           questionId: "question-1",
           sessionId: "session-1",
@@ -842,8 +845,8 @@ describe("MarkdownContent", () => {
     );
 
     expect(html).toContain('id="conversation-card-turn-1-question"');
-    expect(html).toContain('id="conversation-card-part-1-answer"');
-    expect(html).toContain('data-conversation-card-id="part-1-answer"');
+    expect(html).toContain('id="conversation-card-part-1-node-0"');
+    expect(html).toContain('data-conversation-card-id="part-1-node-0"');
     expect(html).toContain("ring-2 ring-primary/70");
   });
 
@@ -872,11 +875,11 @@ describe("MarkdownContent", () => {
 
   it.each([
     ["question", "turn-1-question"],
-    ["answer", "part-1-answer"],
-    ["tool", "part-4-tool"],
-    ["command", "part-2-command"],
-    ["code", "part-3-code"],
-    ["result", "part-2-result-result"],
+    ["answer", "part-1-node-0"],
+    ["tool", "part-4-node-0"],
+    ["command", "part-2-node-0"],
+    ["code", "part-3-node-0"],
+    ["result", "part-2-result-node-0"],
   ] as const)("highlights the exact %s card for Memory evidence navigation", (_cardType, blockId) => {
     render(
       <QuestionPreview
@@ -1052,29 +1055,21 @@ describe("MarkdownContent", () => {
   it("derives filter types from only the cards present in the selected question", () => {
     const types = conversationContentTypesForQuestions([{
       ...questionDetail,
-      cards: [
-        {
-          card_id: "part-answer",
-          part_id: "part-answer",
-          adapter_id: "codex",
-          kind: "codex.answer",
-          semantic_role: "answer",
-          renderer: "markdown",
-          role: "assistant",
-          body: "Answer",
-          legacy_anchor_ids: [],
-        },
-        {
-          card_id: "part-skill",
-          part_id: "part-skill",
-          adapter_id: "codex",
-          kind: "codex.skill",
-          semantic_role: "skill",
-          renderer: "path",
-          role: "system",
-          body: "/tmp/test-skill/SKILL.md",
-          legacy_anchor_ids: [],
-        },
+      projected_content_nodes: [
+        createProjectedNode({
+          content: "Answer",
+          nodeType: "codex.answer",
+          partId: "part-answer",
+          semanticRole: "answer",
+          turnId: "turn-1",
+        }),
+        createProjectedNode({
+          content: "/tmp/test-skill/SKILL.md",
+          nodeType: "codex.skill",
+          partId: "part-skill",
+          semanticRole: "skill",
+          turnId: "turn-1",
+        }),
       ],
     }]);
 
@@ -1441,6 +1436,64 @@ describe("MarkdownContent", () => {
 
 const now = "2026-06-05T00:00:00Z";
 
+function createProjectedNode({
+  content,
+  language = null,
+  legacyAnchorIds = [],
+  nodeId,
+  nodeType,
+  partId,
+  semanticRole,
+  turnId,
+}: {
+  content: string;
+  language?: string | null;
+  legacyAnchorIds?: string[];
+  nodeId?: string;
+  nodeType: string;
+  partId: string;
+  semanticRole: string;
+  turnId: string;
+}): ConversationContentNode {
+  const resolvedNodeId = nodeId ?? `${partId}-node-0`;
+  const role = semanticRole === "command" || semanticRole === "result" || semanticRole === "tool" ? "tool" : "assistant";
+  const renderer = semanticRole === "command"
+    ? "command"
+    : semanticRole === "result"
+      ? "terminal_output"
+      : semanticRole === "code"
+        ? "code"
+        : "markdown";
+  return {
+    node_id: resolvedNodeId,
+    locator: {
+      question_id: "question-1",
+      turn_id: turnId,
+      part_id: partId,
+      node_order: 0,
+    },
+    question_id: "question-1",
+    turn_id: turnId,
+    part_id: partId,
+    turn_order: turnId === "turn-1" ? 0 : 1,
+    part_order: 0,
+    node_order: 0,
+    node_type: nodeType,
+    semantic_role: semanticRole,
+    renderer,
+    role,
+    content,
+    language,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    source_execution_id: null,
+    command_label: null,
+    translated_content: null,
+    legacy_anchor_ids: legacyAnchorIds,
+  };
+}
+
 const t: Translator = (key, params) => interpolate(messages.zh[key] ?? key, params);
 
 function interpolate(template: string, params?: TranslationParams) {
@@ -1472,17 +1525,15 @@ describe("conversation navigation compatibility", () => {
       ...sessionDetail,
       questions: [{
         ...questionDetail,
-        cards: [{
-          adapter_id: "claude-code",
-          body: "Visible answer",
-          card_id: "part-1",
-          kind: "claude-code.answer",
-          legacy_anchor_ids: ["part-1-claude-code.answer", "part-1-answer"],
-          part_id: "part-1",
-          renderer: "markdown",
-          role: "assistant",
-          semantic_role: "answer",
-        }],
+        projected_content_nodes: [createProjectedNode({
+          content: "Visible answer",
+          legacyAnchorIds: ["part-1-claude-code.answer", "part-1-answer"],
+          nodeId: "part-1",
+          nodeType: "claude-code.answer",
+          partId: "part-1",
+          semanticRole: "answer",
+          turnId: "turn-1",
+        })],
       }],
     };
 
@@ -1573,6 +1624,50 @@ const questionDetail: ConversationQuestionDetail = {
       }),
     },
   ],
+  question_turns: [
+    {
+      question_id: "question-1",
+      turn_id: "turn-1",
+      turn_order: 0,
+      assignment_origin: "auto_merged",
+      assigned_at: now,
+      updated_at: now,
+    },
+    {
+      question_id: "question-1",
+      turn_id: "turn-2",
+      turn_order: 1,
+      assignment_origin: "auto_merged",
+      assigned_at: now,
+      updated_at: now,
+    },
+  ],
+  projected_content_nodes: [
+    createProjectedNode({
+      content: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join("\n"),
+      legacyAnchorIds: ["part-1-answer"],
+      nodeType: "answer",
+      partId: "part-1",
+      semanticRole: "answer",
+      turnId: "turn-1",
+    }),
+    createProjectedNode({
+      content: "assetiweave-cli conversation sync --dry-run",
+      legacyAnchorIds: ["part-2-command"],
+      nodeType: "command",
+      partId: "part-2",
+      semanticRole: "command",
+      turnId: "turn-2",
+    }),
+    createProjectedNode({
+      content: "tests passed",
+      legacyAnchorIds: ["part-2-result-result"],
+      nodeType: "result",
+      partId: "part-2-result",
+      semanticRole: "result",
+      turnId: "turn-2",
+    }),
+  ],
 };
 
 const richQuestionDetail: ConversationQuestionDetail = {
@@ -1602,6 +1697,26 @@ const richQuestionDetail: ConversationQuestionDetail = {
         content_card: { type: "tool" },
       }),
     },
+  ],
+  projected_content_nodes: [
+    ...questionDetail.projected_content_nodes,
+    createProjectedNode({
+      content: "const synced = true;",
+      legacyAnchorIds: ["part-3-code"],
+      language: "ts",
+      nodeType: "code",
+      partId: "part-3",
+      semanticRole: "code",
+      turnId: "turn-1",
+    }),
+    createProjectedNode({
+      content: "Read project files",
+      legacyAnchorIds: ["part-4-tool"],
+      nodeType: "tool",
+      partId: "part-4",
+      semanticRole: "tool",
+      turnId: "turn-1",
+    }),
   ],
 };
 

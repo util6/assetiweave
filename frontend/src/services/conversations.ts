@@ -19,6 +19,10 @@ import type {
   ConversationSource,
   AppErrorView,
 } from "../types";
+import {
+  conversationContentNodePresentationKind,
+  conversationQuestionTitle,
+} from "../utils/conversationProjection";
 
 export interface ConversationSessionListParams {
   adapter_id?: string | null;
@@ -1454,7 +1458,7 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
   const hits: ConversationSearchHit[] = [];
 
   for (const questionDetail of detail.questions) {
-    const questionTitle = questionDetail.question.title || firstLine(questionDetail.question.question_text);
+    const questionTitle = conversationQuestionTitle(questionDetail) ?? "Untitled question";
     for (const turn of questionDetail.turns) {
       if (includeQuestions) pushFallbackHit(hits, {
         blockId: `${turn.id}-question`,
@@ -1469,26 +1473,26 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
       });
 
       if (!includeCards) continue;
-      for (const part of questionDetail.parts.filter((candidate) => candidate.turn_id === turn.id)) {
-        for (const entry of fallbackEntriesForPart(part, questionDetail.cards)) {
-          const selected = !filtersCards
-            || allowedTypes.has(entry.cardType)
-            || (entry.semanticRole ? allowedTypes.has(entry.semanticRole) : false)
-            || allowedCardKinds.has(entry.cardType)
-            || (entry.semanticRole ? allowedSemanticRoles.has(entry.semanticRole) : false);
-          if (!selected) continue;
-          pushFallbackHit(hits, {
-            blockId: entry.blockId,
-            cardType: entry.cardType,
-            needle,
-            partId: part.id,
-            questionDetail,
-            questionTitle,
-            session,
-            text: entry.text,
-            turnId: turn.id,
-          });
-        }
+      for (const node of questionDetail.projected_content_nodes.filter((candidate) => candidate.turn_id === turn.id)) {
+        const presentationKind = conversationContentNodePresentationKind(node);
+        const selected = !filtersCards
+          || allowedTypes.has(node.node_type)
+          || allowedTypes.has(presentationKind)
+          || (node.semantic_role ? allowedTypes.has(node.semantic_role) : false)
+          || allowedCardKinds.has(node.node_type)
+          || allowedSemanticRoles.has(node.semantic_role ?? "");
+        if (!selected) continue;
+        pushFallbackHit(hits, {
+          blockId: node.node_id,
+          cardType: node.node_type,
+          needle,
+          partId: node.part_id,
+          questionDetail,
+          questionTitle,
+          session,
+          text: node.content,
+          turnId: turn.id,
+        });
       }
     }
   }
@@ -1578,82 +1582,6 @@ function pushFallbackHit(
   });
 }
 
-function fallbackEntriesForPart(
-  part: ConversationQuestionDetail["parts"][number],
-  cards: ConversationQuestionDetail["cards"] = [],
-) {
-  const projected = cards.find((card) => card.part_id === part.id);
-  if (projected) {
-    return [{
-      blockId: projected.card_id,
-      cardType: projected.kind,
-      semanticRole: projected.semantic_role ?? undefined,
-      text: projected.body,
-    }];
-  }
-  const declaredCard = declaredContentCard(part.metadata_json);
-  if (!declaredCard) return [];
-
-  const cardType = declaredCard.type;
-  const primaryText = declaredCard.text
-    ?? (cardType === "command"
-      ? part.command ?? part.text
-      : part.text ?? part.command);
-  return fallbackEntry(part.id, cardType, primaryText, declaredCard.suffix ?? cardType);
-}
-
-function fallbackEntry(
-  partId: string,
-  cardType: ConversationSearchCardType,
-  text?: string | null,
-  suffix: string = cardType,
-) {
-  const trimmedText = text?.trim();
-  return trimmedText ? [{ blockId: `${partId}-${suffix}`, cardType, semanticRole: cardType, text: trimmedText }] : [];
-}
-
-interface DeclaredContentCard {
-  suffix?: string;
-  text?: string;
-  type: ConversationSearchCardType;
-}
-
-function declaredContentCard(metadataJson?: string | null): DeclaredContentCard | null {
-  const metadata = parseMetadata(metadataJson);
-  if (!metadata) return null;
-  const card = metadata.content_card ?? metadata.contentCard;
-  if (!isRecord(card)) return null;
-  const type = card.type;
-  if (
-    type === "answer"
-    || type === "tool"
-    || type === "command"
-    || type === "code"
-    || type === "result"
-  ) {
-    return {
-      suffix: stringValue(card.suffix),
-      text: stringValue(card.text),
-      type,
-    };
-  }
-  return null;
-}
-
-function stringValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value : undefined;
-}
-
-function parseMetadata(metadataJson?: string | null): Record<string, unknown> | null {
-  if (!metadataJson?.trim()) return null;
-  try {
-    const parsed = JSON.parse(metadataJson);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function fallbackSnippet(text: string, needle: string) {
   const index = text.toLowerCase().indexOf(needle);
   const start = Math.max(0, index - 64);
@@ -1661,10 +1589,6 @@ function fallbackSnippet(text: string, needle: string) {
   return `${start > 0 ? "..." : ""}${text.slice(start, end)}${end < text.length ? "..." : ""}`
     .split(/\s+/)
     .join(" ");
-}
-
-function firstLine(value: string) {
-  return value.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "Untitled question";
 }
 
 function isTauriRuntime() {
@@ -2131,6 +2055,24 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           imported_at: now,
         },
       ],
+      question_turns: [
+        {
+          question_id: "preview-question-1",
+          turn_id: "preview-turn-1",
+          turn_order: 0,
+          assignment_origin: "auto_merged",
+          assigned_at: now,
+          updated_at: now,
+        },
+        {
+          question_id: "preview-question-1",
+          turn_id: "preview-turn-2",
+          turn_order: 1,
+          assignment_origin: "auto_merged",
+          assigned_at: now,
+          updated_at: now,
+        },
+      ],
       parts: [
         {
           id: "preview-part-1",
@@ -2154,6 +2096,30 @@ const fallbackSessionDetail: ConversationSessionDetail = {
             content_card: { type: "command" },
           }),
         },
+      ],
+      projected_content_nodes: [
+        fallbackContentNode({
+          nodeId: "preview-part-1-node-0",
+          questionId: "preview-question-1",
+          turnId: "preview-turn-1",
+          partId: "preview-part-1",
+          nodeType: "answer",
+          semanticRole: "answer",
+          renderer: "markdown",
+          role: "assistant",
+          content: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
+        }),
+        fallbackContentNode({
+          nodeId: "preview-part-2-node-0",
+          questionId: "preview-question-1",
+          turnId: "preview-turn-2",
+          partId: "preview-part-2",
+          nodeType: "command",
+          semanticRole: "command",
+          renderer: "command",
+          role: "tool",
+          content: "assetiweave-cli conversation sync --source codex-live",
+        }),
       ],
     },
     {
@@ -2182,6 +2148,16 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           imported_at: now,
         },
       ],
+      question_turns: [
+        {
+          question_id: "preview-question-2",
+          turn_id: "preview-turn-3",
+          turn_order: 0,
+          assignment_origin: "imported",
+          assigned_at: now,
+          updated_at: now,
+        },
+      ],
       parts: [
         {
           id: "preview-part-3",
@@ -2194,6 +2170,19 @@ const fallbackSessionDetail: ConversationSessionDetail = {
             content_card: { type: "answer", format: "markdown" },
           }),
         },
+      ],
+      projected_content_nodes: [
+        fallbackContentNode({
+          nodeId: "preview-part-3-node-0",
+          questionId: "preview-question-2",
+          turnId: "preview-turn-3",
+          partId: "preview-part-3",
+          nodeType: "answer",
+          semanticRole: "answer",
+          renderer: "markdown",
+          role: "assistant",
+          content: "Use session export to write one Markdown file per session.",
+        }),
       ],
     },
   ],
@@ -2230,5 +2219,79 @@ const fallbackWebSessionDetail: ConversationSessionDetail = {
       id: `preview-web-part-${questionIndex + 1}-${partIndex + 1}`,
       turn_id: `preview-web-turn-${questionIndex + 1}-${Math.min(partIndex + 1, detail.turns.length)}`,
     })),
+    question_turns: detail.question_turns.map((membership, turnIndex) => ({
+      ...membership,
+      question_id: `preview-web-question-${questionIndex + 1}`,
+      turn_id: `preview-web-turn-${questionIndex + 1}-${turnIndex + 1}`,
+    })),
+    projected_content_nodes: detail.projected_content_nodes.map((node, nodeIndex) => {
+      const turnId = `preview-web-turn-${questionIndex + 1}-${Math.min(node.turn_order + 1, detail.turns.length)}`;
+      const partId = `preview-web-part-${questionIndex + 1}-${nodeIndex + 1}`;
+      const questionId = `preview-web-question-${questionIndex + 1}`;
+      return {
+        ...node,
+        node_id: `${partId}-node-${node.node_order}`,
+        question_id: questionId,
+        turn_id: turnId,
+        part_id: partId,
+        locator: {
+          ...node.locator,
+          question_id: questionId,
+          turn_id: turnId,
+          part_id: partId,
+        },
+      };
+    }),
   })),
 };
+
+function fallbackContentNode({
+  nodeId,
+  questionId,
+  turnId,
+  partId,
+  nodeType,
+  semanticRole,
+  renderer,
+  role,
+  content,
+}: {
+  nodeId: string;
+  questionId: string;
+  turnId: string;
+  partId: string;
+  nodeType: string;
+  semanticRole: string;
+  renderer: "markdown" | "plain" | "path" | "json" | "code" | "command" | "terminal_output" | "diff";
+  role: "user" | "assistant" | "tool" | "system";
+  content: string;
+}) {
+  return {
+    node_id: nodeId,
+    locator: {
+      question_id: questionId,
+      turn_id: turnId,
+      part_id: partId,
+      node_order: 0,
+    },
+    question_id: questionId,
+    turn_id: turnId,
+    part_id: partId,
+    turn_order: 0,
+    part_order: 0,
+    node_order: 0,
+    node_type: nodeType,
+    semantic_role: semanticRole,
+    renderer,
+    role,
+    content,
+    language: null,
+    cwd: null,
+    status: null,
+    exit_code: null,
+    source_execution_id: null,
+    command_label: null,
+    translated_content: null,
+    legacy_anchor_ids: [],
+  };
+}

@@ -13,8 +13,7 @@ import type {
   ConversationDisplayNode,
 } from "./ConversationContentCards";
 import {
-  buildConversationContentBlocks,
-  buildConversationDisplayNodes,
+  buildConversationDisplayNodesFromNodes,
   conversationCardDomId,
   ConversationContentCards,
 } from "./ConversationContentCards";
@@ -37,28 +36,15 @@ export interface ConversationTurnPresentation {
 export function buildConversationTurnPresentations(
   question: ConversationQuestionDetail,
 ): ConversationTurnPresentation[] {
-  const usesStructuredContent = Boolean(question.cards && question.content_nodes);
   return question.turns.map((turn) => {
-    const turnParts = usesStructuredContent
-      ? []
-      : question.parts.filter((part) => part.turn_id === turn.id);
-    const displayNodes = usesStructuredContent
-      ? buildConversationDisplayNodes(
-          question.cards ?? [],
-          question.content_nodes?.filter((node) => node.turn_id === turn.id) ?? [],
-        )
-      : undefined;
-    const blocks = displayNodes
-      ? []
-      : buildConversationContentBlocks(
-          turnParts,
-          question.cards?.filter((card) => turnParts.some((part) => part.id === card.part_id)),
-        );
+    const displayNodes = buildConversationDisplayNodesFromNodes(
+      question.projected_content_nodes.filter((node) => node.turn_id === turn.id),
+    );
 
     return {
-      blocks,
+      blocks: [],
       displayNodes,
-      hasContent: displayNodes ? displayNodes.length > 0 : blocks.length > 0,
+      hasContent: displayNodes.length > 0,
       promptBlockId: `${turn.id}-question`,
       turn,
     };
@@ -72,7 +58,7 @@ export function collectConversationTurnBlocks(
     model.displayNodes
       ? model.displayNodes.flatMap((node) => node.type === "card"
         ? [node.block]
-        : [...(node.command ? [node.command] : []), ...node.results])
+        : [...(node.commands ?? (node.command ? [node.command] : [])), ...node.results])
       : model.blocks
   ));
 }
@@ -94,7 +80,7 @@ export function buildConversationBlockTurnIndex(
         continue;
       }
       index.set(node.sourceExecutionId, model.turn.id);
-      for (const block of [node.command, ...node.results]) {
+      for (const block of [...(node.commands ?? (node.command ? [node.command] : [])), ...node.results]) {
         if (!block) continue;
         index.set(block.id, model.turn.id);
         for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);

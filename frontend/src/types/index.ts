@@ -492,13 +492,13 @@ export interface ConversationQuestionTurn {
 
 export interface ConversationQuestionDetail {
   question: ConversationQuestion;
-  question_turns?: ConversationQuestionTurn[];
+  question_turns: ConversationQuestionTurn[];
   turns: ConversationTurn[];
   parts: ConversationPart[];
   cards?: ConversationCard[];
   /** Deprecated compatibility output; new consumers use projected_content_nodes. */
   content_nodes?: LegacyConversationContentNode[];
-  projected_content_nodes?: ConversationContentNode[];
+  projected_content_nodes: ConversationContentNode[];
 }
 
 export interface ConversationSessionDetail {
