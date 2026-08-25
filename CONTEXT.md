@@ -61,11 +61,15 @@ Turn 内不可再分的标准化内容事实块，是会话内容的最小持久
 _Avoid_: 消息块、文本段、独立卡片表
 
 **语义问题（Conversation Question）**：
-AssetIWeave 在 Turn 之上构造的二次语义分组；将因中断、“继续”跟进或微调追问产生的多个物理 Turn 聚合为一个完整的用户问题单元，是全文搜索与 Memory 的核心物化消费单元。
+AssetIWeave 在 Turn 之上构造的二次语义分组；将因中断、“继续”跟进或微调追问产生的多个物理 Turn 聚合为一个完整的用户问题单元。Question 只保存稳定身份与轻量元数据，正文、顺序和分组来源分别由 Turn–Part 事实与 Question–Turn membership 投影得到。
 _Avoid_: 原始问题、单次输入、物理轮次
 
+**内容节点（Content Node）**：
+由单个 Part 根据适配器契约在读取时生成的、可追溯到 Question、Turn、Part 和节点顺序的展示与语义投影。一个 Part 可以生成零个、一个或多个 Content Node。
+_Avoid_: 独立持久化卡片、数组索引身份
+
 **卡片（Conversation Card / Card）**：
-由 Part 根据适配器契约在读取时实时投影出的展示与语义 View Model，不是独立持久化数据库实体（Card ID 与 Part ID 等同）。
+前端用于呈现 Content Node 的展示组件，不是后端领域实体或独立持久化数据库实体；卡片身份必须使用 Content Node locator，不得替代 Part 身份。
 _Avoid_: 数据库卡片实体、独立卡片表
 
 **对话来源（Conversation Source）**：
