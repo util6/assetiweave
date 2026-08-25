@@ -7,6 +7,22 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.4",
+      "channel": "stable",
+      "released_at": "2026-08-25T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.gemini-web-0.4.4-universal.zip",
+      "artifact_size": 76886,
+      "artifact_sha256": "a016cc422de2b747b3c2ec668aa79f548bbefa6291e02e3ecd5c2a0f56a8466a",
+      "changelog_markdown": "## 0.4.4\n\n- Project imported shell commands as display-only Content Nodes while preserving source Parts and execution IDs.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web"
+      }
+    },
+    {
       "version": "0.4.3",
       "channel": "stable",
       "released_at": "2026-08-10T00:00:00Z",

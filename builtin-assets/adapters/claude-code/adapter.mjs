@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v7";
+const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v8";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);

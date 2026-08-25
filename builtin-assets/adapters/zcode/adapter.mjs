@@ -11,7 +11,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v6";
+const CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v7";
+const SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION = 1;
 const IGNORED_PART_TYPES = new Set([
   "compaction",
   "reasoning",
@@ -280,6 +281,7 @@ function normalizedPart({
   cwd = null,
   status = null,
   exit_code = null,
+  source_execution_id = null,
   metadata_json = null,
 }) {
   return {
@@ -291,6 +293,7 @@ function normalizedPart({
     cwd,
     status,
     exit_code,
+    source_execution_id,
     metadata_json,
   };
 }
@@ -368,7 +371,7 @@ function splitMarkdown(role, text) {
   return parts;
 }
 
-function normalizeAssistantPart(data) {
+function normalizeAssistantPart(data, sourceExecutionId = null) {
   const kind = String(data?.type || "text");
   if (IGNORED_PART_TYPES.has(kind)) return [];
   if (kind === "text") {
@@ -389,6 +392,7 @@ function normalizeAssistantPart(data) {
           kind: "command",
           command,
           cwd,
+          source_execution_id: sourceExecutionId,
           metadata_json: contentCardMetadata(
             { type: "command", cwd },
             smallMetadata(data),
@@ -403,6 +407,7 @@ function normalizeAssistantPart(data) {
             text,
             status,
             exit_code: exitCode,
+            source_execution_id: sourceExecutionId,
             metadata_json: contentCardMetadata(
               {
                 type: "result",
@@ -425,6 +430,7 @@ function normalizeAssistantPart(data) {
           text,
           status,
           exit_code: exitCode,
+          source_execution_id: sourceExecutionId,
           metadata_json: contentCardMetadata(
             {
               type: "result",
@@ -484,7 +490,7 @@ function normalizeAssistantPart(data) {
 function loadPartsByMessage(dbPath, sessionId) {
   const grouped = new Map();
   const sql = `
-    SELECT message_id, data
+    SELECT id, message_id, data
     FROM part
     WHERE session_id = ${sqlString(sessionId)}
     ORDER BY time_created ASC, id ASC
@@ -492,7 +498,17 @@ function loadPartsByMessage(dbPath, sessionId) {
   for (const row of sqliteJson(dbPath, sql)) {
     const msgId = String(row.message_id);
     const list = grouped.get(msgId) ?? [];
-    list.push(parseJson(row.data));
+    const data = parseJson(row.data);
+    const sourceExecutionId = nestedString(data, [
+      "source_execution_id",
+      "sourceExecutionId",
+      "call_id",
+      "callId",
+      "callID",
+      "execution_id",
+      "executionId",
+    ]) || (nestedString(data, ["command", "cmd", "shell_command"]) ? String(row.id) : null);
+    list.push({ data, sourceExecutionId });
     grouped.set(msgId, list);
   }
   return grouped;
@@ -500,6 +516,7 @@ function loadPartsByMessage(dbPath, sessionId) {
 
 function userText(parts) {
   const texts = parts
+    .map((part) => part.data)
     .filter((part) => part.type === "text" && typeof part.text === "string" && part.text.trim())
     .map((part) => String(part.text).trim());
   return texts.join("\n\n");
@@ -538,7 +555,7 @@ function loadTurns(dbPath, sessionId) {
       };
     } else if (current !== null) {
       for (const part of messageParts) {
-        current.parts.push(...normalizeAssistantPart(part));
+        current.parts.push(...normalizeAssistantPart(part.data, part.sourceExecutionId));
       }
       current.ended_at = createdAt;
     }
@@ -546,7 +563,132 @@ function loadTurns(dbPath, sessionId) {
   if (current !== null) {
     turns.push(current);
   }
-  return displayTurns(turns);
+  return displayTurns(turns).map((turn) => ({
+    ...turn,
+    parts: annotateShellExecutionProjectionParts(turn.parts),
+  }));
+}
+
+function annotateShellExecutionProjectionParts(parts) {
+  for (const part of parts) {
+    if (part?.kind !== "command" || typeof part.command !== "string") continue;
+    const metadata = parseJson(part.metadata_json);
+    const sourceType = String(metadata.tool ?? metadata.source_type ?? "").toLowerCase();
+    if (sourceType && sourceType !== "tool" && !/(shell|command|exec|terminal|bash|zsh|run)/.test(sourceType)) continue;
+    const nodes = [];
+    let pendingLabel = null;
+    for (const command of splitTopLevelShellCommands(part.command)) {
+      const separator = parseSeparatorPrintCommand(command);
+      if (separator) {
+        pendingLabel = separator.label;
+        continue;
+      }
+      nodes.push(compactObject({ command, command_label: pendingLabel }));
+      pendingLabel = null;
+    }
+    metadata.shell_execution_projection = {
+      schema_version: SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION,
+      nodes,
+    };
+    part.metadata_json = compactJson(metadata);
+  }
+  return parts;
+}
+
+function splitTopLevelShellCommands(value) {
+  const source = String(value ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!source || isComplexShellScript(source)) return source ? [source] : [];
+  const commands = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let previousNonWhitespace = null;
+  const pushCommand = (end) => {
+    const command = source.slice(start, end).trim();
+    if (command) commands.push(command);
+  };
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    const precedingNonWhitespace = previousNonWhitespace;
+    if (!/\s/.test(char)) previousNonWhitespace = char;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "(") parenDepth += 1;
+    else if (char === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (char === "{") braceDepth += 1;
+    else if (char === "}") braceDepth = Math.max(0, braceDepth - 1);
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    if (parenDepth || braceDepth || bracketDepth) continue;
+    let nextNonWhitespace = next;
+    if (char === "\n") {
+      let cursor = index + 1;
+      while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
+      nextNonWhitespace = source[cursor];
+    }
+    const continuedPipeline = char === "\n"
+      && (precedingNonWhitespace === "|" || nextNonWhitespace === "|");
+    let separatorLength = 0;
+    if (!continuedPipeline) {
+      if ((char === "&" && next === "&") || (char === "|" && next === "|")) separatorLength = 2;
+      else if (char === ";" || char === "\n") separatorLength = 1;
+    }
+    if (!separatorLength) continue;
+    pushCommand(index);
+    index += separatorLength - 1;
+    start = index + 1;
+  }
+  pushCommand(source.length);
+  return commands.length > 0 ? commands : [source];
+}
+
+function isComplexShellScript(source) {
+  return /<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/.test(source)
+    || /(?:^|[;&|\n]\s*)(?:for|select|while|until|if|case|function)\b/.test(source)
+    || /^\s*\{(?:\s|\n)/.test(source);
+}
+
+function parseSeparatorPrintCommand(command) {
+  const trimmed = String(command ?? "").trim();
+  let body = null;
+  const printfWithArgument = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s+(['"])([\s\S]*?)\3\s*$/);
+  if (printfWithArgument) {
+    const format = printfWithArgument[2];
+    const substitutions = format.match(/%s/g) ?? [];
+    if (substitutions.length === 1 && /^(?:%s|\\[nrt]|\s)+$/.test(format)) body = printfWithArgument[4];
+  } else {
+    const printfLiteral = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s*$/);
+    const echoLiteral = trimmed.match(/^echo\s+(?:-[A-Za-z]+\s+)*(['"])([\s\S]*?)\1\s*$/);
+    body = printfLiteral?.[2] ?? echoLiteral?.[2] ?? null;
+  }
+  if (body == null) return null;
+  const printedText = body
+    .replace(/^(?:(?:\\[nrt])+|\s)+|(?:(?:\\[nrt])+|\s)+$/g, "")
+    .trim();
+  if (!printedText) return null;
+  const divider = "[-=*~_─━—–]";
+  if (new RegExp(`^${divider}+$`, "u").test(printedText)) return { label: null };
+  const wrappedLabel = printedText.match(new RegExp(`^${divider}{2,}\\s*(.{1,80}?)\\s*${divider}{2,}$`, "u"));
+  if (!wrappedLabel) return null;
+  return { label: wrappedLabel[1].replace(/\\s+/g, " ").trim() || null };
 }
 
 function displayTurns(turns) {

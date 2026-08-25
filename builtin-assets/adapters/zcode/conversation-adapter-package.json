@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.zcode-session",
   "name": "ZCode Session Parser",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -13,6 +13,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "0.5.1",
+      "date": "2026-08-25",
+      "notes": [
+        "Preserve source execution IDs and project multi-command shell nodes without lossy command concatenation."
+      ]
+    },
     {
       "version": "0.5.0",
       "date": "2026-08-17",

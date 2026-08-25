@@ -125,15 +125,26 @@ def create_fixture(path: Path) -> None:
                 "state": {
                     "status": "completed",
                     "input": {
-                        "command": "pnpm test",
+                        "command": "printf '%s\\n' '--- tests ---' && pnpm test",
                         "workdir": "/tmp/zcode-project",
                     },
                     "output": "tests passed",
                 },
             },
         ),
-        ("part-6", "message-3", {"type": "text", "text": "Continue"}),
-        ("part-7", "message-4", {"type": "text", "text": "Done"}),
+        (
+            "part-6",
+            "message-2",
+            {
+                "type": "tool",
+                "tool": "Bash",
+                "callID": "zcode-simple-shell",
+                "command": "pwd",
+                "output": "simple output",
+            },
+        ),
+        ("part-7", "message-3", {"type": "text", "text": "Continue"}),
+        ("part-8", "message-4", {"type": "text", "text": "Done"}),
     ]
     for index, (part_id, message_id, data) in enumerate(parts):
         timestamp = 1_767_225_600_000 + index
@@ -212,14 +223,29 @@ class ZCodeConversationAdapterTests(unittest.TestCase):
             self.assertEqual(tool_part["role"], "tool")
             self.assertEqual(tool_part["text"], "file contents")
             command_part = next(part for part in first_turn["parts"] if part["kind"] == "command")
-            self.assertEqual(command_part["command"], "pnpm test")
+            self.assertEqual(command_part["command"], "printf '%s\\n' '--- tests ---' && pnpm test")
             self.assertEqual(command_part["cwd"], "/tmp/zcode-project")
+            self.assertEqual(command_part["source_execution_id"], "part-5")
+            projection = json.loads(command_part["metadata_json"])["shell_execution_projection"]
+            self.assertEqual(projection["schema_version"], 1)
+            self.assertEqual(projection["nodes"], [{"command": "pnpm test", "command_label": "tests"}])
             result_part = next(
                 part
                 for part in first_turn["parts"]
                 if part["kind"] == "tool" and part["text"] == "tests passed"
             )
             self.assertEqual(result_part["status"], "completed")
+            self.assertEqual(result_part["source_execution_id"], "part-5")
+            simple_command = next(
+                part
+                for part in first_turn["parts"]
+                if part["kind"] == "command" and part["source_execution_id"] == "zcode-simple-shell"
+            )
+            self.assertEqual(simple_command["command"], "pwd")
+            self.assertEqual(
+                json.loads(simple_command["metadata_json"])["shell_execution_projection"]["nodes"],
+                [{"command": "pwd"}],
+            )
 
     def test_read_session_filters_by_external_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

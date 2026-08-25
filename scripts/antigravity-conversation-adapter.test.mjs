@@ -191,6 +191,64 @@ test("Antigravity omits successful command results with no useful payload", () =
       session.turns[0].parts.map((part) => part.content_card?.kind),
       ["antigravity.command"],
     );
+    assert.equal(session.turns[0].parts[0].source_execution_id, "turn-0:run-command:1");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity keeps a RUN_COMMAND execution boundary and projects display nodes", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-shell-projection-"));
+  try {
+    const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
+    const command = [
+      "printf '%s\\n' '--- inspect ---'",
+      "rg 'quoted && value' ./src | sed 's/;/|/'",
+      "git status --short > /tmp/status.txt",
+    ].join(" && ");
+    writeFileSync(transcriptPath, [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-03T00:00:00Z",
+        content: "<USER_REQUEST>检查工作区</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-03T00:00:01Z",
+        content: "",
+        tool_calls: [{
+          id: "antigravity-shell-projection",
+          name: "run_command",
+          args: { CommandLine: command },
+        }],
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "RUN_COMMAND",
+        status: "ERROR",
+        created_at: "2026-08-03T00:00:02Z",
+        content: "Error: failed",
+      }),
+    ].join("\n"));
+
+    const session = readFixtureSession(transcriptPath);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "antigravity-shell-projection",
+      "antigravity-shell-projection",
+    ]);
+    assert.equal(parts[0].command, command);
+    assert.equal(parts[1].text, "Error: failed");
+    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
+      schema_version: 1,
+      nodes: [
+        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
+        { command: "git status --short > /tmp/status.txt" },
+      ],
+    });
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

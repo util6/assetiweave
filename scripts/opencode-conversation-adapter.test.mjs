@@ -55,6 +55,77 @@ test("OpenCode stores message summary diffs once in the existing patch Part", ()
   }
 });
 
+test("OpenCode keeps an aggregated shell Part and projects its command nodes", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-shell-projection-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const command = [
+      "printf '%s\\n' '--- inspect ---'",
+      "rg 'quoted && value' ./src | sed 's/;/|/'",
+      "git status --short > /tmp/status.txt",
+    ].join(" && ");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-shell', 'Shell fixture', '/tmp/project', '2026-08-06T00:00:02Z');",
+      `INSERT INTO message VALUES ('message-user', 'session-shell', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-user', 'message-user', 'session-shell', '${sqlString(JSON.stringify({ type: "text", text: "检查工作区" }))}');`,
+      `INSERT INTO message VALUES ('message-assistant', 'session-shell', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-shell', 'message-assistant', 'session-shell', '${sqlString(JSON.stringify({ type: "tool", command, output: "Error: failed", callID: "opencode-shell-projection", status: "failed", exit_code: 1 }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "opencode-shell-projection",
+      "opencode-shell-projection",
+    ]);
+    assert.equal(parts[0].command, command);
+    assert.equal(parts[1].text, "Error: failed");
+    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
+      schema_version: 1,
+      nodes: [
+        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
+        { command: "git status --short > /tmp/status.txt" },
+      ],
+    });
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode keeps a simple shell Part with one projected node", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-simple-shell-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-simple', 'Simple shell fixture', '/tmp/project', '2026-08-06T00:00:02Z');",
+      `INSERT INTO message VALUES ('message-user', 'session-simple', '${sqlString(JSON.stringify({ role: "user", time: { created: "2026-08-06T00:00:00Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-user', 'message-user', 'session-simple', '${sqlString(JSON.stringify({ type: "text", text: "查看状态" }))}');`,
+      `INSERT INTO message VALUES ('message-assistant', 'session-simple', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-shell', 'message-assistant', 'session-simple', '${sqlString(JSON.stringify({ type: "tool", tool: "Bash", command: "git status --short", output: "clean", callID: "opencode-simple-shell" }))}');`,
+    ].join("\n"));
+
+    const parts = readFixtureSession(dbPath).turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, "git status --short");
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "opencode-simple-shell",
+      "opencode-simple-shell",
+    ]);
+    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
+      { command: "git status --short" },
+    ]);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(dbPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",

@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
-const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v8";
+const CONTENT_CARD_SCHEMA_VERSION = "antigravity-content-cards-v9";
 const MAX_PART_TEXT_CHARS = 96 * 1024;
 const MAX_SESSION_TEXT_CHARS = 384 * 1024;
 const MAX_COMPACTED_TOOL_TEXT_CHARS = 24 * 1024;
@@ -353,9 +353,28 @@ function inferProjectPathFromToolCalls(toolCalls) {
 // Antigravity-specific: build tool parts from PLANNER_RESPONSE tool_calls
 // ---------------------------------------------------------------------------
 
-function toolCallParts(toolCalls) {
+function toolCallExecutionId(call, turnId, commandIndex) {
+  for (const key of ["id", "call_id", "callId", "execution_id", "executionId"]) {
+    const value = call?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return `${turnId}:run-command:${commandIndex}`;
+}
+
+function runCommandExecutionIds(toolCalls, turnId) {
+  let commandIndex = 0;
+  return (Array.isArray(toolCalls) ? toolCalls : [])
+    .filter((call) => call?.name === "run_command")
+    .map((call) => {
+      commandIndex += 1;
+      return toolCallExecutionId(call, turnId, commandIndex);
+    });
+}
+
+function toolCallParts(toolCalls, turnId) {
   if (!Array.isArray(toolCalls)) return [];
   const parts = [];
+  let commandIndex = 0;
   for (const call of toolCalls) {
     const toolName = call?.name;
     if (!toolName) continue;
@@ -364,6 +383,7 @@ function toolCallParts(toolCalls) {
 
     // Reconstruct command for run_command calls
     if (toolName === "run_command") {
+      commandIndex += 1;
       const rawCmd = argsObj?.CommandLine;
       const command = typeof rawCmd === "string" ? rawCmd.replace(/^"|"$/g, "") : null;
       const rawCwd = argsObj?.Cwd;
@@ -378,6 +398,7 @@ function toolCallParts(toolCalls) {
           cwd,
           status: null,
           exit_code: null,
+          source_execution_id: toolCallExecutionId(call, turnId, commandIndex),
           metadata_json: metadata(compactObject({ type: "command", cwd }), { name: toolName }),
         });
       }
@@ -416,7 +437,7 @@ function toolCallParts(toolCalls) {
 // Antigravity-specific: build tool result parts from step output
 // ---------------------------------------------------------------------------
 
-function toolResultPart(step, fileOperation = null) {
+function toolResultPart(step, fileOperation = null, sourceExecutionId = null) {
   const type = step.type ?? "";
   const content = String(step.content ?? "").trim();
   if (!content) return [];
@@ -433,6 +454,7 @@ function toolResultPart(step, fileOperation = null) {
       cwd: null,
       status,
       exit_code: null,
+      source_execution_id: sourceExecutionId,
       metadata_json: metadata(
         compactObject({ type: "skill-content", format: "markdown", status }),
         { source_type: type, skill_path: skillContent.path, detected_from_view_file: true },
@@ -450,6 +472,7 @@ function toolResultPart(step, fileOperation = null) {
       cwd: null,
       status,
       exit_code: null,
+      source_execution_id: sourceExecutionId,
       metadata_json: metadata(
         compactObject({ type: "result", format: "plain", status }),
         { source_type: type },
@@ -670,6 +693,7 @@ function parseTranscript(text) {
   let current = null;
   let projectPath = null;
   const pendingFileOperations = [];
+  const pendingExecutionIds = [];
   const knownFileContents = new Map();
 
   for (const line of text.split(/\r?\n/)) {
@@ -694,6 +718,7 @@ function parseTranscript(text) {
       if (!userText) continue;
       if (current) turns.push(current);
       pendingFileOperations.length = 0;
+      pendingExecutionIds.length = 0;
       current = {
         external_id: `turn-${turns.length}`,
         turn_index: turns.length,
@@ -719,7 +744,8 @@ function parseTranscript(text) {
         pendingFileOperations.push(
           ...step.tool_calls.map((call) => fileOperationFromToolCall(call, knownFileContents)).filter(Boolean),
         );
-        current.parts.push(...toolCallParts(step.tool_calls));
+        current.parts.push(...toolCallParts(step.tool_calls, current.external_id));
+        pendingExecutionIds.push(...runCommandExecutionIds(step.tool_calls, current.external_id));
         projectPath ??= inferProjectPathFromToolCalls(step.tool_calls);
       }
       current.ended_at = timestamp;
@@ -736,7 +762,10 @@ function parseTranscript(text) {
         const fileOperation = type === "CODE_ACTION"
           ? matchPendingFileOperation(pendingFileOperations, step.content)
           : null;
-        current.parts.push(...toolResultPart(step, fileOperation));
+        const sourceExecutionId = type === "RUN_COMMAND"
+          ? pendingExecutionIds.shift() ?? null
+          : null;
+        current.parts.push(...toolResultPart(step, fileOperation, sourceExecutionId));
         current.ended_at = timestamp;
       }
     }

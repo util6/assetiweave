@@ -26,7 +26,7 @@
     {
       "id": "io.github.util6.opencode-session",
       "name": "OpenCode Session Parser",
-      "version": "1.3.5",
+      "version": "1.3.6",
       "record_kind": "session",
       "provider": "opencode",
       "adapter_id": "opencode",
@@ -38,7 +38,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "e841e71371463e4d975ba693fa5a629e9575a9baa9ec258267b17341c0f8e00b",
+      "expected_package_hash": "b3704cf25baf406169ecf5cb1047cf6aed83db9889ceb4245f17274e81773510",
       "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
@@ -48,7 +48,7 @@
     {
       "id": "io.github.util6.claude-code-session",
       "name": "Claude Code Session Parser",
-      "version": "1.3.5",
+      "version": "1.3.6",
       "record_kind": "session",
       "provider": "claude-code",
       "adapter_id": "claude-code",
@@ -59,7 +59,7 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "bfb10ce42179359976a9aa0b53617cfaf67bc63dcc32bb760e59b9520edb02b6",
+      "expected_package_hash": "2985f9fa5eafa421c3c805011ab3e9bcde64e48406d3611df0b3b7a65b681ef2",
       "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",
@@ -69,7 +69,7 @@
     {
       "id": "io.github.util6.zcode-session",
       "name": "ZCode Session Parser",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "record_kind": "session",
       "provider": "zcode",
       "adapter_id": "zcode",
@@ -81,7 +81,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "a29644ecbcadbb4c90341e1b44bd5f14112acdc52acce5f2887c87da562669d9",
+      "expected_package_hash": "32bcd5f088b34c088ec0e1db164c6824554c4dd83e33df8f7227c574960f5b1d",
       "expected_content_hash": "fa7e1b0c5641bc9315d7e969d7b864ef4085a6cdc2301d9ec2d2e588c8fea49d",
       "source": {
         "type": "github",
@@ -91,7 +91,7 @@
     {
       "id": "io.github.util6.chatgpt-web",
       "name": "ChatGPT Web Harvester",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "record_kind": "web",
       "provider": "chatgpt",
       "adapter_id": "chatgpt-web",
@@ -103,7 +103,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "148dd1d498639e4bbfee1f8947fc09f692cd0db7223165df4efecb8e74f9559e",
+      "expected_package_hash": "ec83696e00107ad173b803d6d10e74adb8abb5f2ea89493552c7df46e0a05477",
       "expected_content_hash": "4b8898eedf120ab640cc5cc6db7a03fb3ec8a1cf8a3f370cdd17c9a9a51a2ab1",
       "source": {
         "type": "github",
@@ -113,7 +113,7 @@
     {
       "id": "io.github.util6.qwen-web",
       "name": "Qwen Web Harvester",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "record_kind": "web",
       "provider": "qwen",
       "adapter_id": "qwen-web",
@@ -125,7 +125,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "1f88216522667caa795a01579f21de1efbb0d08bfa70620a39dda3391d0518eb",
+      "expected_package_hash": "a17aa2b5d56bfa7066abec447d07f8b7c25a5e6150e3a19876214333875eae1a",
       "expected_content_hash": "02b0159b1b8458dee17cbadb617c8ba9e4939211629d9223cc91c711a583b62f",
       "source": {
         "type": "github",
@@ -135,7 +135,7 @@
     {
       "id": "io.github.util6.gemini-web",
       "name": "Gemini Web Harvester",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "record_kind": "web",
       "provider": "gemini",
       "adapter_id": "gemini-web",
@@ -147,7 +147,7 @@
         "node",
         "browser-cookie-auth"
       ],
-      "expected_package_hash": "2e177c4ba7caba1139c30022811db1223c473f5236ff3e0150f79831fee5efe5",
+      "expected_package_hash": "e8538e138d5761bf823bf23bca8b96fbfe9c6bd9474a0bce8939ec470bc1609c",
       "expected_content_hash": "1d456c5f66703228492755d295555b3f3c12b17caf0ab3308f274617c8ffa365",
       "source": {
         "type": "github",

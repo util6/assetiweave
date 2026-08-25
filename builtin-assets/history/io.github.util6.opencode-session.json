@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.3.6",
+      "channel": "stable",
+      "released_at": "2026-08-25T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.3.6-universal.zip",
+      "artifact_size": 57060,
+      "artifact_sha256": "7cde6fb1f5994cd6b15b938adae12ce0f9df1e4121a590d1a57499390f36cc50",
+      "changelog_markdown": "## 1.3.6\n\n- Preserve raw shell execution Parts and project display-only command nodes without splitting source IDs.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode"
+      }
+    },
+    {
       "version": "1.3.5",
       "channel": "stable",
       "released_at": "2026-08-10T00:00:00Z",

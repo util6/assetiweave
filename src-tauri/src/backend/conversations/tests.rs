@@ -1676,7 +1676,22 @@ fn official_web_adapters_expose_incremental_session_discovery() {
                         }, {
                             "role": "tool",
                             "kind": "command",
-                            "command": "printf '\\n'",
+                            "command": "pwd",
+                            "source_execution_id": "web-simple",
+                            "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "tool",
+                            "text": "simple output",
+                            "status": "completed",
+                            "exit_code": 0,
+                            "source_execution_id": "web-simple",
+                            "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
+                        }, {
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "printf '%s\\n' '--- inspect ---' && git status --short",
+                            "source_execution_id": "web-shell",
                             "metadata_json": "{\"content_card\":{\"type\":\"command\"}}"
                         }, {
                             "role": "tool",
@@ -1684,6 +1699,7 @@ fn official_web_adapters_expose_incremental_session_discovery() {
                             "text": "\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\\u001b[32mok\\u001b[0m\"",
                             "status": "completed",
                             "exit_code": 0,
+                            "source_execution_id": "web-shell",
                             "metadata_json": "{\"content_card\":{\"type\":\"result\",\"format\":\"plain\"}}"
                         }]
                     }]
@@ -1726,10 +1742,40 @@ fn official_web_adapters_expose_incremental_session_discovery() {
                 .is_none_or(|metadata| !metadata.contains("content_card")),
             "{adapter_id}"
         );
-        let command = &result.sessions[0].turns[0].parts[1];
+        let simple_command = &result.sessions[0].turns[0].parts[1];
+        assert_eq!(
+            simple_command.command.as_deref(),
+            Some("pwd"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            simple_command.source_execution_id.as_deref(),
+            Some("web-simple"),
+            "{adapter_id}"
+        );
+        let simple_metadata: serde_json::Value =
+            serde_json::from_str(simple_command.metadata_json.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            simple_metadata["shell_execution_projection"]["nodes"],
+            json!([{ "command": "pwd" }]),
+            "{adapter_id}"
+        );
+        let command = &result.sessions[0].turns[0].parts[3];
         assert_eq!(
             command.command.as_deref(),
-            Some("printf '\\n'"),
+            Some("printf '%s\\n' '--- inspect ---' && git status --short"),
+            "{adapter_id}"
+        );
+        assert_eq!(
+            command.source_execution_id.as_deref(),
+            Some("web-shell"),
+            "{adapter_id}"
+        );
+        let command_metadata: serde_json::Value =
+            serde_json::from_str(command.metadata_json.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            command_metadata["shell_execution_projection"]["nodes"],
+            json!([{ "command": "git status --short", "command_label": "inspect" }]),
             "{adapter_id}"
         );
         assert_eq!(
@@ -1740,8 +1786,13 @@ fn official_web_adapters_expose_incremental_session_discovery() {
             Some("command"),
             "{adapter_id}"
         );
-        let execution_result = &result.sessions[0].turns[0].parts[2];
+        let execution_result = &result.sessions[0].turns[0].parts[4];
         assert_eq!(execution_result.text.as_deref(), Some("ok"), "{adapter_id}");
+        assert_eq!(
+            execution_result.source_execution_id.as_deref(),
+            Some("web-shell"),
+            "{adapter_id}"
+        );
         assert_eq!(
             execution_result
                 .content_card
@@ -1772,7 +1823,7 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         INSERT INTO part VALUES ('user-part', 'user-1', 'session-1', 1, '{"type":"text","text":"Explain it"}');
         INSERT INTO message VALUES ('assistant-1', 'session-1', 2, '{"role":"assistant"}');
         INSERT INTO part VALUES ('assistant-part', 'assistant-1', 'session-1', 2, '{"type":"text","text":"Structured answer"}');
-        INSERT INTO part VALUES ('tool-part', 'assistant-1', 'session-1', 3, '{"type":"tool","command":"printf ok","output":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mok\\u001b[0m\"}]"}');
+        INSERT INTO part VALUES ('tool-part', 'assistant-1', 'session-1', 3, '{"type":"tool","tool":"Bash","callID":"zcode-shell","command":"printf ''%s\\n'' ''\u002D\u002D\u002D inspect \u002D\u002D\u002D'' && git status --short","output":"[{\"type\":\"input_text\",\"text\":\"Script completed\\nWall time 0.1 seconds\\nOutput:\\n\"},{\"type\":\"input_text\",\"text\":\"\\u001b[32mok\\u001b[0m\"}]"}');
         INSERT INTO part VALUES ('patch-part', 'assistant-1', 'session-1', 4, '{"type":"patch","patch":"diff --git a/src/main.ts b/src/main.ts\n--- a/src/main.ts\n+++ b/src/main.ts\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/src/other.ts b/src/other.ts\n--- a/src/other.ts\n+++ b/src/other.ts\n@@ -1 +1 @@\n-before\n+after"}');
         "#,
     )
@@ -1796,8 +1847,19 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         parts,
         &["answer", "command", "result", "file-change", "file-change"],
     );
-    assert_eq!(parts[1].command.as_deref(), Some("printf ok"));
+    assert_eq!(
+        parts[1].command.as_deref(),
+        Some("printf '%s\\n' '--- inspect ---' && git status --short")
+    );
+    assert_eq!(parts[1].source_execution_id.as_deref(), Some("zcode-shell"));
+    let command_metadata: serde_json::Value =
+        serde_json::from_str(parts[1].metadata_json.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        command_metadata["shell_execution_projection"]["nodes"],
+        json!([{ "command": "git status --short", "command_label": "inspect" }])
+    );
     assert_eq!(parts[2].text.as_deref(), Some("ok"));
+    assert_eq!(parts[2].source_execution_id.as_deref(), Some("zcode-shell"));
     assert_eq!(
         parts[2]
             .content_card

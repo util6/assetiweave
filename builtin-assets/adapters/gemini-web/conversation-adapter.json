@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "gemini-web",
   "name": "Gemini Web",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "protocol_version": 1,
   "runtime": {
     "type": "node",

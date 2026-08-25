@@ -90,6 +90,86 @@ test("Claude Code stores one canonical diff in the original Edit result Part", (
   }
 });
 
+test("Claude Code keeps an aggregated Bash execution raw and projects display nodes", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-shell-projection-"));
+  try {
+    const sessionPath = path.join(fixtureRoot, "session-shell.jsonl");
+    const command = [
+      "printf '%s\\n' '--- inspect ---'",
+      "rg 'quoted && value' ./src | sed 's/;/|/'",
+      "git status --short > /tmp/status.txt",
+    ].join(" && ");
+    writeFileSync(sessionPath, [
+      message("2026-08-05T00:00:00Z", "user", [{ type: "text", text: "检查工作区" }]),
+      message("2026-08-05T00:00:01Z", "assistant", [{
+        type: "tool_use",
+        id: "tool-shell-projection",
+        name: "Bash",
+        input: { command, description: "inspect" },
+      }]),
+      message("2026-08-05T00:00:02Z", "user", [{
+        type: "tool_result",
+        tool_use_id: "tool-shell-projection",
+        content: "Error: failed",
+        is_error: true,
+      }]),
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "tool-shell-projection",
+      "tool-shell-projection",
+    ]);
+    assert.equal(parts[0].command, command);
+    assert.equal(parts[1].text, "Error: failed");
+    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
+      schema_version: 1,
+      nodes: [
+        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
+        { command: "git status --short > /tmp/status.txt", command_label: "Bash" },
+      ],
+    });
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Claude Code keeps a simple Bash execution boundary unchanged", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-simple-shell-"));
+  try {
+    const sessionPath = path.join(fixtureRoot, "session-simple-shell.jsonl");
+    writeFileSync(sessionPath, [
+      message("2026-08-05T00:00:00Z", "user", [{ type: "text", text: "查看状态" }]),
+      message("2026-08-05T00:00:01Z", "assistant", [{
+        type: "tool_use",
+        id: "tool-simple-shell",
+        name: "Bash",
+        input: { command: "git status --short" },
+      }]),
+      message("2026-08-05T00:00:02Z", "user", [{
+        type: "tool_result",
+        tool_use_id: "tool-simple-shell",
+        content: "clean",
+      }]),
+    ].join("\n"));
+
+    const parts = readFixtureSession(fixtureRoot).turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, "git status --short");
+    assert.deepEqual(parts.map((part) => part.source_execution_id), [
+      "tool-simple-shell",
+      "tool-simple-shell",
+    ]);
+    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
+      { command: "git status --short", command_label: "Bash" },
+    ]);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function message(timestamp, role, content, extra = {}) {
   return JSON.stringify({ timestamp, type: role, message: { role, content }, ...extra });
 }

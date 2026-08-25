@@ -89,25 +89,18 @@ test("payload policy omits decorative print separators when splitting chained sh
   normalizeSessionPayload(session);
 
   const parts = session.turns[0].parts;
-  assert.equal(parts.length, 3);
-  assert.deepEqual(parts.map((item) => item.command), [
-    "pnpm lint",
-    "pnpm test",
-    null,
-  ]);
-  assert.deepEqual(parts.map((item) => item.command_label), ["lint", "TESTS", null]);
-  assert.deepEqual(parts.map((item) => item.source_execution_id), [
-    "shell-chain:command:1",
-    "shell-chain:command:2",
-    "shell-chain:command:2",
-  ]);
-  assert.equal(parts[2].text, null);
-  for (const [index, commandPart] of parts.slice(0, 2).entries()) {
-    const metadata = JSON.parse(commandPart.metadata_json);
-    assert.equal(metadata.source_execution_parent_id, "shell-chain");
-    assert.equal(metadata.command_index, index + 1);
-    assert.equal(metadata.command_count, 2);
-  }
+  assert.equal(parts.length, 2);
+  assert.equal(parts[0].command, session.turns[0].parts[0].command);
+  assert.equal(parts[0].source_execution_id, "shell-chain");
+  assert.equal(parts[1].source_execution_id, "shell-chain");
+  assert.equal(parts[1].text, null);
+  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
+    schema_version: 1,
+    nodes: [
+      { command: "pnpm lint", command_label: "lint" },
+      { command: "pnpm test", command_label: "TESTS" },
+    ],
+  });
 });
 
 test("payload policy preserves the original execution ID when one real command remains after separator filtering", () => {
@@ -125,11 +118,14 @@ test("payload policy preserves the original execution ID when one real command r
 
   const parts = session.turns[0].parts;
   assert.equal(parts.length, 2);
-  assert.equal(parts[0].command, "git status --short");
-  assert.equal(parts[0].command_label, "status");
+  assert.equal(parts[0].command, "printf '%s\\n' '--- status ---'; git status --short");
+  assert.equal(parts[0].command_label, "exec");
   assert.equal(parts[0].source_execution_id, "shell-single");
   assert.equal(parts[1].source_execution_id, "shell-single");
   assert.equal(parts[1].text, null);
+  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
+    { command: "git status --short", command_label: "status" },
+  ]);
 });
 
 test("payload policy retains printf and echo commands that carry non-decorative values", () => {
@@ -146,11 +142,16 @@ test("payload policy retains printf and echo commands that carry non-decorative 
 
   normalizeSessionPayload(session);
 
-  assert.deepEqual(session.turns[0].parts.map((item) => item.command), [
+  assert.equal(session.turns[0].parts.length, 1);
+  assert.equal(session.turns[0].parts[0].command, [
+    "printf '%s\\n' '--- paths ---'",
     "printf '%s\\n' \"$tmpdir\"",
     "echo 'build completed'",
+  ].join("; "));
+  assert.deepEqual(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection.nodes, [
+    { command: "printf '%s\\n' \"$tmpdir\"", command_label: "paths" },
+    { command: "echo 'build completed'", command_label: "exec" },
   ]);
-  assert.deepEqual(session.turns[0].parts.map((item) => item.command_label), ["paths", "exec"]);
 });
 
 test("payload policy filters an unlabeled divider without replacing the original command label", () => {
@@ -164,8 +165,11 @@ test("payload policy filters an unlabeled divider without replacing the original
   normalizeSessionPayload(session);
 
   assert.equal(session.turns[0].parts.length, 1);
-  assert.equal(session.turns[0].parts[0].command, "pnpm test");
+  assert.equal(session.turns[0].parts[0].command, "echo '---'; pnpm test");
   assert.equal(session.turns[0].parts[0].command_label, "exec");
+  assert.deepEqual(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection.nodes, [
+    { command: "pnpm test", command_label: "exec" },
+  ]);
 });
 
 test("payload policy splits only top-level separators and preserves quoted operators and pipelines", () => {
@@ -181,9 +185,12 @@ test("payload policy splits only top-level separators and preserves quoted opera
 
   const parts = session.turns[0].parts;
   assert.deepEqual(parts.map((item) => item.command), [
-    `node -e "console.log('a && b')"`,
-    "printf 'a;b' |\n  sed 's/;/|/'",
-    "pnpm test",
+    `node -e "console.log('a && b')" && printf 'a;b' |\n  sed 's/;/|/'\npnpm test`,
+  ]);
+  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
+    { command: `node -e "console.log('a && b')"` },
+    { command: "printf 'a;b' |\n  sed 's/;/|/'" },
+    { command: "pnpm test" },
   ]);
 });
 

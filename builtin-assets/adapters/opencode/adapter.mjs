@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v6";
+const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v7";
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);

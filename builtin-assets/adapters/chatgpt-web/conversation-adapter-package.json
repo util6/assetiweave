@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.chatgpt-web",
   "name": "ChatGPT Web Harvester",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "min_core_version": "0.5.2",
   "record_kind": "web",
   "adapter_manifest": "conversation-adapter.json",
@@ -15,6 +15,13 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "0.4.4",
+      "date": "2026-08-25",
+      "notes": [
+        "Project imported shell commands as display-only Content Nodes while preserving source Parts and execution IDs."
+      ]
+    },
     {
       "version": "0.4.3",
       "date": "2026-08-10",

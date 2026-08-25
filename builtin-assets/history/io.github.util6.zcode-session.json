@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "0.5.1",
+      "channel": "stable",
+      "released_at": "2026-08-25T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.zcode-session-0.5.1-universal.zip",
+      "artifact_size": 40052,
+      "artifact_sha256": "41df878ae5b247d903777f01ab91557a26da381441a30b6a069decbf154085e3",
+      "changelog_markdown": "## 0.5.1\n\n- Preserve source execution IDs and project multi-command shell nodes without lossy command concatenation.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode"
+      }
+    },
+    {
       "version": "0.5.0",
       "channel": "stable",
       "released_at": "2026-08-17T00:00:00Z",
