@@ -1112,6 +1112,30 @@ describe("MarkdownContent", () => {
     expect(document.querySelector('[data-command-label="status"]')).toBeTruthy();
   });
 
+  it("keeps the complete raw command visible and reports a projector failure", async () => {
+    vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
+      .mockRejectedValueOnce(new Error("projector exited"));
+    const onCopyError = vi.fn();
+    render(
+      <QuestionPreview
+        adapterVersion="1.0.0"
+        onCopyError={onCopyError}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    expect(screen.getByText("assetiweave-cli conversation sync --dry-run")).toBeTruthy();
+    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(
+      "命令展示解析失败，已保留原始命令：projector exited",
+    ));
+  });
+
   it("renders question checkboxes for batch export selection", () => {
     const html = renderToStaticMarkup(
       <SessionQuestionWorkspace
