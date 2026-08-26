@@ -221,6 +221,7 @@ export function ConversationContentCards({
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   controller,
   onCopyError,
+  onCommandPartsVisible,
   onTranslationError,
   nodes,
   recordKind = "session",
@@ -238,6 +239,7 @@ export function ConversationContentCards({
   colors?: ConversationContentCardColorSettings;
   controller?: ConversationContentController;
   onCopyError?: (message: string) => void;
+  onCommandPartsVisible?: (partIds: string[]) => void;
   onTranslationError?: (message: string) => void;
   nodes?: ConversationDisplayNode[];
   recordKind?: ConversationRecordKind;
@@ -271,11 +273,39 @@ export function ConversationContentCards({
       ? [{ ...node, commands, results }]
       : [];
   });
-  const visibleBlocks = visibleNodes.flatMap((node) => (
+  const [nodeRenderLimit, setNodeRenderLimit] = useState(12);
+  const nodeLoadMoreRef = useRef<HTMLDivElement>(null);
+  const renderedNodes = visibleNodes.slice(0, nodeRenderLimit);
+  const hasMoreNodes = renderedNodes.length < visibleNodes.length;
+  const visibleBlocks = renderedNodes.flatMap((node) => (
       node.type === "card"
       ? [node.block]
       : [...node.commands, ...node.results]
   ));
+
+  useEffect(() => {
+    if (!onCommandPartsVisible) return;
+    const partIds = new Set<string>();
+    for (const node of renderedNodes) {
+      const commands = node.type === "card" ? [node.block] : node.commands;
+      for (const command of commands) {
+        if (command.type === "command" && command.partId) partIds.add(command.partId);
+      }
+    }
+    if (partIds.size > 0) onCommandPartsVisible([...partIds]);
+  }, [onCommandPartsVisible, renderedNodes]);
+
+  useEffect(() => {
+    if (!hasMoreNodes || typeof IntersectionObserver === "undefined") return;
+    const target = nodeLoadMoreRef.current;
+    if (!target) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setNodeRenderLimit((current) => Math.min(current + 12, visibleNodes.length));
+    }, { rootMargin: "480px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMoreNodes, renderedNodes.length, visibleNodes.length]);
   const fallbackController = useConversationContentController({
     blocks: visibleBlocks,
     enabled: controller == null,
@@ -301,7 +331,7 @@ export function ConversationContentCards({
 
   return (
     <div className="grid gap-3">
-      {visibleNodes.map((node) => {
+      {renderedNodes.map((node) => {
         if (node.type === "card") {
           return renderContentCard(node.block);
         }
@@ -315,6 +345,17 @@ export function ConversationContentCards({
           />
         );
       })}
+      {hasMoreNodes ? (
+        <div className="flex justify-center py-2" ref={nodeLoadMoreRef}>
+          <button
+            className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+            onClick={() => setNodeRenderLimit((current) => Math.min(current + 12, visibleNodes.length))}
+            type="button"
+          >
+            {t("conversation.content.loadMoreActivities")}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 

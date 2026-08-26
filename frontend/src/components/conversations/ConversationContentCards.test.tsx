@@ -454,6 +454,43 @@ describe("ConversationContentCards", () => {
     expect(screen.getByText("result-output-8")).toBeTruthy();
   });
 
+  it("projects and mounts only the visible activity batch inside a very large Turn", async () => {
+    const onCommandPartsVisible = vi.fn();
+    const nodes = Array.from({ length: 20 }, (_, index) => ({
+      type: "card" as const,
+      turnId: "turn-large",
+      block: {
+        id: `command-${index + 1}`,
+        partId: `part-${index + 1}`,
+        type: "command" as const,
+        renderer: "command" as const,
+        role: "tool" as const,
+        text: `raw-command-${index + 1}`,
+      },
+    }));
+    render(
+      <ConversationContentCards
+        blocks={[]}
+        nodes={nodes}
+        onCommandPartsVisible={onCommandPartsVisible}
+        t={t}
+        visibility={{ command: true }}
+      />,
+    );
+
+    expect(screen.getByText("raw-command-12")).toBeTruthy();
+    expect(screen.queryByText("raw-command-13")).toBeNull();
+    await waitFor(() => expect(onCommandPartsVisible).toHaveBeenCalledWith(
+      Array.from({ length: 12 }, (_, index) => `part-${index + 1}`),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: "继续加载活动记录" }));
+    expect(screen.getByText("raw-command-20")).toBeTruthy();
+    await waitFor(() => expect(onCommandPartsVisible).toHaveBeenLastCalledWith(
+      Array.from({ length: 20 }, (_, index) => `part-${index + 1}`),
+    ));
+  });
+
   it("renders backend-split commands as independent cards with header labels", () => {
     const blocks = buildConversationContentBlocks([], [
       projectedCard("command-first", "command", "cat first.md"),

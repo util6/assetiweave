@@ -2625,6 +2625,10 @@ export function QuestionPreview({
   const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
   const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
   const [commandProjections, setCommandProjections] = useState<ConversationCommandProjection[]>([]);
+  const requestedProjectionPartIdsRef = useRef(new Set<string>());
+  const commandPartById = useMemo(() => new Map(question.parts.flatMap((part) => (
+    part.command?.trim() ? [[part.id, part] as const] : []
+  ))), [question.parts]);
   const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const virtualizedCollectionRef = useRef<VirtualizedCollectionHandle>(null);
@@ -2656,26 +2660,29 @@ export function QuestionPreview({
     [activeTurnId, focusedTurnId],
   );
 
-  useEffect(() => {
-    const commandParts = question.parts.flatMap((part) => {
-      const command = part.command?.trim();
-      return command ? [{ partId: part.id, command: part.command!, commandLabel: part.command_label }] : [];
+  const handleCommandPartsVisible = useCallback((partIds: string[]) => {
+    const parts = partIds.flatMap((partId) => {
+      if (requestedProjectionPartIdsRef.current.has(partId)) return [];
+      const part = commandPartById.get(partId);
+      if (!part?.command?.trim()) return [];
+      requestedProjectionPartIdsRef.current.add(partId);
+      return [{ partId, command: part.command, commandLabel: part.command_label }];
     });
-    let cancelled = false;
-    setCommandProjections([]);
-    if (commandParts.length === 0) return () => { cancelled = true; };
-
+    if (parts.length === 0) return;
     void projectConversationCommandParts({
       adapterId: session.session.adapter_id,
       adapterVersion,
-      parts: commandParts,
+      parts,
     }).then((projections) => {
-      if (!cancelled) setCommandProjections(projections);
+      setCommandProjections((current) => {
+        const merged = new Map(current.map((projection) => [projection.part_id, projection]));
+        projections.forEach((projection) => merged.set(projection.part_id, projection));
+        return [...merged.values()];
+      });
     }).catch((error) => {
-      if (!cancelled) onCopyError?.(t("conversation.content.projectionFailed", { message: errorMessage(error) }));
+      onCopyError?.(t("conversation.content.projectionFailed", { message: errorMessage(error) }));
     });
-    return () => { cancelled = true; };
-  }, [adapterVersion, onCopyError, question, session.session.adapter_id, t]);
+  }, [adapterVersion, commandPartById, onCopyError, session.session.adapter_id, t]);
 
   useEffect(() => {
     if (!activeTurnId) return;
@@ -2770,6 +2777,7 @@ export function QuestionPreview({
                   index={index}
                   model={model}
                   onCopyError={onCopyError}
+                  onCommandPartsVisible={handleCommandPartsVisible}
                   onSplit={onSplit ? (turnId) => void onSplit(question, turnId) : undefined}
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}

@@ -149,6 +149,7 @@ export const ConversationTurn = memo(function ConversationTurn({
   controller,
   index,
   onCopyError,
+  onCommandPartsVisible,
   onSplit,
   recordKind,
   resultPreviewLineLimit,
@@ -163,6 +164,7 @@ export const ConversationTurn = memo(function ConversationTurn({
   index: number;
   model: ConversationTurnPresentation;
   onCopyError?: (message: string) => void;
+  onCommandPartsVisible?: (partIds: string[]) => void;
   onSplit?: (turnId: string) => void;
   recordKind: ConversationRecordKind;
   resultPreviewLineLimit?: number;
@@ -238,6 +240,7 @@ export const ConversationTurn = memo(function ConversationTurn({
             controller={controller}
             nodes={model.displayNodes}
             onCopyError={onCopyError}
+            onCommandPartsVisible={onCommandPartsVisible}
             recordKind={recordKind}
             resultPreviewLineLimit={resultPreviewLineLimit}
             t={t}
