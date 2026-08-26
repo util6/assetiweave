@@ -25,6 +25,8 @@ const ORGANIZER_ZCODE_MANIFEST: &[u8] =
     include_bytes!("../../../builtin-assets/adapters/zcode/conversation-adapter.json");
 const ORGANIZER_ZCODE_ADAPTER: &[u8] =
     include_bytes!("../../../builtin-assets/adapters/zcode/adapter.mjs");
+const ORGANIZER_ZCODE_SHELL_PROJECTOR: &[u8] =
+    include_bytes!("../../../builtin-assets/adapters/zcode/shell-projector.cjs");
 const RECALL_SKILL: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-conversation-recall/SKILL.md");
 const RECALL_MANIFEST: &[u8] = include_bytes!(
@@ -69,6 +71,11 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         relative_path: "assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/adapter.mjs",
         contents: ORGANIZER_ZCODE_ADAPTER,
         executable: true,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-conversation-organizer/scripts/zcode-conversation-adapter/shell-projector.cjs",
+        contents: ORGANIZER_ZCODE_SHELL_PROJECTOR,
+        executable: false,
     },
     EmbeddedFile {
         relative_path: "assetiweave-conversation-recall/SKILL.md",
@@ -561,6 +568,7 @@ mod tests {
             .join("zcode-conversation-adapter");
         assert!(adapter_dir.join("conversation-adapter.json").is_file());
         assert!(adapter_dir.join("adapter.mjs").is_file());
+        assert!(adapter_dir.join("shell-projector.cjs").is_file());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -724,6 +732,10 @@ mod tests {
         assert_eq!(
             ORGANIZER_ZCODE_ADAPTER,
             include_bytes!("../../../builtin-assets/adapters/zcode/adapter.mjs")
+        );
+        assert_eq!(
+            ORGANIZER_ZCODE_SHELL_PROJECTOR,
+            include_bytes!("../../../builtin-assets/adapters/zcode/shell-projector.cjs")
         );
     }
 

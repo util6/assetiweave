@@ -250,6 +250,30 @@ impl AppService {
             .map_err(conversation_external_error)
     }
 
+    pub(crate) fn project_conversation_command_parts(
+        &self,
+        params: crate::backend::conversations::ConversationCommandProjectionParams,
+    ) -> AppResult<Vec<crate::backend::conversations::ConversationCommandProjection>> {
+        let adapter = self
+            .list_conversation_adapters()?
+            .into_iter()
+            .find(|adapter| adapter.id == params.adapter_id)
+            .ok_or_else(|| {
+                AppError::NotFound(format!(
+                    "conversation adapter not found: {}",
+                    params.adapter_id
+                ))
+            })?;
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        crate::backend::conversations::project_external_adapter_command_parts_with_settings(
+            &adapter,
+            &params.parts,
+            &settings,
+        )
+        .map_err(conversation_external_error)
+    }
+
     pub(crate) fn list_conversation_sources(&self) -> AppResult<Vec<ConversationSource>> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();

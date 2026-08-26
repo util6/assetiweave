@@ -14,8 +14,8 @@ mod types;
 pub(crate) use external::{
     adapter_from_registration_preview, export_external_adapter_markdown_with_settings,
     list_conversation_adapter_runtime_statuses_with_settings,
-    register_external_adapter_with_settings, scaffold_external_adapter,
-    try_run_external_adapter_with_settings, validate_external_adapter,
+    project_external_adapter_command_parts_with_settings, register_external_adapter_with_settings,
+    scaffold_external_adapter, try_run_external_adapter_with_settings, validate_external_adapter,
 };
 #[cfg(test)]
 pub(crate) use external::{
@@ -45,7 +45,9 @@ pub(crate) use readers::{
 #[allow(unused_imports)]
 pub(crate) use types::{
     ConversationAdapterCatalog, ConversationAdapterManifest, ConversationAdapterRuntimeKind,
-    ConversationAdapterRuntimeStatus, ConversationSessionDescriptor, ExternalAdapterRegisterParams,
-    ExternalAdapterRunResult, ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult,
-    ExternalAdapterTryRunParams, ExternalAdapterValidateParams, ExternalAdapterValidationResult,
+    ConversationAdapterRuntimeStatus, ConversationCommandProjection,
+    ConversationCommandProjectionParams, ConversationCommandProjectionPart,
+    ConversationSessionDescriptor, ExternalAdapterRegisterParams, ExternalAdapterRunResult,
+    ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult, ExternalAdapterTryRunParams,
+    ExternalAdapterValidateParams, ExternalAdapterValidationResult,
 };

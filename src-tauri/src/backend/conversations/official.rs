@@ -14,6 +14,9 @@ struct OfficialAdapterAsset {
     payload_policy_script: &'static str,
 }
 
+const SHELL_PROJECTOR_SCRIPT: &str =
+    include_str!("../../../../builtin-assets/adapters/common/shell-projector.cjs");
+
 const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     OfficialAdapterAsset {
         manifest: "codex/conversation-adapter.json",
@@ -88,6 +91,8 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
         write_if_missing(&script_path, asset.script.as_bytes())?;
         let payload_policy_path = adapter_dir.join("payload-policy.mjs");
         write_if_missing(&payload_policy_path, asset.payload_policy_script.as_bytes())?;
+        let shell_projector_path = adapter_dir.join("shell-projector.cjs");
+        write_if_missing(&shell_projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
         make_executable(&script_path)?;
 
         let Ok(validation) =

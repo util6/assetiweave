@@ -5176,7 +5176,7 @@ mod tests {
     }
 
     #[test]
-    fn question_aggregate_projects_shell_execution_nodes_for_fts_compatibility() {
+    fn question_aggregate_indexes_the_raw_shell_part_for_fts_compatibility() {
         let part = ConversationPart {
             id: "conversation-part-shell".to_string(),
             turn_id: "conversation-turn-shell".to_string(),
@@ -5221,9 +5221,9 @@ mod tests {
             &mut code_text,
             &mut command_text,
         )
-        .expect("project shell execution nodes into FTS fields");
+        .expect("project raw shell Part into FTS fields");
 
-        assert_eq!(command_text, vec!["printf first", "printf second"]);
+        assert_eq!(command_text, vec!["raw shell command"]);
         assert!(answer_text.is_empty());
         assert!(code_text.is_empty());
     }

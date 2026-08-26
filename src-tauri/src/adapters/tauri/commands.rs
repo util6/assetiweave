@@ -65,6 +65,7 @@ use crate::{
         OpencodeTranslationRequest, OpencodeTranslationResult,
     },
     backend::conversations::{
+        ConversationCommandProjection, ConversationCommandProjectionParams,
         ExternalAdapterRegisterParams, ExternalAdapterScaffoldParams, ExternalAdapterTryRunParams,
         ExternalAdapterValidateParams,
     },
@@ -2271,6 +2272,19 @@ pub(crate) fn try_run_conversation_adapter(
 }
 
 #[tauri::command]
+pub(crate) async fn project_conversation_command_parts(
+    state: State<'_, AppState>,
+    params: ConversationCommandProjectionParams,
+) -> RuntimeAppResult<Vec<ConversationCommandProjection>> {
+    let runtime = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::from_runtime(&runtime).project_conversation_command_parts(params)
+    })
+    .await
+    .map_err(|error| AppError::External(error.to_string()))?
+}
+
+#[tauri::command]
 pub(crate) fn list_conversation_sources(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<ConversationSource>> {
@@ -3578,6 +3592,7 @@ pub(crate) fn command_handler(
         register_conversation_adapter,
         unregister_conversation_adapter,
         try_run_conversation_adapter,
+        project_conversation_command_parts,
         list_conversation_sources,
         upsert_conversation_source,
         disable_conversation_source,

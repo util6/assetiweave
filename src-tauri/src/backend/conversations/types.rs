@@ -4,6 +4,7 @@ pub(super) const EXTERNAL_ADAPTER_PROTOCOL_VERSION: u32 = 1;
 pub(super) const DEFAULT_PROBE_TIMEOUT_MS: u64 = 10_000;
 pub(super) const DEFAULT_LIST_TIMEOUT_MS: u64 = 30_000;
 pub(super) const DEFAULT_READ_TIMEOUT_MS: u64 = 120_000;
+pub(super) const DEFAULT_PROJECT_TIMEOUT_MS: u64 = 30_000;
 pub(super) const DEFAULT_MAX_CONTROL_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_ITEM_LINE_BYTES: usize = 64 * 1024 * 1024;
 pub(super) const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
@@ -239,8 +240,23 @@ pub(crate) struct ExternalAdapterRunResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ConversationCommandProjection {
     pub(crate) part_id: String,
-    pub(crate) projector_version: u32,
+    pub(crate) schema_version: u32,
+    pub(crate) projector_version: String,
     pub(crate) nodes: Vec<ConversationCommandProjectionNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationCommandProjectionParams {
+    pub(crate) adapter_id: String,
+    pub(crate) parts: Vec<ConversationCommandProjectionPart>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationCommandProjectionPart {
+    pub(crate) part_id: String,
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) command_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

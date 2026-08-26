@@ -3923,7 +3923,7 @@ fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
 
 #[cfg(unix)]
 #[test]
-fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_nodes() {
+fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-codex-shell-projection-app-service-{}",
         Uuid::new_v4()
@@ -4016,23 +4016,20 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
         .iter()
         .filter(|node| node.part_id == "conversation-part-codex-shell-command")
         .collect::<Vec<_>>();
-    assert_eq!(command_nodes.len(), 2);
+    assert_eq!(command_nodes.len(), 1);
     assert_eq!(
         command_nodes
             .iter()
             .map(|node| node.content.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "rg 'quoted && value' ./src | sed 's/;/|/'",
-            "git status --short > /tmp/status.txt"
-        ]
+        vec![raw_command]
     );
     assert_eq!(
         command_nodes
             .iter()
             .map(|node| node.command_label.as_deref())
             .collect::<Vec<_>>(),
-        vec![Some("inspect"), Some("status")]
+        vec![Some("exec")]
     );
     assert!(command_nodes
         .iter()
@@ -4051,7 +4048,7 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
             .iter()
             .filter(|node| node.part_id == "conversation-part-codex-shell-command")
             .count(),
-        2
+        1
     );
 
     execute_test_sql(
@@ -4136,11 +4133,11 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
             offset: Some(0),
             search_options: None,
         })
-        .expect("search projected shell command node");
+        .expect("search raw shell command Part");
     assert_eq!(command_search.total_count, 1);
     assert_eq!(
         command_search.hits[0].block_id,
-        "conversation-part-codex-shell-command-node-1"
+        "conversation-part-codex-shell-command"
     );
     assert_eq!(
         command_search.hits[0].part_id.as_deref(),
@@ -4154,33 +4151,30 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
         .list_conversation_blocks(ConversationBlockListParams {
             question_id: detail.question.id.clone(),
         })
-        .expect("list projected shell command locators");
+        .expect("list raw shell command locators");
     let command_blocks = blocks
         .iter()
         .filter(|block| block.part_id.as_deref() == Some("conversation-part-codex-shell-command"))
         .collect::<Vec<_>>();
-    assert_eq!(command_blocks.len(), 2);
+    assert_eq!(command_blocks.len(), 1);
     assert_eq!(
         command_blocks
             .iter()
             .map(|block| block.block_id.as_str())
             .collect::<Vec<_>>(),
-        vec![
-            "conversation-part-codex-shell-command-node-0",
-            "conversation-part-codex-shell-command-node-1"
-        ]
+        vec!["conversation-part-codex-shell-command"]
     );
     let status_block = service
         .get_conversation_block(ConversationBlockGetParams {
-            block_id: "conversation-part-codex-shell-command-node-1".to_string(),
+            block_id: "conversation-part-codex-shell-command".to_string(),
         })
-        .expect("load projected shell command node");
-    assert_eq!(status_block.content, "git status --short > /tmp/status.txt");
+        .expect("load raw shell command Part");
+    assert_eq!(status_block.content, raw_command);
 
     let report = service
         .rebuild_conversation_search_index()
-        .expect("rebuild projected shell search index");
-    assert_eq!(report.document_count, 7);
+        .expect("rebuild raw shell search index");
+    assert_eq!(report.document_count, 6);
     let indexed_command_search = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -4202,12 +4196,12 @@ fn conversation_question_detail_projects_one_codex_shell_part_into_multiple_node
             offset: Some(0),
             search_options: None,
         })
-        .expect("search projected shell command node in Tantivy");
+        .expect("search raw shell command Part in Tantivy");
     assert_eq!(indexed_command_search.backend, "tantivy");
     assert_eq!(indexed_command_search.total_count, 1);
     assert_eq!(
         indexed_command_search.hits[0].block_id,
-        "conversation-part-codex-shell-command-node-1"
+        "conversation-part-codex-shell-command"
     );
     let _ = fs::remove_dir_all(root);
 }

@@ -125,94 +125,21 @@ pub(crate) fn project_conversation_content_card(
     }))
 }
 
-/// Projects the persisted source Part into the compatibility Card shape.
+/// Projects one persisted source Part into the compatibility Card shape.
 ///
-/// A Codex shell execution keeps its raw command in one Part. Its optional
-/// `shell_execution_projection` metadata is display-only and may expand that
-/// Part into multiple command Cards for the canonical Content Node seam. The
-/// source Part, execution ID, and result relationship remain unchanged.
+/// Historical `shell_execution_projection` metadata is deliberately ignored.
+/// Command splitting is a read-time concern owned by the external Adapter
+/// projector and must not alter the canonical Part/Card identity here.
 pub(crate) fn project_conversation_content_cards(
     part: &ConversationPart,
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> Result<Vec<ConversationCard>, String> {
-    let Some(base) = project_conversation_content_card(part, adapter_id, card_kinds)? else {
-        return Ok(Vec::new());
-    };
-    if base.renderer != ConversationCardRenderer::Command {
-        return Ok(vec![base]);
-    }
-    let Some(nodes) = shell_execution_projection_nodes(part.metadata_json.as_deref())? else {
-        return Ok(vec![base]);
-    };
-    Ok(nodes
-        .into_iter()
-        .enumerate()
-        .map(|(node_order, (command, command_label))| {
-            let mut card = base.clone();
-            card.node_id = format!("{}-node-{node_order}", part.id);
-            card.body = command;
-            card.command_label = command_label;
-            card.translated_body = None;
-            let node_anchor = format!("{}-node-{node_order}", part.id);
-            if !card.legacy_anchor_ids.contains(&node_anchor) {
-                card.legacy_anchor_ids.push(node_anchor);
-            }
-            card
-        })
-        .collect())
-}
-
-fn shell_execution_projection_nodes(
-    metadata_json: Option<&str>,
-) -> Result<Option<Vec<(String, Option<String>)>>, String> {
-    let Some(metadata_json) = metadata_json
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(None);
-    };
-    let metadata = serde_json::from_str::<Value>(metadata_json)
-        .map_err(|error| format!("invalid conversation part metadata JSON: {error}"))?;
-    let Some(projection) = metadata
-        .as_object()
-        .and_then(|metadata| metadata.get("shell_execution_projection"))
-    else {
-        return Ok(None);
-    };
-    let projection = projection
-        .as_object()
-        .ok_or_else(|| "shell_execution_projection must be a JSON object".to_string())?;
-    if projection.get("schema_version").and_then(Value::as_u64) != Some(1) {
-        return Err("shell_execution_projection schema_version must be 1".to_string());
-    }
-    let nodes = projection
-        .get("nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "shell_execution_projection nodes must be an array".to_string())?;
-    nodes
-        .iter()
-        .map(|node| {
-            let node = node
-                .as_object()
-                .ok_or_else(|| "shell execution projection node must be an object".to_string())?;
-            let command = node
-                .get("command")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|command| !command.is_empty())
-                .ok_or_else(|| "shell execution projection command is required".to_string())?
-                .to_string();
-            let command_label = node
-                .get("command_label")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|label| !label.is_empty())
-                .map(str::to_string);
-            Ok((command, command_label))
-        })
-        .collect::<Result<Vec<_>, String>>()
-        .map(Some)
+    Ok(
+        project_conversation_content_card(part, adapter_id, card_kinds)?
+            .into_iter()
+            .collect(),
+    )
 }
 
 pub(crate) fn project_persisted_content_card(
@@ -1030,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_shell_projection_expands_one_part_without_changing_source_identity() {
+    fn historical_shell_projection_metadata_does_not_split_the_raw_part() {
         let mut part = part_with_metadata(
             r#"{"shell_execution_projection":{"schema_version":1,"nodes":[{"command":"rg TODO","command_label":"inspect"},{"command":"git status --short","command_label":"status"}]}}"#,
         );
@@ -1046,19 +973,17 @@ mod tests {
         });
 
         let cards = project_conversation_content_cards(&part, "codex", &[])
-            .expect("project Codex shell nodes");
+            .expect("project raw Codex shell Part");
 
-        assert_eq!(cards.len(), 2);
-        assert_eq!(cards[0].node_id, "part-1-node-0");
-        assert_eq!(cards[1].node_id, "part-1-node-1");
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].node_id, "part-1");
         assert_eq!(cards[0].part_id, "part-1");
-        assert_eq!(cards[1].part_id, "part-1");
-        assert_eq!(cards[0].body, "rg TODO");
-        assert_eq!(cards[1].body, "git status --short");
-        assert_eq!(cards[0].command_label.as_deref(), Some("inspect"));
-        assert_eq!(cards[1].command_label.as_deref(), Some("status"));
+        assert_eq!(
+            cards[0].body,
+            "printf '--- inspect ---'; rg TODO; git status --short"
+        );
+        assert_eq!(cards[0].command_label, None);
         assert_eq!(cards[0].source_execution_id.as_deref(), Some("execution-1"));
-        assert_eq!(cards[1].source_execution_id.as_deref(), Some("execution-1"));
     }
 
     #[test]

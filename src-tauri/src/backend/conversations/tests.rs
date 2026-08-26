@@ -1,6 +1,7 @@
 use super::external::resolve_source_location_for_adapter;
 use super::prelude::*;
 use super::{
+    project_external_adapter_command_parts_with_settings,
     read_source_sessions_incrementally_with_adapter, read_source_sessions_with_adapter,
     register_external_adapter, scaffold_external_adapter, try_run_external_adapter,
     validate_external_adapter,
@@ -333,22 +334,70 @@ fn adapter_output_parses_markdown_export_item() {
 
 #[test]
 fn adapter_output_parses_batch_command_display_projections() {
-    let output = br#"{"type":"item","item":{"kind":"command_projection","projection":{"part_id":"conversation-part-raw","projector_version":1,"nodes":[{"display_order":0,"command":"git status --short","command_label":"status"},{"display_order":1,"command":"git diff","command_label":null}]}}}
+    let output = br#"{"type":"item","item":{"kind":"command_projection","projection":{"part_id":"conversation-part-raw","schema_version":1,"projector_version":"shell-projector-v1","nodes":[{"display_order":0,"command":"git status --short","command_label":"status"},{"display_order":1,"command":"git diff","command_label":null}]}}}
 {"type":"complete","item":{"projection_count":1}}"#;
 
-    let result = parse_external_adapter_output("project_commands", output.to_vec(), Vec::new())
-        .expect("parse command display projection output");
+    let result =
+        parse_external_adapter_output("project_command_parts", output.to_vec(), Vec::new())
+            .expect("parse command display projection output");
 
     assert_eq!(result.command_projections.len(), 1);
     let projection = &result.command_projections[0];
     assert_eq!(projection.part_id, "conversation-part-raw");
-    assert_eq!(projection.projector_version, 1);
+    assert_eq!(projection.schema_version, 1);
+    assert_eq!(projection.projector_version, "shell-projector-v1");
     assert_eq!(projection.nodes.len(), 2);
     assert_eq!(projection.nodes[0].display_order, 0);
     assert_eq!(projection.nodes[0].command, "git status --short");
     assert_eq!(projection.nodes[0].command_label.as_deref(), Some("status"));
     assert_eq!(projection.nodes[1].display_order, 1);
     assert_eq!(projection.nodes[1].command, "git diff");
+}
+
+#[test]
+fn adapter_output_removes_persisted_shell_display_projection_metadata() {
+    let output = format!(
+        "{}\n{}",
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "session",
+                "session": {
+                    "external_id": "session-1",
+                    "turns": [{
+                        "external_id": "turn-1",
+                        "turn_index": 0,
+                        "user_text": "Question",
+                        "parts": [{
+                            "role": "tool",
+                            "kind": "command",
+                            "command": "git status --short",
+                            "metadata_json": {
+                                "keep": "raw",
+                                "shell_execution_projection": {
+                                    "schema_version": 1,
+                                    "nodes": [{ "command": "git status --short" }]
+                                }
+                            }
+                        }]
+                    }]
+                }
+            }
+        }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+
+    let result = parse_external_adapter_output("read_session", output.into_bytes(), Vec::new())
+        .expect("parse raw command Part");
+    let metadata = result.sessions[0].turns[0].parts[0]
+        .metadata_json
+        .as_deref()
+        .expect("retained source metadata");
+
+    assert_eq!(
+        serde_json::from_str::<Value>(metadata).unwrap(),
+        json!({ "keep": "raw" })
+    );
 }
 
 #[test]
@@ -1300,6 +1349,7 @@ printf '%s\n' '{"type":"complete","item":{}}'
             "list_sessions".to_string(),
             "read_session".to_string(),
             "export_markdown".to_string(),
+            "project_command_parts".to_string(),
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,
@@ -1464,6 +1514,56 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     assert_eq!(result.item_count, 1);
     assert_eq!(export.content, "# Exported from adapter");
     assert_eq!(export.relative_path, "fixture/export.md");
+}
+
+#[cfg(unix)]
+#[test]
+fn external_adapter_projects_a_validated_batch_without_persistence() {
+    let fixture = TempFixture::new("assetiweave-adapter-project-fixture");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+cat >/dev/null
+printf '%s\n' '{"type":"item","item":{"kind":"command_projection","part_id":"part-1","schema_version":1,"projector_version":"fixture-v1","nodes":[{"display_order":0,"command":"git status --short","command_label":"status"}]}}'
+printf '%s\n' '{"type":"complete","item":{"projection_count":1}}'
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["project_command_parts".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+
+    let projections = project_external_adapter_command_parts_with_settings(
+        &adapter,
+        &[ConversationCommandProjectionPart {
+            part_id: "part-1".to_string(),
+            command: "printf '%s\\n' '--- status ---'; git status --short".to_string(),
+            command_label: None,
+        }],
+        &json!({}),
+    )
+    .expect("project batch");
+
+    assert_eq!(projections.len(), 1);
+    assert_eq!(projections[0].part_id, "part-1");
+    assert_eq!(projections[0].nodes[0].command, "git status --short");
 }
 
 #[cfg(unix)]
@@ -1773,11 +1873,11 @@ fn official_web_adapters_expose_incremental_session_discovery() {
             Some("web-simple"),
             "{adapter_id}"
         );
-        let simple_metadata: serde_json::Value =
-            serde_json::from_str(simple_command.metadata_json.as_deref().unwrap()).unwrap();
-        assert_eq!(
-            simple_metadata["shell_execution_projection"]["nodes"],
-            json!([{ "command": "pwd" }]),
+        assert!(
+            simple_command
+                .metadata_json
+                .as_deref()
+                .is_none_or(|metadata| { !metadata.contains("shell_execution_projection") }),
             "{adapter_id}"
         );
         let command = &result.sessions[0].turns[0].parts[3];
@@ -1791,11 +1891,11 @@ fn official_web_adapters_expose_incremental_session_discovery() {
             Some("web-shell"),
             "{adapter_id}"
         );
-        let command_metadata: serde_json::Value =
-            serde_json::from_str(command.metadata_json.as_deref().unwrap()).unwrap();
-        assert_eq!(
-            command_metadata["shell_execution_projection"]["nodes"],
-            json!([{ "command": "git status --short", "command_label": "inspect" }]),
+        assert!(
+            command
+                .metadata_json
+                .as_deref()
+                .is_none_or(|metadata| { !metadata.contains("shell_execution_projection") }),
             "{adapter_id}"
         );
         assert_eq!(
@@ -1872,12 +1972,10 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         Some("printf '%s\\n' '--- inspect ---' && git status --short")
     );
     assert_eq!(parts[1].source_execution_id.as_deref(), Some("zcode-shell"));
-    let command_metadata: serde_json::Value =
-        serde_json::from_str(parts[1].metadata_json.as_deref().unwrap()).unwrap();
-    assert_eq!(
-        command_metadata["shell_execution_projection"]["nodes"],
-        json!([{ "command": "git status --short", "command_label": "inspect" }])
-    );
+    assert!(parts[1]
+        .metadata_json
+        .as_deref()
+        .is_none_or(|metadata| !metadata.contains("shell_execution_projection")));
     assert_eq!(parts[2].text.as_deref(), Some("ok"));
     assert_eq!(parts[2].source_execution_id.as_deref(), Some("zcode-shell"));
     assert_eq!(
@@ -2071,21 +2169,10 @@ fn official_codex_adapter_separates_skill_context_and_projects_aggregated_comman
         parts[3].command.as_deref(),
         Some("cargo fmt --check && cargo test")
     );
-    let shell_projection = parts[3]
+    assert!(parts[3]
         .metadata_json
         .as_deref()
-        .and_then(|metadata| serde_json::from_str::<Value>(metadata).ok())
-        .and_then(|metadata| metadata.get("shell_execution_projection").cloned())
-        .expect("Codex shell projection metadata");
-    assert_eq!(
-        shell_projection["nodes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|node| node["command"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["cargo fmt --check", "cargo test"]
-    );
+        .is_none_or(|metadata| !metadata.contains("shell_execution_projection")));
     assert_eq!(
         parts[4].command.as_deref(),
         Some("/tmp/test-skill/SKILL.md")
@@ -3277,6 +3364,7 @@ fn write_manifest(dir: &Path, command: Vec<String>) -> PathBuf {
             "list_sessions".to_string(),
             "read_session".to_string(),
             "export_markdown".to_string(),
+            "project_command_parts".to_string(),
         ],
         input_kinds: vec![ConversationSourceKind::Directory],
         card_contract_version: None,

@@ -146,6 +146,121 @@ pub(crate) fn export_external_adapter_markdown_with_settings(
     })?)
 }
 
+pub(crate) fn project_external_adapter_command_parts_with_settings(
+    adapter: &ConversationAdapter,
+    parts: &[ConversationCommandProjectionPart],
+    settings: &Value,
+) -> AppResult<Vec<ConversationCommandProjection>> {
+    const METHOD: &str = "project_command_parts";
+    const MAX_PARTS: usize = 128;
+    const MAX_TOTAL_COMMAND_BYTES: usize = 8 * 1024 * 1024;
+
+    if parts.is_empty() {
+        return Ok(Vec::new());
+    }
+    if parts.len() > MAX_PARTS {
+        return Err(AppError::Validation(format!(
+            "command projection batch exceeds {MAX_PARTS} Parts"
+        )));
+    }
+    let mut requested_ids = std::collections::BTreeSet::new();
+    let mut total_command_bytes = 0usize;
+    for part in parts {
+        if part.part_id.trim().is_empty() {
+            return Err(AppError::Validation(
+                "command projection part_id is required".to_string(),
+            ));
+        }
+        if part.command.trim().is_empty() {
+            return Err(AppError::Validation(format!(
+                "command projection command is required for Part {}",
+                part.part_id
+            )));
+        }
+        if !requested_ids.insert(part.part_id.as_str()) {
+            return Err(AppError::Validation(format!(
+                "duplicate command projection Part: {}",
+                part.part_id
+            )));
+        }
+        total_command_bytes = total_command_bytes.saturating_add(part.command.len());
+    }
+    if total_command_bytes > MAX_TOTAL_COMMAND_BYTES {
+        return Err(AppError::Validation(format!(
+            "command projection batch exceeds {MAX_TOTAL_COMMAND_BYTES} command bytes"
+        )));
+    }
+    if adapter.kind != ConversationAdapterKind::External
+        || !adapter.enabled
+        || !matches!(
+            adapter.trust_state,
+            ConversationAdapterTrustState::Trusted | ConversationAdapterTrustState::BuiltIn
+        )
+        || !adapter.capabilities.iter().any(|value| value == METHOD)
+    {
+        return Err(AppError::external(format!(
+            "conversation adapter {} is not enabled and trusted for {METHOD}",
+            adapter.id
+        )));
+    }
+    let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
+        AppError::external(format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        ))
+    })?;
+    let validation = validate_external_adapter_manifest(manifest_path)?;
+    validate_external_adapter_manifest_for_method(adapter, &validation, METHOD)?;
+    let manifest_dir = Path::new(&validation.manifest_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("project-{}-{}", adapter.id, Utc::now().timestamp_millis()),
+        "method": METHOD,
+        "source": { "location": manifest_dir, "config": null },
+        "params": { "parts": parts }
+    });
+    let result = run_external_adapter_with_settings(
+        &validation,
+        METHOD,
+        request,
+        Duration::from_millis(DEFAULT_PROJECT_TIMEOUT_MS),
+        settings,
+    )?;
+
+    let mut by_part_id = std::collections::BTreeMap::new();
+    for projection in result.command_projections {
+        if !requested_ids.contains(projection.part_id.as_str()) {
+            return Err(AppError::external(format!(
+                "adapter returned an unknown command projection Part: {}",
+                projection.part_id
+            )));
+        }
+        let projection_id = projection.part_id.clone();
+        if by_part_id
+            .insert(projection_id.clone(), projection)
+            .is_some()
+        {
+            return Err(AppError::external(format!(
+                "adapter returned duplicate command projections for Part: {projection_id}"
+            )));
+        }
+    }
+    parts
+        .iter()
+        .map(|part| {
+            by_part_id.remove(&part.part_id).ok_or_else(|| {
+                AppError::external(format!(
+                    "adapter did not return a command projection for Part: {}",
+                    part.part_id
+                ))
+            })
+        })
+        .collect()
+}
+
 pub(super) fn resolve_source_location_for_adapter(
     source: &ConversationSource,
 ) -> AppResult<String> {
@@ -873,7 +988,12 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
     for capability in &manifest.capabilities {
         if !matches!(
             capability.as_str(),
-            "probe" | "list_sessions" | "read_session" | "export_markdown" | "web_records"
+            "probe"
+                | "list_sessions"
+                | "read_session"
+                | "export_markdown"
+                | "web_records"
+                | "project_command_parts"
         ) {
             return Err(AppError::external(format!(
                 "unsupported adapter capability: {capability}"
@@ -1144,9 +1264,7 @@ fn parse_external_adapter_output_impl(
     })
 }
 
-fn parse_adapter_command_projection_item(
-    item: Value,
-) -> AppResult<ConversationCommandProjection> {
+fn parse_adapter_command_projection_item(item: Value) -> AppResult<ConversationCommandProjection> {
     let projection_value = item.get("projection").cloned().unwrap_or(item);
     let projection: ConversationCommandProjection =
         serde_json::from_value(projection_value).map_err(AppError::external)?;
@@ -1155,9 +1273,14 @@ fn parse_adapter_command_projection_item(
             "command projection part_id is required".to_string(),
         ));
     }
-    if projection.projector_version == 0 {
+    if projection.schema_version != 1 {
         return Err(AppError::external(
-            "command projection projector_version must be positive".to_string(),
+            "command projection schema_version must be 1".to_string(),
+        ));
+    }
+    if projection.projector_version.trim().is_empty() {
+        return Err(AppError::external(
+            "command projection projector_version is required".to_string(),
         ));
     }
     for (expected_order, node) in projection.nodes.iter().enumerate() {
@@ -1278,8 +1401,9 @@ fn validate_normalized_session(
                 "normalized turn user_text is required".to_string(),
             ));
         }
-        if let Some(manifest) = manifest {
-            for part in &mut turn.parts {
+        for part in &mut turn.parts {
+            remove_persisted_shell_projection(part)?;
+            if let Some(manifest) = manifest {
                 if super::cards::canonicalize_normalized_content_card(
                     part,
                     &manifest.id,
@@ -1294,6 +1418,34 @@ fn validate_normalized_session(
         }
     }
     Ok(legacy_cards_upgraded)
+}
+
+fn remove_persisted_shell_projection(
+    part: &mut crate::backend::models::NormalizedConversationPart,
+) -> AppResult<()> {
+    let Some(raw) = part
+        .metadata_json
+        .as_deref()
+        .filter(|raw| raw.contains("shell_execution_projection"))
+    else {
+        return Ok(());
+    };
+    let mut metadata = serde_json::from_str::<Value>(raw).map_err(AppError::external)?;
+    let Some(metadata_object) = metadata.as_object_mut() else {
+        return Ok(());
+    };
+    if metadata_object
+        .remove("shell_execution_projection")
+        .is_none()
+    {
+        return Ok(());
+    }
+    part.metadata_json = if metadata_object.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&metadata).map_err(AppError::external)?)
+    };
+    Ok(())
 }
 
 fn example_session_detail() -> Value {
