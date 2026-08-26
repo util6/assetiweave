@@ -68,4 +68,35 @@ describe("conversation command projection service", () => {
     }]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
+
+  it("invalidates a cached projection when the source command label changes", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock
+      .mockResolvedValueOnce([{
+        part_id: "part-shell",
+        schema_version: 1,
+        projector_version: "shell-projector-v1",
+        nodes: [{ display_order: 0, command: "git status", command_label: "first" }],
+      }])
+      .mockResolvedValueOnce([{
+        part_id: "part-shell",
+        schema_version: 1,
+        projector_version: "shell-projector-v1",
+        nodes: [{ display_order: 0, command: "git status", command_label: "updated" }],
+      }]);
+
+    await projectConversationCommandParts({
+      adapterId: "codex",
+      adapterVersion: "1.6.1",
+      parts: [{ partId: "part-shell", command: "git status", commandLabel: "first" }],
+    });
+    const updated = await projectConversationCommandParts({
+      adapterId: "codex",
+      adapterVersion: "1.6.1",
+      parts: [{ partId: "part-shell", command: "git status", commandLabel: "updated" }],
+    });
+
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(updated[0]?.nodes[0]?.command_label).toBe("updated");
+  });
 });

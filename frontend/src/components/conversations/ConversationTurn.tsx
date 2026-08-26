@@ -24,6 +24,7 @@ import type {
 } from "../../store/settings/AppSettingsProvider";
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";
+import type { ConversationCommandProjection } from "../../services/conversationCommandProjection";
 
 export interface ConversationTurnPresentation {
   blocks: ConversationContentBlock[];
@@ -35,10 +36,15 @@ export interface ConversationTurnPresentation {
 
 export function buildConversationTurnPresentations(
   question: ConversationQuestionDetail,
+  commandProjections: readonly ConversationCommandProjection[] = [],
 ): ConversationTurnPresentation[] {
+  const projectionByPartId = new Map(commandProjections.map((projection) => [projection.part_id, projection]));
   return question.turns.map((turn) => {
-    const displayNodes = buildConversationDisplayNodesFromNodes(
-      question.projected_content_nodes.filter((node) => node.turn_id === turn.id),
+    const displayNodes = applyConversationCommandProjections(
+      buildConversationDisplayNodesFromNodes(
+        question.projected_content_nodes.filter((node) => node.turn_id === turn.id),
+      ),
+      projectionByPartId,
     );
 
     return {
@@ -49,6 +55,50 @@ export function buildConversationTurnPresentations(
       turn,
     };
   });
+}
+
+function applyConversationCommandProjections(
+  nodes: readonly ConversationDisplayNode[],
+  projectionByPartId: ReadonlyMap<string, ConversationCommandProjection>,
+): ConversationDisplayNode[] {
+  return nodes.flatMap((node): ConversationDisplayNode[] => {
+    if (node.type === "card") {
+      if (node.block.type !== "command") return [node];
+      const projection = node.block.partId ? projectionByPartId.get(node.block.partId) : undefined;
+      return projection
+        ? projectCommandBlock(node.block, projection).map((block) => ({ ...node, block }))
+        : [node];
+    }
+
+    const rawCommands = node.commands;
+    let projectionApplied = false;
+    const commands = rawCommands.flatMap((command) => {
+      const projection = command.partId ? projectionByPartId.get(command.partId) : undefined;
+      if (!projection) return [command];
+      projectionApplied = true;
+      return projectCommandBlock(command, projection);
+    });
+    return [{
+      ...node,
+      commands,
+      rawCommands: projectionApplied ? rawCommands : undefined,
+    }];
+  });
+}
+
+function projectCommandBlock(
+  rawBlock: ConversationContentBlock,
+  projection: ConversationCommandProjection,
+): ConversationContentBlock[] {
+  return projection.nodes.map((node, index) => ({
+    ...rawBlock,
+    id: `${rawBlock.partId ?? rawBlock.id}::display:${node.display_order}`,
+    commandLabel: node.command_label,
+    legacyAnchorIds: index === 0
+      ? Array.from(new Set([rawBlock.id, rawBlock.partId, ...(rawBlock.legacyAnchorIds ?? [])].filter(Boolean) as string[]))
+      : [],
+    text: node.command,
+  }));
 }
 
 export function collectConversationTurnBlocks(
@@ -80,6 +130,10 @@ export function buildConversationBlockTurnIndex(
         continue;
       }
       index.set(node.sourceExecutionId, model.turn.id);
+      for (const rawCommand of node.rawCommands ?? []) {
+        index.set(rawCommand.id, model.turn.id);
+        if (rawCommand.partId) index.set(rawCommand.partId, model.turn.id);
+      }
       for (const block of [...node.commands, ...node.results]) {
         index.set(block.id, model.turn.id);
         for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);

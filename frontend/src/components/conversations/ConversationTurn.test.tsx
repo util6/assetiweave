@@ -143,29 +143,38 @@ describe("ConversationTurn", () => {
     expect(html).toContain('data-conversation-card-id="part-1"');
   });
 
-  it("renders multiple projected command nodes from one source execution", () => {
+  it("projects one raw command Part into ephemeral display nodes with one shared Part ID", () => {
     const executionQuestion: ConversationQuestionDetail = {
       ...question,
       turns: [question.turns[0]!],
       question_turns: [question.question_turns[0]!],
       projected_content_nodes: [
-        executionNode("part-shell", "shell-command-1", "command", "printf one", 0),
-        executionNode("part-shell", "shell-command-2", "command", "printf two", 1),
-        executionNode("part-shell", "shell-result", "result", "one\ntwo", 2),
+        executionNode("part-shell", "shell-command", "command", "printf divider; printf one; printf two", 0),
+        executionNode("part-result", "shell-result", "result", "one\ntwo", 1),
       ],
     };
 
-    const [model] = buildConversationTurnPresentations(executionQuestion);
+    const [model] = buildConversationTurnPresentations(executionQuestion, [{
+      part_id: "part-shell",
+      schema_version: 1,
+      projector_version: "shell-projector-v1",
+      nodes: [
+        { display_order: 0, command: "printf one", command_label: "one" },
+        { display_order: 1, command: "printf two", command_label: "two" },
+      ],
+    }]);
     expect(model?.displayNodes).toHaveLength(1);
     expect(model?.displayNodes?.[0]).toMatchObject({
       type: "execution",
       sourceExecutionId: "shell-execution",
       commands: [
-        { id: "part-shell-node-0" },
-        { id: "part-shell-node-1" },
+        { id: "part-shell::display:0", partId: "part-shell", commandLabel: "one" },
+        { id: "part-shell::display:1", partId: "part-shell", commandLabel: "two" },
       ],
-      results: [{ id: "part-shell-node-2" }],
+      rawCommands: [{ id: "part-shell-node-0" }],
+      results: [{ id: "part-result-node-1" }],
     });
+    expect(buildConversationBlockTurnIndex([model!]).get("part-shell-node-0")).toBe("turn-1");
   });
 });
 

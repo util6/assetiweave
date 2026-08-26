@@ -103,6 +103,10 @@ import {
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
 import {
+  projectConversationCommandParts,
+  type ConversationCommandProjection,
+} from "../../services/conversationCommandProjection";
+import {
   useConversationsController,
   type ConversationExportDialogState,
   type ConversationExportMode,
@@ -1120,6 +1124,7 @@ export function ConversationsPage({
         />
       ) : (
         <SessionQuestionWorkspace
+          adapterVersion={adapters.find((adapter) => adapter.id === sessionDetail?.session.adapter_id)?.version ?? "unknown"}
           activeSearchTarget={activeSearchTarget}
           contentCardColors={appSettings.conversations.contentCardColors}
           onExport={() => openExportDialog("session")}
@@ -1225,12 +1230,14 @@ function ColumnPanel({
   children,
   className = "",
   icon,
+  scrollRef,
   title,
 }: {
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
   icon: ReactNode;
+  scrollRef?: React.Ref<HTMLDivElement>;
   title: string;
 }) {
   return (
@@ -1242,7 +1249,9 @@ function ColumnPanel({
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </header>
-      <div className="conversation-column-scroll min-h-0 flex-1 overflow-auto">{children}</div>
+      <RenderSafeScrollSurface className="conversation-column-scroll min-h-0 flex-1" ref={scrollRef}>
+        {children}
+      </RenderSafeScrollSurface>
     </section>
   );
 }
@@ -1551,6 +1560,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   selectedProjectKey: string | null;
   t: Translator;
 }) {
+  const sessionListScrollRef = useRef<HTMLDivElement>(null);
   const showProjectColumn = recordKind !== "web";
   const selectedGroup = groups.find((group) => group.app.id === selectedAppId) ?? null;
   const selectedProjectGroup = showProjectColumn
@@ -1653,7 +1663,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
             </span>
           ) : null}
         </header>
-        <div className="min-h-0 flex-1 overflow-auto p-4">
+        <RenderSafeScrollSurface className="min-h-0 flex-1 p-4" ref={sessionListScrollRef}>
           {!selectedGroup ? (
             <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
           ) : showProjectColumn && selectedGroup.projectGroups.length === 0 ? (
@@ -1663,23 +1673,46 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
           ) : selectedProjectGroup.sessions.length === 0 ? (
             <EmptyPanel>{emptySessionsMessage}</EmptyPanel>
           ) : (
-            <div className="grid gap-3">
-              {selectedProjectGroup.sessions.map((session) => (
-                <SessionCard
-                  key={session.id}
-                  onOpen={() => onSessionOpen(session.id)}
-                  session={session}
-                  showProjectPath={showProjectColumn}
-                  t={t}
-                />
-              ))}
-            </div>
+            <RenderActivityProvider scrollElementRef={sessionListScrollRef}>
+              <VirtualizedCollection
+                className="grid gap-3"
+                contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
+                deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && selectedProjectGroup.sessions.length >= 12}
+                enabled={renderingFlags.conversationListVirtualization}
+                estimateSize={132}
+                fallback={() => <SessionCardSkeleton />}
+                getItemKey={(session) => session.id}
+                gap={12}
+                items={selectedProjectGroup.sessions}
+                minItems={12}
+                renderItem={(session) => (
+                  <SessionCard
+                    onOpen={() => onSessionOpen(session.id)}
+                    session={session}
+                    showProjectPath={showProjectColumn}
+                    t={t}
+                  />
+                )}
+                scrollElementRef={sessionListScrollRef}
+                size="regular"
+              />
+            </RenderActivityProvider>
           )}
-        </div>
+        </RenderSafeScrollSurface>
       </section>
     </ResizableColumns>
   );
 });
+
+function SessionCardSkeleton() {
+  return (
+    <div aria-hidden="true" className="conversation-session-card grid min-h-32 animate-pulse gap-3 border px-4 py-4">
+      <div className="h-4 w-2/3 rounded bg-theme-control" />
+      <div className="h-3 w-4/5 rounded bg-theme-control/75" />
+      <div className="h-7 w-1/2 rounded-xl bg-theme-control/60" />
+    </div>
+  );
+}
 
 function ProjectListItem({
   group,
@@ -2271,6 +2304,7 @@ function SessionMetaChip({
 
 export function SessionQuestionWorkspace({
   activeSearchTarget,
+  adapterVersion = "unknown",
   columnMinWidth = DEFAULT_COLUMN_MIN_WIDTH,
   contentCardColors,
   onExport,
@@ -2294,6 +2328,7 @@ export function SessionQuestionWorkspace({
   visibility,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
+  adapterVersion?: string;
   columnMinWidth?: number;
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
@@ -2317,6 +2352,10 @@ export function SessionQuestionWorkspace({
   visibility: ConversationContentVisibility;
 }) {
   const [questionListCollapsed, setQuestionListCollapsed] = useState(false);
+  const questionListScrollRef = useRef<HTMLDivElement>(null);
+  const selectedQuestionListKey = selectedQuestionId
+    ? `${selectedQuestionId}:${questions.findIndex((item) => item.question.id === selectedQuestionId)}`
+    : null;
   const toggleQuestionList = useCallback(() => {
     setQuestionListCollapsed((current) => !current);
   }, []);
@@ -2333,6 +2372,7 @@ export function SessionQuestionWorkspace({
         <QuestionPreview
           key={`${session.session.id}:${question.question.id}`}
           activeSearchTarget={activeSearchTarget}
+          adapterVersion={adapterVersion}
           contentCardColors={contentCardColors}
           onExport={onExport}
           onCopyError={onCopyError}
@@ -2386,6 +2426,7 @@ export function SessionQuestionWorkspace({
         className="max-[920px]:border-r-0 max-[920px]:border-b"
         title={t("conversation.column.questions")}
         icon={<Layers3 size={16} />}
+        scrollRef={questionListScrollRef}
       >
         {!session ? (
           <ConversationLoadingState label={t("conversation.session.loading")} />
@@ -2394,32 +2435,57 @@ export function SessionQuestionWorkspace({
         ) : questions.length === 0 ? (
           <EmptyPanel>{t("conversation.question.emptyForSearch")}</EmptyPanel>
         ) : (
-          questions.map((item) => {
-            const sessionQuestionIndex = session.questions.findIndex(
-              (candidate) => candidate.question.id === item.question.id,
-            );
-            const previousQuestion =
-              sessionQuestionIndex > 0 ? session.questions[sessionQuestionIndex - 1] : null;
-
-            return (
-              <QuestionListItem
-                key={item.question.id}
-                onMergeWithPrevious={
-                  previousQuestion && onMerge ? () => void onMerge(previousQuestion, item) : undefined
-                }
-                onSelect={() => onQuestionSelect(item.question.id)}
-                onSelectionChange={(checked) => onQuestionSelectionChange(item.question.id, checked)}
-                question={item}
-                selected={item.question.id === selectedQuestionId}
-                selectedForExport={selectedQuestionIds.has(item.question.id)}
-                t={t}
-              />
-            );
-          })
+          <RenderActivityProvider scrollElementRef={questionListScrollRef}>
+            <VirtualizedCollection
+              contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
+              deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && questions.length >= 12}
+              eagerKeys={selectedQuestionListKey ? new Set([selectedQuestionListKey]) : undefined}
+              enabled={renderingFlags.conversationListVirtualization}
+              estimateSize={192}
+              fallback={() => <QuestionListItemSkeleton />}
+              getItemKey={(item, index) => `${item.question.id}:${index}`}
+              gap={0}
+              items={questions}
+              minItems={12}
+              pinnedKeys={selectedQuestionListKey ? new Set([selectedQuestionListKey]) : undefined}
+              renderItem={(item) => {
+                const sessionQuestionIndex = session.questions.findIndex(
+                  (candidate) => candidate.question.id === item.question.id,
+                );
+                const previousQuestion =
+                  sessionQuestionIndex > 0 ? session.questions[sessionQuestionIndex - 1] : null;
+                return (
+                  <QuestionListItem
+                    onMergeWithPrevious={
+                      previousQuestion && onMerge ? () => void onMerge(previousQuestion, item) : undefined
+                    }
+                    onSelect={() => onQuestionSelect(item.question.id)}
+                    onSelectionChange={(checked) => onQuestionSelectionChange(item.question.id, checked)}
+                    question={item}
+                    selected={item.question.id === selectedQuestionId}
+                    selectedForExport={selectedQuestionIds.has(item.question.id)}
+                    t={t}
+                  />
+                );
+              }}
+              scrollElementRef={questionListScrollRef}
+              size="compact"
+            />
+          </RenderActivityProvider>
         )}
       </ColumnPanel>
       {previewPanel}
     </ResizableColumns>
+  );
+}
+
+function QuestionListItemSkeleton() {
+  return (
+    <div aria-hidden="true" className="conversation-row grid h-48 animate-pulse gap-3 px-4 py-4">
+      <div className="h-4 w-3/4 rounded bg-theme-control" />
+      <div className="h-3 w-full rounded bg-theme-control/75" />
+      <div className="h-3 w-2/3 rounded bg-theme-control/60" />
+    </div>
   );
 }
 
@@ -2521,6 +2587,7 @@ function QuestionListItem({
 
 export function QuestionPreview({
   activeSearchTarget,
+  adapterVersion = "unknown",
   contentCardColors,
   onExport,
   onCopyError,
@@ -2538,6 +2605,7 @@ export function QuestionPreview({
   visibility = DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
 }: {
   activeSearchTarget?: ConversationSearchTarget | null;
+  adapterVersion?: string;
   contentCardColors?: ConversationContentCardColorSettings;
   onExport: () => void;
   onCopyError?: (message: string) => void;
@@ -2556,10 +2624,14 @@ export function QuestionPreview({
 }) {
   const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
   const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
+  const [commandProjections, setCommandProjections] = useState<ConversationCommandProjection[]>([]);
   const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const virtualizedCollectionRef = useRef<VirtualizedCollectionHandle>(null);
-  const turnModels = useMemo(() => buildConversationTurnPresentations(question), [question]);
+  const turnModels = useMemo(
+    () => buildConversationTurnPresentations(question, commandProjections),
+    [commandProjections, question],
+  );
   const contentController = useConversationContentController({
     blocks: collectConversationTurnBlocks(turnModels),
     onCopyError,
@@ -2569,7 +2641,11 @@ export function QuestionPreview({
     translationSettings: translationSettings ?? DEFAULT_TRANSLATION_SETTINGS,
   });
   const blockTurnIndex = useMemo(() => buildConversationBlockTurnIndex(turnModels), [turnModels]);
-  const activeTurnId = activeBlockId ? blockTurnIndex.get(activeBlockId) ?? null : null;
+  const activeTurnId = activeBlockId
+    ? blockTurnIndex.get(activeBlockId)
+      ?? blockTurnIndex.get(conversationProjectionPartId(activeBlockId))
+      ?? null
+    : null;
   const [focusedTurnId, setFocusedTurnId] = useState<string | null>(null);
   const eagerKeys = useMemo(
     () => activeTurnId ? new Set([activeTurnId]) : new Set<string>(),
@@ -2579,6 +2655,27 @@ export function QuestionPreview({
     () => new Set([activeTurnId, focusedTurnId].filter((value): value is string => Boolean(value))),
     [activeTurnId, focusedTurnId],
   );
+
+  useEffect(() => {
+    const commandParts = question.parts.flatMap((part) => {
+      const command = part.command?.trim();
+      return command ? [{ partId: part.id, command: part.command!, commandLabel: part.command_label }] : [];
+    });
+    let cancelled = false;
+    setCommandProjections([]);
+    if (commandParts.length === 0) return () => { cancelled = true; };
+
+    void projectConversationCommandParts({
+      adapterId: session.session.adapter_id,
+      adapterVersion,
+      parts: commandParts,
+    }).then((projections) => {
+      if (!cancelled) setCommandProjections(projections);
+    }).catch((error) => {
+      if (!cancelled) onCopyError?.(t("conversation.content.projectionFailed", { message: errorMessage(error) }));
+    });
+    return () => { cancelled = true; };
+  }, [adapterVersion, onCopyError, question, session.session.adapter_id, t]);
 
   useEffect(() => {
     if (!activeTurnId) return;
@@ -2696,6 +2793,10 @@ function questionOriginLabel(question: ConversationQuestionDetail, t: Translator
   const origin = origins.has("manual") ? "manual" : origins.has("auto_merged") ? "auto_merged" : "imported";
   const key = `conversation.question.origin.${origin}` as TranslationKey;
   return t(key);
+}
+
+function conversationProjectionPartId(blockId: string) {
+  return blockId.replace(/::display:\d+$/, "");
 }
 
 function conversationQuestionOrder(question: ConversationQuestionDetail) {

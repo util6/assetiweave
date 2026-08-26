@@ -378,6 +378,45 @@ describe("ConversationContentCards", () => {
     expect(html.indexOf("pnpm typecheck")).toBeLessThan(html.indexOf("types passed"));
   });
 
+  it("folds projected command groups and keeps the Part short ID stable across display nodes", () => {
+    const partId = "part-shell-12345678";
+    const commands = Array.from({ length: 8 }, (_, index) => ({
+      id: `${partId}::display:${index}`,
+      partId,
+      type: "command" as const,
+      renderer: "command" as const,
+      role: "tool" as const,
+      text: `command-${index + 1}`,
+    }));
+    render(
+      <ConversationContentCards
+        blocks={[]}
+        nodes={[{
+          type: "execution",
+          turnId: "turn-1",
+          sourceExecutionId: "call-a",
+          commands,
+          results: [],
+          rawCommands: [{ ...commands[0]!, id: partId, text: "raw command block" }],
+        }]}
+        t={t}
+        visibility={{ command: true, result: true }}
+      />,
+    );
+
+    expect(screen.getByText("command-1")).toBeTruthy();
+    expect(screen.queryByText("command-2")).toBeNull();
+    expect(screen.queryByText("raw command block")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "展开其余 7 条命令" }));
+    expect(screen.getByText("command-6")).toBeTruthy();
+    expect(screen.queryByText("command-7")).toBeNull();
+    expect(document.querySelectorAll(`[title="${partId}"]`)).toHaveLength(6);
+    expect(document.body.innerHTML).not.toContain(`title="${partId}::display:`);
+    expect(screen.getByRole("button", { name: "继续加载命令" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "查看后端保存的原始命令块" }));
+    expect(screen.getByText("raw command block")).toBeTruthy();
+  });
+
   it("renders backend-split commands as independent cards with header labels", () => {
     const blocks = buildConversationContentBlocks([], [
       projectedCard("command-first", "command", "cat first.md"),

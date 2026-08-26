@@ -1,5 +1,5 @@
-import { Check, CheckCircle2, Copy, GitCompareArrows, Languages, XCircle } from "lucide-react";
-import { useState } from "react";
+import { Check, CheckCircle2, ChevronDown, ChevronUp, Copy, GitCompareArrows, Languages, XCircle } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import {
@@ -108,6 +108,7 @@ export type ConversationDisplayNode =
       sourceExecutionId: string;
       commands: ConversationContentBlock[];
       results: ConversationContentBlock[];
+      rawCommands?: ConversationContentBlock[];
     };
 
 export function conversationCardDomId(blockId: string) {
@@ -263,7 +264,7 @@ export function ConversationContentCards({
     const results = node.results.filter((block) => (
       (visibility[block.type] ?? true) && shouldDisplayContentBlock(block)
     ));
-    if (commands.length > 0 && results.length === 0) {
+    if (commands.length === 1 && results.length === 0 && !node.rawCommands) {
       return commands.map((command) => ({ type: "card", turnId: node.turnId, block: command }));
     }
     return commands.length > 0 || results.length > 0
@@ -306,21 +307,12 @@ export function ConversationContentCards({
         }
         const executionKey = `${node.turnId}:${node.sourceExecutionId}`;
         return (
-          <section
-            className="conversation-surface overflow-hidden rounded-xl"
-            data-conversation-execution-id={node.sourceExecutionId}
+          <ConversationExecutionGroup
             key={executionKey}
-          >
-            <header className="conversation-content-header flex flex-wrap items-center gap-2 px-4 py-2.5">
-              <span className="text-label-caps text-on-surface-variant">
-                {t("conversation.content.execution")}
-              </span>
-            </header>
-            <div className="grid gap-3 p-3">
-              {node.commands.map(renderContentCard)}
-              {node.results.map(renderContentCard)}
-            </div>
-          </section>
+            node={node}
+            renderContentCard={renderContentCard}
+            t={t}
+          />
         );
       })}
     </div>
@@ -350,6 +342,104 @@ export function ConversationContentCards({
       />
     );
   }
+}
+
+const COMMAND_RENDER_BATCH_SIZE = 6;
+
+function ConversationExecutionGroup({
+  node,
+  renderContentCard,
+  t,
+}: {
+  node: Extract<ConversationDisplayNode, { type: "execution" }>;
+  renderContentCard: (block: ConversationContentBlock) => ReactNode;
+  t: Translator;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [rawExpanded, setRawExpanded] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(COMMAND_RENDER_BATCH_SIZE);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const hasFoldedCommands = node.commands.length > 1;
+  const visibleCommandCount = expanded ? Math.min(renderLimit, node.commands.length) : Math.min(1, node.commands.length);
+  const hasMore = expanded && visibleCommandCount < node.commands.length;
+
+  useEffect(() => {
+    if (!hasMore || typeof IntersectionObserver === "undefined") return;
+    const target = loadMoreRef.current;
+    if (!target) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length));
+    }, { rootMargin: "320px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, node.commands.length, visibleCommandCount]);
+
+  return (
+    <section
+      className="conversation-surface overflow-hidden rounded-xl"
+      data-conversation-execution-id={node.sourceExecutionId}
+    >
+      <header className="conversation-content-header flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+        <span className="text-label-caps text-on-surface-variant">
+          {t("conversation.content.execution")}
+        </span>
+        {hasFoldedCommands ? (
+          <button
+            aria-expanded={expanded}
+            className="inline-flex items-center gap-1.5 rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+            onClick={() => {
+              setExpanded((current) => !current);
+              setRenderLimit(COMMAND_RENDER_BATCH_SIZE);
+            }}
+            type="button"
+          >
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            {expanded
+              ? t("conversation.content.collapseCommands")
+              : t("conversation.content.expandCommands", { count: node.commands.length - 1 })}
+          </button>
+        ) : null}
+      </header>
+      <div className="grid gap-3 p-3">
+        {node.commands.slice(0, visibleCommandCount).map(renderContentCard)}
+        {hasMore ? (
+          <div className="flex justify-center py-1" ref={loadMoreRef}>
+            <button
+              className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+              onClick={() => setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length))}
+              type="button"
+            >
+              {t("conversation.content.loadMoreCommands")}
+            </button>
+          </div>
+        ) : null}
+        {node.results.map(renderContentCard)}
+        {node.rawCommands?.length ? (
+          <div className="rounded-xl border border-theme-card-border/55 bg-theme-card/35 px-3 py-2">
+            <button
+              aria-expanded={rawExpanded}
+              className="inline-flex items-center gap-1.5 text-body-sm font-semibold text-on-surface-variant"
+              onClick={() => setRawExpanded((current) => !current)}
+              type="button"
+            >
+              {rawExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {t("conversation.content.rawCommand")}
+            </button>
+            {rawExpanded ? (
+              <div className="mt-2 grid gap-2">
+                {node.rawCommands.map((command) => (
+                  <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface" key={command.id}>
+                    <code>{command.text}</code>
+                  </pre>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
 }
 
 const DEFAULT_TRANSLATION_SETTINGS: ResolvedConversationTranslationSettings = {
@@ -472,9 +562,9 @@ function ConversationContentCard({
         <div className="flex items-center gap-1.5 text-label-caps">
           <span
             className="select-text rounded-md border border-inherit bg-theme-card/45 px-1.5 py-0.5 font-mono text-code-sm normal-case text-on-surface-muted"
-            title={block.id}
+            title={block.partId ?? block.id}
           >
-            {conversationIdFragment(block.id)}
+            {conversationIdFragment(block.partId ?? block.id)}
           </span>
           <span className="text-label-caps text-on-surface-muted">{role}</span>
           <button

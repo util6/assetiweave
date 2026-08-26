@@ -20,6 +20,7 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/AppSettingsProvider";
+import * as conversationCommandProjectionService from "../../services/conversationCommandProjection";
 import type {
   AppShortcut,
   ConversationAdapter,
@@ -1074,6 +1075,41 @@ describe("MarkdownContent", () => {
     expect(types).toEqual(["answer", "codex.skill"]);
     expect(types).not.toContain("command");
     expect(types).not.toContain("result");
+  });
+
+  it("projects all command Parts for the visible Question through one service boundary", async () => {
+    const projector = vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
+      .mockResolvedValueOnce([{
+        part_id: "part-2",
+        schema_version: 1,
+        projector_version: "shell-projector-v1",
+        nodes: [{ display_order: 0, command: "git status --short", command_label: "status" }],
+      }]);
+    render(
+      <QuestionPreview
+        adapterVersion="1.0.0"
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("git status --short")).toBeTruthy());
+    expect(projector).toHaveBeenCalledTimes(1);
+    expect(projector).toHaveBeenCalledWith({
+      adapterId: "codex",
+      adapterVersion: "1.0.0",
+      parts: [{
+        partId: "part-2",
+        command: "assetiweave-cli conversation sync --dry-run",
+        commandLabel: undefined,
+      }],
+    });
+    expect(document.querySelector('[data-command-label="status"]')).toBeTruthy();
   });
 
   it("renders question checkboxes for batch export selection", () => {

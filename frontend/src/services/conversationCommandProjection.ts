@@ -161,6 +161,7 @@ function projectionSourceKey(
     request.adapterVersion,
     part.partId,
     commandHash(part.command),
+    commandHash(part.commandLabel ?? ""),
   ].join("\0");
 }
 
