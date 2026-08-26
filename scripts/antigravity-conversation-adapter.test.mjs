@@ -197,7 +197,7 @@ test("Antigravity omits successful command results with no useful payload", () =
   }
 });
 
-test("Antigravity keeps a RUN_COMMAND execution boundary and projects display nodes", () => {
+test("Antigravity keeps a RUN_COMMAND execution boundary without persisted display projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-shell-projection-"));
   try {
     const transcriptPath = path.join(fixtureRoot, "transcript_full.jsonl");
@@ -242,13 +242,7 @@ test("Antigravity keeps a RUN_COMMAND execution boundary and projects display no
     ]);
     assert.equal(parts[0].command, command);
     assert.equal(parts[1].text, "Error: failed");
-    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
-      schema_version: 1,
-      nodes: [
-        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
-        { command: "git status --short > /tmp/status.txt" },
-      ],
-    });
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

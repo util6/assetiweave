@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { normalizeSessionPayload } from "./payload-policy.mjs";
+import shellProjector from "./shell-projector.cjs";
+const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -736,7 +738,11 @@ function structuredCardRenderer(card) {
 }
 
 try {
-  if (input.method === "probe") {
+  if (input.method === "project_command_parts") {
+    const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
+    for (const projection of projections) emit("item", { item: { kind: "command_projection", ...projection } });
+    emit("complete", { item: { projection_count: projections.length, projector_version: SHELL_PROJECTOR_VERSION } });
+  } else if (input.method === "probe") {
     emit("complete", { item: { session_count: 0 } });
   } else if (input.method === "list_sessions") {
     const descriptors = listSessions();

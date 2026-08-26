@@ -2,17 +2,26 @@
   "schema_version": 1,
   "package_id": "io.github.util6.antigravity-session",
   "name": "Antigravity Session Parser",
-  "version": "1.3.9",
+  "version": "1.3.10",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
   "capabilities": [
-    "read_session"
+    "read_session",
+    "project_command_parts"
   ],
   "runtime": {
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.3.10",
+      "date": "2026-08-26",
+      "notes": [
+        "Keep each raw command block as one persisted Part and expose versioned project_command_parts display projection through the external Adapter protocol.",
+        "Remove legacy shell_execution_projection metadata at the ingestion boundary."
+      ]
+    },
     {
       "version": "1.3.9",
       "date": "2026-08-25",

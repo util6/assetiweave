@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "codex",
   "name": "Codex",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "protocol_version": 1,
   "runtime": {
     "type": "node",
@@ -12,7 +12,8 @@
   "capabilities": [
     "probe",
     "list_sessions",
-    "read_session"
+    "read_session",
+    "project_command_parts"
   ],
   "input_kinds": [
     "live",

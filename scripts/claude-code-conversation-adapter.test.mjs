@@ -90,7 +90,7 @@ test("Claude Code stores one canonical diff in the original Edit result Part", (
   }
 });
 
-test("Claude Code keeps an aggregated Bash execution raw and projects display nodes", () => {
+test("Claude Code keeps an aggregated Bash execution raw without persisted display projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-shell-projection-"));
   try {
     const sessionPath = path.join(fixtureRoot, "session-shell.jsonl");
@@ -124,19 +124,13 @@ test("Claude Code keeps an aggregated Bash execution raw and projects display no
     ]);
     assert.equal(parts[0].command, command);
     assert.equal(parts[1].text, "Error: failed");
-    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
-      schema_version: 1,
-      nodes: [
-        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
-        { command: "git status --short > /tmp/status.txt", command_label: "Bash" },
-      ],
-    });
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Claude Code keeps a simple Bash execution boundary unchanged", () => {
+test("Claude Code keeps a simple Bash execution boundary and omits persisted display projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-claude-simple-shell-"));
   try {
     const sessionPath = path.join(fixtureRoot, "session-simple-shell.jsonl");
@@ -162,9 +156,7 @@ test("Claude Code keeps a simple Bash execution boundary unchanged", () => {
       "tool-simple-shell",
       "tool-simple-shell",
     ]);
-    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
-      { command: "git status --short", command_label: "Bash" },
-    ]);
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

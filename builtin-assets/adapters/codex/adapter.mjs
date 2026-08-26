@@ -10,6 +10,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { normalizeSessionPayload } from "./payload-policy.mjs";
+import shellProjector from "./shell-projector.cjs";
+const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 
 // ---------------------------------------------------------------------------
 // 全局常量配置与配额定义 (Global Constants & Budget Rules)
@@ -1717,7 +1719,11 @@ function structuredCardRenderer(card) {
 try {
   // 1. 【方法分支: probe】探针心跳检测
   //    用于 Rust 后端在初始化或检测适配器可用性时，轻量验证本 Adapter 脚本能否在当前系统环境中正确被 Node.js 执行。
-  if (input.method === "probe") {
+  if (input.method === "project_command_parts") {
+    const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
+    for (const projection of projections) emit("item", { item: { kind: "command_projection", ...projection } });
+    emit("complete", { item: { projection_count: projections.length, projector_version: SHELL_PROJECTOR_VERSION } });
+  } else if (input.method === "probe") {
     // 立即向 stdout 发送 complete 信号，表示探针响应成功且会话总数为 0
     emit("complete", { item: { session_count: 0 } });
 

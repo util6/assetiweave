@@ -55,7 +55,7 @@ test("OpenCode stores message summary diffs once in the existing patch Part", ()
   }
 });
 
-test("OpenCode keeps an aggregated shell Part and projects its command nodes", () => {
+test("OpenCode keeps an aggregated shell Part without persisted display projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-shell-projection-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode.db");
@@ -84,19 +84,13 @@ test("OpenCode keeps an aggregated shell Part and projects its command nodes", (
     ]);
     assert.equal(parts[0].command, command);
     assert.equal(parts[1].text, "Error: failed");
-    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
-      schema_version: 1,
-      nodes: [
-        { command: "rg 'quoted && value' ./src | sed 's/;/|/'", command_label: "inspect" },
-        { command: "git status --short > /tmp/status.txt" },
-      ],
-    });
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("OpenCode keeps a simple shell Part with one projected node", () => {
+test("OpenCode keeps a simple shell Part without a persisted projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-simple-shell-"));
   try {
     const dbPath = path.join(fixtureRoot, "opencode.db");
@@ -118,9 +112,7 @@ test("OpenCode keeps a simple shell Part with one projected node", () => {
       "opencode-simple-shell",
       "opencode-simple-shell",
     ]);
-    assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
-      { command: "git status --short" },
-    ]);
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

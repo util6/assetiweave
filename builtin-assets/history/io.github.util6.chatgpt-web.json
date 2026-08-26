@@ -7,13 +7,29 @@
   "record_kind": "web",
   "releases": [
     {
+      "version": "0.4.5",
+      "channel": "stable",
+      "released_at": "2026-08-26T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.5-universal.zip",
+      "artifact_size": 89451,
+      "artifact_sha256": "b7e1f2d5f85ad8d035dc492484b6b1e2468111d6baed4650327f7d348441c2cf",
+      "changelog_markdown": "## 0.4.5\n\n- Keep each raw command block as one persisted Part and expose versioned project_command_parts display projection through the external Adapter protocol.\n- Remove legacy shell_execution_projection metadata at the ingestion boundary.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web"
+      }
+    },
+    {
       "version": "0.4.4",
       "channel": "stable",
       "released_at": "2026-08-25T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.chatgpt-web-0.4.4-universal.zip",
-      "artifact_size": 80401,
-      "artifact_sha256": "f4ef4f402f89261107350017272b6bd4fddaa44ff24973005e8fbef7cb5bc351",
+      "artifact_size": 89110,
+      "artifact_sha256": "8e94bded25226500529e507fda1cdf105990540cfcd6d808163be64e15985484",
       "changelog_markdown": "## 0.4.4\n\n- Project imported shell commands as display-only Content Nodes while preserving source Parts and execution IDs.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",

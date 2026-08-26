@@ -9,10 +9,11 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import shellProjector from "./shell-projector.cjs";
+const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const CONTENT_CARD_SCHEMA_VERSION = "zcode-content-cards-v7";
-const SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION = 1;
 const IGNORED_PART_TYPES = new Set([
   "compaction",
   "reasoning",
@@ -565,130 +566,17 @@ function loadTurns(dbPath, sessionId) {
   }
   return displayTurns(turns).map((turn) => ({
     ...turn,
-    parts: annotateShellExecutionProjectionParts(turn.parts),
+    parts: turn.parts.map((part) => removePersistedShellProjection(part)),
   }));
 }
 
-function annotateShellExecutionProjectionParts(parts) {
-  for (const part of parts) {
-    if (part?.kind !== "command" || typeof part.command !== "string") continue;
-    const metadata = parseJson(part.metadata_json);
-    const sourceType = String(metadata.tool ?? metadata.source_type ?? "").toLowerCase();
-    if (sourceType && sourceType !== "tool" && !/(shell|command|exec|terminal|bash|zsh|run)/.test(sourceType)) continue;
-    const nodes = [];
-    let pendingLabel = null;
-    for (const command of splitTopLevelShellCommands(part.command)) {
-      const separator = parseSeparatorPrintCommand(command);
-      if (separator) {
-        pendingLabel = separator.label;
-        continue;
-      }
-      nodes.push(compactObject({ command, command_label: pendingLabel }));
-      pendingLabel = null;
-    }
-    metadata.shell_execution_projection = {
-      schema_version: SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION,
-      nodes,
-    };
-    part.metadata_json = compactJson(metadata);
-  }
-  return parts;
-}
-
-function splitTopLevelShellCommands(value) {
-  const source = String(value ?? "").replace(/\r\n?/g, "\n").trim();
-  if (!source || isComplexShellScript(source)) return source ? [source] : [];
-  const commands = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let previousNonWhitespace = null;
-  const pushCommand = (end) => {
-    const command = source.slice(start, end).trim();
-    if (command) commands.push(command);
-  };
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    const next = source[index + 1];
-    const precedingNonWhitespace = previousNonWhitespace;
-    if (!/\s/.test(char)) previousNonWhitespace = char;
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      continue;
-    }
-    if (char === "(") parenDepth += 1;
-    else if (char === ")") parenDepth = Math.max(0, parenDepth - 1);
-    else if (char === "{") braceDepth += 1;
-    else if (char === "}") braceDepth = Math.max(0, braceDepth - 1);
-    else if (char === "[") bracketDepth += 1;
-    else if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
-    if (parenDepth || braceDepth || bracketDepth) continue;
-    let nextNonWhitespace = next;
-    if (char === "\n") {
-      let cursor = index + 1;
-      while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
-      nextNonWhitespace = source[cursor];
-    }
-    const continuedPipeline = char === "\n"
-      && (precedingNonWhitespace === "|" || nextNonWhitespace === "|");
-    let separatorLength = 0;
-    if (!continuedPipeline) {
-      if ((char === "&" && next === "&") || (char === "|" && next === "|")) separatorLength = 2;
-      else if (char === ";" || char === "\n") separatorLength = 1;
-    }
-    if (!separatorLength) continue;
-    pushCommand(index);
-    index += separatorLength - 1;
-    start = index + 1;
-  }
-  pushCommand(source.length);
-  return commands.length > 0 ? commands : [source];
-}
-
-function isComplexShellScript(source) {
-  return /<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/.test(source)
-    || /(?:^|[;&|\n]\s*)(?:for|select|while|until|if|case|function)\b/.test(source)
-    || /^\s*\{(?:\s|\n)/.test(source);
-}
-
-function parseSeparatorPrintCommand(command) {
-  const trimmed = String(command ?? "").trim();
-  let body = null;
-  const printfWithArgument = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s+(['"])([\s\S]*?)\3\s*$/);
-  if (printfWithArgument) {
-    const format = printfWithArgument[2];
-    const substitutions = format.match(/%s/g) ?? [];
-    if (substitutions.length === 1 && /^(?:%s|\\[nrt]|\s)+$/.test(format)) body = printfWithArgument[4];
-  } else {
-    const printfLiteral = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s*$/);
-    const echoLiteral = trimmed.match(/^echo\s+(?:-[A-Za-z]+\s+)*(['"])([\s\S]*?)\1\s*$/);
-    body = printfLiteral?.[2] ?? echoLiteral?.[2] ?? null;
-  }
-  if (body == null) return null;
-  const printedText = body
-    .replace(/^(?:(?:\\[nrt])+|\s)+|(?:(?:\\[nrt])+|\s)+$/g, "")
-    .trim();
-  if (!printedText) return null;
-  const divider = "[-=*~_─━—–]";
-  if (new RegExp(`^${divider}+$`, "u").test(printedText)) return { label: null };
-  const wrappedLabel = printedText.match(new RegExp(`^${divider}{2,}\\s*(.{1,80}?)\\s*${divider}{2,}$`, "u"));
-  if (!wrappedLabel) return null;
-  return { label: wrappedLabel[1].replace(/\\s+/g, " ").trim() || null };
+function removePersistedShellProjection(part) {
+  if (!part || typeof part !== "object") return part;
+  const metadata = parseJson(part.metadata_json);
+  if (!("shell_execution_projection" in metadata)) return part;
+  delete metadata.shell_execution_projection;
+  part.metadata_json = Object.keys(metadata).length > 0 ? compactJson(metadata) : null;
+  return part;
 }
 
 function displayTurns(turns) {
@@ -1114,7 +1002,13 @@ function main() {
     if (!request || typeof request !== "object" || Array.isArray(request)) {
       throw new Error("adapter request must be a JSON object");
     }
-    run(request);
+    if (request.method === "project_command_parts") {
+      const projections = projectCommandParts(request.params?.parts ?? request.params?.command_parts);
+      for (const projection of projections) emit({ type: "item", item: { kind: "command_projection", ...projection } });
+      emit({ type: "complete", item: { projection_count: projections.length, projector_version: SHELL_PROJECTOR_VERSION } });
+    } else {
+      run(request);
+    }
   } catch (error) {
     fail(error);
   }

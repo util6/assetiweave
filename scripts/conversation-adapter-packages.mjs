@@ -11,9 +11,17 @@ const outputRoot = path.join(root, "target", "conversation-adapter-packages");
 const command = process.argv[2] ?? "check";
 const update = process.argv.includes("--update");
 const generatedCopies = [
+  ...[
+    "antigravity", "chatgpt-web", "claude-code", "codex",
+    "gemini-web", "opencode", "qwen-web", "zcode",
+  ].map((adapterId) => [
+    "builtin-assets/adapters/common/shell-projector.cjs",
+    `builtin-assets/adapters/${adapterId}/shell-projector.cjs`,
+  ]),
   ...["gemini-web", "qwen-web"].flatMap((adapterId) => [
     "adapter.js",
     "conversation-adapter.json",
+    "shell-projector.cjs",
     "harvester.json",
     "web-harvester.json",
     "requests",

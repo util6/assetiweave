@@ -7,13 +7,29 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.6.1",
+      "channel": "stable",
+      "released_at": "2026-08-26T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.6.1-universal.zip",
+      "artifact_size": 110388,
+      "artifact_sha256": "6077a4296151d45a95f7c7c997e7d757f8a0bc6d544f47aa13ced2b88638f95a",
+      "changelog_markdown": "## 1.6.1\n\n- Keep each raw command block as one persisted Part and expose versioned project_command_parts display projection through the external Adapter protocol.\n- Remove legacy shell_execution_projection metadata at the ingestion boundary.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.6.0",
       "channel": "stable",
       "released_at": "2026-08-25T00:00:00Z",
       "core_compatibility": ">=0.5.2, <1.0.0",
       "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.6.0-universal.zip",
-      "artifact_size": 108892,
-      "artifact_sha256": "5c1213905ae70de447fd7e6ec7ec57817a57889547f0c9bdbdcb51f5b616918e",
+      "artifact_size": 110047,
+      "artifact_sha256": "705e9b0bd87f0bb29c2c3b4183037135def19ac22001386485a9bb3632e8a58c",
       "changelog_markdown": "## 1.6.0\n\n- Preserve each Codex Shell Execution as one raw command Part and project separator-labeled commands for display without duplicating execution results.",
       "breaking_change": false,
       "runtime_protocol": "stdio-ndjson-v1",

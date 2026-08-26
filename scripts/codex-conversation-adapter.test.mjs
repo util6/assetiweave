@@ -318,7 +318,7 @@ test("Codex adapter preserves source execution IDs across interleaved command re
   }
 });
 
-test("Codex adapter keeps one raw Shell Execution while projecting separator labels", () => {
+test("Codex adapter keeps one raw Shell Execution without persisting separator projections", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-command-separators-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -364,17 +364,13 @@ test("Codex adapter keeps one raw Shell Execution while projecting separator lab
     assert.equal(parts[0].source_execution_id, "call-status");
     assert.equal(parts[1].source_execution_id, "call-status");
     assert.equal(parts[1].text, "Error: failed");
-    const projection = JSON.parse(parts[0].metadata_json).shell_execution_projection;
-    assert.deepEqual(projection.nodes, [
-      { command: "git status --short", command_label: "status" },
-      { command: "git diff --cached --stat", command_label: "staged diff stat" },
-    ]);
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Codex adapter keeps a pure printf separator as raw evidence without a command node", () => {
+test("Codex adapter keeps a pure printf separator as raw evidence without a persisted projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-pure-separator-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -401,13 +397,13 @@ test("Codex adapter keeps a pure printf separator as raw evidence without a comm
     const [part] = readFixtureSession(fixtureRoot).turns[0].parts;
     assert.equal(part.command, command);
     assert.equal(part.source_execution_id, "call-pure-separator");
-    assert.deepEqual(JSON.parse(part.metadata_json).shell_execution_projection.nodes, []);
+    assert.equal(JSON.parse(part.metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
 });
 
-test("Codex adapter preserves complex raw shell syntax and exact execution pairing", () => {
+test("Codex adapter preserves complex raw shell syntax without a persisted projection", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-raw-shell-"));
   try {
     const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
@@ -456,13 +452,7 @@ test("Codex adapter preserves complex raw shell syntax and exact execution pairi
     assert.equal(parts[0].source_execution_id, "call-raw-shell");
     assert.equal(parts[1].source_execution_id, "call-raw-shell");
     assert.equal(parts[1].text, resultText);
-    const projection = JSON.parse(parts[0].metadata_json).shell_execution_projection;
-    assert.equal(projection.nodes.length, 1);
-    assert.equal(projection.nodes[0].command, command);
-    assert.equal(projection.nodes[0].command_label, "exec");
-    assert.equal(projection.nodes[0].command.includes("quoted && value"), true);
-    assert.equal(projection.nodes[0].command.includes("sed 's/quoted/quoted;still/'"), true);
-    assert.equal(projection.nodes[0].command.includes("git status --short > /tmp/status.txt"), true);
+    assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }
@@ -489,13 +479,7 @@ test("Codex historical 48d4ef52 fixture retains one raw execution for four legac
   assert.equal(parts[0].command, fixture.session.turns[0].parts[0].command);
   assert.equal(parts[0].source_execution_id, "execution-48d4ef52");
   assert.equal(parts[1].source_execution_id, "execution-48d4ef52");
-  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
-    {
-      command: "rg 'quoted && value' ./src | sed 's/;/|/'",
-      command_label: "inspect",
-    },
-    { command: "git status --short > /tmp/status.txt", command_label: "exec" },
-  ]);
+  assert.equal(JSON.parse(parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
 test("Codex adapter removes successful structured execution output", () => {

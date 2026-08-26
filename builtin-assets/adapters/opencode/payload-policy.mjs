@@ -4,7 +4,6 @@ export const PAYLOAD_POLICY_VERSION = 10;
 
 const SUCCESS_STATUSES = new Set(["success", "succeeded", "completed", "complete", "done", "ok"]);
 const FAILURE_STATUS = /^(error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/i;
-const SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION = 1;
 
 function compactObject(value) {
   return Object.fromEntries(
@@ -13,14 +12,14 @@ function compactObject(value) {
 }
 
 /**
- * Classifies and trims execution payloads. Raw shell commands remain one Part and their
- * display-only command nodes are recorded as a deterministic projection in metadata. Result/
+ * Classifies and trims execution payloads. Raw shell commands remain one Part. Display-only command nodes are generated on demand by the external shell projector. Result/
  * command association is performed only with an exact source_execution_id.
  */
 export function normalizeSessionPayload(session) {
   for (const turn of Array.isArray(session?.turns) ? session.turns : []) {
     const originalParts = Array.isArray(turn?.parts) ? turn.parts : [];
-    const parts = annotateShellExecutionProjectionParts(originalParts);
+    for (const part of originalParts) removePersistedShellProjection(part);
+    const parts = originalParts;
     turn.parts = parts;
     const commands = new Map();
     const results = new Map();
@@ -183,167 +182,12 @@ function decodeDiffPath(value) {
   return candidate.replace(/^[ab]\//, "") || null;
 }
 
-function annotateShellExecutionProjectionParts(parts) {
-  const resultsByExecutionId = new Map();
-  for (const part of parts) {
-    const executionId = executionIdOf(part);
-    if (executionId && isResultPart(part) && !isCommandPart(part)) {
-      resultsByExecutionId.set(executionId, part);
-    }
-  }
-
-  for (const part of parts) {
-    if (!part || typeof part !== "object" || !isCommandPart(part) || typeof part.command !== "string") {
-      continue;
-    }
-    const executionId = executionIdOf(part);
-    const metadata = parseMetadata(part.metadata_json);
-    const peer = executionId ? resultsByExecutionId.get(executionId) ?? null : null;
-    const executionKind = classifyExecution(part, metadata, peer, parseMetadata(peer?.metadata_json));
-    if (executionKind !== "shell") continue;
-
-    const projectionNodes = [];
-    let pendingCommandLabel = null;
-    for (const command of splitTopLevelShellCommands(part.command)) {
-      const separator = parseSeparatorPrintCommand(command);
-      if (separator) {
-        pendingCommandLabel = separator.label;
-        continue;
-      }
-      projectionNodes.push(compactObject({
-        command,
-        command_label: pendingCommandLabel ?? part.command_label ?? null,
-      }));
-      pendingCommandLabel = null;
-    }
-    metadata.shell_execution_projection = {
-      schema_version: SHELL_EXECUTION_PROJECTION_SCHEMA_VERSION,
-      nodes: projectionNodes,
-    };
-    writeMetadata(part, metadata);
-  }
-  return parts;
-}
-
-/**
- * Parses print commands that only emit a decorative separator, such as
- * `printf '%s\n' '--- staged diff stat ---'`, `printf '\n--- tests ---\n'`,
- * or `echo '=== results ==='`.
- * These are commonly injected between real commands in aggregated shell scripts
- * and carry no Command semantic value. A wrapped title becomes the label of the
- * next real command; an unlabeled divider is discarded without changing its label.
- */
-function parseSeparatorPrintCommand(command) {
-  const trimmed = String(command ?? "").trim();
-  let body = null;
-
-  const printfWithArgument = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s+(['"])([\s\S]*?)\3\s*$/);
-  if (printfWithArgument) {
-    const format = printfWithArgument[2];
-    const substitutions = format.match(/%s/g) ?? [];
-    if (substitutions.length === 1 && /^(?:%s|\\[nrt]|\s)+$/.test(format)) {
-      body = printfWithArgument[4];
-    }
-  } else {
-    const printfLiteral = trimmed.match(/^printf\s+(['"])([\s\S]*?)\1\s*$/);
-    const echoLiteral = trimmed.match(/^echo\s+(?:-[A-Za-z]+\s+)*(['"])([\s\S]*?)\1\s*$/);
-    body = printfLiteral?.[2] ?? echoLiteral?.[2] ?? null;
-  }
-  if (body == null) return null;
-
-  const printedText = body
-    .replace(/^(?:(?:\\[nrt])+|\s)+|(?:(?:\\[nrt])+|\s)+$/g, "")
-    .trim();
-  if (!printedText) return null;
-
-  const divider = "[-=*~_─━—–]";
-  if (new RegExp(`^${divider}+$`, "u").test(printedText)) {
-    return { label: null };
-  }
-  const wrappedLabel = printedText.match(
-    new RegExp(`^${divider}{2,}\\s*(.{1,80}?)\\s*${divider}{2,}$`, "u"),
-  );
-  if (!wrappedLabel) return null;
-  const label = wrappedLabel[1].replace(/\\s+/g, " ").trim();
-  return { label: label || null };
-}
-
-function splitTopLevelShellCommands(value) {
-  const source = String(value ?? "").replace(/\r\n?/g, "\n").trim();
-  if (!source || isComplexShellScript(source)) return source ? [source] : [];
-
-  const commands = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  let parenDepth = 0;
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let previousNonWhitespace = null;
-
-  const pushCommand = (end) => {
-    const command = source.slice(start, end).trim();
-    if (command) commands.push(command);
-  };
-
-  for (let index = 0; index < source.length; index += 1) {
-    const char = source[index];
-    const next = source[index + 1];
-    const precedingNonWhitespace = previousNonWhitespace;
-    if (!/\s/.test(char)) previousNonWhitespace = char;
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) quote = null;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === "`") {
-      quote = char;
-      continue;
-    }
-    if (char === "(") parenDepth += 1;
-    else if (char === ")") parenDepth = Math.max(0, parenDepth - 1);
-    else if (char === "{") braceDepth += 1;
-    else if (char === "}") braceDepth = Math.max(0, braceDepth - 1);
-    else if (char === "[") bracketDepth += 1;
-    else if (char === "]") bracketDepth = Math.max(0, bracketDepth - 1);
-
-    if (parenDepth || braceDepth || bracketDepth) continue;
-    let nextNonWhitespace = next;
-    if (char === "\n") {
-      let cursor = index + 1;
-      while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
-      nextNonWhitespace = source[cursor];
-    }
-    const continuedPipeline = char === "\n"
-      && (precedingNonWhitespace === "|" || nextNonWhitespace === "|");
-    let separatorLength = 0;
-    if (!continuedPipeline) {
-      if ((char === "&" && next === "&") || (char === "|" && next === "|")) {
-        separatorLength = 2;
-      } else if (char === ";" || char === "\n") {
-        separatorLength = 1;
-      }
-    }
-    if (!separatorLength) continue;
-    pushCommand(index);
-    index += separatorLength - 1;
-    start = index + 1;
-  }
-  pushCommand(source.length);
-  return commands.length > 0 ? commands : [source];
-}
-
-function isComplexShellScript(source) {
-  return /<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/.test(source)
-    || /(?:^|[;&|\n]\s*)(?:for|select|while|until|if|case|function)\b/.test(source)
-    || /^\s*\{(?:\s|\n)/.test(source);
+function removePersistedShellProjection(part) {
+  if (!part || typeof part !== "object") return;
+  const metadata = parseMetadata(part.metadata_json);
+  if (!("shell_execution_projection" in metadata)) return;
+  delete metadata.shell_execution_projection;
+  writeMetadata(part, metadata);
 }
 
 function executionIdOf(part) {

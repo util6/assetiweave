@@ -22,6 +22,20 @@ function part(input) {
   };
 }
 
+test("payload policy removes stale display projections from persisted metadata", () => {
+  const session = { turns: [{ parts: [part({
+    cardType: "command",
+    command: "git status --short",
+    metadata: { shell_execution_projection: { schema_version: 1, nodes: [] }, keep: "raw" },
+  })] }] };
+
+  normalizeSessionPayload(session);
+
+  const metadata = JSON.parse(session.turns[0].parts[0].metadata_json);
+  assert.equal(metadata.keep, "raw");
+  assert.equal(metadata.shell_execution_projection, undefined);
+});
+
 test("payload policy keeps read/search pairs positional and removes low-value bodies", () => {
   const session = { turns: [{ parts: [
     part({ cardType: "command", command: "sed -n '1,20p' ./src/main.ts", source_execution_id: "read-1" }),
@@ -69,7 +83,7 @@ test("payload policy hides successful shell output while backfilling command sta
   assert.equal(session.turns[0].parts[1].text, null);
 });
 
-test("payload policy omits decorative print separators when splitting chained shell commands", () => {
+test("payload policy keeps chained shell commands raw and omits persisted projection", () => {
   const session = { turns: [{ parts: [
     part({
       cardType: "command",
@@ -94,16 +108,10 @@ test("payload policy omits decorative print separators when splitting chained sh
   assert.equal(parts[0].source_execution_id, "shell-chain");
   assert.equal(parts[1].source_execution_id, "shell-chain");
   assert.equal(parts[1].text, null);
-  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection, {
-    schema_version: 1,
-    nodes: [
-      { command: "pnpm lint", command_label: "lint" },
-      { command: "pnpm test", command_label: "TESTS" },
-    ],
-  });
+  assert.equal(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
-test("payload policy preserves the original execution ID when one real command remains after separator filtering", () => {
+test("payload policy preserves the original execution ID without persisting a projection", () => {
   const session = { turns: [{ parts: [
     part({
       cardType: "command",
@@ -123,12 +131,10 @@ test("payload policy preserves the original execution ID when one real command r
   assert.equal(parts[0].source_execution_id, "shell-single");
   assert.equal(parts[1].source_execution_id, "shell-single");
   assert.equal(parts[1].text, null);
-  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
-    { command: "git status --short", command_label: "status" },
-  ]);
+  assert.equal(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
-test("payload policy retains printf and echo commands that carry non-decorative values", () => {
+test("payload policy retains printf and echo commands without persisting a projection", () => {
   const session = { turns: [{ parts: [part({
     cardType: "command",
     command: [
@@ -148,13 +154,10 @@ test("payload policy retains printf and echo commands that carry non-decorative 
     "printf '%s\\n' \"$tmpdir\"",
     "echo 'build completed'",
   ].join("; "));
-  assert.deepEqual(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection.nodes, [
-    { command: "printf '%s\\n' \"$tmpdir\"", command_label: "paths" },
-    { command: "echo 'build completed'", command_label: "exec" },
-  ]);
+  assert.equal(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
-test("payload policy filters an unlabeled divider without replacing the original command label", () => {
+test("payload policy preserves an unlabeled divider in the raw command", () => {
   const session = { turns: [{ parts: [part({
     cardType: "command",
     command: "echo '---'; pnpm test",
@@ -167,9 +170,7 @@ test("payload policy filters an unlabeled divider without replacing the original
   assert.equal(session.turns[0].parts.length, 1);
   assert.equal(session.turns[0].parts[0].command, "echo '---'; pnpm test");
   assert.equal(session.turns[0].parts[0].command_label, "exec");
-  assert.deepEqual(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection.nodes, [
-    { command: "pnpm test", command_label: "exec" },
-  ]);
+  assert.equal(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
 test("payload policy splits only top-level separators and preserves quoted operators and pipelines", () => {
@@ -187,11 +188,7 @@ test("payload policy splits only top-level separators and preserves quoted opera
   assert.deepEqual(parts.map((item) => item.command), [
     `node -e "console.log('a && b')" && printf 'a;b' |\n  sed 's/;/|/'\npnpm test`,
   ]);
-  assert.deepEqual(JSON.parse(parts[0].metadata_json).shell_execution_projection.nodes, [
-    { command: `node -e "console.log('a && b')"` },
-    { command: "printf 'a;b' |\n  sed 's/;/|/'" },
-    { command: "pnpm test" },
-  ]);
+  assert.equal(JSON.parse(session.turns[0].parts[0].metadata_json).shell_execution_projection, undefined);
 });
 
 test("payload policy keeps heredoc and shell control-flow scripts as one command", () => {

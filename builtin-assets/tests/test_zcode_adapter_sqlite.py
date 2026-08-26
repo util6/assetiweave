@@ -226,9 +226,7 @@ class ZCodeConversationAdapterTests(unittest.TestCase):
             self.assertEqual(command_part["command"], "printf '%s\\n' '--- tests ---' && pnpm test")
             self.assertEqual(command_part["cwd"], "/tmp/zcode-project")
             self.assertEqual(command_part["source_execution_id"], "part-5")
-            projection = json.loads(command_part["metadata_json"])["shell_execution_projection"]
-            self.assertEqual(projection["schema_version"], 1)
-            self.assertEqual(projection["nodes"], [{"command": "pnpm test", "command_label": "tests"}])
+            self.assertNotIn("shell_execution_projection", json.loads(command_part["metadata_json"]))
             result_part = next(
                 part
                 for part in first_turn["parts"]
@@ -242,10 +240,7 @@ class ZCodeConversationAdapterTests(unittest.TestCase):
                 if part["kind"] == "command" and part["source_execution_id"] == "zcode-simple-shell"
             )
             self.assertEqual(simple_command["command"], "pwd")
-            self.assertEqual(
-                json.loads(simple_command["metadata_json"])["shell_execution_projection"]["nodes"],
-                [{"command": "pwd"}],
-            )
+            self.assertNotIn("shell_execution_projection", json.loads(simple_command["metadata_json"]))
 
     def test_read_session_filters_by_external_session_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
