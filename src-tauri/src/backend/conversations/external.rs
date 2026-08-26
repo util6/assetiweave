@@ -1034,6 +1034,7 @@ fn parse_external_adapter_output_impl(
     let mut session_descriptors = Vec::new();
     let mut snapshot_complete = false;
     let mut sessions = Vec::new();
+    let mut command_projections = Vec::new();
     let mut markdown_export = None;
     let mut warnings = Vec::new();
     let mut saw_complete = false;
@@ -1084,6 +1085,9 @@ fn parse_external_adapter_output_impl(
                         }
                         markdown_export = Some(parse_adapter_markdown_export_item(item)?);
                     }
+                    "command_projection" => {
+                        command_projections.push(parse_adapter_command_projection_item(item)?);
+                    }
                     _ => {}
                 }
             }
@@ -1133,10 +1137,43 @@ fn parse_external_adapter_output_impl(
         session_descriptors,
         snapshot_complete,
         sessions,
+        command_projections,
         markdown_export,
         warnings,
         stderr,
     })
+}
+
+fn parse_adapter_command_projection_item(
+    item: Value,
+) -> AppResult<ConversationCommandProjection> {
+    let projection_value = item.get("projection").cloned().unwrap_or(item);
+    let projection: ConversationCommandProjection =
+        serde_json::from_value(projection_value).map_err(AppError::external)?;
+    if projection.part_id.trim().is_empty() {
+        return Err(AppError::external(
+            "command projection part_id is required".to_string(),
+        ));
+    }
+    if projection.projector_version == 0 {
+        return Err(AppError::external(
+            "command projection projector_version must be positive".to_string(),
+        ));
+    }
+    for (expected_order, node) in projection.nodes.iter().enumerate() {
+        if node.display_order != expected_order {
+            return Err(AppError::external(format!(
+                "command projection nodes must have contiguous display_order starting at 0: expected {expected_order}, got {}",
+                node.display_order
+            )));
+        }
+        if node.command.trim().is_empty() {
+            return Err(AppError::external(format!(
+                "command projection node {expected_order} command is required"
+            )));
+        }
+    }
+    Ok(projection)
 }
 
 fn parse_adapter_session_descriptor_item(item: Value) -> AppResult<ConversationSessionDescriptor> {

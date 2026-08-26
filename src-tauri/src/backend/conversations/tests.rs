@@ -332,6 +332,26 @@ fn adapter_output_parses_markdown_export_item() {
 }
 
 #[test]
+fn adapter_output_parses_batch_command_display_projections() {
+    let output = br#"{"type":"item","item":{"kind":"command_projection","projection":{"part_id":"conversation-part-raw","projector_version":1,"nodes":[{"display_order":0,"command":"git status --short","command_label":"status"},{"display_order":1,"command":"git diff","command_label":null}]}}}
+{"type":"complete","item":{"projection_count":1}}"#;
+
+    let result = parse_external_adapter_output("project_commands", output.to_vec(), Vec::new())
+        .expect("parse command display projection output");
+
+    assert_eq!(result.command_projections.len(), 1);
+    let projection = &result.command_projections[0];
+    assert_eq!(projection.part_id, "conversation-part-raw");
+    assert_eq!(projection.projector_version, 1);
+    assert_eq!(projection.nodes.len(), 2);
+    assert_eq!(projection.nodes[0].display_order, 0);
+    assert_eq!(projection.nodes[0].command, "git status --short");
+    assert_eq!(projection.nodes[0].command_label.as_deref(), Some("status"));
+    assert_eq!(projection.nodes[1].display_order, 1);
+    assert_eq!(projection.nodes[1].command, "git diff");
+}
+
+#[test]
 fn adapter_output_rejects_empty_markdown_export_content() {
     let output = br#"{"type":"item","item":{"kind":"markdown_export","content":"","relative_path":"codex/project/session.md"}}
 {"type":"complete","item":{"export_count":1}}"#;

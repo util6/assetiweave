@@ -230,9 +230,25 @@ pub(crate) struct ExternalAdapterRunResult {
     pub(crate) session_descriptors: Vec<ConversationSessionDescriptor>,
     pub(crate) snapshot_complete: bool,
     pub(crate) sessions: Vec<NormalizedConversationSession>,
+    pub(crate) command_projections: Vec<ConversationCommandProjection>,
     pub(crate) markdown_export: Option<ExternalMarkdownExport>,
     pub(crate) warnings: Vec<String>,
     pub(crate) stderr: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationCommandProjection {
+    pub(crate) part_id: String,
+    pub(crate) projector_version: u32,
+    pub(crate) nodes: Vec<ConversationCommandProjectionNode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ConversationCommandProjectionNode {
+    pub(crate) display_order: usize,
+    pub(crate) command: String,
+    #[serde(default)]
+    pub(crate) command_label: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
