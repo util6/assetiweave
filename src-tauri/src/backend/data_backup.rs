@@ -10,6 +10,7 @@ use crate::backend::{
     runtime::{AppError, AppResult},
 };
 use chrono::Utc;
+use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{
@@ -123,10 +124,29 @@ fn backup_database_to_directory(
     ensure_backup_directory(directory)?;
     let target_path = directory.join(file_name);
     snapshot_sqlite_database(db_path, &target_path)?;
+    if let Err(error) = verify_sqlite_snapshot(&target_path) {
+        fs::remove_file(&target_path).ok();
+        return Err(error);
+    }
     Ok(DatabaseBackupTarget {
         directory: directory.to_string_lossy().to_string(),
         backup_path: target_path.to_string_lossy().to_string(),
     })
+}
+
+fn verify_sqlite_snapshot(path: &Path) -> AppResult<()> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(AppError::external)?;
+    let result = connection
+        .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+        .map_err(AppError::external)?;
+    if result == "ok" {
+        return Ok(());
+    }
+    Err(AppError::Validation(format!(
+        "database backup verification failed for {}: {result}",
+        path.display()
+    )))
 }
 
 fn ensure_backup_directory(directory: &Path) -> AppResult<()> {

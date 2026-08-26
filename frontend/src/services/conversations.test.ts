@@ -608,13 +608,13 @@ describe("conversation services", () => {
       .mockResolvedValueOnce({ id: "repair-1", status: "cancelling", operation: "repair" });
 
     await auditConversationData({ record_kind: "session" });
-    await repairConversationData({ dry_run: true, create_backup: false, resync: true });
+    await repairConversationData({ dry_run: true, resync: true });
     await listConversationDataMaintenanceTasks();
     await cancelConversationDataMaintenance("repair-1");
 
     expect(invokeMock.mock.calls).toEqual([
       ["audit_conversation_data", { params: { record_kind: "session" } }],
-      ["repair_conversation_data", { params: { dry_run: true, create_backup: false, resync: true } }],
+      ["repair_conversation_data", { params: { dry_run: true, resync: true } }],
       ["list_conversation_data_maintenance_tasks"],
       ["cancel_conversation_data_maintenance", { params: { task_id: "repair-1" } }],
     ]);

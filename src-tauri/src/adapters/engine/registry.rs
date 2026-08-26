@@ -1545,8 +1545,8 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview repairs without writing", ["dryRun"]),
-            param!("create_backup", "Create a verified database backup before apply", ["createBackup"]),
             param!("yes", "Confirm applying repairs"),
+            param!("resync", "Run a full source resync before applying safe repairs"),
         ],
         None
     ),
@@ -3591,8 +3591,8 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
             param!("dry_run", "Preview repairs without writing", ["dryRun"]),
-            param!("create_backup", "Create a verified database backup before apply", ["createBackup"]),
             param!("yes", "Confirm applying repairs"),
+            param!("resync", "Run a full source resync before applying safe repairs"),
         ],
         None
     ),

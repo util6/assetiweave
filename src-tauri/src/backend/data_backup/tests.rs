@@ -64,6 +64,10 @@ fn backup_database_to_directories_creates_readable_snapshots() {
         assert!(backup_path.is_file());
         assert!(backup_path.starts_with(&first_target) || backup_path.starts_with(&second_target));
         let backup_conn = Connection::open(backup_path).expect("open backup db");
+        let integrity: String = backup_conn
+            .query_row("PRAGMA quick_check", [], |row| row.get(0))
+            .expect("verify backup integrity");
+        assert_eq!(integrity, "ok");
         let body: String = backup_conn
             .query_row("SELECT body FROM notes WHERE id = 1", [], |row| row.get(0))
             .expect("read backup row");

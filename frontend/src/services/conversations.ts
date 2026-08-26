@@ -355,7 +355,6 @@ export interface ConversationDataAuditParams {
 
 export interface ConversationDataRepairParams extends ConversationDataAuditParams {
   dry_run?: boolean;
-  create_backup?: boolean;
   yes?: boolean;
   resync?: boolean;
 }

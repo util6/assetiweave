@@ -650,8 +650,6 @@ pub(crate) struct ConversationDataRepairParams {
     pub(crate) record_kind: Option<String>,
     #[serde(default, alias = "dryRun")]
     pub(crate) dry_run: bool,
-    #[serde(default = "default_true", alias = "createBackup")]
-    pub(crate) create_backup: bool,
     #[serde(default)]
     pub(crate) yes: bool,
     #[serde(default)]
@@ -666,10 +664,6 @@ pub(crate) struct ConversationDataRollbackParams {
     pub(crate) dry_run: bool,
     #[serde(default)]
     pub(crate) yes: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

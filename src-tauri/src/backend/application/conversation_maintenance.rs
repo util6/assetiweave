@@ -95,19 +95,8 @@ impl AppService {
             ));
         }
 
-        let backup = if params.create_backup {
-            on_progress(2, AUDIT_STAGE_COUNT, Some("backup".to_string()));
-            let settings =
-                crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
-            Some(
-                crate::backend::data_backup::backup_database_from_settings_value(
-                    &self.db_path,
-                    &settings,
-                )?,
-            )
-        } else {
-            None
-        };
+        on_progress(2, AUDIT_STAGE_COUNT, Some("backup".to_string()));
+        let backup = create_conversation_repair_backup(self)?;
 
         let mut resync = Value::Null;
         if params.resync {
@@ -163,38 +152,46 @@ impl AppService {
             record_kind: verification_record_kind.clone(),
             include_resolved: false,
         })?;
-        let resolved = if verification_source_id.is_none() {
-            let active_categories = verification["issues"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|issue| issue["category"].as_str().map(str::to_string))
-                .collect::<HashSet<_>>();
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            self.db.block_on(async move {
-                resolve_safe_conversation_audit_issues_sqlx(
-                    &pool,
-                    &tenant_id,
-                    verification_record_kind.as_deref(),
-                    &active_categories,
-                )
-                .await
-            })?
-        } else {
-            0
-        };
-        let rollback = backup.as_ref().map(|report| {
-            let backup_path = report
-                .targets
-                .first()
-                .map(|target| target.backup_path.clone())
-                .unwrap_or_default();
-            json!({
-                "backup_path": backup_path,
-                "requires_app_restart": true,
-                "operation": "conversation.data.rollback",
+        let active_fingerprints = verification["issues"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|issue| {
+                let category = issue["category"].as_str()?;
+                let record_kind = issue["details"]["record_kind"].as_str().unwrap_or("all");
+                Some(conversation_audit_fingerprint(
+                    record_kind,
+                    category,
+                    audit_issue_source_scope(category, verification_source_id.as_deref()),
+                ))
             })
+            .collect::<HashSet<_>>();
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        let resolution_source_id = verification_source_id.clone();
+        let resolved = self.db.block_on(async move {
+            resolve_safe_conversation_audit_issues_sqlx(
+                &pool,
+                &tenant_id,
+                verification_record_kind.as_deref(),
+                resolution_source_id.as_deref(),
+                &active_fingerprints,
+            )
+            .await
+        })?;
+        let backup_path = backup
+            .targets
+            .first()
+            .map(|target| target.backup_path.clone())
+            .ok_or_else(|| {
+                AppError::Validation(
+                    "conversation repair backup did not produce a rollback target".to_string(),
+                )
+            })?;
+        let rollback = json!({
+            "backup_path": backup_path,
+            "requires_app_restart": true,
+            "operation": "conversation.data.rollback",
         });
         on_progress(
             AUDIT_STAGE_COUNT,
@@ -264,6 +261,26 @@ impl AppService {
     }
 }
 
+#[cfg(not(test))]
+fn create_conversation_repair_backup(
+    service: &AppService,
+) -> AppResult<crate::backend::data_backup::DatabaseBackupReport> {
+    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    crate::backend::data_backup::backup_database_from_settings_value(&service.db_path, &settings)
+}
+
+#[cfg(test)]
+fn create_conversation_repair_backup(
+    service: &AppService,
+) -> AppResult<crate::backend::data_backup::DatabaseBackupReport> {
+    let backup_root = service
+        .db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("conversation-repair-backups");
+    crate::backend::data_backup::backup_database_to_directories(&service.db_path, &[backup_root])
+}
+
 async fn audit_conversation_data_sqlx<F>(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -311,7 +328,7 @@ where
             (
                 "orphan_memberships",
                 format!(
-                    "SELECT COUNT(*) FROM {question_turns} qt LEFT JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id LEFT JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id LEFT JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE qt.tenant_id = ?1 AND (q.id IS NULL OR t.id IS NULL) AND (?2 IS NULL OR q.id IS NULL OR s.source_id = ?2)"
+                    "SELECT COUNT(*) FROM {question_turns} qt LEFT JOIN {questions} q ON q.tenant_id = qt.tenant_id AND q.id = qt.question_id LEFT JOIN {turns} t ON t.tenant_id = qt.tenant_id AND t.id = qt.turn_id LEFT JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE qt.tenant_id = ?1 AND (q.id IS NULL OR t.id IS NULL) AND (?2 IS NULL OR (q.id IS NOT NULL AND s.source_id = ?2))"
                 ),
                 "error",
                 true,
@@ -338,7 +355,7 @@ where
             (
                 "orphan_parts",
                 format!(
-                    "SELECT COUNT(*) FROM {parts} p LEFT JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id WHERE p.tenant_id = ?1 AND t.id IS NULL"
+                    "SELECT COUNT(*) FROM {parts} p LEFT JOIN {turns} t ON t.tenant_id = p.tenant_id AND t.id = p.turn_id WHERE p.tenant_id = ?1 AND t.id IS NULL AND ?2 IS NULL"
                 ),
                 "error",
                 true,
@@ -377,7 +394,7 @@ where
                 affected_count: count,
                 details: json!({ "message": detail, "record_kind": family_kind }),
             };
-            persist_audit_issue_sqlx(pool, tenant_id, &issue, family_kind).await?;
+            persist_audit_issue_sqlx(pool, tenant_id, &issue, family_kind, source_id).await?;
             issues.push(issue);
         }
     }
@@ -387,16 +404,20 @@ where
         family_check_count + 2,
         Some("question_snapshot_dependencies".to_string()),
     );
-    let snapshot_query = if include_resolved {
-        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = ?1 AND category = 'question_snapshot_dependencies'"
+    let snapshot_count = if record_kind.is_none() && source_id.is_none() {
+        let snapshot_query = if include_resolved {
+            "SELECT COALESCE(SUM(affected_count), 0) FROM conversation_data_audit_issues WHERE tenant_id = ?1 AND category = 'question_snapshot_dependencies'"
+        } else {
+            "SELECT COALESCE(SUM(affected_count), 0) FROM conversation_data_audit_issues WHERE tenant_id = ?1 AND category = 'question_snapshot_dependencies' AND status = 'open'"
+        };
+        sqlx::query_scalar::<_, i64>(snapshot_query)
+            .bind(tenant_id)
+            .fetch_one(pool)
+            .await
+            .map_err(AppError::external)?
     } else {
-        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = ?1 AND category = 'question_snapshot_dependencies' AND status = 'open'"
+        0
     };
-    let snapshot_count = sqlx::query_scalar::<_, i64>(snapshot_query)
-        .bind(tenant_id)
-        .fetch_one(pool)
-        .await
-        .map_err(AppError::external)?;
     if snapshot_count > 0 {
         let issue = AuditIssue {
             category: "question_snapshot_dependencies",
@@ -428,7 +449,7 @@ where
             affected_count: search_count,
             details: json!({ "message": "search index is missing, stale, or incompatible with source revision" }),
         };
-        persist_audit_issue_sqlx(pool, tenant_id, &issue, "all").await?;
+        persist_audit_issue_sqlx(pool, tenant_id, &issue, "all", None).await?;
         issues.push(issue);
     }
     on_progress(
@@ -462,16 +483,18 @@ async fn persist_audit_issue_sqlx(
     tenant_id: &str,
     issue: &AuditIssue,
     record_kind: &str,
+    source_id: Option<&str>,
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
-    let fingerprint = format!("{record_kind}:{}", issue.category);
+    let fingerprint = conversation_audit_fingerprint(record_kind, issue.category, source_id);
     sqlx::query(
         r#"
         INSERT INTO conversation_data_audit_issues (
             tenant_id, id, category, fingerprint, severity, auto_repairable, status,
             affected_count, sample_ids_json, details_json, first_seen_at, last_seen_at
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'open', ?7, '[]', ?8, ?9, ?9)
-        ON CONFLICT(tenant_id, fingerprint, status) DO UPDATE SET
+        ON CONFLICT DO UPDATE SET
+            status = 'open',
             category = excluded.category,
             severity = excluded.severity,
             auto_repairable = excluded.auto_repairable,
@@ -500,7 +523,8 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     record_kind: Option<&str>,
-    active_categories: &HashSet<String>,
+    source_id: Option<&str>,
+    active_fingerprints: &HashSet<String>,
 ) -> AppResult<u64> {
     const SAFE_CATEGORIES: [&str; 5] = [
         "orphan_parts",
@@ -517,10 +541,15 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
     let now = Utc::now().to_rfc3339();
     let mut resolved = 0;
     for category in SAFE_CATEGORIES {
-        if active_categories.contains(category) {
-            continue;
-        }
         for prefix in &prefixes {
+            let fingerprint = conversation_audit_fingerprint(
+                prefix,
+                category,
+                audit_issue_source_scope(category, source_id),
+            );
+            if active_fingerprints.contains(&fingerprint) {
+                continue;
+            }
             resolved += sqlx::query(
                 r#"
                 UPDATE conversation_data_audit_issues
@@ -529,7 +558,7 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
                 "#,
             )
             .bind(tenant_id)
-            .bind(format!("{prefix}:{category}"))
+            .bind(fingerprint)
             .bind(&now)
             .execute(pool)
             .await
@@ -538,6 +567,25 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
         }
     }
     Ok(resolved)
+}
+
+fn conversation_audit_fingerprint(
+    record_kind: &str,
+    category: &str,
+    source_id: Option<&str>,
+) -> String {
+    source_id.map_or_else(
+        || format!("{record_kind}:{category}"),
+        |source_id| format!("{record_kind}:{category}:source:{source_id}"),
+    )
+}
+
+fn audit_issue_source_scope<'a>(category: &str, source_id: Option<&'a str>) -> Option<&'a str> {
+    if category == "search_index_mismatch" {
+        None
+    } else {
+        source_id
+    }
 }
 
 async fn apply_safe_conversation_repairs_sqlx(

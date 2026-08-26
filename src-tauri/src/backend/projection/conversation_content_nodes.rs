@@ -66,6 +66,9 @@ pub(crate) fn project_content_nodes_for_part(
             if candidates.len() == 1 && !legacy_anchor_ids.contains(&legacy_node_id) {
                 legacy_anchor_ids.push(legacy_node_id);
             }
+            if candidates.len() > 1 && node_order == 0 && !legacy_anchor_ids.contains(&part.id) {
+                legacy_anchor_ids.push(part.id.clone());
+            }
             ConversationContentNode {
                 node_id,
                 locator: ConversationContentNodeLocator {
@@ -208,6 +211,7 @@ mod tests {
         assert_eq!(nodes[0].turn_order, 3);
         assert_eq!(nodes[0].part_order, 4);
         assert_eq!(nodes[0].node_order, 0);
+        assert!(nodes[0].legacy_anchor_ids.contains(&"part-1".to_string()));
         assert_eq!(nodes[1].node_order, 1);
         assert_eq!(nodes[1].content, "detail");
         assert_eq!(nodes[1].legacy_anchor_ids, vec!["part-1-detail"]);

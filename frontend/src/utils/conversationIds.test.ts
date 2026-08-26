@@ -18,6 +18,14 @@ describe("conversationIdFragment", () => {
     ).toBe("12345678");
   });
 
+  it("keeps a stable segment discriminator for projected sibling nodes", () => {
+    expect(
+      conversationIdFragment(
+        "conversation-part-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef-node-2",
+      ),
+    ).toBe("12345678:n2");
+  });
+
   it("extracts the same fragment from web record ids", () => {
     expect(
       conversationIdFragment(

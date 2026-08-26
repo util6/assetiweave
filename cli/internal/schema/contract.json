@@ -4623,14 +4623,6 @@
               "dryRun"
             ]
           },
-          "create_backup": {
-            "type": "boolean",
-            "default": true,
-            "description": "Create a verified database backup before apply",
-            "aliases": [
-              "createBackup"
-            ]
-          },
           "yes": {
             "type": "boolean",
             "default": false,
@@ -4639,7 +4631,7 @@
           "resync": {
             "type": "boolean",
             "default": false,
-            "description": "resync"
+            "description": "Run a full source resync before applying safe repairs"
           }
         },
         "type": "object",
@@ -11955,14 +11947,6 @@
               "dryRun"
             ]
           },
-          "create_backup": {
-            "type": "boolean",
-            "default": true,
-            "description": "Create a verified database backup before apply",
-            "aliases": [
-              "createBackup"
-            ]
-          },
           "yes": {
             "type": "boolean",
             "default": false,
@@ -11971,7 +11955,7 @@
           "resync": {
             "type": "boolean",
             "default": false,
-            "description": "resync"
+            "description": "Run a full source resync before applying safe repairs"
           }
         },
         "type": "object",

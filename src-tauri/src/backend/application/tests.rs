@@ -148,7 +148,6 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
         .repair_conversation_data(ConversationDataRepairParams {
             record_kind: Some("session".to_string()),
             dry_run: true,
-            create_backup: false,
             yes: false,
             resync: false,
             ..ConversationDataRepairParams::default()
@@ -171,7 +170,6 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
     let resync_error = service.repair_conversation_data(ConversationDataRepairParams {
         source_id: Some("missing-source".to_string()),
         record_kind: Some("session".to_string()),
-        create_backup: false,
         yes: true,
         resync: true,
         ..ConversationDataRepairParams::default()
@@ -194,7 +192,6 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
         .repair_conversation_data(ConversationDataRepairParams {
             source_id: Some("unrelated-source".to_string()),
             record_kind: Some("session".to_string()),
-            create_backup: false,
             yes: true,
             resync: false,
             ..ConversationDataRepairParams::default()
@@ -202,11 +199,30 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
         .expect("apply source-scoped conversation repair");
     assert_eq!(scoped_repair["applied"]["deleted_parts"], 0);
     assert_eq!(scoped_repair["applied"]["deleted_memberships"], 0);
+    assert!(!scoped_repair["audit"]["issues"]
+        .as_array()
+        .expect("scoped audit issues")
+        .iter()
+        .any(|issue| matches!(
+            issue["category"].as_str(),
+            Some("orphan_parts" | "orphan_memberships")
+        )));
+    let open_scoped_safe_issue_count: i64 = service
+        .db
+        .block_on(async {
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'open' AND auto_repairable = 1 AND fingerprint LIKE '%:source:unrelated-source'",
+            )
+            .fetch_one(service.db.pool())
+            .await
+            .map_err(AppError::external)
+        })
+        .expect("count open source-scoped safe audit issues");
+    assert_eq!(open_scoped_safe_issue_count, 0);
 
     let repaired = service
         .repair_conversation_data(ConversationDataRepairParams {
             record_kind: Some("session".to_string()),
-            create_backup: false,
             yes: true,
             resync: false,
             ..ConversationDataRepairParams::default()
@@ -215,6 +231,11 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
     assert_eq!(repaired["dry_run"], false);
     assert_eq!(repaired["applied"]["deleted_parts"], 1);
     assert_eq!(repaired["applied"]["deleted_memberships"], 1);
+    let backup_path = repaired["rollback"]["backup_path"]
+        .as_str()
+        .expect("repair rollback backup path");
+    assert!(Path::new(backup_path).is_file());
+    assert!(Path::new(backup_path).starts_with(root.join("conversation-repair-backups")));
     let resolved_issue_count: i64 = service
         .db
         .block_on(async {
@@ -230,7 +251,6 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
     let second = service
         .repair_conversation_data(ConversationDataRepairParams {
             record_kind: Some("session".to_string()),
-            create_backup: false,
             yes: true,
             resync: false,
             ..ConversationDataRepairParams::default()
@@ -239,6 +259,94 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
     assert_eq!(second["applied"]["deleted_parts"], 0);
     assert_eq!(second["applied"]["deleted_memberships"], 0);
 
+    let pool = service.db.pool().clone();
+    service
+        .db
+        .block_on(async move {
+            let mut connection = pool.acquire().await.map_err(AppError::external)?;
+            sqlx::query("PRAGMA foreign_keys = OFF")
+                .execute(&mut *connection)
+                .await
+                .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
+                INSERT INTO conversation_parts (
+                    tenant_id, id, turn_id, part_index, role, kind, text, language,
+                    command, cwd, status, exit_code, metadata_json, content_card_json,
+                    translated_text, source_execution_id, command_label
+                ) VALUES ('default', 'maintenance-recurrent-orphan-part',
+                    'maintenance-recurrent-missing-turn', 0, 'assistant', 'text', 'orphan',
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                "#,
+            )
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *connection)
+                .await
+                .map_err(AppError::external)?;
+            AppResult::Ok(())
+        })
+        .expect("seed recurrent orphan conversation row");
+    let recurrent = service
+        .audit_conversation_data(ConversationDataAuditParams {
+            record_kind: Some("session".to_string()),
+            ..ConversationDataAuditParams::default()
+        })
+        .expect("audit a recurrent resolved issue");
+    assert!(recurrent["issues"]
+        .as_array()
+        .expect("recurrent audit issues")
+        .iter()
+        .any(|issue| issue["category"] == "orphan_parts"));
+    let recurrent_repair = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            record_kind: Some("session".to_string()),
+            yes: true,
+            ..ConversationDataRepairParams::default()
+        })
+        .expect("repair a recurrent resolved issue");
+    assert_eq!(recurrent_repair["applied"]["deleted_parts"], 1);
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn conversation_data_audit_reports_affected_snapshot_rows() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-audit-dependencies-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create snapshot audit test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+
+    execute_test_sql(
+        &service,
+        r#"
+        INSERT INTO conversation_data_audit_issues (
+            tenant_id, id, category, fingerprint, severity, auto_repairable, status,
+            affected_count, sample_ids_json, details_json, first_seen_at, last_seen_at
+        ) VALUES (
+            'default', 'question-snapshot-test', 'question_snapshot_dependencies',
+            'question_snapshot_dependencies', 'warning', 0, 'open', 7, '[]', '{}',
+            '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z'
+        )
+        "#,
+    )
+    .expect("seed snapshot audit fixture");
+
+    let audit = service
+        .audit_conversation_data(ConversationDataAuditParams::default())
+        .expect("audit conversation dependencies");
+    let issues = audit["issues"].as_array().expect("audit issues");
+    let snapshot_issue = issues
+        .iter()
+        .find(|issue| issue["category"] == "question_snapshot_dependencies")
+        .expect("snapshot dependency issue");
+    assert_eq!(snapshot_issue["affected_count"], 7);
     drop(service);
     fs::remove_dir_all(root).ok();
 }
