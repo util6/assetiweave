@@ -40,7 +40,6 @@
 |---|---|
 | Search / FTS | 从关系与事实重建；多节点精确命中；无孤立索引 |
 | Block Locator / 深链 | 同时携带 Question、Turn、Part 和片段身份 |
-| Memory evidence | merge/split 后确定性重映射；歧义进入审计 |
 | Export | raw 事实与 rendered 投影明确分离 |
 | Engine | 使用 AppService canonical workflow；无 Card 语义旁路 |
 | CLI | 使用生成契约；请求消费者专用最小载荷 |
@@ -60,8 +59,7 @@
 7. 旧拆分 Shell Execution；
 8. 一个 execution 内含多个 `printf` 分割标记；
 9. 会话 `48d4ef52` 场景的最小脱敏复现；
-10. 有效、可重映射和歧义 Memory evidence；
-11. 空库与大规模会话。
+10. 空库与大规模会话。
 
 每个 migration fixture 验证 dry-run、backup、apply、重复 apply、verify 和 rollback。
 
@@ -97,3 +95,6 @@ pnpm cli:test:e2e
 
 `pnpm cli:contract` 可能改变生成物；执行者必须先确认本工单是否改变公开 Engine 契约，再提交对应生成结果。
 每条完成评论记录逐条命令、结果和未运行原因，不用“测试通过”概括全部证据。
+
+Memory 相关测试只作为仓库全量门禁的既有回归存在，不作为本轮 Conversation 重构的
+功能验收证据；本轮不新增或修改 Memory fixture。

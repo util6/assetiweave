@@ -2,11 +2,11 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | Ready for Agent |
+| 状态 | Post-Luna audit：部分完成，#3/#13/#15/#16 待重新收口 |
 | 日期 | 2026-08-25 |
 | 父 Issue | [#3](https://github.com/util6/assetiweave/issues/3) |
 | 执行模型 | Luna |
-| 计划范围 | [#4–#16](https://github.com/util6/assetiweave/issues/3) |
+| 计划范围 | [#4–#16](https://github.com/util6/assetiweave/issues/3)，其中 #10 Memory 已按产品决策移出本轮 |
 
 ## 1. 文档职责
 
@@ -23,6 +23,9 @@ GitHub Issue 是计划工作与验收标准的权威来源。本目录不复制�
 
 父 Issue #3 形成后需求有一次重要修订：`conversation_questions` 不删除，而是瘦身为
 稳定 Question 身份与轻量元数据容器。子 Issue #4–#16 和本目录以该修订为准。
+
+2026-08-26 的施工后审计进一步确认：Memory 大模块后续整体重写，本轮不审计、不修复、
+不验收任何 Memory 行为。审计结论与剩余工作以 `07-post-luna-audit.md` 为准。
 
 ## 2. 目标状态
 
@@ -66,6 +69,7 @@ Session → Question → Turn → Content Node
 - 通过拼接历史拆分命令伪造不存在的原始来源事实；
 - 以 UI 数组索引、Card 短 ID 或平行数组作为跨层身份；
 - 在依赖尚未完成时提前删除兼容读取路径。
+- 修改、补测或收口 Memory 领域、evidence、Recall、Dream 或相关 UI。
 
 ## 4. 工单阶段
 
@@ -73,7 +77,7 @@ Session → Question → Turn → Content Node
 |---|---|---|
 | 基础 seam | #4、#5 | membership Authority 与 Content Node 契约 |
 | 分组和 adapter | #6–#8 | reconciliation、Codex 原始执行、adapter 一致性 |
-| 消费者迁移 | #9–#12 | Search、Memory、Export、前端层级读取 |
+| 消费者迁移 | #9、#11、#12 | Search、Export、前端层级读取；#10 Memory 移出本轮 |
 | 数据收口 | #13–#15 | 审计修复、Question 瘦身、旧 Card 契约删除 |
 | 最终验收 | #16 | 全链路、性能和文档证据 |
 
@@ -87,7 +91,7 @@ Session → Question → Turn → Content Node
 2. `conversation_questions` 不含正文、可推导顺序和分配来源字段；
 3. 新写入不再拆分存储一次 Shell Execution；
 4. 前端保持逐条命令展示且使用稳定 locator；
-5. Search、Memory、Export、Engine、CLI 和前端均已迁移；
+5. Search、Export、Engine、CLI 和前端均已迁移；
 6. 历史数据有 dry-run、备份、修复、验证和回滚证据；
 7. 旧 Card DTO 与平行数组兼容契约已在消费者切换后删除；
 8. 完整质量门禁和性能基线通过。

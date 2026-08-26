@@ -13,7 +13,7 @@
 
 ### Migrate
 
-1. 切换 reconciliation、Search、Memory、Export、前端、Engine 和 CLI；
+1. 切换 reconciliation、Search、Export、前端、Engine 和 CLI；
 2. 重建可推导索引；
 3. 审计历史 membership、Question 快照、旧拆分 Shell Part 与消费者引用；
 4. 在备份和 dry-run 后修复或从可靠来源重新同步。
@@ -44,8 +44,6 @@
 | Question 内容快照与 Part 不一致 | 报告差异；有来源时重同步，无来源时保留事实并标记审计 |
 | Shell Execution 被历史脚本拆成多个 Part | 有可靠来源时按新 adapter version 重同步 |
 | 只有拆分 Part、无可靠来源 | 保持兼容读取，不通过字符串拼接伪造原始 execution |
-| evidence 可由 Turn/Part 唯一定位 | 重映射到当前 Question 和新 locator |
-| evidence 不能唯一定位 | 进入显式审计状态，不静默猜测 |
 
 ## 4. 后台修复工作流
 
@@ -69,8 +67,10 @@
 - 新领域 workflow 不读取 Question 内容字段；
 - 新前端页面不在多个旧 DTO 之间猜测；
 - 旧拆分 Shell Part 可由兼容 projector 展示，但不能反向写回伪造的原始 execution；
-- Card alias 不得进入新的 Search、Memory、Export 或 Engine 契约；
+- Card alias 不得进入新的 Search、Export 或 Engine 契约；
 - 每个兼容入口都必须有删除它的后续 blocker，最终由 #15 清除。
+
+Memory 整体重写是独立后续模块，不属于本迁移的消费者或兼容验收范围。
 
 ## 6. 回滚原则
 

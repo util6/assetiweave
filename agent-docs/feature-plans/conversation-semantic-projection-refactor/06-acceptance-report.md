@@ -2,48 +2,57 @@
 
 日期：2026-08-26
 
-## 实现范围
+复审状态：**未完成最终验收**
 
-- #12 前端使用 `Session → Question → Turn → Part → Content Node` 唯一读取模型。
-- #13 增加审计表、dry-run/backup/apply/verify/rollback、可选可靠来源全量重同步和后台
-  TaskRuntime 进度/事件/轮询补偿。
-- #14 通过受控 SQLite 表重建移除 Question 的六个旧字段；顺序从 membership 与 Turn 推导。
-- #15 删除公开 Card DTO、旧内容节点数组和 UI execution 的 `command` 兼容旁路；CLI contract
-  由 `pnpm cli:contract` 生成。
-- Memory 功能性重写不在本轮范围；没有新增 Memory 审计、证据重算或行为设计。
+详细审计：[`07-post-luna-audit.md`](./07-post-luna-audit.md)
 
-## 行为证据
+## 已由当前事实证明的范围
 
-- 临时 SQLite 集成测试覆盖孤立 Part/membership 的 audit、dry-run、apply、重复 apply、
-  failed resync 保留事实，以及备份 rollback。
-- Rust projection 测试证明一个 Codex Shell Part 可以生成多个稳定 Content Node，而 Part
-  数量不随展示节点数量增加。
-- BackgroundTaskRegistry 测试覆盖重复启动、阶段进度、失败、取消和终态投影；前端 provider
-  测试覆盖事件更新、漏事件轮询和取消。
-- fresh schema contract test 断言两套 Question 表仅含：`tenant_id`、`id`、`session_id`、
-  `title`、`created_at`、`updated_at`。
-- 代表性 legacy Question fixture migration test 验证六个旧字段被移除、标题回填、审计快照
-  保留；fresh contract test、audit/repair/rollback 临时数据库测试均通过。
-- Content Node projection test 验证单节点使用源 Part ID，多节点使用稳定 `-node-N` 后缀，
-  单节点旧锚点进入 `legacy_anchor_ids`。
+- `conversation_questions` 与 `web_record_questions` 均只保留
+  `tenant_id`、`id`、`session_id`、`title`、`created_at`、`updated_at`。
+- `conversation_question_turns` / `web_record_question_turns` 是 Question–Turn membership
+  的持久化 Authority；真实数据库没有重复、跨 Session 或孤立 membership。
+- 新 Adapter fixture 证明一次 Shell Execution 可保存为一个 Part，并在读取时投影多个
+  Content Node；前端短 ID 使用 Part 片段加 `:nN` 节点判别符。
+- Search、Export、公开 Question Detail、Engine contract 和前端生产读取已经使用
+  Content Node locator；Question 表不再保存正文快照。
+- 启动崩溃已修复：已发布 migration 恢复原始字节，只对已知错误 checksum 和已验证
+  contract 形状执行一次性修复，后续补偿由新 migration 完成。
+- `conversation.data.repair` 非 dry-run 执行前强制创建并校验 SQLite 备份；调用方不再能
+  关闭备份。
 
-## 性能基线
+## 仍阻止最终验收的事实
 
-基线环境：本地 macOS、Rust test profile、Node 22/pnpm 10；数据为脱敏临时 SQLite fixture。
+- 真实数据库仍有 `44,962` 个历史 Shell execution 分组由多个 Part 保存。缺少可靠来源时
+  禁止自动拼接；需要按可证明来源分批 full resync。
+- Luna 修改后的 `202608250005` 曾先删除 Question 快照再补审计，导致 `6,131` 行只能保留
+  保守依赖计数，不能重建迁移前逐字段差异。
+- 后台“取消”只改变 TaskRuntime 状态，worker 和搜索重建没有消费取消 token；不能据此
+  宣称协作式取消成立。
+- 真实数据修复总耗时 `547,978 ms`，其中 185,579 文档搜索索引重建耗时 `525,986 ms`；
+  现有验收没有大会话性能 fixture，也没有内存峰值和响应性证据。
+- 前端没有普通用户可触发 audit/repair 的入口，CLI 只有通用 `api call`，没有专用命令。
+- `ConversationContentCards` 仍保留 `parts`/seed fallback 与可选 `nodes`；后端内部仍有
+  Card 命名的投影 seam。生产读取已走 Content Node，但 #15 的兼容收缩没有完全结束。
 
-| 工作负载 | 基线命令 | 实测结果 |
-|---|---|---:|
-| Rust 全量单元/集成测试（695 tests，1 ignored） | `cargo fmt --all -- --check && cargo test --workspace` | 126.09s（测试阶段） |
-| 前端 typecheck 与全量测试（110 files，558 tests） | `pnpm typecheck && pnpm test` | 63.24s |
-| 前端生产构建与 artifact guard | `pnpm build` | 14.44s |
-| Go vet、race tests、CLI contract 与 CLI–Engine e2e | `go vet -C cli ./...`、`go test -C cli -race ./...`、`ASSETIWEAVE_DB_PATH=... pnpm cli:contract`、`ASSETIWEAVE_DB_PATH=... pnpm cli:test:e2e` | PASS |
+## 当前质量门禁
 
-上述结果是施工机基线，不作为跨机器硬阈值。当前仓库没有独立的大会话性能 fixture，
-因此没有虚构读取延迟、搜索吞吐或历史修复吞吐数字；后续性能优化应使用同一 fixture 和
-命令补充比较。
+| 门禁 | 复审结果 |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm test` | PASS：110 files / 559 tests；首次高系统负载运行出现超时，原命令复跑通过 |
+| `pnpm build` | PASS |
+| `cargo fmt --all -- --check` | PASS |
+| `cargo test --workspace` | PASS：698 passed / 1 ignored |
+| `go vet -C cli ./...` | PASS |
+| `go test -C cli -race ./...` | PASS |
+| 临时 DB `pnpm cli:contract` | PASS，生成物已更新 |
+| 临时 DB `pnpm cli:test:e2e` | PASS |
+| `conversation-adapters:check/test` | PASS：7 packages / 54 tests |
+| fresh DB 与真实 DB startup self-check | PASS |
+| `pnpm tauri:dev` 真实 DB 启动 | PASS：进入 `target/debug/assetiweave`，无新增 panic |
 
-## 回滚说明
+## 范围裁决
 
-apply 前的数据库备份由现有 backup 设置决定；返回值包含 `backup_path` 和
-`conversation.data.rollback` 入口。rollback 会 checkpoint WAL、替换活动数据库并返回
-`requires_app_restart: true`，重启后由迁移器重新打开数据库。
+Memory 大模块后续整体重写。本轮不审计、不修复、不验收 Memory 功能；任何既有 Memory
+测试通过只表示仓库回归门禁未被当前补丁破坏，不构成该模块的功能结论。

@@ -4,7 +4,8 @@
 > **决策日期**：2026-08-25
 > **记录日期**：2026-08-26
 > **取代**：Question 内容快照、物理 question index、grouping origin 与后端 Card 数组作为读取权威的早期实现
-> **实现证据**：`src-tauri/migrations/202608250004_conversation_data_audit.sql`、`src-tauri/migrations/202608250005_rebuild_conversation_questions.sql`、提交 `7621dbe`
+> **实现证据**：`src-tauri/migrations/202608250004_conversation_data_audit.sql`、`src-tauri/migrations/202608250005_rebuild_conversation_questions.sql`、`src-tauri/migrations/202608260001_repair_conversation_question_contract_release.sql`、提交 `7621dbe`、`1886947`、`1ee0141`
+> **实现状态**：核心 contract 已落地；历史收口、协作式取消、性能验收和兼容删除仍按 `07-post-luna-audit.md` 追踪
 
 ## 背景
 
@@ -13,8 +14,8 @@ Conversation 早期把问题正文、回答/代码/命令快照、物理顺序�
 Question 合并/拆分、Shell Execution 一对多展示、搜索重建和历史修复时产生第二套身份
 和内容权威。
 
-本次迁移已经完成 #4–#15 的消费者切换，且用户明确要求 Memory 后续整体重写；本轮不
-扩展 Memory 功能，只保留既有代码所需的兼容编译和历史迁移事实。
+本次迁移完成了主要消费者切换，但施工后审计确认 #13、#15、#16 尚未满足全部验收。
+用户明确要求 Memory 后续整体重写；本轮不审计、不修改、不验收 Memory 功能。
 
 ## 决策
 
@@ -37,9 +38,11 @@ Question 合并/拆分、Shell Execution 一对多展示、搜索重建和历史
 
 - `202608250004` 建立租户级审计问题表；问题使用稳定 fingerprint，便于重复审计和幂等
   修复。
-- `202608250005` 通过 SQLite 受控表重建移除六个 Question 快照/推导字段，并保留标题
-  的历史回填；FTS 内容仍位于独立可重建结构。
-- `conversation.data.repair` 默认在 apply 前生成并验证数据库备份，支持 `dry_run`、
+- `202608250005` 通过 SQLite 受控表重建移除六个 Question 快照/推导字段，并原样复制
+  当时的标题。该已发布 migration 曾被施工修改并引发 checksum 启动失败，现已恢复原始字节。
+- `202608260001` 以新 migration 补建所需索引、从首个 Turn 回填空标题，并记录无法再逐行
+  重建的保守 Question 快照依赖计数。
+- `conversation.data.repair` 在 apply 前强制生成并验证数据库备份，支持 `dry_run`、
   `yes`、`resync` 与最终 verify；`conversation.data.rollback` 恢复备份后要求重启应用。
 - 迁移后回滚依赖 apply 前备份，不尝试从已删除的 Question 正文快照重建事实。
 
@@ -49,3 +52,5 @@ Question 合并/拆分、Shell Execution 一对多展示、搜索重建和历史
 - 搜索、导出、深链接和前端读取共享同一层级 DTO 与 Content Node locator。
 - UI 可以扩展展示节点数量，但持久化 Part 数量仍按真实执行单元计算。
 - Memory 的领域行为不在本决策范围；其后续整体重写应重新定义证据与 Question 消费契约。
+- 本 ADR 记录目标 contract，不等同于最终验收通过；施工后未完成项以
+  `agent-docs/feature-plans/conversation-semantic-projection-refactor/07-post-luna-audit.md` 为准。

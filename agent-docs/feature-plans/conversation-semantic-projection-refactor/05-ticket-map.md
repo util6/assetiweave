@@ -12,7 +12,7 @@
 | 4 | [#7 为 Codex 保留原始 Shell Execution 并投影多个命令节点](https://github.com/util6/assetiweave/issues/7) | #5 |
 | 5 | [#8 将原始 Shell Execution 模型推广到其他官方 Adapter](https://github.com/util6/assetiweave/issues/8) | #7 |
 | 6 | [#9 迁移 Question FTS、Search、Block Locator 与深链接](https://github.com/util6/assetiweave/issues/9) | #4、#5、#6、#7 |
-| 7 | [#10 迁移 Memory evidence 与 Question ID 重映射](https://github.com/util6/assetiweave/issues/10) | #6、#9 |
+| 7 | [#10 迁移 Memory evidence 与 Question ID 重映射](https://github.com/util6/assetiweave/issues/10) | **已由产品决策移出本轮；不继续施工或验收** |
 | 8 | [#11 迁移 Export 与消费者专用载荷](https://github.com/util6/assetiweave/issues/11) | #4、#5、#6、#7 |
 | 9 | [#12 前端切换到唯一的层级 Conversation 读取模型](https://github.com/util6/assetiweave/issues/12) | #4、#5、#6、#7、#9 |
 | 10 | [#13 实现历史数据审计、后台修复与重新同步](https://github.com/util6/assetiweave/issues/13) | #6、#8、#9、#10、#11 |
@@ -27,8 +27,8 @@
 1. 初始：#4 与 #5；
 2. #4 完成后：#6；#5 完成后：#7；
 3. #7 完成后：#8；满足各自 blocker 后可推进 #9、#11、#12；
-4. #6 与 #9 完成后：#10；
-5. 消费者迁移完成后：#13；
+4. #10 不进入当前 frontier；
+5. 其余消费者迁移完成后：#13；
 6. #14 → #15 → #16 按 blocker 收口。
 
 调度器每次以 GitHub 原生 blocker 的实时状态为准，不根据本表猜测已完成状态。

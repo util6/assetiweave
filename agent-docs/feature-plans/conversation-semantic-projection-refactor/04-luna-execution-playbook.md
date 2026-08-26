@@ -4,7 +4,7 @@
 |---|---|
 | 执行模型 | Luna |
 | 执行单位 | 一个 GitHub 子 Issue |
-| 任务范围 | #4–#16 |
+| 任务范围 | #4–#16，排除 #10 Memory；审计后只继续重新打开的 Issue |
 | 调度依据 | GitHub 原生 parent/sub-issue 与 blocker |
 | 默认方法 | 单一垂直切片、测试先行、中文提交 |
 
@@ -12,6 +12,9 @@
 
 Luna 每轮只执行一张未关闭、无未关闭 blocker 的子 Issue。不要把多个“看起来相近”的 Issue
 合并施工，也不要提前实现后续 schema contract 或兼容删除。
+
+Memory 大模块后续整体重写。任何后续 Luna 轮次都不得修改或以验收名义审计 Memory
+领域、evidence、Recall、Dream、Memory UI 或其测试；遇到相关代码只记录为本轮排除范围。
 
 开工前必须：
 
@@ -49,6 +52,7 @@ BLOCKERS: 已核对关闭的 blocker
 - 不创建 `legacy`、`new`、`v2` 或第二套 Question membership/投影路径；
 - 不让 Question 表重新承担正文、搜索缓存、顺序或 grouping origin；
 - 不把 Card 作为后端领域实体；
+- 不触碰 Memory 相关实现或测试；
 - 不用字符串拼接恢复缺失的原始 Shell Execution；
 - 长运行迁移遵循后台任务约束，不用页面级 busy 包住全流程；
 - 公开 Engine 契约变化后运行 `pnpm cli:contract`，不手工编辑生成物；
@@ -122,6 +126,9 @@ BLOCKERS: 已核对关闭的 blocker
 
 只输出按严重度排序的 findings；没有 finding 时输出“未发现阻止合并的问题”并列出剩余测试盲区。
 ```
+
+上面 review 清单中的 `evidence` 仅指 Conversation 自身的迁移、索引和定位证据，不包含
+Memory evidence。
 
 Review finding 修复后重新运行相关门禁，再向 Issue 写入完成证据。Issue 在 acceptance 全部满足前保持打开。
 
