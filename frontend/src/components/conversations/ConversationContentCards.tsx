@@ -345,6 +345,7 @@ export function ConversationContentCards({
 }
 
 const COMMAND_RENDER_BATCH_SIZE = 6;
+const RESULT_RENDER_BATCH_SIZE = 6;
 
 function ConversationExecutionGroup({
   node,
@@ -358,10 +359,14 @@ function ConversationExecutionGroup({
   const [expanded, setExpanded] = useState(false);
   const [rawExpanded, setRawExpanded] = useState(false);
   const [renderLimit, setRenderLimit] = useState(COMMAND_RENDER_BATCH_SIZE);
+  const [resultRenderLimit, setResultRenderLimit] = useState(RESULT_RENDER_BATCH_SIZE);
   const loadMoreRef = useRef<HTMLDivElement>(null);
+  const loadMoreResultsRef = useRef<HTMLDivElement>(null);
   const hasFoldedCommands = node.commands.length > 1;
   const visibleCommandCount = expanded ? Math.min(renderLimit, node.commands.length) : Math.min(1, node.commands.length);
   const hasMore = expanded && visibleCommandCount < node.commands.length;
+  const visibleResultCount = Math.min(resultRenderLimit, node.results.length);
+  const hasMoreResults = visibleResultCount < node.results.length;
 
   useEffect(() => {
     if (!hasMore || typeof IntersectionObserver === "undefined") return;
@@ -374,6 +379,18 @@ function ConversationExecutionGroup({
     observer.observe(target);
     return () => observer.disconnect();
   }, [hasMore, node.commands.length, visibleCommandCount]);
+
+  useEffect(() => {
+    if (!hasMoreResults || typeof IntersectionObserver === "undefined") return;
+    const target = loadMoreResultsRef.current;
+    if (!target) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length));
+    }, { rootMargin: "320px 0px" });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMoreResults, node.results.length, visibleResultCount]);
 
   return (
     <section
@@ -414,7 +431,18 @@ function ConversationExecutionGroup({
             </button>
           </div>
         ) : null}
-        {node.results.map(renderContentCard)}
+        {node.results.slice(0, visibleResultCount).map(renderContentCard)}
+        {hasMoreResults ? (
+          <div className="flex justify-center py-1" ref={loadMoreResultsRef}>
+            <button
+              className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+              onClick={() => setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length))}
+              type="button"
+            >
+              {t("conversation.content.loadMoreResults")}
+            </button>
+          </div>
+        ) : null}
         {node.rawCommands?.length ? (
           <div className="rounded-xl border border-theme-card-border/55 bg-theme-card/35 px-3 py-2">
             <button

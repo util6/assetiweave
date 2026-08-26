@@ -417,6 +417,43 @@ describe("ConversationContentCards", () => {
     expect(screen.getByText("raw command block")).toBeTruthy();
   });
 
+  it("progressively mounts large result groups instead of putting every result in the DOM", () => {
+    const results = Array.from({ length: 8 }, (_, index) => ({
+      id: `result-${index + 1}`,
+      partId: `result-part-${index + 1}`,
+      type: "result" as const,
+      renderer: "terminal_output" as const,
+      role: "tool" as const,
+      text: `result-output-${index + 1}`,
+    }));
+    render(
+      <ConversationContentCards
+        blocks={[]}
+        nodes={[{
+          type: "execution",
+          turnId: "turn-1",
+          sourceExecutionId: "call-many-results",
+          commands: [{
+            id: "command-1",
+            partId: "command-part",
+            type: "command",
+            renderer: "command",
+            role: "tool",
+            text: "run checks",
+          }],
+          results,
+        }]}
+        t={t}
+        visibility={{ command: true, result: true }}
+      />,
+    );
+
+    expect(screen.getByText("result-output-6")).toBeTruthy();
+    expect(screen.queryByText("result-output-7")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "继续加载执行结果" }));
+    expect(screen.getByText("result-output-8")).toBeTruthy();
+  });
+
   it("renders backend-split commands as independent cards with header labels", () => {
     const blocks = buildConversationContentBlocks([], [
       projectedCard("command-first", "command", "cat first.md"),
