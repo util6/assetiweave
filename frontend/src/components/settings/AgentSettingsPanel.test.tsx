@@ -186,6 +186,33 @@ describe("AgentSettingsPanel", () => {
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
   });
 
+  it("rechecks installed ACP agents instead of trusting persisted availability", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([createMarketItem("opencode", true)]);
+    agentRuntime.checkAgentConnection.mockResolvedValue({
+      agent_id: "opencode",
+      available: false,
+      installed: true,
+      connected: false,
+      version: "1.0.0",
+      connection_method: "acp",
+      error_code: "model_list_unavailable",
+      error: "The ACP Agent did not return a model list.",
+      installation_status: "ready",
+      runtime_status: "ready",
+      protocol_status: "failed",
+      execution_ready: false,
+      health_stale: false,
+    });
+
+    renderPanel();
+
+    const row = (await screen.findByRole("heading", { name: "OpenCode" })).closest("article");
+    await waitFor(() => expect(agentRuntime.checkAgentConnection).toHaveBeenCalledWith("opencode", "connection"));
+    await waitFor(() => expect(within(row as HTMLElement).getByText("不可用")).toBeTruthy());
+    expect(within(row as HTMLElement).getByTitle("The ACP Agent did not return a model list.")).toBeTruthy();
+  });
+
   it("lists catalog versions without compatibility gating", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     const item = createMarketItem("opencode", false);

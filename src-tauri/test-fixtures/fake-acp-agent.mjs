@@ -87,7 +87,7 @@ function handleNewSession(message) {
   }
   respond(message.id, {
     sessionId,
-    configOptions: [
+    configOptions: mode === "no_models" ? [] : [
       {
         id: "model",
         name: "Model",

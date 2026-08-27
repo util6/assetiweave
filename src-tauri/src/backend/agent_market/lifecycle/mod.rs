@@ -212,8 +212,9 @@ mod tests {
             lifecycle::install::register_test_artifact,
             types::{
                 AgentInstallStartRequest, AgentMarketProtocol, Catalog, CatalogCapabilities,
-                CatalogItem, CatalogSource, CoreCompatibility, Distribution, ProtocolStatus,
-                Target, UpstreamSource, Verification, VerificationStatus,
+                CatalogItem, CatalogSource, CoreCompatibility, Distribution, InstallationStatus,
+                ProtocolStatus, RuntimeStatus, Target, UpstreamSource, Verification,
+                VerificationStatus,
             },
         },
         agents::types::AgentId,
@@ -346,6 +347,71 @@ mod tests {
             warnings.is_empty(),
             "unexpected recovery warnings: {warnings:?}"
         );
+        assert!(recovered_manager
+            .registry()
+            .get(&AgentId::parse(AGENT_ID).expect("agent id"))
+            .is_some());
+
+        let active_program = second_install_dir.join("bin/agent");
+        std::fs::write(
+            &active_program,
+            fixture_agent_script(&fixture_path, "no_models"),
+        )
+        .expect("replace fixture with an ACP agent that returns no models");
+        let scheduled = recovered_manager
+            .prepare_startup_health_refresh("default")
+            .await
+            .expect("mark persisted ACP health pending");
+        assert_eq!(scheduled, 1);
+        let pending = service_v3
+            .repository
+            .get("default", AGENT_ID)
+            .await
+            .expect("pending installation")
+            .expect("pending installation remains downloaded");
+        assert_eq!(pending.protocol_status, ProtocolStatus::Unchecked);
+        assert_eq!(pending.model_status.as_deref(), Some("unchecked"));
+        assert!(recovered_manager
+            .registry()
+            .get(&AgentId::parse(AGENT_ID).expect("agent id"))
+            .is_none());
+
+        let failed_refresh = recovered_manager
+            .refresh_installed_acp_health("default")
+            .await
+            .expect("startup ACP health refresh");
+        assert_eq!(failed_refresh.checked, 1);
+        assert_eq!(failed_refresh.available, 0);
+        assert_eq!(failed_refresh.unavailable, 1);
+        let unavailable = service_v3
+            .repository
+            .get("default", AGENT_ID)
+            .await
+            .expect("unavailable installation")
+            .expect("unavailable installation remains downloaded");
+        assert_eq!(unavailable.installation_status, InstallationStatus::Ready);
+        assert_eq!(unavailable.runtime_status, RuntimeStatus::Ready);
+        assert_eq!(unavailable.protocol_status, ProtocolStatus::Failed);
+        assert_eq!(unavailable.model_status.as_deref(), Some("failed"));
+
+        std::fs::write(
+            &active_program,
+            fixture_agent_script(&fixture_path, "happy"),
+        )
+        .expect("restore usable ACP fixture");
+        let recovered_refresh = recovered_manager
+            .refresh_installed_acp_health("default")
+            .await
+            .expect("repeat ACP health refresh after recovery");
+        assert_eq!(recovered_refresh.available, 1);
+        let available = service_v3
+            .repository
+            .get("default", AGENT_ID)
+            .await
+            .expect("available installation")
+            .expect("available installation remains downloaded");
+        assert_eq!(available.protocol_status, ProtocolStatus::Ready);
+        assert_eq!(available.model_status.as_deref(), Some("ready"));
         assert!(recovered_manager
             .registry()
             .get(&AgentId::parse(AGENT_ID).expect("agent id"))

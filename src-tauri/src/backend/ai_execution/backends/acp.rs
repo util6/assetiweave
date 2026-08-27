@@ -185,9 +185,8 @@ async fn run_connection_probe(
     definition: &AgentDefinition,
     request: &AiExecutionRequest,
 ) -> Result<(), AiExecutionError> {
-    run_session_probe(guard, definition, request)
-        .await
-        .map(|_| ())
+    let session = run_session_probe(guard, definition, request).await?;
+    parse_session_models(&session).map(|_| ())
 }
 
 async fn run_session_probe(
@@ -321,6 +320,11 @@ fn parse_session_models(
         .filter_map(parse_model_option)
         .collect::<Vec<_>>();
     let current_model_id = string_field(&value, &["current_model_id", "currentModelId"]);
+    if models.is_empty() {
+        return Err(AiExecutionError::Protocol {
+            operation: "session_model_catalog_empty",
+        });
+    }
     Ok((models, current_model_id))
 }
 
@@ -852,7 +856,32 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn life_03_model_discovery_reads_session_config_options_without_prompt() {
+    async fn life_03_connection_probe_requires_a_non_empty_model_list() {
+        let (root, record) = test_paths("connection-probe-no-models");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        let error = backend
+            .check_connection(&definition("no_models", &record))
+            .await
+            .expect_err("an ACP session without models is not usable");
+
+        assert!(matches!(
+            error,
+            AiExecutionError::Protocol {
+                operation: "session_model_catalog_empty"
+            }
+        ));
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"initialize\""));
+        assert!(records.contains("\"event\":\"new\""));
+        assert!(records.contains("\"event\":\"close\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn life_04_model_discovery_reads_session_config_options_without_prompt() {
         let (root, record) = test_paths("model-discovery");
         let workspace_root = root.join("workspaces");
         let backend = AcpExecutionBackend::new(workspace_root.clone());
@@ -868,6 +897,27 @@ mod tests {
         assert_eq!(models[0].description.as_deref(), Some("Fast fixture model"));
         assert!(records(&record).contains("\"event\":\"new\""));
         assert!(!records(&record).contains("\"event\":\"prompt\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn life_05_model_discovery_rejects_an_empty_model_list() {
+        let (root, record) = test_paths("model-discovery-no-models");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        let error = backend
+            .discover_models(&definition("no_models", &record))
+            .await
+            .expect_err("empty model discovery must fail health checks");
+
+        assert!(matches!(
+            error,
+            AiExecutionError::Protocol {
+                operation: "session_model_catalog_empty"
+            }
+        ));
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
         let _ = fs::remove_dir_all(root);
     }

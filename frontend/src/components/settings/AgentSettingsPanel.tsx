@@ -86,15 +86,33 @@ export function AgentSettingsPanel({
     let disposed = false;
     if (typeof agentRuntime.listAgentMarket === "function") {
       void agentRuntime.listAgentMarket()
-        .then((items) => {
+        .then(async (items) => {
           if (disposed) return;
           if (items.length === 0) return;
           const dynamicCatalog = items.map(marketItemToCatalogItem);
           setMarketCatalog(dynamicCatalog);
           setConnectionStates(Object.fromEntries(items.map((item) => [
             item.id,
-            item.installed?.executionReady ? "available" : item.installed ? "failed" : "not-installed",
+            marketConnectionState(item),
           ])));
+          const installedAcpAgents = items.filter((item) =>
+            item.protocol === "acp" && item.installed?.enabled);
+          if (installedAcpAgents.length === 0) return;
+          setConnectionStates((current) => ({
+            ...current,
+            ...Object.fromEntries(installedAcpAgents.map((item) => [item.id, "checking"])),
+          }));
+          await Promise.all(installedAcpAgents.map(async (item) => {
+            try {
+              const result = await checkAgentConnection(item.id, "connection");
+              if (disposed) return;
+              applyConnectionResult(item.id, result, "connection", t, setConnectionStates, setConnectionMessages);
+            } catch (error) {
+              if (disposed) return;
+              setConnectionStates((current) => ({ ...current, [item.id]: "failed" }));
+              setConnectionMessages((current) => ({ ...current, [item.id]: errorMessage(error) }));
+            }
+          }));
         })
         .catch(() => undefined);
       return () => {
@@ -198,7 +216,7 @@ export function AgentSettingsPanel({
     setMarketCatalog(items.map(marketItemToCatalogItem));
     setConnectionStates(Object.fromEntries(items.map((item) => [
       item.id,
-      item.installed?.executionReady ? "available" : item.installed ? "failed" : "not-installed",
+      marketConnectionState(item),
     ])));
   }
 
@@ -629,6 +647,12 @@ export function AgentSettingsPanel({
 
     </div>
   );
+}
+
+function marketConnectionState(item: agentRuntime.AgentMarketItem): AgentConnectionState {
+  if (!item.installed) return "not-installed";
+  if (item.installed.healthStale) return "checking";
+  return item.installed.executionReady ? "available" : "failed";
 }
 
 function ModelOptionButton({

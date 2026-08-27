@@ -277,9 +277,13 @@ async fn materialize_and_activate(
         protocol_error_code,
         protocol_error_message,
         protocol_checked_at: Some(now.clone()),
-        model_status: None,
+        model_status: Some(if protocol_status == ProtocolStatus::Ready {
+            "ready".to_string()
+        } else {
+            "failed".to_string()
+        }),
         model_error_code: None,
-        model_checked_at: None,
+        model_checked_at: Some(now.clone()),
         installed_at: now.clone(),
         updated_at: now,
     };

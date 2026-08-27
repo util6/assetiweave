@@ -20,11 +20,46 @@ impl AppService {
         let agent_id = AgentId::parse(params.agent_id)
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let mode = params.mode;
-        let mut result = crate::backend::ai_execution::check_agent_connection_blocking(
-            self.agent_runtime.clone(),
-            agent_id.clone(),
-            mode,
-        );
+        let existing_installation = self
+            .list_agent_installations()?
+            .into_iter()
+            .find(|item| item.agent_id == agent_id.to_string());
+        let mut result = if matches!(mode, AgentConnectionCheckMode::Connection)
+            && existing_installation.as_ref().is_some_and(|installation| {
+                installation.protocol
+                    == crate::backend::agent_market::types::AgentMarketProtocol::Acp
+            }) {
+            let models = self
+                .db
+                .block_on(
+                    self.agent_runtime_manager
+                        .refresh_acp_health(self.tenant_id(), agent_id.as_str()),
+                )
+                .map_err(AppError::external)?;
+            AgentConnectionResult {
+                agent_id: agent_id.to_string(),
+                available: models.available,
+                installed: true,
+                connected: models.available,
+                version: existing_installation
+                    .as_ref()
+                    .map(|installation| installation.agent_version.clone()),
+                connection_method: Some("acp".to_string()),
+                error_code: models.error_code,
+                error: models.error,
+                installation_status: None,
+                runtime_status: None,
+                protocol_status: None,
+                execution_ready: false,
+                health_stale: false,
+            }
+        } else {
+            crate::backend::ai_execution::check_agent_connection_blocking(
+                self.agent_runtime.clone(),
+                agent_id.clone(),
+                mode,
+            )
+        };
         if let Some(installation) = self
             .list_agent_installations()?
             .into_iter()
@@ -71,6 +106,23 @@ impl AppService {
     ) -> AppResult<AgentModelsResult> {
         let agent_id = AgentId::parse(params.agent_id)
             .map_err(|error| AppError::Validation(error.to_string()))?;
+        if self
+            .list_agent_installations()?
+            .into_iter()
+            .any(|installation| {
+                installation.agent_id == agent_id.to_string()
+                    && installation.protocol
+                        == crate::backend::agent_market::types::AgentMarketProtocol::Acp
+            })
+        {
+            return self
+                .db
+                .block_on(
+                    self.agent_runtime_manager
+                        .refresh_acp_health(self.tenant_id(), agent_id.as_str()),
+                )
+                .map_err(AppError::external);
+        }
         Ok(
             crate::backend::ai_execution::discover_agent_models_blocking(
                 self.agent_runtime.clone(),

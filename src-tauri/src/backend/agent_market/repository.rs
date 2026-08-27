@@ -46,7 +46,7 @@ impl AgentInstallationRepository {
         &self,
         tenant_id: &str,
     ) -> Result<Vec<AgentInstallation>, String> {
-        let rows = sqlx::query("SELECT * FROM agent_installations WHERE tenant_id = ?1 AND enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' ORDER BY agent_id")
+        let rows = sqlx::query("SELECT * FROM agent_installations WHERE tenant_id = ?1 AND enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' AND (protocol != 'acp' OR model_status = 'ready') ORDER BY agent_id")
             .bind(tenant_id).fetch_all(&self.pool).await.map_err(|error| error.to_string())?;
         rows.into_iter().map(row_to_installation).collect()
     }
@@ -103,6 +103,20 @@ impl AgentInstallationRepository {
             .bind(&installation.model_status).bind(&installation.model_error_code).bind(&installation.model_checked_at).bind(&installation.updated_at)
             .bind(&installation.tenant_id).bind(&installation.agent_id).execute(&self.pool).await.map_err(|error| error.to_string())?;
         Ok(())
+    }
+
+    pub(crate) async fn mark_acp_health_unchecked(
+        &self,
+        tenant_id: &str,
+        updated_at: &str,
+    ) -> Result<u64, String> {
+        let result = sqlx::query("UPDATE agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND enabled = 1 AND protocol = 'acp' AND installation_status IN ('ready', 'broken')")
+            .bind(updated_at)
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(result.rows_affected())
     }
 
     pub(crate) async fn mark_broken(

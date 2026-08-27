@@ -765,14 +765,16 @@ fn installation_view(installation: &AgentInstallation) -> AgentInstallationView 
         .protocol_checked_at
         .clone()
         .or_else(|| installation.runtime_checked_at.clone());
-    let health_stale = last_checked_at.as_deref().is_none_or(|value| {
-        chrono::DateTime::parse_from_rfc3339(value)
-            .map(|checked| {
-                chrono::Utc::now() - checked.with_timezone(&chrono::Utc)
-                    > chrono::Duration::minutes(30)
-            })
-            .unwrap_or(true)
-    });
+    let health_stale = installation.protocol_status == ProtocolStatus::Unchecked
+        || installation.model_status.as_deref() == Some("unchecked")
+        || last_checked_at.as_deref().is_none_or(|value| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .map(|checked| {
+                    chrono::Utc::now() - checked.with_timezone(&chrono::Utc)
+                        > chrono::Duration::minutes(30)
+                })
+                .unwrap_or(true)
+        });
     AgentInstallationView {
         agent_id: installation.agent_id.clone(),
         display_name: installation.display_name.clone(),
@@ -804,13 +806,27 @@ fn installation_view(installation: &AgentInstallation) -> AgentInstallationView 
         error: installation
             .protocol_error_code
             .as_ref()
-            .or(installation.runtime_error_code.as_ref())
             .map(|code| {
                 AgentMarketErrorView::from(&AgentMarketError::new(
                     code,
-                    "Agent health check failed.",
+                    installation
+                        .protocol_error_message
+                        .as_deref()
+                        .unwrap_or("Agent protocol health check failed."),
                     true,
                 ))
+            })
+            .or_else(|| {
+                installation.runtime_error_code.as_ref().map(|code| {
+                    AgentMarketErrorView::from(&AgentMarketError::new(
+                        code,
+                        installation
+                            .runtime_error_message
+                            .as_deref()
+                            .unwrap_or("Agent runtime health check failed."),
+                        true,
+                    ))
+                })
             }),
         warnings: Vec::new(),
     }

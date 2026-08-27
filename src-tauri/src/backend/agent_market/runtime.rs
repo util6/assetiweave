@@ -12,21 +12,24 @@ use crate::backend::{
     agents::{
         registry::{AgentRegistry, AgentRegistryHandle},
         types::{
-            AgentCommandDefinition, AgentDefinition, AgentEnvEntry, AgentId, AgentProtocol,
-            DeclaredAgentCapabilities,
+            AgentCommandDefinition, AgentDefinition, AgentEnvEntry, AgentId, AgentModelsResult,
+            AgentProtocol, DeclaredAgentCapabilities,
         },
     },
     ai_execution::{
         backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
         executor::AgentExecutor,
-        AgentExecutionRuntime,
+        AgentExecutionRuntime, AiExecutionError,
     },
     extension_kernel::DomainPackageSystem,
 };
 
 use super::{
     repository::AgentInstallationRepository,
-    types::{AgentInstallation, AgentMarketProtocol, InstallationStatus, Ownership, RuntimeStatus},
+    types::{
+        AgentInstallation, AgentMarketProtocol, InstallationStatus, Ownership, ProtocolStatus,
+        RuntimeStatus,
+    },
 };
 
 const STAGING_RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
@@ -85,6 +88,14 @@ pub(crate) struct AgentRuntimeManager {
     registry: AgentRuntimeRegistry,
     registry_snapshot: Arc<crate::backend::extension_kernel::RegistrySnapshot<AgentRegistry>>,
     executor: Arc<AgentExecutor>,
+    workspace_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AgentHealthRefreshSummary {
+    pub(crate) checked: usize,
+    pub(crate) available: usize,
+    pub(crate) unavailable: usize,
 }
 
 impl AgentRuntimeManager {
@@ -97,7 +108,7 @@ impl AgentRuntimeManager {
         let executor = Arc::new(AgentExecutor::with_registry_handle(
             registry.clone(),
             Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
-            Arc::new(NativeExecutionBackend::new(workspace_root)),
+            Arc::new(NativeExecutionBackend::new(workspace_root.clone())),
             2,
         ));
         Self {
@@ -105,6 +116,7 @@ impl AgentRuntimeManager {
             registry,
             registry_snapshot,
             executor,
+            workspace_root,
         }
     }
 
@@ -243,6 +255,215 @@ impl AgentRuntimeManager {
         }
         self.reload(tenant_id).await?;
         Ok(warnings)
+    }
+
+    pub(crate) async fn prepare_startup_health_refresh(
+        &self,
+        tenant_id: &str,
+    ) -> Result<u64, String> {
+        let changed = self
+            .repository
+            .mark_acp_health_unchecked(tenant_id, &chrono::Utc::now().to_rfc3339())
+            .await?;
+        self.reload(tenant_id).await?;
+        Ok(changed)
+    }
+
+    pub(crate) async fn refresh_installed_acp_health(
+        &self,
+        tenant_id: &str,
+    ) -> Result<AgentHealthRefreshSummary, String> {
+        let agent_ids = self
+            .repository
+            .list(tenant_id)
+            .await?
+            .into_iter()
+            .filter(|installation| {
+                installation.enabled && installation.protocol == AgentMarketProtocol::Acp
+            })
+            .map(|installation| installation.agent_id)
+            .collect::<Vec<_>>();
+        let mut summary = AgentHealthRefreshSummary::default();
+        for agent_id in agent_ids {
+            let result = match self.probe_acp_health(tenant_id, &agent_id).await {
+                Ok(result) => result,
+                Err(error) => {
+                    self.reload(tenant_id).await?;
+                    return Err(error);
+                }
+            };
+            summary.checked += 1;
+            if result.available {
+                summary.available += 1;
+            } else {
+                summary.unavailable += 1;
+            }
+        }
+        self.reload(tenant_id).await?;
+        Ok(summary)
+    }
+
+    pub(crate) async fn refresh_acp_health(
+        &self,
+        tenant_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentModelsResult, String> {
+        let result = self.probe_acp_health(tenant_id, agent_id).await?;
+        self.reload(tenant_id).await?;
+        Ok(result)
+    }
+
+    async fn probe_acp_health(
+        &self,
+        tenant_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentModelsResult, String> {
+        let mutation_gate = self.mutation_gate(agent_id);
+        let _mutation_lease = mutation_gate.write().await;
+        let mut installation = self
+            .repository
+            .get(tenant_id, agent_id)
+            .await?
+            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        if installation.protocol != AgentMarketProtocol::Acp {
+            return Err("The installed Agent does not use ACP.".to_string());
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        if !installation.enabled {
+            return Ok(unavailable_models(
+                agent_id,
+                "agent_disabled",
+                "The ACP Agent is disabled.",
+            ));
+        }
+        if !installation.resolved_program.is_file() {
+            installation.installation_status = InstallationStatus::Broken;
+            installation.runtime_status = if installation.ownership == Ownership::Managed {
+                RuntimeStatus::EntryMissing
+            } else {
+                RuntimeStatus::RuntimeMissing
+            };
+            installation.runtime_error_code = Some("agent_entry_missing".to_string());
+            installation.runtime_error_message =
+                Some("The resolved Agent entry is missing.".to_string());
+            installation.runtime_checked_at = Some(now.clone());
+            installation.protocol_status = ProtocolStatus::Failed;
+            installation.protocol_error_code = Some("agent_entry_missing".to_string());
+            installation.protocol_error_message =
+                Some("The resolved Agent entry is missing.".to_string());
+            installation.protocol_checked_at = Some(now.clone());
+            installation.model_status = Some("failed".to_string());
+            installation.model_error_code = Some("agent_entry_missing".to_string());
+            installation.model_checked_at = Some(now.clone());
+            installation.updated_at = now;
+            self.repository.update_health(&installation).await?;
+            return Ok(unavailable_models(
+                agent_id,
+                "agent_entry_missing",
+                "The resolved Agent entry is missing.",
+            ));
+        }
+
+        let definition = match definition_from_installation(&installation) {
+            Ok(definition) => definition,
+            Err(error) => {
+                installation.installation_status = InstallationStatus::Broken;
+                installation.runtime_status = RuntimeStatus::Failed;
+                installation.runtime_error_code = Some("definition_invalid".to_string());
+                installation.runtime_error_message = Some(error);
+                installation.runtime_checked_at = Some(now.clone());
+                installation.protocol_status = ProtocolStatus::Failed;
+                installation.protocol_error_code = Some("definition_invalid".to_string());
+                installation.protocol_error_message =
+                    Some("The persisted ACP definition is invalid.".to_string());
+                installation.protocol_checked_at = Some(now.clone());
+                installation.model_status = Some("failed".to_string());
+                installation.model_error_code = Some("definition_invalid".to_string());
+                installation.model_checked_at = Some(now.clone());
+                installation.updated_at = now;
+                self.repository.update_health(&installation).await?;
+                return Ok(unavailable_models(
+                    agent_id,
+                    "definition_invalid",
+                    "The persisted ACP definition is invalid.",
+                ));
+            }
+        };
+
+        installation.installation_status = InstallationStatus::Ready;
+        installation.runtime_status = RuntimeStatus::Ready;
+        installation.runtime_error_code = None;
+        installation.runtime_error_message = None;
+        installation.runtime_checked_at = Some(now.clone());
+        let discovery = AcpExecutionBackend::new(self.workspace_root.clone())
+            .discover_models(&definition)
+            .await;
+        let result = match discovery {
+            Ok((models, current_model_id)) => {
+                installation.protocol_status = ProtocolStatus::Ready;
+                installation.protocol_error_code = None;
+                installation.protocol_error_message = None;
+                installation.model_status = Some("ready".to_string());
+                installation.model_error_code = None;
+                AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: current_model_id
+                        .or_else(|| models.first().map(|model| model.id.clone())),
+                    models,
+                    error_code: None,
+                    error: None,
+                }
+            }
+            Err(error) => {
+                let message = model_discovery_error_message(&error);
+                if matches!(
+                    error,
+                    AiExecutionError::RuntimeUnavailable { .. } | AiExecutionError::Spawn { .. }
+                ) {
+                    installation.installation_status = InstallationStatus::Broken;
+                    installation.runtime_status = RuntimeStatus::Failed;
+                    installation.runtime_error_code = Some("runtime_probe_failed".to_string());
+                    installation.runtime_error_message = Some(message.clone());
+                }
+                installation.protocol_status = ProtocolStatus::Failed;
+                installation.protocol_error_code = Some("model_list_unavailable".to_string());
+                installation.protocol_error_message = Some(message.clone());
+                installation.model_status = Some("failed".to_string());
+                installation.model_error_code = Some("model_list_unavailable".to_string());
+                unavailable_models(agent_id, "model_list_unavailable", &message)
+            }
+        };
+        installation.protocol_checked_at = Some(now.clone());
+        installation.model_checked_at = Some(now.clone());
+        installation.updated_at = now;
+        self.repository.update_health(&installation).await?;
+        Ok(result)
+    }
+}
+
+fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
+    AgentModelsResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        models: Vec::new(),
+        current_model_id: None,
+        error_code: Some(code.to_string()),
+        error: Some(message.to_string()),
+    }
+}
+
+fn model_discovery_error_message(error: &AiExecutionError) -> String {
+    if matches!(
+        error,
+        AiExecutionError::Protocol {
+            operation: "session_model_catalog_empty"
+        }
+    ) {
+        "The ACP Agent did not return a usable model list.".to_string()
+    } else {
+        error.to_view().message
     }
 }
 

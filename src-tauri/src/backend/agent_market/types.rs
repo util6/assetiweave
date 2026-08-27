@@ -621,6 +621,8 @@ impl AgentInstallation {
 
     pub(crate) fn connected(&self) -> bool {
         self.protocol_status == ProtocolStatus::Ready
+            && (self.protocol != AgentMarketProtocol::Acp
+                || self.model_status.as_deref() == Some("ready"))
     }
 
     pub(crate) fn execution_ready(&self) -> bool {
@@ -629,6 +631,8 @@ impl AgentInstallation {
             && self.installation_status == InstallationStatus::Ready
             && self.runtime_status == RuntimeStatus::Ready
             && self.protocol_status == ProtocolStatus::Ready
+            && (self.protocol != AgentMarketProtocol::Acp
+                || self.model_status.as_deref() == Some("ready"))
     }
 }
 
@@ -1134,6 +1138,10 @@ mod tests {
         assert!(!installation.connected());
         assert!(!installation.execution_ready());
         installation.protocol_status = ProtocolStatus::Ready;
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
+        installation.model_status = Some("ready".to_string());
+        assert!(installation.connected());
         assert!(installation.execution_ready());
     }
 

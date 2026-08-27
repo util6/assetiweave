@@ -146,6 +146,17 @@ impl AppRuntime {
         runtime
             .block_on(agent_runtime_manager.reload(&tenant_id))
             .map_err(AppError::External)?;
+        if role == RuntimeRole::ResidentHost {
+            if let Err(error) =
+                runtime.block_on(agent_runtime_manager.prepare_startup_health_refresh(&tenant_id))
+            {
+                crate::backend::operation_log::log_warn(
+                    "app.startup.agent_health_prepare",
+                    "ACP startup health refresh could not be prepared",
+                    &[("error", error)],
+                );
+            }
+        }
 
         let task_runtime = TaskRuntime::with_runtime_handle(runtime.handle().clone());
         let db = Database::from_parts(pool, runtime);
@@ -237,6 +248,7 @@ impl AppRuntime {
     }
 
     fn start_resident_services(&self) {
+        self.start_agent_health_refresh();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants() {
             crate::backend::operation_log::log_warn(
@@ -249,6 +261,55 @@ impl AppRuntime {
         let handle = dispatcher.start();
         if let Ok(mut slot) = self.dispatcher.lock() {
             *slot = Some(handle);
+        }
+    }
+
+    fn start_agent_health_refresh(&self) {
+        let snapshot = self.context();
+        let tenant_id = snapshot.tenant.id.clone();
+        let runtime_manager = snapshot.agent_runtime_manager.clone();
+        let mut spec = super::tasks::TaskSpec::new(
+            super::tasks::TaskKind::Other,
+            Some(format!("agent-health-startup:{tenant_id}")),
+        )
+        .with_tenant_id(tenant_id.clone());
+        spec.detail = serde_json::json!({
+            "domain": "agent_market",
+            "operation": "startup_health_refresh",
+        });
+        let spawn = self.task_runtime.spawn(
+            spec,
+            Box::new(move |context| {
+                if context.is_cancelled() {
+                    return Err(AppError::Canceled(
+                        "ACP startup health refresh was cancelled".to_string(),
+                    ));
+                }
+                let summary = std::thread::spawn(move || {
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())?;
+                    runtime.block_on(runtime_manager.refresh_installed_acp_health(&tenant_id))
+                })
+                .join()
+                .map_err(|_| {
+                    AppError::External("ACP startup health refresh did not complete".to_string())
+                })?
+                .map_err(AppError::External)?;
+                Ok(serde_json::json!({
+                    "checked": summary.checked,
+                    "available": summary.available,
+                    "unavailable": summary.unavailable,
+                }))
+            }),
+        );
+        if let Err(error) = spawn {
+            crate::backend::operation_log::log_warn(
+                "app.startup.agent_health_refresh",
+                "ACP startup health refresh could not be started",
+                &[("error", error.to_string())],
+            );
         }
     }
 
