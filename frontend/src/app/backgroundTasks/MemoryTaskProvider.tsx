@@ -41,7 +41,13 @@ interface MemoryTaskContextValue {
 
 const MemoryTaskContext = createContext<MemoryTaskContextValue | null>(null);
 
-export function MemoryTaskProvider({ children }: { children: ReactNode }) {
+export function MemoryTaskProvider({
+  automaticDreamEnabled = false,
+  children,
+}: {
+  automaticDreamEnabled?: boolean;
+  children: ReactNode;
+}) {
   const [autoDreamStatus, setAutoDreamStatus] = useState<MemoryDreamPreview | null>(null);
   const autoStartAttemptRef = useRef<string | null>(null);
   const adapter = useMemo<BackgroundTaskRuntimeAdapter<MemoryTaskSnapshot[], MemoryTaskRuntimeEvent>>(
@@ -88,10 +94,12 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
   }, [merge, refreshAutoDreamStatus]);
 
   useEffect(() => {
+    if (!automaticDreamEnabled) return;
     void refreshAutoDreamStatus().catch(() => {});
-  }, [refreshAutoDreamStatus]);
+  }, [automaticDreamEnabled, refreshAutoDreamStatus]);
 
   useEffect(() => {
+    if (!automaticDreamEnabled) return;
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     void subscribeConversationSyncTasks((snapshot) => {
@@ -108,9 +116,10 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsubscribe?.();
     };
-  }, [maybeStartAutoDream]);
+  }, [automaticDreamEnabled, maybeStartAutoDream]);
 
   useEffect(() => {
+    if (!automaticDreamEnabled) return;
     const startupTimer = window.setTimeout(() => {
       void maybeStartAutoDream().catch(() => {});
     }, 5000);
@@ -121,7 +130,7 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(startupTimer);
       window.clearInterval(interval);
     };
-  }, [maybeStartAutoDream]);
+  }, [automaticDreamEnabled, maybeStartAutoDream]);
 
   const startDream = useCallback(async (params: { scope?: MemoryScope; dryRun?: boolean } = {}) => {
     const snapshot = await startMemoryTask({

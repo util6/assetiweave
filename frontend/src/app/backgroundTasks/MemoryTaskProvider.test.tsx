@@ -46,6 +46,20 @@ describe("MemoryTaskProvider", () => {
     vi.clearAllMocks();
   });
 
+  it("does not inspect or schedule automatic Dream work when automatic Dream is disabled", async () => {
+    vi.useFakeTimers();
+
+    render(<MemoryTaskProvider automaticDreamEnabled={false}><Harness /></MemoryTaskProvider>);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
+    });
+
+    expect(statusMock).not.toHaveBeenCalled();
+    expect(subscribeConversationSyncTasksMock).not.toHaveBeenCalled();
+    expect(startMock).not.toHaveBeenCalled();
+  });
+
   it("recovers a completed task through polling while unrelated controls stay enabled", async () => {
     vi.useFakeTimers();
     const running = task("running");
@@ -76,7 +90,7 @@ describe("MemoryTaskProvider", () => {
     statusMock.mockResolvedValue(preview);
     startMock.mockResolvedValue(task("running"));
 
-    render(<MemoryTaskProvider><Harness /></MemoryTaskProvider>);
+    render(<MemoryTaskProvider automaticDreamEnabled={true}><Harness /></MemoryTaskProvider>);
     await act(async () => {});
     await act(async () => {
       listeners.get("conversation-sync-task-updated")?.({ status: "completed" });
