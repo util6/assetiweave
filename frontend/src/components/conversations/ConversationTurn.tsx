@@ -70,18 +70,14 @@ function applyConversationCommandProjections(
         : [node];
     }
 
-    const rawCommands = node.commands;
-    let projectionApplied = false;
-    const commands = rawCommands.flatMap((command) => {
+    const commands = node.commands.flatMap((command) => {
       const projection = command.partId ? projectionByPartId.get(command.partId) : undefined;
       if (!projection) return [command];
-      projectionApplied = true;
       return projectCommandBlock(command, projection);
     });
     return [{
       ...node,
       commands,
-      rawCommands: projectionApplied ? rawCommands : undefined,
     }];
   });
 }
@@ -130,10 +126,6 @@ export function buildConversationBlockTurnIndex(
         continue;
       }
       index.set(node.sourceExecutionId, model.turn.id);
-      for (const rawCommand of node.rawCommands ?? []) {
-        index.set(rawCommand.id, model.turn.id);
-        if (rawCommand.partId) index.set(rawCommand.partId, model.turn.id);
-      }
       for (const block of [...node.commands, ...node.results]) {
         index.set(block.id, model.turn.id);
         for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);

@@ -348,7 +348,7 @@ describe("ConversationContentCards", () => {
     ]);
   });
 
-  it("renders command and results as children of one Execution unit", () => {
+  it("renders command and results directly without an outer Execution surface", () => {
     const displayNodes = buildConversationDisplayNodesFromNodes([
       projectedNodeFromSeed(
         projectedCard("command-a", "command", "pnpm typecheck"),
@@ -370,15 +370,15 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-conversation-execution-id="call-a"');
-    expect(html).toContain("执行");
+    expect(html).not.toContain("data-conversation-execution-id");
+    expect(html).not.toContain("conversation-surface");
     expect(html).not.toContain('title="call-a"');
     expect(html).toContain("pnpm typecheck");
     expect(html).toContain("types passed");
     expect(html.indexOf("pnpm typecheck")).toBeLessThan(html.indexOf("types passed"));
   });
 
-  it("folds projected command groups and keeps the Part short ID stable across display nodes", () => {
+  it("folds projected command groups without exposing the raw block or an Execution wrapper", () => {
     const partId = "part-shell-12345678";
     const commands = Array.from({ length: 8 }, (_, index) => ({
       id: `${partId}::display:${index}`,
@@ -397,7 +397,6 @@ describe("ConversationContentCards", () => {
           sourceExecutionId: "call-a",
           commands,
           results: [],
-          rawCommands: [{ ...commands[0]!, id: partId, text: "raw command block" }],
         }]}
         t={t}
         visibility={{ command: true, result: true }}
@@ -406,15 +405,14 @@ describe("ConversationContentCards", () => {
 
     expect(screen.getByText("command-1")).toBeTruthy();
     expect(screen.queryByText("command-2")).toBeNull();
-    expect(screen.queryByText("raw command block")).toBeNull();
+    expect(screen.queryByRole("button", { name: "查看后端保存的原始命令块" })).toBeNull();
+    expect(document.querySelector("[data-conversation-execution-id]")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开其余 7 条命令" }));
     expect(screen.getByText("command-6")).toBeTruthy();
     expect(screen.queryByText("command-7")).toBeNull();
     expect(document.querySelectorAll(`[title="${partId}"]`)).toHaveLength(6);
     expect(document.body.innerHTML).not.toContain(`title="${partId}::display:`);
     expect(screen.getByRole("button", { name: "继续加载命令" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "查看后端保存的原始命令块" }));
-    expect(screen.getByText("raw command block")).toBeTruthy();
   });
 
   it("progressively mounts large result groups instead of putting every result in the DOM", () => {
@@ -511,7 +509,7 @@ describe("ConversationContentCards", () => {
     expect(html.match(/data-conversation-card-id=/g)).toHaveLength(2);
   });
 
-  it("removes command-only Execution shells while preserving paired executions", () => {
+  it("does not wrap command-only or paired executions in an Execution shell", () => {
     const displayNodes = buildConversationDisplayNodesFromNodes([
       projectedNodeFromSeed(
         projectedCard("command-format", "command", "cargo fmt --check"),
@@ -543,9 +541,8 @@ describe("ConversationContentCards", () => {
       type: "execution",
       commands: [expect.objectContaining({ id: "command-format" })],
     });
-    expect(html.match(/data-conversation-execution-id=/g)).toHaveLength(1);
-    expect(html).not.toContain('data-conversation-execution-id="call-checks:command:1"');
-    expect(html).toContain('data-conversation-execution-id="call-checks:command:2"');
+    expect(html).not.toContain("data-conversation-execution-id");
+    expect(html).not.toContain("conversation-surface");
     expect(html.match(/data-content-type="command"/g)).toHaveLength(2);
   });
 

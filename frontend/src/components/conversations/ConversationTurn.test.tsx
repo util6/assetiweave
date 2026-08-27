@@ -171,7 +171,6 @@ describe("ConversationTurn", () => {
         { id: "part-shell::display:0", partId: "part-shell", commandLabel: "one" },
         { id: "part-shell::display:1", partId: "part-shell", commandLabel: "two" },
       ],
-      rawCommands: [{ id: "part-shell-node-0" }],
       results: [{ id: "part-result-node-1" }],
     });
     expect(buildConversationBlockTurnIndex([model!]).get("part-shell-node-0")).toBe("turn-1");

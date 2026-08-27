@@ -108,7 +108,6 @@ export type ConversationDisplayNode =
       sourceExecutionId: string;
       commands: ConversationContentBlock[];
       results: ConversationContentBlock[];
-      rawCommands?: ConversationContentBlock[];
     };
 
 export function conversationCardDomId(blockId: string) {
@@ -266,7 +265,7 @@ export function ConversationContentCards({
     const results = node.results.filter((block) => (
       (visibility[block.type] ?? true) && shouldDisplayContentBlock(block)
     ));
-    if (commands.length === 1 && results.length === 0 && !node.rawCommands) {
+    if (commands.length === 1 && results.length === 0) {
       return commands.map((command) => ({ type: "card", turnId: node.turnId, block: command }));
     }
     return commands.length > 0 || results.length > 0
@@ -337,7 +336,7 @@ export function ConversationContentCards({
         }
         const executionKey = `${node.turnId}:${node.sourceExecutionId}`;
         return (
-          <ConversationExecutionGroup
+          <ConversationExecutionContent
             key={executionKey}
             node={node}
             renderContentCard={renderContentCard}
@@ -388,7 +387,7 @@ export function ConversationContentCards({
 const COMMAND_RENDER_BATCH_SIZE = 6;
 const RESULT_RENDER_BATCH_SIZE = 6;
 
-function ConversationExecutionGroup({
+function ConversationExecutionContent({
   node,
   renderContentCard,
   t,
@@ -398,7 +397,6 @@ function ConversationExecutionGroup({
   t: Translator;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [rawExpanded, setRawExpanded] = useState(false);
   const [renderLimit, setRenderLimit] = useState(COMMAND_RENDER_BATCH_SIZE);
   const [resultRenderLimit, setResultRenderLimit] = useState(RESULT_RENDER_BATCH_SIZE);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -434,15 +432,10 @@ function ConversationExecutionGroup({
   }, [hasMoreResults, node.results.length, visibleResultCount]);
 
   return (
-    <section
-      className="conversation-surface overflow-hidden rounded-xl"
-      data-conversation-execution-id={node.sourceExecutionId}
-    >
-      <header className="conversation-content-header flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-        <span className="text-label-caps text-on-surface-variant">
-          {t("conversation.content.execution")}
-        </span>
-        {hasFoldedCommands ? (
+    <>
+      {node.commands.slice(0, visibleCommandCount).map(renderContentCard)}
+      {hasFoldedCommands ? (
+        <div className="flex justify-end py-1">
           <button
             aria-expanded={expanded}
             className="inline-flex items-center gap-1.5 rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
@@ -457,57 +450,32 @@ function ConversationExecutionGroup({
               ? t("conversation.content.collapseCommands")
               : t("conversation.content.expandCommands", { count: node.commands.length - 1 })}
           </button>
-        ) : null}
-      </header>
-      <div className="grid gap-3 p-3">
-        {node.commands.slice(0, visibleCommandCount).map(renderContentCard)}
-        {hasMore ? (
-          <div className="flex justify-center py-1" ref={loadMoreRef}>
-            <button
-              className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-              onClick={() => setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length))}
-              type="button"
-            >
-              {t("conversation.content.loadMoreCommands")}
-            </button>
-          </div>
-        ) : null}
-        {node.results.slice(0, visibleResultCount).map(renderContentCard)}
-        {hasMoreResults ? (
-          <div className="flex justify-center py-1" ref={loadMoreResultsRef}>
-            <button
-              className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-              onClick={() => setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length))}
-              type="button"
-            >
-              {t("conversation.content.loadMoreResults")}
-            </button>
-          </div>
-        ) : null}
-        {node.rawCommands?.length ? (
-          <div className="rounded-xl border border-theme-card-border/55 bg-theme-card/35 px-3 py-2">
-            <button
-              aria-expanded={rawExpanded}
-              className="inline-flex items-center gap-1.5 text-body-sm font-semibold text-on-surface-variant"
-              onClick={() => setRawExpanded((current) => !current)}
-              type="button"
-            >
-              {rawExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              {t("conversation.content.rawCommand")}
-            </button>
-            {rawExpanded ? (
-              <div className="mt-2 grid gap-2">
-                {node.rawCommands.map((command) => (
-                  <pre className="overflow-auto whitespace-pre-wrap break-words text-code-sm leading-6 text-on-surface" key={command.id}>
-                    <code>{command.text}</code>
-                  </pre>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </section>
+        </div>
+      ) : null}
+      {hasMore ? (
+        <div className="flex justify-center py-1" ref={loadMoreRef}>
+          <button
+            className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+            onClick={() => setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length))}
+            type="button"
+          >
+            {t("conversation.content.loadMoreCommands")}
+          </button>
+        </div>
+      ) : null}
+      {node.results.slice(0, visibleResultCount).map(renderContentCard)}
+      {hasMoreResults ? (
+        <div className="flex justify-center py-1" ref={loadMoreResultsRef}>
+          <button
+            className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
+            onClick={() => setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length))}
+            type="button"
+          >
+            {t("conversation.content.loadMoreResults")}
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
