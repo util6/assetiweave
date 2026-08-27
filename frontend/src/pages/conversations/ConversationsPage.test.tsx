@@ -1136,6 +1136,34 @@ describe("MarkdownContent", () => {
     ));
   });
 
+  it("reports the message from a structured Tauri projector error", async () => {
+    vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
+      .mockRejectedValueOnce({
+        code: "external_error",
+        message: "An external operation failed.",
+        retryable: true,
+        details: null,
+      });
+    const onCopyError = vi.fn();
+    render(
+      <QuestionPreview
+        adapterVersion="1.0.0"
+        onCopyError={onCopyError}
+        onExport={vi.fn()}
+        onPickOutputRoot={async () => null}
+        outputRoot="/tmp/conversation-export"
+        question={questionDetail}
+        session={sessionDetail}
+        setOutputRoot={vi.fn()}
+        t={t}
+      />,
+    );
+
+    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(
+      "命令展示解析失败，已保留原始命令：An external operation failed.",
+    ));
+  });
+
   it("renders question checkboxes for batch export selection", () => {
     const html = renderToStaticMarkup(
       <SessionQuestionWorkspace

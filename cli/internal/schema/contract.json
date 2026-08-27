@@ -88,6 +88,7 @@
     "conversation.data.repair",
     "conversation.data.rollback",
     "conversation.session.list",
+    "conversation.command_projection.project",
     "conversation.search",
     "conversation.search.incremental",
     "conversation.search.index.status",
@@ -228,6 +229,7 @@
     "repair_conversation_data",
     "rollback_conversation_data",
     "list_conversation_sessions",
+    "project_conversation_command_parts",
     "get_conversation_session",
     "export_conversation_session",
     "list_web_record_sessions",
@@ -4746,6 +4748,62 @@
         "required": []
       },
       "cli": "assetiweave-cli conversation session list",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "conversation.command_projection.project",
+      "canonical_method": "conversation.command_projection.project",
+      "description": "Project one stored command block into display command parts",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "adapter_id",
+          "parts"
+        ],
+        "type": "object",
+        "properties": {
+          "adapter_id": {
+            "type": "string",
+            "description": "Source conversation adapter identifier",
+            "aliases": [
+              "adapterId"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "part_id": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "command_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "part_id",
+                "command"
+              ]
+            },
+            "description": "Stored raw command blocks to project"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
       "since": "0.1.0",
       "deprecated": false
     },
@@ -12068,6 +12126,62 @@
         "type": "object",
         "additionalProperties": false,
         "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "project_conversation_command_parts",
+      "canonical_method": "conversation.command_projection.project",
+      "description": "Project one stored command block into display command parts",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "adapter_id",
+          "parts"
+        ],
+        "type": "object",
+        "properties": {
+          "adapter_id": {
+            "type": "string",
+            "description": "Source conversation adapter identifier",
+            "aliases": [
+              "adapterId"
+            ]
+          },
+          "parts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "part_id": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "command_label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                }
+              },
+              "required": [
+                "part_id",
+                "command"
+              ]
+            },
+            "description": "Stored raw command blocks to project"
+          }
+        },
+        "additionalProperties": false
       },
       "cli": null,
       "since": "0.1.0",

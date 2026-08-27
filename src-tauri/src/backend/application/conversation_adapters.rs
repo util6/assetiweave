@@ -264,10 +264,19 @@ impl AppService {
                     params.adapter_id
                 ))
             })?;
+        let projection_adapter = if adapter
+            .capabilities
+            .iter()
+            .any(|capability| capability == "project_command_parts")
+        {
+            adapter
+        } else {
+            crate::backend::conversations::ensure_shell_command_projector()?
+        };
         let settings =
             crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
         crate::backend::conversations::project_external_adapter_command_parts_with_settings(
-            &adapter,
+            &projection_adapter,
             &params.parts,
             &settings,
         )

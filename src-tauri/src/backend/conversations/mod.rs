@@ -26,7 +26,7 @@ pub(crate) use harvester::run_conversation_harvester_for_adapter_source_with_set
 pub(crate) use harvester::{
     run_conversation_harvester_for_adapter_source, run_conversation_harvester_for_source,
 };
-pub(crate) use official::ensure_official_conversation_adapters;
+pub(crate) use official::{ensure_official_conversation_adapters, ensure_shell_command_projector};
 pub(crate) use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageInstallSource,
     ConversationAdapterPackageInstallSourceKind, ConversationAdapterPackageInstallSpec,

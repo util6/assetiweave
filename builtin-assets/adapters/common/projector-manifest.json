@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "assetiweave-shell-command-projector",
+  "name": "AssetIWeave Shell Command Projector",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "runtime": {
+    "type": "node",
+    "entry": "projector-adapter.cjs",
+    "version": ">=20"
+  },
+  "capabilities": [
+    "project_command_parts"
+  ],
+  "input_kinds": [],
+  "card_contract_version": 1,
+  "card_kinds": []
+}

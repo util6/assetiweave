@@ -38,6 +38,81 @@ fn clear_test_tables(service: &AppService, tables: &[&str]) {
         .expect("clear test tables");
 }
 
+#[cfg(unix)]
+#[test]
+fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-command-projector-fallback-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create command projector test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let now = Utc::now().to_rfc3339();
+    let legacy_adapter = ConversationAdapter {
+        id: "legacy-command-adapter".to_string(),
+        name: "Legacy Command Adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::File],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let pool = service.db.pool().clone();
+    service
+        .db
+        .block_on(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(
+                &pool,
+                "default",
+                &legacy_adapter,
+            )
+            .await
+        })
+        .expect("save legacy conversation adapter");
+    service
+        .runtime
+        .refresh_conversation_adapter_catalog()
+        .expect("refresh adapter catalog");
+
+    let projections = service
+        .project_conversation_command_parts(
+            crate::backend::conversations::ConversationCommandProjectionParams {
+                adapter_id: "legacy-command-adapter".to_string(),
+                parts: vec![
+                    crate::backend::conversations::ConversationCommandProjectionPart {
+                        part_id: "legacy-command-part".to_string(),
+                        command: "printf '%s\\n' '--- tests ---' && pnpm test".to_string(),
+                        command_label: None,
+                    },
+                ],
+            },
+        )
+        .expect("project legacy adapter command through fallback");
+
+    assert_eq!(projections.len(), 1);
+    assert_eq!(projections[0].part_id, "legacy-command-part");
+    assert_eq!(projections[0].nodes.len(), 1);
+    assert_eq!(projections[0].nodes[0].command, "pnpm test");
+    assert_eq!(
+        projections[0].nodes[0].command_label.as_deref(),
+        Some("tests")
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
 fn upsert_test_source(service: &AppService, source: &Source) {
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();

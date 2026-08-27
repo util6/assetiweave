@@ -2833,7 +2833,12 @@ export function preferredConversationQuestionId(
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return String(error);
 }
 
 function rememberDismissedConversationSyncProgressTask(

@@ -1585,6 +1585,21 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli conversation session list")
     ),
     command!(
+        "conversation.command_projection.project",
+        "conversation.command_projection.project",
+        "Project one stored command block into display command parts",
+        Read,
+        Friendly,
+        false,
+        crate::backend::conversations::ConversationCommandProjectionParams,
+        Service => |service, params| service.project_conversation_command_parts(params),
+        &[
+            param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
+            param!("parts", "Stored raw command blocks to project"),
+        ],
+        None
+    ),
+    command!(
         "conversation.search",
         "conversation.search",
         "Search conversation content cards",
@@ -3627,6 +3642,21 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("query", "Search query"),
             param!("limit", "Maximum number of sessions"),
             param!("offset", "Pagination offset"),
+        ],
+        None
+    ),
+    command!(
+        "project_conversation_command_parts",
+        "conversation.command_projection.project",
+        "Project one stored command block into display command parts",
+        Read,
+        App,
+        false,
+        crate::backend::conversations::ConversationCommandProjectionParams,
+        Service => |service, params| service.project_conversation_command_parts(params),
+        &[
+            param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
+            param!("parts", "Stored raw command blocks to project"),
         ],
         None
     ),

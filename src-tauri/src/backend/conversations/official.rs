@@ -4,7 +4,7 @@ use crate::backend::{
     runtime::{AppError, AppResult},
 };
 use chrono::Utc;
-use std::{fs, path::Path};
+use std::{fs, path::Path, sync::Mutex};
 
 struct OfficialAdapterAsset {
     manifest: &'static str,
@@ -16,6 +16,12 @@ struct OfficialAdapterAsset {
 
 const SHELL_PROJECTOR_SCRIPT: &str =
     include_str!("../../../../builtin-assets/adapters/common/shell-projector.cjs");
+const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
+    include_str!("../../../../builtin-assets/adapters/common/projector-adapter.cjs");
+const SHELL_PROJECTOR_MANIFEST: &str =
+    include_str!("../../../../builtin-assets/adapters/common/projector-manifest.json");
+const SHELL_PROJECTOR_RUNTIME_VERSION: &str = "shell-projector-v1";
+static SHELL_PROJECTOR_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 
 const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
     OfficialAdapterAsset {
@@ -124,6 +130,57 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
     Ok(adapters)
 }
 
+pub(crate) fn ensure_shell_command_projector() -> AppResult<ConversationAdapter> {
+    let _guard = SHELL_PROJECTOR_MATERIALIZE_LOCK
+        .lock()
+        .map_err(|_| AppError::external("shell command projector materialization lock poisoned"))?;
+    let root = conversation_adapter_dir()?
+        .join("runtime")
+        .join(SHELL_PROJECTOR_RUNTIME_VERSION);
+    materialize_shell_command_projector(&root)
+}
+
+fn materialize_shell_command_projector(root: &Path) -> AppResult<ConversationAdapter> {
+    fs::create_dir_all(root)?;
+    let manifest_path = root.join("conversation-adapter.json");
+    let adapter_path = root.join("projector-adapter.cjs");
+    let projector_path = root.join("shell-projector.cjs");
+    write_managed_runtime_file(&manifest_path, SHELL_PROJECTOR_MANIFEST.as_bytes())?;
+    write_managed_runtime_file(&adapter_path, SHELL_PROJECTOR_ADAPTER_SCRIPT.as_bytes())?;
+    write_managed_runtime_file(&projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
+    make_executable(&adapter_path)?;
+
+    let validation =
+        super::external::validate_external_adapter_manifest(&manifest_path.to_string_lossy())?;
+    let now = Utc::now().to_rfc3339();
+    Ok(ConversationAdapter {
+        id: validation.manifest.id.clone(),
+        name: validation.manifest.name.clone(),
+        kind: ConversationAdapterKind::External,
+        version: validation.manifest.version.clone(),
+        enabled: true,
+        manifest_path: Some(validation.manifest_path.clone()),
+        executable_path: Some(validation.executable_path.clone()),
+        content_hash: Some(validation.content_hash.clone()),
+        trusted_hash: Some(validation.content_hash.clone()),
+        trust_state: ConversationAdapterTrustState::BuiltIn,
+        protocol_version: Some(validation.manifest.protocol_version),
+        capabilities: validation.manifest.capabilities.clone(),
+        input_kinds: validation.manifest.input_kinds.clone(),
+        card_contract_version: validation.manifest.card_contract_version,
+        card_kinds: validation.manifest.card_kinds.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+fn write_managed_runtime_file(path: &Path, bytes: &[u8]) -> AppResult<()> {
+    if fs::read(path).ok().as_deref() == Some(bytes) {
+        return Ok(());
+    }
+    fs::write(path, bytes).map_err(AppError::from)
+}
+
 fn write_if_missing(path: &Path, bytes: &[u8]) -> AppResult<()> {
     if path.exists() {
         return Ok(());
@@ -164,6 +221,32 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&path).expect("read workspace file"),
             "user revision\n"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn managed_shell_projector_runtime_is_refreshed_and_validated() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-shell-projector-runtime-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create projector runtime");
+        fs::write(root.join("projector-adapter.cjs"), "stale runtime\n")
+            .expect("write stale projector runtime");
+
+        let adapter = materialize_shell_command_projector(&root)
+            .expect("materialize managed projector runtime");
+
+        assert_eq!(adapter.id, "assetiweave-shell-command-projector");
+        assert!(adapter
+            .capabilities
+            .iter()
+            .any(|capability| capability == "project_command_parts"));
+        assert_eq!(
+            fs::read_to_string(root.join("projector-adapter.cjs"))
+                .expect("read refreshed projector runtime"),
+            SHELL_PROJECTOR_ADAPTER_SCRIPT
         );
         let _ = fs::remove_dir_all(root);
     }
