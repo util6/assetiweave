@@ -22,11 +22,11 @@ function respond(id, result) {
   send({ jsonrpc: "2.0", id, result });
 }
 
-function fail(id, code = -32603) {
+function fail(id, code = -32603, message = "FAKE_PRIVATE_ERROR_MUST_NOT_ESCAPE") {
   send({
     jsonrpc: "2.0",
     id,
-    error: { code, message: "FAKE_PRIVATE_ERROR_MUST_NOT_ESCAPE" },
+    error: { code, message },
   });
 }
 
@@ -222,6 +222,10 @@ function handleDelete(message) {
   record("delete", { sessionId: message.params?.sessionId });
   if (mode === "delete_error") {
     fail(message.id);
+    return;
+  }
+  if (mode === "delete_not_found") {
+    fail(message.id, -32602, `Session not found: ${sessionId}`);
     return;
   }
   if (mode === "delete_hang") {

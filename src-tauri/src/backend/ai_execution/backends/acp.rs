@@ -76,8 +76,8 @@ impl AcpExecutionBackend {
             process_reaped: cleanup.process_reaped,
             workspace_removed: cleanup.workspace_removed,
             failure_count: cleanup.failures.len(),
-            session_closed: Some(cleanup.session_closed),
-            session_deleted: Some(cleanup.session_deleted),
+            session_closed: cleanup.session_closed,
+            session_deleted: cleanup.session_deleted,
             session_delete_method: cleanup.session_delete_method,
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
@@ -91,8 +91,14 @@ impl AcpExecutionBackend {
             ("stderr_bytes", cleanup.stderr_bytes.to_string()),
             ("stderr_truncated", cleanup.stderr_truncated.to_string()),
             ("failure_count", cleanup.failures.len().to_string()),
-            ("session_closed", cleanup.session_closed.to_string()),
-            ("session_deleted", cleanup.session_deleted.to_string()),
+            (
+                "session_closed",
+                optional_bool_label(cleanup.session_closed).to_string(),
+            ),
+            (
+                "session_deleted",
+                optional_bool_label(cleanup.session_deleted).to_string(),
+            ),
             (
                 "session_delete_method",
                 cleanup
@@ -665,6 +671,10 @@ impl AcpExecutionGuard {
         self.cleaned = true;
         let mut report = CleanupReport::default();
         let mut standard_delete_failure = None;
+        if self.session_id.is_some() {
+            report.session_closed = Some(false);
+            report.session_deleted = Some(false);
+        }
 
         if let Some(protocol) = self.protocol.as_ref() {
             if cancel_before_close {
@@ -686,7 +696,7 @@ impl AcpExecutionGuard {
                 )
                 .await
                 {
-                    Ok(Ok(_)) => report.session_closed = true,
+                    Ok(Ok(_)) => report.session_closed = Some(true),
                     Ok(Err(_)) => report.failures.push("close".to_owned()),
                     Err(_) => report.failures.push("close_timeout".to_owned()),
                 }
@@ -699,10 +709,19 @@ impl AcpExecutionGuard {
                 .await
                 {
                     Ok(Ok(Some(_))) => {
-                        report.session_deleted = true;
+                        report.session_deleted = Some(true);
                         report.session_delete_method = Some(AiExecutionSessionDeleteMethod::Acp);
                     }
                     Ok(Ok(None)) => standard_delete_failure = Some("delete_unsupported"),
+                    Ok(Err(AcpError::RequestFailed { message, .. }))
+                        if matches_declared_not_found(
+                            &message,
+                            &definition.session_cleanup_not_found_markers,
+                        ) =>
+                    {
+                        report.session_deleted = Some(true);
+                        report.session_delete_method = Some(AiExecutionSessionDeleteMethod::Acp);
+                    }
                     Ok(Err(_)) => standard_delete_failure = Some("delete"),
                     Err(_) => standard_delete_failure = Some("delete_timeout"),
                 }
@@ -749,7 +768,7 @@ impl AcpExecutionGuard {
         }
         self.process.take();
 
-        if self.session_id.is_some() && !report.session_deleted {
+        if self.session_id.is_some() && report.session_deleted != Some(true) {
             if let Some(cleanup) = definition.session_cleanup.as_ref() {
                 let session_id = self
                     .session_id
@@ -791,20 +810,28 @@ impl AcpExecutionGuard {
                             && std::str::from_utf8(&output.stderr)
                                 .ok()
                                 .is_some_and(|stderr| {
-                                    definition
-                                        .session_cleanup_not_found_markers
-                                        .iter()
-                                        .any(|marker| stderr.contains(marker))
+                                    matches_declared_not_found(
+                                        stderr,
+                                        &definition.session_cleanup_not_found_markers,
+                                    )
                                 });
                         if output.status.success() || missing_is_success {
-                            report.session_deleted = true;
+                            report.session_deleted = Some(true);
                             report.session_delete_method =
                                 Some(AiExecutionSessionDeleteMethod::ProviderFallback);
                         } else {
+                            if let Some(failure) = standard_delete_failure {
+                                report.failures.push(failure.to_owned());
+                            }
                             report.failures.push("delete_fallback".to_owned());
                         }
                     }
-                    _ => report.failures.push("delete_fallback".to_owned()),
+                    _ => {
+                        if let Some(failure) = standard_delete_failure {
+                            report.failures.push(failure.to_owned());
+                        }
+                        report.failures.push("delete_fallback".to_owned());
+                    }
                 }
             } else if let Some(failure) = standard_delete_failure {
                 report.failures.push(failure.to_owned());
@@ -823,6 +850,21 @@ impl AcpExecutionGuard {
     }
 }
 
+fn matches_declared_not_found(message: &str, markers: &[String]) -> bool {
+    message.lines().any(|line| {
+        let line = line.trim_start();
+        markers.iter().any(|marker| line.starts_with(marker))
+    })
+}
+
+fn optional_bool_label(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "not_applicable",
+    }
+}
+
 #[derive(Default, Debug)]
 struct CleanupReport {
     failures: Vec<String>,
@@ -832,8 +874,8 @@ struct CleanupReport {
     stderr_bytes: usize,
     stderr_truncated: bool,
     exit_code: Option<i32>,
-    session_deleted: bool,
-    session_closed: bool,
+    session_deleted: Option<bool>,
+    session_closed: Option<bool>,
     session_delete_method: Option<AiExecutionSessionDeleteMethod>,
 }
 
@@ -998,6 +1040,24 @@ mod tests {
             )
             .await
             .expect("standard delete completes cleanup");
+
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"delete\""));
+        assert!(!records.contains("\"event\":\"fallback_delete\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_standard_delete_treats_a_declared_missing_session_as_deleted() {
+        let (root, record) = test_paths("one-shot-standard-not-found");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+        let mut definition = definition_with_fallback("delete_not_found", &record, "failure");
+        definition.session_cleanup_not_found_markers = vec!["Session not found:".to_string()];
+
+        backend
+            .execute(&definition, request(None))
+            .await
+            .expect("already missing is idempotent success");
 
         let records = records(&record);
         assert!(records.contains("\"event\":\"delete\""));
