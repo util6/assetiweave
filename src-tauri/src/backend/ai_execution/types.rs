@@ -67,6 +67,13 @@ impl fmt::Debug for AiExecutionCancellation {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub(crate) enum AgentSessionMode {
+    OneShot,
+    Persistent,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum AiExecutionPurpose {
     Translation,
     ConnectionTest,
@@ -103,6 +110,7 @@ pub(crate) struct AiExecutionRequest {
     pub(crate) execution_id: String,
     pub(crate) agent_id: AgentId,
     pub(crate) purpose: AiExecutionPurpose,
+    pub(crate) session_mode: AgentSessionMode,
     pub(crate) prompt: String,
     pub(crate) model: Option<String>,
     pub(crate) limits: AiExecutionLimits,
@@ -112,6 +120,11 @@ pub(crate) struct AiExecutionRequest {
 
 impl AiExecutionRequest {
     pub(crate) fn validate(&self) -> Result<(), AiExecutionError> {
+        if matches!(self.session_mode, AgentSessionMode::Persistent) {
+            return Err(AiExecutionError::UnsupportedSessionMode {
+                mode: self.session_mode,
+            });
+        }
         normalize_prompt(&self.prompt)?;
         normalize_model(self.model.as_deref())?;
         Ok(())
@@ -137,6 +150,7 @@ impl fmt::Debug for AiExecutionRequest {
             .field("execution_id", &self.execution_id)
             .field("agent_id", &self.agent_id)
             .field("purpose", &self.purpose)
+            .field("session_mode", &self.session_mode)
             .field("prompt", &"<redacted>")
             .field("model", &self.model.as_ref().map(|_| "<redacted>"))
             .field("limits", &self.limits)
@@ -249,6 +263,7 @@ mod tests {
             execution_id: uuid::Uuid::new_v4().to_string(),
             agent_id: AgentId::parse("opencode").unwrap(),
             purpose: AiExecutionPurpose::Translation,
+            session_mode: AgentSessionMode::OneShot,
             prompt: prompt.to_string(),
             model: model.map(str::to_string),
             limits: AiExecutionLimits::default(),

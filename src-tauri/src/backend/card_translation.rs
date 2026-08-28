@@ -6,8 +6,8 @@ use crate::backend::host_process::{
 use crate::backend::{
     agents::types::AgentId,
     ai_execution::{
-        execute_agent_blocking, AgentExecutionRuntime, AiExecutionCancellation, AiExecutionError,
-        AiExecutionLimits, AiExecutionPurpose, AiExecutionRequest,
+        execute_agent_blocking, AgentExecutionRuntime, AgentSessionMode, AiExecutionCancellation,
+        AiExecutionError, AiExecutionLimits, AiExecutionPurpose, AiExecutionRequest,
     },
     runtime::{AppError, AppResult},
 };
@@ -378,6 +378,7 @@ fn execute_agent_translation(
         execution_id: uuid::Uuid::new_v4().to_string(),
         agent_id,
         purpose,
+        session_mode: AgentSessionMode::OneShot,
         prompt: prompt.trim().to_string(),
         model,
         limits,

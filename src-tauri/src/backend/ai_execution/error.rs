@@ -5,10 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::agents::types::AgentId;
 
-use super::AiExecutionPhase;
+use super::{AgentSessionMode, AiExecutionPhase};
 
 #[derive(Debug)]
 pub(crate) enum AiExecutionError {
+    UnsupportedSessionMode {
+        mode: AgentSessionMode,
+    },
     AgentNotFound {
         agent_id: AgentId,
     },
@@ -63,6 +66,11 @@ pub(crate) enum AiExecutionError {
 impl AiExecutionError {
     pub(crate) fn to_view(&self) -> AiExecutionErrorView {
         let (code, message, retryable) = match self {
+            Self::UnsupportedSessionMode { .. } => (
+                "unsupported_session_mode",
+                "The requested Agent session mode is not supported yet.",
+                false,
+            ),
             Self::AgentNotFound { .. } => (
                 "agent_not_found",
                 "The selected AI agent is not registered.",
@@ -165,6 +173,9 @@ impl AiExecutionError {
 impl fmt::Display for AiExecutionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedSessionMode { mode } => {
+                write!(formatter, "Agent session mode {mode:?} is not supported yet")
+            }
             Self::AgentNotFound { agent_id } => {
                 write!(formatter, "AI agent '{agent_id}' is not registered")
             }

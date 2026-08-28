@@ -971,6 +971,7 @@ mod tests {
             execution_id: uuid::Uuid::new_v4().to_string(),
             agent_id: AgentId::parse(agent_id).unwrap(),
             purpose: AiExecutionPurpose::Translation,
+            session_mode: crate::backend::ai_execution::AgentSessionMode::OneShot,
             prompt: "translate".to_owned(),
             model: None,
             limits: AiExecutionLimits {

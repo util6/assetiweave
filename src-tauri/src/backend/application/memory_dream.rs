@@ -781,6 +781,7 @@ fn execute_memory_dream_ai(
         execution_id: Uuid::new_v4().to_string(),
         agent_id: policy.agent_id.clone(),
         purpose: crate::backend::ai_execution::AiExecutionPurpose::Translation,
+        session_mode: crate::backend::ai_execution::AgentSessionMode::OneShot,
         prompt: prompt.to_string(),
         model: policy.model.clone(),
         limits: crate::backend::ai_execution::AiExecutionLimits {

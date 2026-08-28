@@ -65,10 +65,16 @@ function handleInitialize(message) {
     return;
   }
   const supportsClose = !["no_close", "initialize_timeout"].includes(mode);
+  const supportsDelete = mode !== "initialize_timeout";
   respond(message.id, {
     protocolVersion: 1,
-    agentCapabilities: supportsClose
-      ? { sessionCapabilities: { close: {} } }
+    agentCapabilities: supportsClose || supportsDelete
+      ? {
+          sessionCapabilities: {
+            ...(supportsClose ? { close: {} } : {}),
+            ...(supportsDelete ? { delete: {} } : {}),
+          },
+        }
       : {},
     agentInfo: { name: "assetiweave-fake-acp", version: "1" },
   });
@@ -211,6 +217,11 @@ function handleClose(message) {
   respond(message.id, {});
 }
 
+function handleDelete(message) {
+  record("delete", { sessionId: message.params?.sessionId });
+  respond(message.id, {});
+}
+
 function handleCancel(message) {
   record("cancel", { sessionId: message.params?.sessionId });
   if (pendingPromptId !== undefined) {
@@ -255,6 +266,8 @@ input.on("line", (line) => {
     handleCancel(message);
   } else if (message.method === "session/close") {
     handleClose(message);
+  } else if (message.method === "session/delete") {
+    handleDelete(message);
   } else if (Object.hasOwn(message, "id")) {
     handleResponse(message);
   }

@@ -308,6 +308,7 @@ pub(super) fn execute_recall_ai(
         execution_id: Uuid::new_v4().to_string(),
         agent_id: runtime.agent_id.clone(),
         purpose: crate::backend::ai_execution::AiExecutionPurpose::Translation,
+        session_mode: crate::backend::ai_execution::AgentSessionMode::OneShot,
         prompt,
         model: runtime.model.clone(),
         limits: crate::backend::ai_execution::AiExecutionLimits {

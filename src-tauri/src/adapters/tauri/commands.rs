@@ -2154,6 +2154,7 @@ fn prepare_ai_execution_task_for_tenant(
         execution_id: snapshot.id.clone(),
         agent_id,
         purpose: AiExecutionPurpose::Translation,
+        session_mode: crate::backend::ai_execution::AgentSessionMode::OneShot,
         prompt,
         model,
         limits: AiExecutionLimits::default(),

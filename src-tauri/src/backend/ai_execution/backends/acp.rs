@@ -15,8 +15,9 @@ use crate::backend::{
         types::{AgentDefinition, AgentModelOption, AgentProtocol},
     },
     ai_execution::{
-        AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError, AiExecutionLimits,
-        AiExecutionPhase, AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+        AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError,
+        AiExecutionLimits, AiExecutionPhase, AiExecutionPurpose, AiExecutionRequest,
+        AiExecutionResult,
     },
     operation_log::{log_info, log_warn},
 };
@@ -256,6 +257,7 @@ fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest 
         execution_id: format!("agent-probe-{}", Uuid::new_v4()),
         agent_id: definition.id.clone(),
         purpose: AiExecutionPurpose::ConnectionTest,
+        session_mode: AgentSessionMode::OneShot,
         prompt: "ACP connection probe".to_string(),
         model: None,
         limits: AiExecutionLimits {
@@ -670,6 +672,19 @@ impl AcpExecutionGuard {
                     Err(_) => report.failures.push("close_timeout".to_owned()),
                 }
             }
+            if let Some(session_id) = self.session_id.clone() {
+                match tokio::time::timeout(
+                    request.limits.close_timeout,
+                    protocol.delete_session(session_id),
+                )
+                .await
+                {
+                    Ok(Ok(Some(_))) => report.session_deleted = true,
+                    Ok(Ok(None)) => report.failures.push("delete_unsupported".to_owned()),
+                    Ok(Err(_)) => report.failures.push("delete".to_owned()),
+                    Err(_) => report.failures.push("delete_timeout".to_owned()),
+                }
+            }
             if protocol
                 .shutdown(request.limits.close_timeout)
                 .await
@@ -733,6 +748,7 @@ struct CleanupReport {
     stderr_bytes: usize,
     stderr_truncated: bool,
     exit_code: Option<i32>,
+    session_deleted: bool,
 }
 
 impl CleanupReport {
@@ -750,7 +766,9 @@ mod tests {
     use super::*;
     use crate::backend::{
         agents::types::{AgentEnvEntry, AgentId, DeclaredAgentCapabilities},
-        ai_execution::{AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose},
+        ai_execution::{
+            AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose,
+        },
     };
     use std::time::Duration;
 
@@ -783,6 +801,7 @@ mod tests {
             execution_id: Uuid::new_v4().to_string(),
             agent_id: AgentId::parse("fake-acp").unwrap(),
             purpose: AiExecutionPurpose::Translation,
+            session_mode: AgentSessionMode::OneShot,
             prompt: "translate fixture".to_owned(),
             model: model.map(str::to_owned),
             limits: AiExecutionLimits {
@@ -832,6 +851,47 @@ mod tests {
         assert!(record.contains("\"event\":\"prompt\""));
         assert!(record.contains("\"event\":\"close\""));
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_cleanup_deletes_the_session_after_close() {
+        let (root, record) = test_paths("one-shot-delete");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        backend
+            .execute(&definition("happy", &record), request(None))
+            .await
+            .expect("one-shot execution");
+
+        let records = records(&record);
+        let close = records.find("\"event\":\"close\"").expect("close record");
+        let delete = records.find("\"event\":\"delete\"").expect("delete record");
+        assert!(
+            close < delete,
+            "session/delete must run after session/close"
+        );
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn persistent_mode_is_rejected_before_spawning_the_agent() {
+        let (root, record) = test_paths("persistent-rejected");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+        let definition = definition("happy", &record);
+        let mut request = request(None);
+        request.session_mode = AgentSessionMode::Persistent;
+
+        let error = backend
+            .execute(&definition, request)
+            .await
+            .expect_err("Persistent is reserved for a later specification");
+
+        assert_eq!(error.to_view().code, "unsupported_session_mode");
+        assert!(!record.exists(), "the Agent process must not be started");
         let _ = fs::remove_dir_all(root);
     }
 

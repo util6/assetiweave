@@ -13,11 +13,11 @@ use agent_client_protocol::{
     schema::{
         v1::{
             CancelNotification, ClientCapabilities, CloseSessionRequest, CloseSessionResponse,
-            ContentBlock, Implementation, InitializeRequest, InitializeResponse, NewSessionRequest,
-            NewSessionResponse, PromptRequest, PromptResponse, RequestPermissionOutcome,
-            RequestPermissionRequest, RequestPermissionResponse, SessionId, SessionNotification,
-            SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-            StopReason, TextContent,
+            ContentBlock, DeleteSessionRequest, DeleteSessionResponse, Implementation,
+            InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
+            PromptRequest, PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
+            RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent,
         },
         ProtocolVersion,
     },
@@ -236,6 +236,27 @@ impl AcpProtocol {
             .map_err(|error| request_failed(AcpOperation::CloseSession, error))
     }
 
+    pub(crate) async fn delete_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Option<DeleteSessionResponse>, AcpError> {
+        if self
+            .initialize
+            .agent_capabilities
+            .session_capabilities
+            .delete
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.connection
+            .send_request(DeleteSessionRequest::new(session_id))
+            .block_task()
+            .await
+            .map(Some)
+            .map_err(|error| request_failed(AcpOperation::DeleteSession, error))
+    }
+
     pub(crate) async fn shutdown(&self, timeout: Duration) -> Result<(), AcpError> {
         self.shutdown_requested.store(true, Ordering::Release);
         if let Some(shutdown_tx) = take_mutex_option(&self.shutdown_tx, "shutdown")? {
@@ -328,6 +349,7 @@ pub(crate) enum AcpOperation {
     Prompt,
     Cancel,
     CloseSession,
+    DeleteSession,
 }
 
 #[derive(Debug)]
@@ -522,8 +544,9 @@ async fn abort_and_join(actor: JoinHandle<()>) {
 mod tests {
     use super::*;
     use agent_client_protocol::schema::v1::{
-        AgentCapabilities, CloseSessionRequest, NewSessionRequest, PermissionOption,
-        PermissionOptionKind, PromptRequest, SessionCapabilities, SessionCloseCapabilities,
+        AgentCapabilities, CloseSessionRequest, DeleteSessionRequest, DeleteSessionResponse,
+        NewSessionRequest, PermissionOption, PermissionOptionKind, PromptRequest,
+        SessionCapabilities, SessionCloseCapabilities, SessionDeleteCapabilities,
         SetSessionConfigOptionRequest, ToolCall, ToolCallUpdate, ToolCallUpdateFields,
     };
     use agent_client_protocol::{on_receive_notification, on_receive_request, Channel};
@@ -622,6 +645,65 @@ mod tests {
             .expect("capability skip");
 
         assert!(result.is_none());
+        protocol.shutdown(Duration::from_millis(250)).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn delete_session_uses_typed_request_only_when_capability_is_advertised() {
+        let transport = initialized_agent_transport(InitializeResponse::new(ProtocolVersion::V1));
+        let (protocol, _channels) = AcpProtocol::connect_transport(
+            transport,
+            AcpConnectConfig::new(Duration::from_millis(250)),
+        )
+        .await
+        .expect("connect protocol without delete capability");
+
+        assert!(protocol
+            .delete_session(SessionId::new("unsupported-session"))
+            .await
+            .expect("capability skip")
+            .is_none());
+        protocol.shutdown(Duration::from_millis(250)).await.unwrap();
+
+        let deleted_session = Arc::new(Mutex::new(None));
+        let observed_session = Arc::clone(&deleted_session);
+        let (client_transport, agent_transport) = Channel::duplex();
+        tokio::spawn(async move {
+            let session = SessionCapabilities::new().delete(SessionDeleteCapabilities::new());
+            let initialize = InitializeResponse::new(ProtocolVersion::V1)
+                .agent_capabilities(AgentCapabilities::new().session_capabilities(session));
+            let _ = Agent
+                .builder()
+                .on_receive_request(
+                    async move |_request: InitializeRequest, responder, _connection| {
+                        responder.respond(initialize.clone())
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |request: DeleteSessionRequest, responder, _connection| {
+                        *observed_session.lock().unwrap() = Some(request.session_id);
+                        responder.respond(DeleteSessionResponse::new())
+                    },
+                    on_receive_request!(),
+                )
+                .connect_to(agent_transport)
+                .await;
+        });
+        let (protocol, _channels) = AcpProtocol::connect_transport(
+            client_transport,
+            AcpConnectConfig::new(Duration::from_millis(250)),
+        )
+        .await
+        .expect("connect protocol with delete capability");
+
+        let session_id = SessionId::new("advertised-session");
+        assert!(protocol
+            .delete_session(session_id.clone())
+            .await
+            .expect("typed session/delete")
+            .is_some());
+        assert_eq!(*deleted_session.lock().unwrap(), Some(session_id));
         protocol.shutdown(Duration::from_millis(250)).await.unwrap();
     }
 
