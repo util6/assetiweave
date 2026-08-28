@@ -696,7 +696,8 @@ impl AcpExecutionGuard {
                 )
                 .await
                 {
-                    Ok(Ok(_)) => report.session_closed = Some(true),
+                    Ok(Ok(Some(_))) => report.session_closed = Some(true),
+                    Ok(Ok(None)) => report.session_closed = None,
                     Ok(Err(_)) => report.failures.push("close".to_owned()),
                     Err(_) => report.failures.push("close_timeout".to_owned()),
                 }
@@ -1025,6 +1026,22 @@ mod tests {
             "session/delete must run after session/close"
         );
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_delete_succeeds_when_close_is_not_advertised() {
+        let (root, record) = test_paths("one-shot-no-close");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+
+        backend
+            .execute(&definition("no_close", &record), request(None))
+            .await
+            .expect("delete does not require close capability");
+
+        let records = records(&record);
+        assert!(!records.contains("\"event\":\"close\""));
+        assert!(records.contains("\"event\":\"delete\""));
         let _ = fs::remove_dir_all(root);
     }
 
