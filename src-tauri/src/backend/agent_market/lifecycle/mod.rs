@@ -404,6 +404,12 @@ mod tests {
             .await
             .expect("repeat ACP health refresh after recovery");
         assert_eq!(recovered_refresh.available, 1);
+        let blocking_refresh = recovered_manager
+            .clone()
+            .refresh_acp_health_blocking("default".to_string(), AGENT_ID.to_string())
+            .expect("blocking ACP refresh uses a process-capable runtime");
+        assert!(blocking_refresh.available);
+        assert!(!blocking_refresh.models.is_empty());
         let available = service_v3
             .repository
             .get("default", AGENT_ID)

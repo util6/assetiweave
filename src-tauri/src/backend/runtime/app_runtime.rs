@@ -285,18 +285,9 @@ impl AppRuntime {
                         "ACP startup health refresh was cancelled".to_string(),
                     ));
                 }
-                let summary = std::thread::spawn(move || {
-                    let runtime = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|error| error.to_string())?;
-                    runtime.block_on(runtime_manager.refresh_installed_acp_health(&tenant_id))
-                })
-                .join()
-                .map_err(|_| {
-                    AppError::External("ACP startup health refresh did not complete".to_string())
-                })?
-                .map_err(AppError::External)?;
+                let summary = runtime_manager
+                    .refresh_installed_acp_health_blocking(tenant_id)
+                    .map_err(AppError::External)?;
                 Ok(serde_json::json!({
                     "checked": summary.checked,
                     "available": summary.available,

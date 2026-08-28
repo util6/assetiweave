@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -179,12 +179,7 @@ impl AgentRuntimeManager {
         runtime_root: &Path,
     ) -> Result<Vec<String>, String> {
         let installations = self.repository.list(tenant_id).await?;
-        let referenced_install_dirs = installations
-            .iter()
-            .filter_map(|installation| installation.install_dir.as_ref())
-            .cloned()
-            .collect::<HashSet<_>>();
-        let mut warnings = cleanup_runtime_directories(runtime_root, &referenced_install_dirs);
+        let mut warnings = cleanup_runtime_directories(runtime_root);
         for installation in installations {
             if installation.installation_status != InstallationStatus::Ready {
                 continue;
@@ -303,6 +298,17 @@ impl AgentRuntimeManager {
         Ok(summary)
     }
 
+    pub(crate) fn refresh_installed_acp_health_blocking(
+        self: Arc<Self>,
+        tenant_id: String,
+    ) -> Result<AgentHealthRefreshSummary, String> {
+        run_process_capable_runtime(
+            "aiw-acp-startup-health",
+            "The ACP startup health refresh did not complete.",
+            async move { self.refresh_installed_acp_health(&tenant_id).await },
+        )
+    }
+
     pub(crate) async fn refresh_acp_health(
         &self,
         tenant_id: &str,
@@ -311,6 +317,18 @@ impl AgentRuntimeManager {
         let result = self.probe_acp_health(tenant_id, agent_id).await?;
         self.reload(tenant_id).await?;
         Ok(result)
+    }
+
+    pub(crate) fn refresh_acp_health_blocking(
+        self: Arc<Self>,
+        tenant_id: String,
+        agent_id: String,
+    ) -> Result<AgentModelsResult, String> {
+        run_process_capable_runtime(
+            "aiw-acp-health",
+            "The ACP health refresh did not complete.",
+            async move { self.refresh_acp_health(&tenant_id, &agent_id).await },
+        )
     }
 
     async fn probe_acp_health(
@@ -443,6 +461,28 @@ impl AgentRuntimeManager {
     }
 }
 
+fn run_process_capable_runtime<T, F>(
+    thread_name: &str,
+    join_error: &str,
+    future: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: Future<Output = Result<T, String>> + Send + 'static,
+{
+    let handle = std::thread::Builder::new()
+        .name(thread_name.to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?;
+            runtime.block_on(future)
+        })
+        .map_err(|error| error.to_string())?;
+    handle.join().map_err(|_| join_error.to_string())?
+}
+
 fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
     AgentModelsResult {
         agent_id: agent_id.to_string(),
@@ -467,10 +507,7 @@ fn model_discovery_error_message(error: &AiExecutionError) -> String {
     }
 }
 
-fn cleanup_runtime_directories(
-    runtime_root: &Path,
-    referenced_install_dirs: &HashSet<PathBuf>,
-) -> Vec<String> {
+fn cleanup_runtime_directories(runtime_root: &Path) -> Vec<String> {
     let mut warnings = Vec::new();
     let now = SystemTime::now();
     let staging = runtime_root.join(".staging");
@@ -495,34 +532,11 @@ fn cleanup_runtime_directories(
             }
         }
     }
-    let active = runtime_root.join("active");
-    if let Ok(entries) = std::fs::read_dir(&active) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let owned_identity = entry
-                .file_name()
-                .to_str()
-                .and_then(|value| uuid::Uuid::parse_str(value).ok())
-                .is_some();
-            let referenced = referenced_install_dirs.contains(&path)
-                || path.canonicalize().ok().is_some_and(|canonical| {
-                    referenced_install_dirs
-                        .iter()
-                        .any(|reference| reference.canonicalize().ok().as_ref() == Some(&canonical))
-                });
-            if owned_identity
-                && !referenced
-                && entry
-                    .file_type()
-                    .map(|file_type| file_type.is_dir() && !file_type.is_symlink())
-                    .unwrap_or(false)
-            {
-                if let Err(error) = std::fs::remove_dir_all(&path) {
-                    warnings.push(format!("orphan active cleanup pending: {error}"));
-                }
-            }
-        }
-    }
+    // The runtime root is shared by desktop, CLI, tests, and selectable database
+    // paths. An installation absent from this database may still be owned by a
+    // different database, so startup cleanup must never infer that an active
+    // directory is orphaned. Active installations are removed only by explicit
+    // lifecycle rollback, update, and uninstall operations with an exact ID.
     warnings
 }
 
@@ -739,5 +753,24 @@ mod tests {
             vec!["--version".to_string()]
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_cleanup_preserves_active_installations_owned_by_another_database() {
+        let runtime_root = std::env::temp_dir().join(format!(
+            "assetiweave-agent-runtime-shared-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let installation_id = uuid::Uuid::new_v4().to_string();
+        let active_install = runtime_root.join("active").join(&installation_id);
+        std::fs::create_dir_all(&active_install).expect("create shared active installation");
+        std::fs::write(active_install.join("agent"), b"persisted")
+            .expect("write shared active installation");
+
+        let warnings = cleanup_runtime_directories(&runtime_root);
+
+        assert!(warnings.is_empty());
+        assert!(active_install.join("agent").is_file());
+        let _ = std::fs::remove_dir_all(runtime_root);
     }
 }
