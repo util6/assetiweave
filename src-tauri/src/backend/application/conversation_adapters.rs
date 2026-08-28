@@ -264,19 +264,33 @@ impl AppService {
                     params.adapter_id
                 ))
             })?;
-        let projection_adapter = if adapter
+        let supports_adapter_projection = adapter
             .capabilities
             .iter()
-            .any(|capability| capability == "project_command_parts")
-        {
-            adapter
-        } else {
-            crate::backend::conversations::ensure_shell_command_projector()?
-        };
+            .any(|capability| capability == "project_command_parts");
         let settings =
             crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        if supports_adapter_projection {
+            match crate::backend::conversations::project_external_adapter_command_parts_with_settings(
+                &adapter,
+                &params.parts,
+                &settings,
+            ) {
+                Ok(projections) => return Ok(projections),
+                Err(error) => crate::backend::operation_log::log_warn(
+                    "conversation.command_projection.fallback",
+                    "adapter command projector failed; using the core projector",
+                    &[
+                        ("adapter_id", adapter.id.clone()),
+                        ("error", error.to_string()),
+                    ],
+                ),
+            }
+        }
+
+        let core_projector = crate::backend::conversations::ensure_shell_command_projector()?;
         crate::backend::conversations::project_external_adapter_command_parts_with_settings(
-            &projection_adapter,
+            &core_projector,
             &params.parts,
             &settings,
         )
