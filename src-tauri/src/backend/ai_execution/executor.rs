@@ -963,6 +963,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
     }
 

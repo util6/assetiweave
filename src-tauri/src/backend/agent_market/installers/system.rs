@@ -100,6 +100,8 @@ mod tests {
             version_range: ">=1.0.0".to_string(),
             launch_args: vec!["acp".to_string()],
             model_discovery_args: None,
+            session_cleanup_args: None,
+            session_cleanup_not_found_markers: Vec::new(),
         };
         let runtime = installer.materialize(&distribution, &context).unwrap();
         assert_eq!(runtime.ownership, Ownership::System);

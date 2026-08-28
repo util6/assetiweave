@@ -398,6 +398,11 @@ fn builtin_agent<const N: usize>(
         )),
         model_discovery: (id == "opencode" || id == "antigravity")
             .then(|| AgentCommandDefinition::new(["models"])),
+        session_cleanup: (id == "opencode")
+            .then(|| AgentCommandDefinition::new(["session", "delete", "{session_id}"])),
+        session_cleanup_not_found_markers: (id == "opencode")
+            .then(|| vec!["Session not found:".to_string()])
+            .unwrap_or_default(),
     }
 }
 
@@ -550,6 +555,14 @@ mod tests {
         assert_eq!(definition.args, ["acp"]);
         assert_eq!(definition.protocol, AgentProtocol::Acp);
         assert!(definition.declared_capabilities.text_prompt);
+        assert_eq!(
+            definition
+                .session_cleanup
+                .as_ref()
+                .expect("OpenCode must declare OneShot session cleanup")
+                .args,
+            ["session", "delete", "{session_id}"]
+        );
 
         for (id, command, args, protocol) in [
             ("gemini", "gemini", vec!["--acp"], AgentProtocol::Acp),
@@ -718,6 +731,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
     }
 
@@ -738,6 +753,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(availability_args)),
             model_discovery: Some(AgentCommandDefinition::new(model_args)),
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
     }
 }

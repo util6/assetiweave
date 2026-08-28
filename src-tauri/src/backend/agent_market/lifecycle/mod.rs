@@ -519,6 +519,8 @@ mod tests {
                     executable: "bin/agent".to_string(),
                     launch_args: Vec::new(),
                     model_discovery_args: None,
+                    session_cleanup_args: None,
+                    session_cleanup_not_found_markers: Vec::new(),
                 }],
             }],
         }

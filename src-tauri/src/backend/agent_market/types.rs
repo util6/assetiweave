@@ -158,6 +158,10 @@ pub(crate) enum Distribution {
         launch_args: Vec<String>,
         #[serde(default)]
         model_discovery_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_not_found_markers: Vec<String>,
     },
     #[serde(rename = "binary")]
     Binary {
@@ -173,6 +177,10 @@ pub(crate) enum Distribution {
         launch_args: Vec<String>,
         #[serde(default)]
         model_discovery_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_not_found_markers: Vec<String>,
     },
     #[serde(rename = "npx")]
     Npx {
@@ -186,6 +194,10 @@ pub(crate) enum Distribution {
         node_range: Option<String>,
         #[serde(default)]
         model_discovery_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_not_found_markers: Vec<String>,
     },
     #[serde(rename = "uvx")]
     Uvx {
@@ -199,6 +211,10 @@ pub(crate) enum Distribution {
         python_range: Option<String>,
         #[serde(default)]
         model_discovery_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_args: Option<Vec<String>>,
+        #[serde(default)]
+        session_cleanup_not_found_markers: Vec<String>,
     },
 }
 
@@ -224,6 +240,8 @@ impl<'de> Deserialize<'de> for Distribution {
                     version_range: fields.version_range,
                     launch_args: fields.launch_args,
                     model_discovery_args: fields.model_discovery_args,
+                    session_cleanup_args: fields.session_cleanup_args,
+                    session_cleanup_not_found_markers: fields.session_cleanup_not_found_markers,
                 })
             }
             "binary" => {
@@ -240,6 +258,8 @@ impl<'de> Deserialize<'de> for Distribution {
                     executable: fields.executable,
                     launch_args: fields.launch_args,
                     model_discovery_args: fields.model_discovery_args,
+                    session_cleanup_args: fields.session_cleanup_args,
+                    session_cleanup_not_found_markers: fields.session_cleanup_not_found_markers,
                 })
             }
             "npx" => {
@@ -254,6 +274,8 @@ impl<'de> Deserialize<'de> for Distribution {
                     launch_args: fields.launch_args,
                     node_range: fields.node_range,
                     model_discovery_args: fields.model_discovery_args,
+                    session_cleanup_args: fields.session_cleanup_args,
+                    session_cleanup_not_found_markers: fields.session_cleanup_not_found_markers,
                 })
             }
             "uvx" => {
@@ -268,6 +290,8 @@ impl<'de> Deserialize<'de> for Distribution {
                     launch_args: fields.launch_args,
                     python_range: fields.python_range,
                     model_discovery_args: fields.model_discovery_args,
+                    session_cleanup_args: fields.session_cleanup_args,
+                    session_cleanup_not_found_markers: fields.session_cleanup_not_found_markers,
                 })
             }
             other => Err(serde::de::Error::custom(format!(
@@ -288,6 +312,10 @@ struct SystemDistributionFields {
     launch_args: Vec<String>,
     #[serde(default)]
     model_discovery_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_not_found_markers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -305,6 +333,10 @@ struct BinaryDistributionFields {
     launch_args: Vec<String>,
     #[serde(default)]
     model_discovery_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_not_found_markers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -320,6 +352,10 @@ struct NpxDistributionFields {
     node_range: Option<String>,
     #[serde(default)]
     model_discovery_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_not_found_markers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,6 +371,10 @@ struct UvxDistributionFields {
     python_range: Option<String>,
     #[serde(default)]
     model_discovery_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_args: Option<Vec<String>>,
+    #[serde(default)]
+    session_cleanup_not_found_markers: Vec<String>,
 }
 
 impl Distribution {
@@ -362,6 +402,48 @@ impl Distribution {
             | Self::Binary { launch_args, .. }
             | Self::Npx { launch_args, .. }
             | Self::Uvx { launch_args, .. } => launch_args,
+        }
+    }
+
+    pub(crate) fn session_cleanup_args(&self) -> Option<&[String]> {
+        match self {
+            Self::System {
+                session_cleanup_args,
+                ..
+            }
+            | Self::Binary {
+                session_cleanup_args,
+                ..
+            }
+            | Self::Npx {
+                session_cleanup_args,
+                ..
+            }
+            | Self::Uvx {
+                session_cleanup_args,
+                ..
+            } => session_cleanup_args.as_deref(),
+        }
+    }
+
+    pub(crate) fn session_cleanup_not_found_markers(&self) -> &[String] {
+        match self {
+            Self::System {
+                session_cleanup_not_found_markers,
+                ..
+            }
+            | Self::Binary {
+                session_cleanup_not_found_markers,
+                ..
+            }
+            | Self::Npx {
+                session_cleanup_not_found_markers,
+                ..
+            }
+            | Self::Uvx {
+                session_cleanup_not_found_markers,
+                ..
+            } => session_cleanup_not_found_markers,
         }
     }
 
@@ -866,6 +948,41 @@ impl CatalogItem {
             {
                 return Err(format!("invalid distribution: {}", distribution.id()));
             }
+            if let Some(args) = distribution.session_cleanup_args() {
+                let placeholder_count = args
+                    .iter()
+                    .filter(|arg| arg.as_str() == "{session_id}")
+                    .count();
+                if placeholder_count != 1
+                    || args.iter().any(|arg| {
+                        arg.contains('\0')
+                            || (arg.as_str() != "{session_id}" && arg.contains(['{', '}']))
+                    })
+                {
+                    return Err(format!(
+                        "invalid session cleanup arguments: {}",
+                        distribution.id()
+                    ));
+                }
+            }
+            if distribution
+                .session_cleanup_not_found_markers()
+                .iter()
+                .any(|marker| marker.is_empty() || marker.contains('\0'))
+            {
+                return Err(format!(
+                    "invalid session cleanup not-found marker: {}",
+                    distribution.id()
+                ));
+            }
+            if distribution.session_cleanup_args().is_none()
+                && !distribution.session_cleanup_not_found_markers().is_empty()
+            {
+                return Err(format!(
+                    "session cleanup markers require cleanup arguments: {}",
+                    distribution.id()
+                ));
+            }
             if let Distribution::System {
                 command_candidates, ..
             } = distribution
@@ -1018,6 +1135,8 @@ mod tests {
             launch_args: vec!["acp".to_string()],
             node_range: Some(">=20".to_string()),
             model_discovery_args: None,
+            session_cleanup_args: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
     }
 
@@ -1094,6 +1213,8 @@ mod tests {
             executable: "../agent".to_string(),
             launch_args: Vec::new(),
             model_discovery_args: None,
+            session_cleanup_args: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }];
         assert!(item.validate_basic().is_err());
     }

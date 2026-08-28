@@ -54,9 +54,17 @@
           "launchArgs": [
             "acp"
           ],
-          "modelDiscoveryArgs": [
-            "models"
-          ]
+      "modelDiscoveryArgs": [
+        "models"
+      ],
+      "sessionCleanupArgs": [
+        "session",
+        "delete",
+        "{session_id}"
+      ],
+      "sessionCleanupNotFoundMarkers": [
+        "Session not found:"
+      ]
         }
       ]
     },

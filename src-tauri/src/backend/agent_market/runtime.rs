@@ -545,6 +545,10 @@ struct ResolvedDefinition {
     id: String,
     display_name: String,
     protocol: String,
+    #[serde(default, alias = "sessionCleanupArgs")]
+    session_cleanup_args: Option<Vec<String>>,
+    #[serde(default, alias = "sessionCleanupNotFoundMarkers")]
+    session_cleanup_not_found_markers: Vec<String>,
 }
 
 #[cfg(test)]
@@ -637,6 +641,10 @@ pub(crate) fn definition_from_installation(
             command: probe.program,
             args: probe.args,
         }),
+        session_cleanup: resolved
+            .session_cleanup_args
+            .map(AgentCommandDefinition::new),
+        session_cleanup_not_found_markers: resolved.session_cleanup_not_found_markers,
     };
     if installation.protocol == AgentMarketProtocol::Acp {
         definition.declared_capabilities = DeclaredAgentCapabilities::acp_text();
@@ -666,6 +674,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         };
         registry.publish(vec![definition]).unwrap();
         let generation = registry.generation();
@@ -680,6 +690,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         };
         assert!(registry.publish(vec![invalid]).is_err());
         assert_eq!(registry.generation(), generation);
@@ -698,6 +710,17 @@ mod tests {
         let program_path = root.join("bin").join("agent");
         std::fs::create_dir_all(program_path.parent().unwrap()).unwrap();
         std::fs::write(&program_path, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut resolved_definition = definition_json(
+            "agent",
+            "Agent",
+            &AgentMarketProtocol::Acp,
+            &program_path,
+            &["acp".to_string()],
+        );
+        resolved_definition["sessionCleanupArgs"] =
+            serde_json::json!(["session", "delete", "{session_id}"]);
+        resolved_definition["sessionCleanupNotFoundMarkers"] =
+            serde_json::json!(["Session not found:"]);
         let installation = AgentInstallation {
             tenant_id: "tenant".to_string(),
             agent_id: "agent".to_string(),
@@ -712,13 +735,7 @@ mod tests {
             install_dir: Some(root.clone()),
             resolved_program: program_path.clone(),
             args: vec!["acp".to_string()],
-            definition_json: definition_json(
-                "agent",
-                "Agent",
-                &AgentMarketProtocol::Acp,
-                &program_path,
-                &["acp".to_string()],
-            ),
+            definition_json: resolved_definition,
             integrity_json: None,
             source_registry: "agent".to_string(),
             catalog_version: "catalog".to_string(),
@@ -740,6 +757,21 @@ mod tests {
         };
         let definition = definition_from_installation(&installation).unwrap();
         assert_eq!(definition.command, program_path.to_string_lossy());
+        assert_eq!(
+            definition
+                .session_cleanup
+                .as_ref()
+                .map(|cleanup| &cleanup.args),
+            Some(&vec![
+                "session".to_string(),
+                "delete".to_string(),
+                "{session_id}".to_string()
+            ])
+        );
+        assert_eq!(
+            definition.session_cleanup_not_found_markers,
+            ["Session not found:"]
+        );
         assert!(!definition
             .args
             .iter()

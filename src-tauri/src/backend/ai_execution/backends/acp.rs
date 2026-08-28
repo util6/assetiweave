@@ -12,13 +12,14 @@ use crate::backend::{
     agents::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
         protocol::acp::{AcpConnectConfig, AcpError, AcpProtocol, AcpProtocolChannels},
-        types::{AgentDefinition, AgentModelOption, AgentProtocol},
+        types::{AgentDefinition, AgentModelOption, AgentProtocol, SESSION_ID_PLACEHOLDER},
     },
     ai_execution::{
         AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError,
         AiExecutionLimits, AiExecutionPhase, AiExecutionPurpose, AiExecutionRequest,
-        AiExecutionResult,
+        AiExecutionResult, AiExecutionSessionDeleteMethod,
     },
+    host_process::{run_host_command, HostCommandSpec, HostInput},
     operation_log::{log_info, log_warn},
 };
 
@@ -70,11 +71,14 @@ impl AcpExecutionBackend {
             request.report_phase(AiExecutionPhase::Cancelling);
         }
         request.report_phase(AiExecutionPhase::Closing);
-        let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
         request.report_cleanup(AiExecutionCleanupReport {
             process_reaped: cleanup.process_reaped,
             workspace_removed: cleanup.workspace_removed,
             failure_count: cleanup.failures.len(),
+            session_closed: Some(cleanup.session_closed),
+            session_deleted: Some(cleanup.session_deleted),
+            session_delete_method: cleanup.session_delete_method,
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
         let mut cleanup_fields = vec![
@@ -87,6 +91,19 @@ impl AcpExecutionBackend {
             ("stderr_bytes", cleanup.stderr_bytes.to_string()),
             ("stderr_truncated", cleanup.stderr_truncated.to_string()),
             ("failure_count", cleanup.failures.len().to_string()),
+            ("session_closed", cleanup.session_closed.to_string()),
+            ("session_deleted", cleanup.session_deleted.to_string()),
+            (
+                "session_delete_method",
+                cleanup
+                    .session_delete_method
+                    .map(|method| match method {
+                        AiExecutionSessionDeleteMethod::Acp => "acp",
+                        AiExecutionSessionDeleteMethod::ProviderFallback => "provider_fallback",
+                    })
+                    .unwrap_or("none")
+                    .to_string(),
+            ),
         ];
         if let Some(process_id) = cleanup.process_id {
             cleanup_fields.push(("pid", process_id.to_string()));
@@ -137,7 +154,7 @@ impl AcpExecutionBackend {
                 }
             }
         };
-        let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
         if cleanup.failures.is_empty() {
             return outcome;
         }
@@ -168,7 +185,7 @@ impl AcpExecutionBackend {
                 }
             }
         };
-        let cleanup = guard.cleanup(outcome.is_err(), &request).await;
+        let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
         if cleanup.failures.is_empty() {
             return outcome;
         }
@@ -640,12 +657,14 @@ impl AcpExecutionGuard {
         &mut self,
         cancel_before_close: bool,
         request: &AiExecutionRequest,
+        definition: &AgentDefinition,
     ) -> CleanupReport {
         if self.cleaned {
             return CleanupReport::already_cleaned();
         }
         self.cleaned = true;
         let mut report = CleanupReport::default();
+        let mut standard_delete_failure = None;
 
         if let Some(protocol) = self.protocol.as_ref() {
             if cancel_before_close {
@@ -667,7 +686,7 @@ impl AcpExecutionGuard {
                 )
                 .await
                 {
-                    Ok(Ok(_)) => {}
+                    Ok(Ok(_)) => report.session_closed = true,
                     Ok(Err(_)) => report.failures.push("close".to_owned()),
                     Err(_) => report.failures.push("close_timeout".to_owned()),
                 }
@@ -679,10 +698,13 @@ impl AcpExecutionGuard {
                 )
                 .await
                 {
-                    Ok(Ok(Some(_))) => report.session_deleted = true,
-                    Ok(Ok(None)) => report.failures.push("delete_unsupported".to_owned()),
-                    Ok(Err(_)) => report.failures.push("delete".to_owned()),
-                    Err(_) => report.failures.push("delete_timeout".to_owned()),
+                    Ok(Ok(Some(_))) => {
+                        report.session_deleted = true;
+                        report.session_delete_method = Some(AiExecutionSessionDeleteMethod::Acp);
+                    }
+                    Ok(Ok(None)) => standard_delete_failure = Some("delete_unsupported"),
+                    Ok(Err(_)) => standard_delete_failure = Some("delete"),
+                    Err(_) => standard_delete_failure = Some("delete_timeout"),
                 }
             }
             if protocol
@@ -727,6 +749,68 @@ impl AcpExecutionGuard {
         }
         self.process.take();
 
+        if self.session_id.is_some() && !report.session_deleted {
+            if let Some(cleanup) = definition.session_cleanup.as_ref() {
+                let session_id = self
+                    .session_id
+                    .as_ref()
+                    .expect("session checked before fallback")
+                    .to_string();
+                let args = cleanup
+                    .args
+                    .iter()
+                    .map(|arg| {
+                        if arg == SESSION_ID_PLACEHOLDER {
+                            session_id.clone()
+                        } else {
+                            arg.clone()
+                        }
+                    })
+                    .collect();
+                let output = run_host_command(
+                    HostCommandSpec {
+                        program: PathBuf::from(&definition.command),
+                        args,
+                        env: definition
+                            .env
+                            .iter()
+                            .map(|entry| (entry.name.clone(), entry.value.clone()))
+                            .collect(),
+                        working_dir: Some(self.workspace.clone()),
+                        stdin: HostInput::Null,
+                        timeout: request.limits.close_timeout,
+                        stdout_limit: request.limits.stderr_bytes,
+                        stderr_limit: request.limits.stderr_bytes,
+                    },
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await;
+                match output {
+                    Ok(output) if !output.stdout_truncated && !output.stderr_truncated => {
+                        let missing_is_success = !output.status.success()
+                            && std::str::from_utf8(&output.stderr)
+                                .ok()
+                                .is_some_and(|stderr| {
+                                    definition
+                                        .session_cleanup_not_found_markers
+                                        .iter()
+                                        .any(|marker| stderr.contains(marker))
+                                });
+                        if output.status.success() || missing_is_success {
+                            report.session_deleted = true;
+                            report.session_delete_method =
+                                Some(AiExecutionSessionDeleteMethod::ProviderFallback);
+                        } else {
+                            report.failures.push("delete_fallback".to_owned());
+                        }
+                    }
+                    _ => report.failures.push("delete_fallback".to_owned()),
+                }
+            } else if let Some(failure) = standard_delete_failure {
+                report.failures.push(failure.to_owned());
+            }
+        }
+
         report.workspace_removed = match fs::remove_dir_all(&self.workspace) {
             Ok(()) => true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
@@ -749,6 +833,8 @@ struct CleanupReport {
     stderr_truncated: bool,
     exit_code: Option<i32>,
     session_deleted: bool,
+    session_closed: bool,
+    session_delete_method: Option<AiExecutionSessionDeleteMethod>,
 }
 
 impl CleanupReport {
@@ -793,7 +879,31 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: None,
             model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
+    }
+
+    fn definition_with_fallback(
+        mode: &str,
+        record_path: &Path,
+        cleanup_mode: &str,
+    ) -> AgentDefinition {
+        let mut definition = definition(mode, record_path);
+        definition.env.push(AgentEnvEntry::new(
+            "ASSETIWEAVE_FAKE_SESSION_CLEANUP_MODE",
+            cleanup_mode,
+        ));
+        definition.session_cleanup = Some(
+            crate::backend::agents::types::AgentCommandDefinition::new([
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("test-fixtures/fake-session-cleanup.mjs")
+                    .to_string_lossy()
+                    .into_owned(),
+                "{session_id}".to_string(),
+            ]),
+        );
+        definition
     }
 
     fn request(model: Option<&str>) -> AiExecutionRequest {
@@ -872,6 +982,135 @@ mod tests {
             close < delete,
             "session/delete must run after session/close"
         );
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_standard_delete_success_skips_the_declared_fallback() {
+        let (root, record) = test_paths("one-shot-standard-delete");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+
+        backend
+            .execute(
+                &definition_with_fallback("happy", &record, "failure"),
+                request(None),
+            )
+            .await
+            .expect("standard delete completes cleanup");
+
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"delete\""));
+        assert!(!records.contains("\"event\":\"fallback_delete\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_standard_delete_failure_or_timeout_uses_the_declared_fallback() {
+        for mode in ["delete_error", "delete_hang"] {
+            let (root, record) = test_paths(mode);
+            let backend = AcpExecutionBackend::new(root.join("workspaces"));
+
+            backend
+                .execute(
+                    &definition_with_fallback(mode, &record, "success"),
+                    request(None),
+                )
+                .await
+                .expect("fallback completes cleanup");
+
+            let records = records(&record);
+            assert!(records.contains("\"event\":\"delete\""));
+            assert!(records.contains("\"event\":\"fallback_delete\""));
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_uses_declared_fallback_after_reaping_an_agent_without_standard_delete() {
+        let (root, record) = test_paths("one-shot-fallback");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        let result = backend
+            .execute(
+                &definition_with_fallback("no_delete", &record, "success"),
+                request(None),
+            )
+            .await
+            .expect("successful fallback completes the OneShot task");
+
+        assert_eq!(result.text, "translated");
+        let records = records(&record);
+        assert!(!records.contains("\"event\":\"delete\""));
+        let reaped = records.find("\"event\":\"sigterm\"").expect("reap record");
+        let fallback = records
+            .find("\"event\":\"fallback_delete\"")
+            .expect("fallback record");
+        assert!(
+            reaped < fallback,
+            "fallback must run after ACP process reap"
+        );
+        assert!(records.contains("\"sessionId\":\"fixture-session\""));
+        assert!(records.contains("\"originalProcessReaped\":true"));
+        assert!(records.contains("\"workspaceExists\":true"));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_fallback_failure_turns_a_successful_execution_into_cleanup_failed() {
+        for cleanup_mode in ["failure", "timeout"] {
+            let (root, record) = test_paths(cleanup_mode);
+            let workspace_root = root.join("workspaces");
+            let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+            let result = backend
+                .execute(
+                    &definition_with_fallback("no_delete", &record, cleanup_mode),
+                    request(None),
+                )
+                .await;
+
+            assert!(matches!(
+                result,
+                Err(AiExecutionError::CleanupFailed { .. })
+            ));
+            assert!(records(&record).contains("\"event\":\"fallback_delete\""));
+            assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_execution_failure_remains_primary_when_fallback_also_fails() {
+        let (root, record) = test_paths("one-shot-primary-failure");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+
+        let result = backend
+            .execute(
+                &definition_with_fallback("no_delete_empty", &record, "failure"),
+                request(None),
+            )
+            .await;
+
+        assert!(matches!(result, Err(AiExecutionError::EmptyOutput { .. })));
+        assert!(records(&record).contains("\"event\":\"fallback_delete\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_fallback_treats_a_declared_missing_session_marker_as_deleted() {
+        let (root, record) = test_paths("one-shot-fallback-not-found");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+        let mut definition = definition_with_fallback("no_delete", &record, "not_found");
+        definition.session_cleanup_not_found_markers = vec!["Session not found:".to_string()];
+
+        let result = backend.execute(&definition, request(None)).await;
+
+        assert!(result.is_ok());
+        assert!(records(&record).contains("\"event\":\"fallback_delete\""));
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
         let _ = fs::remove_dir_all(root);
     }
@@ -1120,6 +1359,7 @@ mod tests {
                 result,
                 Err(AiExecutionError::CleanupFailed { .. })
             ));
+            assert!(records(&record).contains("\"event\":\"delete\""));
             assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
             let _ = fs::remove_dir_all(root);
         }
@@ -1153,8 +1393,9 @@ mod tests {
         let mut guard = AcpExecutionGuard::new(workspace);
         let execution_request = request(None);
 
-        let first = guard.cleanup(false, &execution_request).await;
-        let second = guard.cleanup(false, &execution_request).await;
+        let definition = definition("happy", &_record);
+        let first = guard.cleanup(false, &execution_request, &definition).await;
+        let second = guard.cleanup(false, &execution_request, &definition).await;
 
         assert!(first.workspace_removed);
         assert!(second.workspace_removed);

@@ -9,7 +9,7 @@ pub(crate) use executor::AgentExecutionRuntime;
 pub(crate) use types::{
     AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits,
     AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
-    AiExecutionResult,
+    AiExecutionResult, AiExecutionSessionDeleteMethod,
 };
 
 use crate::backend::agents::types::{

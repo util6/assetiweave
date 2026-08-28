@@ -339,4 +339,26 @@ mod tests {
             Some(["models".to_string()].as_slice())
         );
     }
+
+    #[test]
+    fn bundled_opencode_maps_session_delete_args_into_its_runtime_definition() {
+        let service = CatalogService::bundled().expect("bundled catalog");
+        let item = service.item("opencode").expect("OpenCode item");
+
+        let session_cleanup_args = match &item.distributions[0] {
+            Distribution::Binary {
+                session_cleanup_args,
+                ..
+            } => session_cleanup_args,
+            other => panic!("unexpected OpenCode distribution: {other:?}"),
+        };
+        assert_eq!(
+            session_cleanup_args.as_deref(),
+            Some(
+                ["session", "delete", "{session_id}"]
+                    .map(str::to_string)
+                    .as_slice()
+            )
+        );
+    }
 }

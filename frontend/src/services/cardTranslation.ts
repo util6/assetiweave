@@ -51,6 +51,9 @@ export interface AiExecutionCleanupReport {
   process_reaped: boolean;
   workspace_removed: boolean;
   failure_count: number;
+  session_closed: boolean | null;
+  session_deleted: boolean | null;
+  session_delete_method: "acp" | "provider_fallback" | null;
 }
 
 export interface AiExecutionTaskSnapshot {

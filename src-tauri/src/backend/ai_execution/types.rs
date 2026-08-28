@@ -23,6 +23,16 @@ pub(crate) struct AiExecutionCleanupReport {
     pub(crate) process_reaped: bool,
     pub(crate) workspace_removed: bool,
     pub(crate) failure_count: usize,
+    pub(crate) session_closed: Option<bool>,
+    pub(crate) session_deleted: Option<bool>,
+    pub(crate) session_delete_method: Option<AiExecutionSessionDeleteMethod>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum AiExecutionSessionDeleteMethod {
+    Acp,
+    ProviderFallback,
 }
 
 #[derive(Clone)]

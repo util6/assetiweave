@@ -73,6 +73,9 @@ impl NativeExecutionBackend {
             process_reaped: cleanup.process_reaped,
             workspace_removed: cleanup.workspace_removed,
             failure_count: usize::from(!cleanup.process_reaped || !cleanup.workspace_removed),
+            session_closed: None,
+            session_deleted: None,
+            session_delete_method: None,
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
 

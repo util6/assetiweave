@@ -3723,6 +3723,9 @@ mod tests {
                     process_reaped: false,
                     workspace_removed: true,
                     failure_count: 1,
+                    session_closed: Some(false),
+                    session_deleted: Some(false),
+                    session_delete_method: None,
                 });
                 Err(AiExecutionError::Protocol {
                     operation: "adapter_failure",
@@ -3835,6 +3838,9 @@ mod tests {
                 process_reaped: false,
                 workspace_removed: true,
                 failure_count: 1,
+                session_closed: Some(false),
+                session_deleted: Some(false),
+                session_delete_method: None,
             })
         );
     }

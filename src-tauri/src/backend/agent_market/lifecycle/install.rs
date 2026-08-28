@@ -248,6 +248,8 @@ async fn materialize_and_activate(
         "args": materialized.args,
         "env": [],
         "modelDiscoveryArgs": model_discovery_args(distribution),
+        "sessionCleanupArgs": session_cleanup_args(distribution),
+        "sessionCleanupNotFoundMarkers": distribution.session_cleanup_not_found_markers(),
     });
     let installation = AgentInstallation {
         tenant_id: tenant_id.to_string(),
@@ -477,6 +479,10 @@ fn definition_for(
             ["--version"],
         )),
         model_discovery: model_discovery_args(distribution).map(AgentCommandDefinition::new),
+        session_cleanup: session_cleanup_args(distribution).map(AgentCommandDefinition::new),
+        session_cleanup_not_found_markers: distribution
+            .session_cleanup_not_found_markers()
+            .to_vec(),
     };
     definition
         .validate()
@@ -502,6 +508,27 @@ fn model_discovery_args(distribution: &Distribution) -> Option<Vec<String>> {
             model_discovery_args,
             ..
         } => model_discovery_args.clone(),
+    }
+}
+
+fn session_cleanup_args(distribution: &Distribution) -> Option<Vec<String>> {
+    match distribution {
+        Distribution::System {
+            session_cleanup_args,
+            ..
+        }
+        | Distribution::Binary {
+            session_cleanup_args,
+            ..
+        }
+        | Distribution::Npx {
+            session_cleanup_args,
+            ..
+        }
+        | Distribution::Uvx {
+            session_cleanup_args,
+            ..
+        } => session_cleanup_args.clone(),
     }
 }
 

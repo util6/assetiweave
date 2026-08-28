@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_AGENT_ID_BYTES: usize = 64;
 const MAX_DISPLAY_NAME_BYTES: usize = 120;
+pub(crate) const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct AgentId(String);
@@ -146,6 +147,8 @@ pub(crate) struct AgentDefinition {
     pub(crate) declared_capabilities: DeclaredAgentCapabilities,
     pub(crate) availability_probe: Option<AgentCommandDefinition>,
     pub(crate) model_discovery: Option<AgentCommandDefinition>,
+    pub(crate) session_cleanup: Option<AgentCommandDefinition>,
+    pub(crate) session_cleanup_not_found_markers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -202,6 +205,58 @@ impl AgentDefinition {
         }
         if let Some(discovery) = &self.model_discovery {
             discovery.validate("model_discovery")?;
+        }
+        if let Some(cleanup) = &self.session_cleanup {
+            if cleanup.command.is_some() {
+                return Err(AgentDefinitionError::InvalidCommand(
+                    "session_cleanup must reuse the Agent command".to_string(),
+                ));
+            }
+            cleanup.validate("session_cleanup")?;
+            let mut placeholder_index = None;
+            for (index, arg) in cleanup.args.iter().enumerate() {
+                if arg == SESSION_ID_PLACEHOLDER {
+                    if placeholder_index.is_some() {
+                        return Err(AgentDefinitionError::InvalidArgument {
+                            field: "session_cleanup",
+                            index,
+                            message: "must contain exactly one standalone {session_id} argument"
+                                .to_string(),
+                        });
+                    }
+                    placeholder_index = Some(index);
+                } else if arg.contains(['{', '}']) {
+                    return Err(AgentDefinitionError::InvalidArgument {
+                        field: "session_cleanup",
+                        index,
+                        message: "only a standalone {session_id} placeholder is allowed"
+                            .to_string(),
+                    });
+                }
+            }
+            if placeholder_index.is_none() {
+                return Err(AgentDefinitionError::InvalidArgument {
+                    field: "session_cleanup",
+                    index: cleanup.args.len(),
+                    message: "must contain exactly one standalone {session_id} argument"
+                        .to_string(),
+                });
+            }
+        }
+        if self.session_cleanup.is_none() && !self.session_cleanup_not_found_markers.is_empty() {
+            return Err(AgentDefinitionError::InvalidCommand(
+                "session cleanup not-found markers require a cleanup command".to_string(),
+            ));
+        }
+        if self
+            .session_cleanup_not_found_markers
+            .iter()
+            .any(|marker| marker.is_empty() || marker.contains('\0'))
+        {
+            return Err(AgentDefinitionError::InvalidCommand(
+                "session cleanup not-found markers must be non-empty and may not contain NUL"
+                    .to_string(),
+            ));
         }
         Ok(())
     }
@@ -381,6 +436,52 @@ mod tests {
     }
 
     #[test]
+    fn session_cleanup_accepts_exactly_one_standalone_session_id_token() {
+        let mut definition = definition_with_command("opencode");
+        definition.session_cleanup = Some(AgentCommandDefinition::new([
+            "session",
+            "delete",
+            "{session_id}",
+        ]));
+
+        definition
+            .validate()
+            .expect("a standalone session id token is a valid cleanup argv entry");
+    }
+
+    #[test]
+    fn session_cleanup_rejects_unknown_embedded_missing_and_duplicate_tokens() {
+        for args in [
+            vec!["session", "delete", "{workspace}"],
+            vec!["session", "delete", "session={session_id}"],
+            vec!["session", "delete"],
+            vec!["session", "delete", "{session_id}", "{session_id}"],
+        ] {
+            let mut definition = definition_with_command("opencode");
+            definition.session_cleanup = Some(AgentCommandDefinition::new(args));
+
+            assert!(matches!(
+                definition.validate(),
+                Err(AgentDefinitionError::InvalidArgument {
+                    field: "session_cleanup",
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
+    fn session_cleanup_rejects_a_shell_command_override() {
+        let mut definition = definition_with_command("opencode");
+        definition.session_cleanup = Some(AgentCommandDefinition::with_command(
+            "sh",
+            ["-c", "opencode session delete {session_id}"],
+        ));
+
+        assert!(definition.validate().is_err());
+    }
+
+    #[test]
     fn valid_acp_definition_passes_validation() {
         let definition = definition_with_command("opencode");
 
@@ -401,6 +502,8 @@ mod tests {
             declared_capabilities: DeclaredAgentCapabilities::acp_text(),
             availability_probe: Some(AgentCommandDefinition::new(["--version"])),
             model_discovery: Some(AgentCommandDefinition::new(["models"])),
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
         }
     }
 }

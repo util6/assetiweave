@@ -65,7 +65,7 @@ function handleInitialize(message) {
     return;
   }
   const supportsClose = !["no_close", "initialize_timeout"].includes(mode);
-  const supportsDelete = mode !== "initialize_timeout";
+  const supportsDelete = !["initialize_timeout", "no_delete", "no_delete_empty"].includes(mode);
   respond(message.id, {
     protocolVersion: 1,
     agentCapabilities: supportsClose || supportsDelete
@@ -149,6 +149,7 @@ function handlePrompt(message) {
       finishPrompt(id);
       return;
     case "empty":
+    case "no_delete_empty":
       finishPrompt(id);
       return;
     case "oversized":
@@ -219,6 +220,13 @@ function handleClose(message) {
 
 function handleDelete(message) {
   record("delete", { sessionId: message.params?.sessionId });
+  if (mode === "delete_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "delete_hang") {
+    return;
+  }
   respond(message.id, {});
 }
 
@@ -245,6 +253,7 @@ function handleResponse(message) {
 }
 
 const input = readline.createInterface({ input: process.stdin });
+const keepAlive = mode.startsWith("no_delete") ? setInterval(() => {}, 1_000) : undefined;
 input.on("line", (line) => {
   let message;
   try {
@@ -275,6 +284,7 @@ input.on("line", (line) => {
 
 input.on("close", () => record("stdin_closed"));
 process.on("SIGTERM", () => {
+  if (keepAlive) clearInterval(keepAlive);
   record("sigterm");
   process.exit(0);
 });
