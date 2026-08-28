@@ -30,4 +30,24 @@ describe("NotificationBanner", () => {
     expect(html).not.toContain("sticky");
     expect(html).not.toContain("app-notification-offset");
   });
+
+  it("keeps long error details readable instead of truncating them to one line", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <NotificationBanner
+          notification={{
+            id: "notice-long-error",
+            tone: "error",
+            message: "The selected AI model is currently unavailable. Choose another model in Agent settings.",
+          }}
+          onDismiss={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("break-words");
+    expect(html).not.toContain("whitespace-nowrap");
+    expect(html).not.toContain("text-ellipsis");
+  });
 });

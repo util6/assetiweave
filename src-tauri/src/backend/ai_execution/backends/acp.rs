@@ -620,12 +620,36 @@ fn map_process_error(
 
 fn map_acp_error(operation: &'static str, error: AcpError) -> AiExecutionError {
     match error {
+        AcpError::RequestFailed { message, .. } if is_model_unavailable_message(&message) => {
+            AiExecutionError::ModelUnavailable {
+                detail: normalize_provider_error_message(&message),
+            }
+        }
         AcpError::RequestFailed { message, .. } => AiExecutionError::ProtocolDetail {
             operation,
-            detail: message,
+            detail: normalize_provider_error_message(&message),
         },
         _ => AiExecutionError::Protocol { operation },
     }
+}
+
+fn is_model_unavailable_message(message: &str) -> bool {
+    message
+        .to_ascii_lowercase()
+        .contains("no allowed providers are available for the selected model")
+}
+
+fn normalize_provider_error_message(message: &str) -> String {
+    let message = message.trim();
+    let message = message
+        .strip_prefix("Internal error:")
+        .map(str::trim)
+        .unwrap_or(message);
+    message
+        .strip_prefix("Error from provider (Console):")
+        .map(str::trim)
+        .unwrap_or(message)
+        .to_owned()
 }
 
 fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
@@ -901,6 +925,26 @@ mod tests {
         },
     };
     use std::time::Duration;
+
+    #[test]
+    fn provider_routing_failure_is_reported_as_an_actionable_model_error() {
+        let error = map_acp_error(
+            "prompt",
+            AcpError::RequestFailed {
+                operation: crate::backend::agents::protocol::acp::AcpOperation::Prompt,
+                message: "Internal error: Error from provider (Console): Upstream request failed: [404] No allowed providers are available for the selected model.".to_string(),
+            },
+        );
+
+        let view = error.to_view();
+        assert_eq!(view.code, "model_unavailable");
+        assert!(view
+            .message
+            .contains("Choose another model in Agent settings"));
+        assert!(view.message.contains("Upstream request failed: [404]"));
+        assert!(!view.message.contains("Internal error"));
+        assert!(!view.message.contains("Error from provider (Console)"));
+    }
 
     fn definition(mode: &str, record_path: &Path) -> AgentDefinition {
         AgentDefinition {

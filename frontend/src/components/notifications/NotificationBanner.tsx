@@ -51,14 +51,16 @@ export function NotificationBanner({
     >
       <div
         aria-atomic="true"
-        className={`aurora-notification pointer-events-auto flex w-full max-w-[min(34rem,100%)] items-center gap-3 rounded-2xl border px-3.5 py-2.5 ${toneClass[notification.tone]}`}
+        className={`aurora-notification pointer-events-auto flex w-full max-w-[min(42rem,100%)] items-start gap-3 rounded-2xl border px-3.5 py-2.5 ${toneClass[notification.tone]}`}
         data-tone={notification.tone}
         role={notification.tone === "error" || notification.tone === "warning" ? "alert" : "status"}
       >
         <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-current/10" aria-hidden="true">
           <Icon size={17} />
         </span>
-        <p className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-medium">{message}</p>
+        <p className="max-h-[min(40vh,18rem)] min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words text-body-md font-medium leading-relaxed">
+          {message}
+        </p>
         <button
           className={iconButtonRecipe({ className: "ml-4 shrink-0" })}
           onClick={() => onDismiss(notification.id)}

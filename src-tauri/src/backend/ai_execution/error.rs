@@ -50,6 +50,9 @@ pub(crate) enum AiExecutionError {
     ModelSelectionFailed {
         detail: Option<String>,
     },
+    ModelUnavailable {
+        detail: String,
+    },
     AgentExited {
         code: Option<i32>,
     },
@@ -134,6 +137,17 @@ impl AiExecutionError {
                                 crate::backend::runtime::sanitize_public_message(detail)
                             )
                         },
+                    ),
+                    retryable: false,
+                    phase: None,
+                };
+            }
+            Self::ModelUnavailable { detail } => {
+                return AiExecutionErrorView {
+                    code: "model_unavailable".to_string(),
+                    message: format!(
+                        "The selected AI model is currently unavailable. Choose another model in Agent settings. Provider response: {}",
+                        crate::backend::runtime::sanitize_public_message(detail)
                     ),
                     retryable: false,
                     phase: None,
@@ -224,6 +238,9 @@ impl fmt::Display for AiExecutionError {
             Self::ModelSelectionFailed { detail: None } => {
                 formatter.write_str("the requested AI model could not be selected")
             }
+            Self::ModelUnavailable { detail } => {
+                write!(formatter, "the selected AI model is unavailable: {detail}")
+            }
             Self::AgentExited { code: Some(code) } => {
                 write!(formatter, "the AI agent exited with code {code}")
             }
@@ -282,5 +299,20 @@ mod tests {
 
         assert_eq!(view.code, "protocol_failed");
         assert!(view.message.contains("Free promotion has ended"));
+    }
+
+    #[test]
+    fn public_model_unavailable_error_is_actionable() {
+        let view = AiExecutionError::ModelUnavailable {
+            detail: "No allowed providers are available for the selected model.".to_string(),
+        }
+        .to_view();
+
+        assert_eq!(view.code, "model_unavailable");
+        assert!(view
+            .message
+            .contains("Choose another model in Agent settings"));
+        assert!(view.message.contains("No allowed providers"));
+        assert!(!view.retryable);
     }
 }
