@@ -402,6 +402,7 @@ const routeRenderers: Record<AppRouteId, (context: RouteRenderContext) => ReactN
     <RouteSuspense layout={routeRegistry["prompts-overview"].skeleton}>
       <PromptOverviewPage
         onManualOpen={context.onManualOpen}
+        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
         onReady={() => context.completeRouteTransition(context.routeTransitionId)}
       />
     </RouteSuspense>

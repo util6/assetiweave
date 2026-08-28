@@ -58,7 +58,7 @@ export interface AiExecutionCleanupReport {
 
 export interface AiExecutionTaskSnapshot {
   id: string;
-  purpose: "translation" | "connection_test";
+  purpose: "translation" | "prompt_optimization" | "connection_test" | "model_discovery";
   agent_id: string;
   state: AiExecutionTaskState;
   phase: AiExecutionPhase;

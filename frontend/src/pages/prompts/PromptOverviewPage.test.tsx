@@ -441,13 +441,12 @@ describe("PromptOverviewPage", () => {
   });
 
   it("translates and optimizes a prompt through the injected CLI translator", async () => {
-    const translator = vi.fn(async (request) => ({
-      translated_text: request.promptTemplate?.includes("expert prompt editor")
-        ? "Write a concise implementation plan for prompt cards."
-        : "为提示词卡片编写功能规格。",
+    const translator = vi.fn(async () => ({ translated_text: "为提示词卡片编写功能规格。" }));
+    const optimizer = vi.fn(async () => ({
+      optimized_text: "Write a concise implementation plan for prompt cards.",
     }));
 
-    renderPromptPage({ translator });
+    renderPromptPage({ optimizer, translator });
     fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
       target: { value: "make prompt card feature" },
     });
@@ -473,7 +472,8 @@ describe("PromptOverviewPage", () => {
         optimizedText: "Write a concise implementation plan for prompt cards.",
       });
     });
-    expect(translator).toHaveBeenCalledTimes(2);
+    expect(translator).toHaveBeenCalledTimes(1);
+    expect(optimizer).toHaveBeenCalledTimes(1);
   });
 
   it("uses the configured prompt optimization system prompt", async () => {
@@ -482,9 +482,9 @@ describe("PromptOverviewPage", () => {
       ...defaultSettings,
       promptOptimization: { promptTemplate: customPrompt },
     };
-    const translator = vi.fn(async () => ({ translated_text: "Optimized implementation plan." }));
+    const optimizer = vi.fn(async () => ({ optimized_text: "Optimized implementation plan." }));
 
-    renderPromptPage({ translator });
+    renderPromptPage({ optimizer });
     fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
       target: { value: "add prompt optimization settings" },
     });
@@ -497,10 +497,51 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(optimizeButton);
 
     await waitFor(() => {
-      expect(translator).toHaveBeenCalledWith(expect.objectContaining({
+      expect(optimizer).toHaveBeenCalledWith(expect.objectContaining({
         promptTemplate: customPrompt,
       }));
     });
+  });
+
+  it("routes prompt optimization through its dedicated executor instead of translation", async () => {
+    const translator = vi.fn(async () => ({ translated_text: "wrong translation route" }));
+    const optimizer = vi.fn(async () => ({ optimized_text: "明确输出验收标准的实现提示词" }));
+
+    renderPromptPage({ optimizer, translator });
+    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
+      target: { value: "完善实现要求" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
+    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    await waitFor(() => expect(optimizeButton.disabled).toBe(false));
+
+    fireEvent.click(optimizeButton);
+
+    expect(await screen.findByText("明确输出验收标准的实现提示词")).toBeTruthy();
+    expect(optimizer).toHaveBeenCalledWith(expect.objectContaining({
+      text: "完善实现要求",
+    }));
+    expect(translator).not.toHaveBeenCalled();
+  });
+
+  it("reports prompt action failures only through the global notification callback", async () => {
+    const onNotifyError = vi.fn();
+    const optimizer = vi.fn(async () => {
+      throw new Error("optimization failed");
+    });
+
+    renderPromptPage({ onNotifyError, optimizer });
+    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
+      target: { value: "完善实现要求" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
+    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    await waitFor(() => expect(optimizeButton.disabled).toBe(false));
+
+    fireEvent.click(optimizeButton);
+
+    await waitFor(() => expect(onNotifyError).toHaveBeenCalledWith(expect.stringContaining("optimization failed")));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("flips to an existing optimized prompt without running optimization again", async () => {
@@ -591,18 +632,31 @@ function createClipboardDataWithFiles(files: File[]) {
 }
 
 function renderPromptPage({
+  onNotifyError = vi.fn(),
+  optimizer = vi.fn(async () => ({ optimized_text: "" })),
   translator = vi.fn(async () => ({ translated_text: "" })),
 }: {
+  onNotifyError?: (message: string) => void;
+  optimizer?: (request: {
+    agentId: string;
+    model: string;
+    promptTemplate?: string;
+    provider: "cli";
+    text: string;
+  }) => Promise<{ optimized_text: string }>;
   translator?: ComponentProps<typeof PromptOverviewPage>["translator"];
 } = {}) {
+  const pageProps = {
+    availabilityChecker: async () => ({ available: true, error: null, version: "test" }),
+    onManualOpen: vi.fn(),
+    onNotifyError,
+    optimizer,
+    translator,
+  } as unknown as ComponentProps<typeof PromptOverviewPage>;
   return render(
     <I18nProvider>
       <AppSettingsProvider>
-        <PromptOverviewPage
-          availabilityChecker={async () => ({ available: true, error: null, version: "test" })}
-          onManualOpen={vi.fn()}
-          translator={translator}
-        />
+        <PromptOverviewPage {...pageProps} />
       </AppSettingsProvider>
     </I18nProvider>,
   );

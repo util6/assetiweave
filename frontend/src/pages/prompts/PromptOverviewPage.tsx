@@ -37,10 +37,17 @@ import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import {
   checkConversationTranslationAvailability,
   translateConversationCardContent,
+  type ConversationTranslationAvailabilityRequest,
   type ConversationCardTranslationRequest,
   type OpencodeTranslationAvailability,
   type OpencodeTranslationResult,
 } from "../../services/cardTranslation";
+import {
+  checkPromptOptimizationAvailability,
+  optimizePromptContent,
+  type PromptOptimizationRequest,
+  type PromptOptimizationResult,
+} from "../../services/promptOptimization";
 import { selectTargetDirectory } from "../../services/catalog";
 import { copyPromptImagesToClipboard, copyPromptTextToClipboard } from "../../services/promptClipboard";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -131,12 +138,16 @@ const PROMPT_SEARCH_COMMIT_DELAY_MS = 700;
 export function PromptOverviewPage({
   availabilityChecker,
   onManualOpen,
+  onNotifyError = () => undefined,
   onReady,
+  optimizer = optimizePromptContent,
   translator = translateConversationCardContent,
 }: {
-  availabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
+  availabilityChecker?: (request: ConversationTranslationAvailabilityRequest) => Promise<OpencodeTranslationAvailability>;
   onManualOpen: () => void;
+  onNotifyError?: (message: string) => void;
   onReady?: () => void;
+  optimizer?: (request: PromptOptimizationRequest) => Promise<PromptOptimizationResult>;
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
 }) {
   const { t } = useI18n();
@@ -151,10 +162,13 @@ export function PromptOverviewPage({
   const [selectedTagGroups, setSelectedTagGroups] = useState<PromptTagGroupId[]>([]);
   const [copiedState, setCopiedState] = useState<{ noteId: string; step: PromptCopyStep } | null>(null);
   const [busyActions, setBusyActions] = useState<Record<string, PromptAction | undefined>>({});
-  const [availability, setAvailability] = useState<TranslationAvailabilityStatus>("idle");
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [availability, setAvailability] = useState<Record<PromptAction, TranslationAvailabilityStatus>>({
+    optimize: "idle",
+    translate: "idle",
+  });
   const copiedResetTimerRef = useRef<number | null>(null);
   const promptOptimizationAgent = resolveAgentCapability(settings, "promptOptimization");
+  const cardTranslationAgent = resolveAgentCapability(settings, "cardTranslation");
 
   useEffect(() => {
     onReady?.();
@@ -175,29 +189,49 @@ export function PromptOverviewPage({
 
   useEffect(() => {
     let cancelled = false;
-    setAvailability("checking");
-    const check = availabilityChecker ?? (() =>
-      checkConversationTranslationAvailability({
-        agentId: promptOptimizationAgent.agentId,
-        model: promptOptimizationAgent.model,
-        provider: "cli",
-      }));
-
-    check()
-      .then((result) => {
-        if (cancelled) return;
-        setAvailability(result.available ? "available" : "unavailable");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setAvailability("unavailable");
-      });
+    setAvailability({ optimize: "checking", translate: "checking" });
+    const checks: Array<[
+      PromptAction,
+      ConversationTranslationAvailabilityRequest,
+      () => Promise<OpencodeTranslationAvailability>,
+    ]> = [
+      [
+        "translate",
+        { agentId: cardTranslationAgent.agentId, model: cardTranslationAgent.model, provider: "cli" },
+        () => checkConversationTranslationAvailability({
+          agentId: cardTranslationAgent.agentId,
+          model: cardTranslationAgent.model,
+          provider: "cli",
+        }),
+      ],
+      [
+        "optimize",
+        { agentId: promptOptimizationAgent.agentId, model: promptOptimizationAgent.model, provider: "cli" },
+        checkPromptOptimizationAvailability,
+      ],
+    ];
+    for (const [action, request, defaultCheck] of checks) {
+      (availabilityChecker ? availabilityChecker(request) : defaultCheck())
+        .then((result) => {
+          if (cancelled) return;
+          setAvailability((current) => ({
+            ...current,
+            [action]: result.available ? "available" : "unavailable",
+          }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setAvailability((current) => ({ ...current, [action]: "unavailable" }));
+        });
+    }
 
     return () => {
       cancelled = true;
     };
   }, [
     availabilityChecker,
+    cardTranslationAgent.agentId,
+    cardTranslationAgent.model,
     promptOptimizationAgent.agentId,
     promptOptimizationAgent.model,
   ]);
@@ -246,7 +280,8 @@ export function PromptOverviewPage({
   const translationTarget = normalizeConversationTranslationTargetLanguage(
     settings.conversationTranslation.targetLanguage,
   );
-  const actionsDisabled = availability !== "available";
+  const optimizeDisabled = availability.optimize !== "available";
+  const translateDisabled = availability.translate !== "available";
   const activeNote = creatingNew ? null : filteredNotes.find((note) => note.id === selectedNoteId) ?? filteredNotes[0] ?? null;
   const activeNoteIndex = activeNote ? filteredNotes.findIndex((note) => note.id === activeNote.id) : -1;
   const newNoteTags = getPromptNewNoteTags(selectedTagGroups);
@@ -331,7 +366,7 @@ export function PromptOverviewPage({
         copiedResetTimerRef.current = null;
       }, COPIED_RESET_MS);
     } catch (error) {
-      setActionError(t("prompt.action.copyFailed", { message: errorMessage(error) }));
+      onNotifyError(t("prompt.action.copyFailed", { message: errorMessage(error) }));
     }
   }
 
@@ -345,7 +380,6 @@ export function PromptOverviewPage({
   async function handleOptimizeNote(note: PromptNote, sourceText: string) {
     return runPromptAction(note, "optimize", {
       promptTemplate: settings.promptOptimization.promptTemplate,
-      targetLanguage: settings.conversationTranslation.targetLanguage,
       text: sourceText,
     });
   }
@@ -379,23 +413,30 @@ export function PromptOverviewPage({
   async function runPromptAction(
     note: PromptNote,
     action: PromptAction,
-    request: Pick<ConversationCardTranslationRequest, "promptTemplate" | "targetLanguage"> & { text?: string },
+    request: { promptTemplate?: string; targetLanguage?: string; text?: string },
   ) {
-    if (actionsDisabled) {
+    if (action === "optimize" ? optimizeDisabled : translateDisabled) {
       return false;
     }
 
-    setActionError(null);
     setBusyActions((current) => ({ ...current, [note.id]: action }));
     try {
-      const result = await translator({
-        agentId: promptOptimizationAgent.agentId,
-        model: promptOptimizationAgent.model,
-        provider: "cli",
-        promptTemplate: request.promptTemplate,
-        targetLanguage: request.targetLanguage,
-        text: request.text ?? note.content,
-      });
+      const output = action === "optimize"
+        ? (await optimizer({
+            agentId: promptOptimizationAgent.agentId,
+            model: promptOptimizationAgent.model,
+            provider: "cli",
+            promptTemplate: request.promptTemplate,
+            text: request.text ?? note.content,
+          })).optimized_text
+        : (await translator({
+            agentId: cardTranslationAgent.agentId,
+            model: cardTranslationAgent.model,
+            provider: "cli",
+            promptTemplate: request.promptTemplate,
+            targetLanguage: request.targetLanguage ?? settings.conversationTranslation.targetLanguage,
+            text: request.text ?? note.content,
+          })).translated_text;
       setNotes((current) =>
         current.map((candidate) => {
           if (candidate.id !== note.id) {
@@ -404,15 +445,15 @@ export function PromptOverviewPage({
 
           return {
             ...candidate,
-            optimizedText: action === "optimize" ? result.translated_text : candidate.optimizedText,
-            translatedText: action === "translate" ? result.translated_text : candidate.translatedText,
+            optimizedText: action === "optimize" ? output : candidate.optimizedText,
+            translatedText: action === "translate" ? output : candidate.translatedText,
             updatedAt: new Date().toISOString(),
           };
         }),
       );
       return true;
     } catch (error) {
-      setActionError(
+      onNotifyError(
         action === "translate"
           ? t("prompt.action.translateFailed", { message: errorMessage(error) })
           : t("prompt.action.optimizeFailed", { message: errorMessage(error) }),
@@ -436,12 +477,6 @@ export function PromptOverviewPage({
         titleAction={<ManualHelpButton onOpen={onManualOpen} />}
       />
 
-      {actionError ? (
-        <div className="rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
-          {actionError}
-        </div>
-      ) : null}
-
       <PromptOverviewToolbar
         onCreateNew={handleCreateNewNote}
         onQueryChange={setQuery}
@@ -458,7 +493,8 @@ export function PromptOverviewPage({
 
       <div className="-mt-4 mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col gap-2 overflow-visible">
         <PromptStageCard
-          actionsDisabled={actionsDisabled}
+          optimizeDisabled={optimizeDisabled}
+          translateDisabled={translateDisabled}
           activeIndex={activeNoteIndex}
           activeNote={activeNote}
           busyAction={activeNote ? busyActions[activeNote.id] : undefined}
@@ -600,7 +636,6 @@ function PromptOverviewToolbar({
 }
 
 function PromptStageCard({
-  actionsDisabled,
   activeIndex,
   activeNote,
   busyAction,
@@ -618,10 +653,11 @@ function PromptStageCard({
   onSaveActive,
   onSelectNote,
   onTranslateActive,
+  optimizeDisabled,
   tagLibrary,
+  translateDisabled,
   translationTarget,
 }: {
-  actionsDisabled: boolean;
   activeIndex: number;
   activeNote: PromptNote | null;
   busyAction?: PromptAction;
@@ -639,7 +675,9 @@ function PromptStageCard({
   onSaveActive: (values: PromptNoteDraft, targetFace?: PromptCardFace) => void;
   onSelectNote: (noteId: string) => void;
   onTranslateActive: () => void;
+  optimizeDisabled: boolean;
   tagLibrary: string[];
+  translateDisabled: boolean;
   translationTarget: string;
 }) {
   const { t } = useI18n();
@@ -770,7 +808,7 @@ function PromptStageCard({
   }
 
   async function handleOptimizeVisibleFace() {
-    if (!activeNote || activeBusy || actionsDisabled) {
+    if (!activeNote || activeBusy || optimizeDisabled) {
       return;
     }
     if (cardFace === "front" && hasOptimizedText) {
@@ -859,7 +897,7 @@ function PromptStageCard({
                   }}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy || emptyBackFace}
+                  disabled={!activeSurface || !activeNote || optimizeDisabled || activeBusy || emptyBackFace}
                   icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />}
                   label={t("prompt.action.reoptimize")}
                   onClick={() => {
@@ -877,13 +915,13 @@ function PromptStageCard({
                   onClick={() => setInfoOpen(true)}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy}
+                  disabled={!activeSurface || !activeNote || translateDisabled || activeBusy}
                   icon={<Languages className={busyAction === "translate" ? "animate-pulse" : undefined} size={15} />}
                   label={translateLabel}
                   onClick={onTranslateActive}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || actionsDisabled || activeBusy}
+                  disabled={!activeSurface || !activeNote || optimizeDisabled || activeBusy}
                   icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : hasOptimizedText ? <RotateCw size={15} /> : <Sparkles size={15} />}
                   label={optimizeLabel}
                   onClick={() => {

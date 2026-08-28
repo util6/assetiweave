@@ -117,7 +117,6 @@ describe("ConversationTurn", () => {
       copyBlock: async () => undefined,
       expandedBlockIds: new Set(),
       getTranslatedText: () => undefined,
-      getTranslationError: () => undefined,
       getTranslationPhase: () => undefined,
       isCopied: () => false,
       isTranslating: () => false,

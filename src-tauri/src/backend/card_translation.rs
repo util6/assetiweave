@@ -52,6 +52,22 @@ pub(crate) struct OpencodeTranslationResult {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PromptOptimizationRequest {
+    pub(crate) provider: ConversationTranslationProvider,
+    #[serde(default)]
+    pub(crate) agent_id: Option<String>,
+    #[serde(default = "default_translation_cli")]
+    pub(crate) cli: ConversationTranslationCli,
+    pub(crate) model: String,
+    pub(crate) prompt: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PromptOptimizationResult {
+    pub(crate) optimized_text: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ConversationTranslationProvider {
     Cli,
@@ -164,6 +180,17 @@ pub(crate) fn check_opencode_translation_availability_with_settings(
         version: availability.version,
         error: availability.error,
     }
+}
+
+pub(crate) fn check_prompt_optimization_availability_with_settings(
+    runtime: &dyn AgentExecutionRuntime,
+    settings: &serde_json::Value,
+) -> ActionAvailability {
+    check_action_availability_with_settings(
+        runtime,
+        &crate::backend::ai_execution::composition::ActionId::new("prompt.optimization"),
+        settings,
+    )
 }
 
 pub(crate) fn test_conversation_translation_connection(
@@ -295,6 +322,30 @@ pub(crate) fn translate_conversation_card(
             "Apple Translate provider is reserved but not implemented yet".to_string(),
         )),
     }
+}
+
+pub(crate) fn optimize_prompt(
+    runtime: Arc<dyn AgentExecutionRuntime>,
+    params: PromptOptimizationRequest,
+) -> AppResult<PromptOptimizationResult> {
+    validate_translation_prompt(&params.prompt)?;
+    let model = normalize_model(&params.model)?;
+    let ConversationTranslationProvider::Cli = params.provider else {
+        return Err(AppError::Validation(
+            "prompt optimization currently requires a CLI provider".to_string(),
+        ));
+    };
+    let result = execute_agent_translation(
+        runtime,
+        resolve_agent_id(params.agent_id.as_deref(), params.cli)?,
+        params.prompt,
+        model,
+        AiExecutionPurpose::PromptOptimization,
+        AiExecutionLimits::default(),
+    )?;
+    Ok(PromptOptimizationResult {
+        optimized_text: result.translated_text,
+    })
 }
 
 pub(crate) fn prepare_opencode_agent_translation(
@@ -640,6 +691,29 @@ mod tests {
         assert_eq!(requests[0].agent_id.as_str(), "gemini");
         assert_eq!(requests[0].purpose, AiExecutionPurpose::Translation);
         assert_eq!(requests[0].model.as_deref(), Some("gemini-2.5-pro"));
+    }
+
+    #[test]
+    fn prompt_optimization_has_a_distinct_execution_purpose_and_result_contract() {
+        let runtime = FakeRuntime::new("优化后的提示词");
+
+        let result = optimize_prompt(
+            runtime.clone(),
+            PromptOptimizationRequest {
+                agent_id: Some("opencode".to_string()),
+                provider: ConversationTranslationProvider::Cli,
+                cli: ConversationTranslationCli::Opencode,
+                model: "model/a".to_string(),
+                prompt: "optimize this prompt".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.optimized_text, "优化后的提示词");
+        let requests = runtime.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].purpose, AiExecutionPurpose::PromptOptimization);
+        assert_eq!(requests[0].prompt, "optimize this prompt");
     }
 
     #[test]

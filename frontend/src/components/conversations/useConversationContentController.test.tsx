@@ -116,4 +116,37 @@ describe("useConversationContentController", () => {
     expect(controller.startTranslation).toHaveBeenCalledTimes(1);
     unmount();
   });
+
+  it("reports task failures through the global callback without retaining a card error", async () => {
+    let currentTask = task();
+    const onTranslationError = vi.fn();
+    const translationAvailabilityChecker = vi.fn(async () => ({ available: true, error: null, version: "1" }));
+    const controller: ConversationTranslationTaskController = {
+      cancelTask: vi.fn(async () => currentTask),
+      startTranslation: vi.fn(async () => currentTask),
+      tasks: [],
+    };
+    const { result, rerender } = renderHook(() => useConversationContentController({
+      blocks: [block],
+      onTranslationError,
+      recordKind: "session",
+      t,
+      translationAvailabilityChecker,
+      translationSettings: settings,
+      translationTaskController: controller,
+    }));
+
+    await waitFor(() => expect(result.current.translationAvailability).toBe("available"));
+    await act(async () => result.current.translateBlock(block));
+    currentTask = task({
+      error: { code: "cleanup_failed", message: "cleanup failed", retryable: true, phase: "prompting" },
+      finished_at: "2026-08-16T00:00:02Z",
+      state: "failed",
+      updated_at: "2026-08-16T00:00:02Z",
+    });
+    controller.tasks = [currentTask];
+    rerender();
+
+    await waitFor(() => expect(onTranslationError).toHaveBeenCalledWith("conversation.content.translationFailed"));
+  });
 });

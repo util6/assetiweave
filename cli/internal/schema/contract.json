@@ -181,6 +181,8 @@
     "validate_conversation_adapter",
     "list_conversation_adapter_runtime_statuses",
     "conversation.card.translation.run",
+    "prompt.optimization.run",
+    "prompt.optimization.availability",
     "list_agent_catalog",
     "list_agent_market",
     "inspect_agent_market_item",
@@ -199,6 +201,8 @@
     "check_opencode_translation_availability",
     "translate_conversation_card_with_opencode",
     "translate_conversation_card",
+    "optimize_prompt",
+    "check_prompt_optimization_availability",
     "test_conversation_translation_connection",
     "list_conversation_translation_models",
     "register_conversation_adapter",
@@ -10004,6 +10008,82 @@
     },
     {
       "contract_version": 3,
+      "method": "prompt.optimization.run",
+      "canonical_method": "prompt.optimization.run",
+      "description": "Optimize a prompt through the configured AI Agent",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "provider",
+          "model",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "cli",
+              "google",
+              "apple"
+            ],
+            "description": "AI provider family"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "agent id"
+          },
+          "cli": {
+            "type": "string",
+            "enum": [
+              "opencode",
+              "gemini"
+            ],
+            "description": "CLI Agent when provider is cli"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model identifier"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Rendered prompt optimization instruction"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "prompt.optimization.availability",
+      "canonical_method": "prompt.optimization.availability",
+      "description": "Check the Agent assigned to prompt optimization",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
       "method": "list_agent_catalog",
       "canonical_method": "agent.catalog.list",
       "description": "List built-in Agent runtime definitions",
@@ -10628,6 +10708,82 @@
           }
         },
         "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "optimize_prompt",
+      "canonical_method": "prompt.optimization.run",
+      "description": "Optimize a prompt through the configured AI Agent",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "provider",
+          "model",
+          "prompt"
+        ],
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "cli",
+              "google",
+              "apple"
+            ],
+            "description": "AI provider family"
+          },
+          "agent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "agent id"
+          },
+          "cli": {
+            "type": "string",
+            "enum": [
+              "opencode",
+              "gemini"
+            ],
+            "description": "CLI Agent when provider is cli"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model identifier"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Rendered prompt optimization instruction"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "check_prompt_optimization_availability",
+      "canonical_method": "prompt.optimization.availability",
+      "description": "Check the Agent assigned to prompt optimization",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
       },
       "cli": null,
       "since": "0.1.0",

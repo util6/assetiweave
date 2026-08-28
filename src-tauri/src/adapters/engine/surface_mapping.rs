@@ -251,6 +251,16 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "prompt.optimization.run",
+        tauri_command: Some("optimize_prompt"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "prompt.optimization.availability",
+        tauri_command: Some("check_prompt_optimization_availability"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "conversation.part.translation.update",
         tauri_command: Some("update_conversation_part_translation"),
         note: None,

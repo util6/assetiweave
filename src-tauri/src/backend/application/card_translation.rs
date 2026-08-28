@@ -15,6 +15,19 @@ impl AppService {
         )
     }
 
+    pub(crate) fn check_prompt_optimization_availability(
+        &self,
+    ) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
+        let settings =
+            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        Ok(
+            crate::backend::card_translation::check_prompt_optimization_availability_with_settings(
+                self.agent_runtime()?.as_ref(),
+                &settings,
+            ),
+        )
+    }
+
     pub(crate) fn translate_conversation_card_with_opencode(
         &self,
         params: crate::backend::card_translation::OpencodeTranslationRequest,
@@ -37,6 +50,16 @@ impl AppService {
                 params,
             )?,
         )
+    }
+
+    pub(crate) fn optimize_prompt(
+        &self,
+        params: crate::backend::card_translation::PromptOptimizationRequest,
+    ) -> RuntimeAppResult<crate::backend::card_translation::PromptOptimizationResult> {
+        Ok(crate::backend::card_translation::optimize_prompt(
+            self.agent_runtime()?,
+            params,
+        )?)
     }
 
     pub(crate) fn test_conversation_translation_connection(

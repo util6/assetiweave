@@ -1128,8 +1128,8 @@ describe("ConversationContentCards", () => {
     fireEvent.click(screen.getByRole("button", { name: "完成任务" }));
 
     expect(await screen.findByText(/运行测试/)).toBeTruthy();
-    expect((await screen.findByRole("alert")).textContent).toContain("保存译文失败：disk full");
-    expect(onTranslationError).toHaveBeenCalledWith("保存译文失败：disk full");
+    await waitFor(() => expect(onTranslationError).toHaveBeenCalledWith("保存译文失败：disk full"));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("treats cancellation as a neutral terminal state", async () => {

@@ -26,6 +26,7 @@ use crate::backend::{
 use super::acp_aggregator::{AggregatorAction, TranslationTextAggregator};
 
 const PROTOCOL_EVENT_CAPACITY: usize = 128;
+const PROVIDER_SESSION_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
 pub(crate) struct AcpExecutionBackend {
@@ -798,7 +799,7 @@ impl AcpExecutionGuard {
                             .collect(),
                         working_dir: Some(self.workspace.clone()),
                         stdin: HostInput::Null,
-                        timeout: request.limits.close_timeout,
+                        timeout: PROVIDER_SESSION_DELETE_TIMEOUT,
                         stdout_limit: request.limits.stderr_bytes,
                         stderr_limit: request.limits.stderr_bytes,
                     },
@@ -1131,6 +1132,28 @@ mod tests {
         assert!(records.contains("\"sessionId\":\"fixture-session\""));
         assert!(records.contains("\"originalProcessReaped\":true"));
         assert!(records.contains("\"workspaceExists\":true"));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn one_shot_allows_a_slow_provider_fallback_to_finish_after_the_acp_close_timeout() {
+        let (root, record) = test_paths("one-shot-slow-fallback");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        let result = backend
+            .execute(
+                &definition_with_fallback("no_delete", &record, "slow_success"),
+                request(None),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "a completed prompt must survive a slow session deletion: {result:?}"
+        );
+        assert!(records(&record).contains("\"event\":\"fallback_delete\""));
         assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
         let _ = fs::remove_dir_all(root);
     }

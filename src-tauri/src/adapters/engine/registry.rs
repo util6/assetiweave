@@ -2922,6 +2922,35 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "prompt.optimization.run",
+        "prompt.optimization.run",
+        "Optimize a prompt through the configured AI Agent",
+        Write,
+        Friendly,
+        false,
+        crate::backend::card_translation::PromptOptimizationRequest,
+        Service => |service, params| service.optimize_prompt(params),
+        &[
+            param!("provider", "AI provider family"),
+            param!("cli", "CLI Agent when provider is cli"),
+            param!("model", "Optional model identifier"),
+            param!("prompt", "Rendered prompt optimization instruction")
+        ],
+        None
+    ),
+    command!(
+        "prompt.optimization.availability",
+        "prompt.optimization.availability",
+        "Check the Agent assigned to prompt optimization",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.check_prompt_optimization_availability(),
+        &[],
+        None
+    ),
+    command!(
         "list_agent_catalog",
         "agent.catalog.list",
         "List built-in Agent runtime definitions",
@@ -3164,6 +3193,35 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("model", "Optional model identifier"),
             param!("prompt", "Rendered translation prompt")
         ],
+        None
+    ),
+    command!(
+        "optimize_prompt",
+        "prompt.optimization.run",
+        "Optimize a prompt through the configured AI Agent",
+        Write,
+        App,
+        false,
+        crate::backend::card_translation::PromptOptimizationRequest,
+        Service => |service, params| service.optimize_prompt(params),
+        &[
+            param!("provider", "AI provider family"),
+            param!("cli", "CLI Agent when provider is cli"),
+            param!("model", "Optional model identifier"),
+            param!("prompt", "Rendered prompt optimization instruction")
+        ],
+        None
+    ),
+    command!(
+        "check_prompt_optimization_availability",
+        "prompt.optimization.availability",
+        "Check the Agent assigned to prompt optimization",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.check_prompt_optimization_availability(),
+        &[],
         None
     ),
     command!(
@@ -4621,6 +4679,32 @@ mod tests {
             contract["params_schema"]["properties"]["cli"]["enum"],
             json!(["opencode", "gemini"])
         );
+    }
+
+    #[test]
+    fn prompt_optimization_has_a_dedicated_public_contract() {
+        let spec = find("prompt.optimization.run").expect("prompt optimization method");
+        assert_eq!(spec.canonical_method, "prompt.optimization.run");
+        assert_eq!(spec.risk, CommandRisk::Write);
+        assert_eq!(
+            find("optimize_prompt")
+                .expect("prompt optimization Tauri method")
+                .canonical_method,
+            "prompt.optimization.run"
+        );
+        assert_eq!(
+            find("check_prompt_optimization_availability")
+                .expect("prompt optimization availability Tauri method")
+                .canonical_method,
+            "prompt.optimization.availability"
+        );
+        let contract = schema_get("prompt.optimization.run");
+        let required = contract["params_schema"]["required"]
+            .as_array()
+            .expect("prompt optimization required fields");
+        for field in ["provider", "model", "prompt"] {
+            assert!(required.contains(&json!(field)), "missing field {field}");
+        }
     }
 
     #[test]

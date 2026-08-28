@@ -2639,6 +2639,7 @@ export function QuestionPreview({
   const contentController = useConversationContentController({
     blocks: collectConversationTurnBlocks(turnModels),
     onCopyError,
+    onTranslationError: onCopyError,
     recordKind,
     scopeKey: question.question.id,
     t,

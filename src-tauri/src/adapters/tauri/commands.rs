@@ -62,7 +62,8 @@ use crate::{
         prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
         ConversationTranslationModelsRequest, ConversationTranslationModelsResult,
         ConversationTranslationRequest, OpencodeTranslationAvailability,
-        OpencodeTranslationRequest, OpencodeTranslationResult,
+        OpencodeTranslationRequest, OpencodeTranslationResult, PromptOptimizationRequest,
+        PromptOptimizationResult,
     },
     backend::conversations::{
         ConversationCommandProjection, ConversationCommandProjectionParams,
@@ -2000,6 +2001,18 @@ pub(crate) async fn check_opencode_translation_availability(
 }
 
 #[tauri::command]
+pub(crate) async fn check_prompt_optimization_availability(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
+    let runtime = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::from_runtime(&runtime).check_prompt_optimization_availability()
+    })
+    .await
+    .map_err(|error| AppError::External(error.to_string()))?
+}
+
+#[tauri::command]
 pub(crate) async fn translate_conversation_card_with_opencode(
     state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
@@ -2020,6 +2033,19 @@ pub(crate) async fn translate_conversation_card(
     let runtime = state.runtime.clone();
     tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).translate_conversation_card(params)
+    })
+    .await
+    .map_err(|error| AppError::External(error.to_string()))?
+}
+
+#[tauri::command]
+pub(crate) async fn optimize_prompt(
+    state: State<'_, AppState>,
+    params: PromptOptimizationRequest,
+) -> RuntimeAppResult<PromptOptimizationResult> {
+    let runtime = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        AppService::from_runtime(&runtime).optimize_prompt(params)
     })
     .await
     .map_err(|error| AppError::External(error.to_string()))?
@@ -3582,8 +3608,10 @@ pub(crate) fn command_handler(
         check_agent_connection,
         list_agent_models,
         check_opencode_translation_availability,
+        check_prompt_optimization_availability,
         translate_conversation_card_with_opencode,
         translate_conversation_card,
+        optimize_prompt,
         test_conversation_translation_connection,
         list_conversation_translation_models,
         start_conversation_card_translation,

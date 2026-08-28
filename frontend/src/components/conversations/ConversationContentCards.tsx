@@ -50,13 +50,11 @@ import {
   type ConversationContentController,
   type ConversationTranslationTaskController,
   type TranslationAvailabilityStatus,
-  type TranslationUiError,
 } from "./useConversationContentController";
 
 export type {
   ConversationTranslationTaskController,
   TranslationAvailabilityStatus,
-  TranslationUiError,
 } from "./useConversationContentController";
 
 export interface ConversationContentBlock {
@@ -376,7 +374,6 @@ export function ConversationContentCards({
         translatedText={contentController.getTranslatedText(block)}
         translating={contentController.isTranslating(block.id)}
         translationAvailability={contentController.translationAvailability}
-        translationError={contentController.getTranslationError(block.id)}
         translationPhase={contentController.getTranslationPhase(block.id)}
         translationTargetLanguage={translationSettings.targetLanguage}
       />
@@ -502,7 +499,6 @@ function ConversationContentCard({
   translatedText,
   translating,
   translationAvailability,
-  translationError,
   translationPhase,
   translationTargetLanguage,
 }: {
@@ -520,7 +516,6 @@ function ConversationContentCard({
   translatedText?: string;
   translating: boolean;
   translationAvailability: TranslationAvailabilityStatus;
-  translationError?: TranslationUiError;
   translationPhase?: AiExecutionPhase;
   translationTargetLanguage: ConversationTranslationTargetLanguage;
 }) {
@@ -689,13 +684,6 @@ function ConversationContentCard({
                 ? t("conversation.content.translationCancelling")
                 : t("common.cancel")}
             </button>
-          </div>
-        ) : null}
-        {translationError ? (
-          <div className="mt-3 rounded-xl border border-status-remove/35 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove" role="alert">
-            {translationError.kind === "persistence"
-              ? t("conversation.content.translationSaveFailed", { message: translationError.message })
-              : t("conversation.content.translationFailed", { message: translationError.message })}
           </div>
         ) : null}
         <BlockMetadata block={block} t={t} />

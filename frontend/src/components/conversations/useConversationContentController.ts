@@ -23,11 +23,6 @@ import {
 
 export type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
 
-export type TranslationUiError = {
-  kind: "execution" | "persistence";
-  message: string;
-};
-
 export interface ConversationTranslationTaskController {
   tasks: AiExecutionTaskSnapshot[];
   startTranslation: (
@@ -41,7 +36,6 @@ export interface ConversationContentController {
   copyBlock(block: ConversationContentBlock): Promise<void>;
   expandedBlockIds: ReadonlySet<string>;
   getTranslatedText(block: ConversationContentBlock): string | undefined;
-  getTranslationError(blockId: string): TranslationUiError | undefined;
   getTranslationPhase(blockId: string): AiExecutionPhase | undefined;
   isCopied(blockId: string): boolean;
   isTranslating(blockId: string): boolean;
@@ -96,7 +90,6 @@ export function useConversationContentController({
   const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(new Set());
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
   const [translatedBlocks, setTranslatedBlocks] = useState<Record<string, string>>({});
-  const [translationErrors, setTranslationErrors] = useState<Record<string, TranslationUiError>>({});
   const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(new Set());
   const [translationTaskByBlockId, setTranslationTaskByBlockId] = useState<Record<string, string>>({});
   const [translationAvailability, setTranslationAvailability] = useState<TranslationAvailabilityStatus>("idle");
@@ -120,7 +113,6 @@ export function useConversationContentController({
     setExpandedBlockIds(new Set());
     setCopiedBlockId(null);
     setTranslatedBlocks({});
-    setTranslationErrors({});
     setTranslatingBlockIds(new Set());
     setTranslationTaskByBlockId({});
     setTranslationAvailability("idle");
@@ -178,14 +170,12 @@ export function useConversationContentController({
       });
 
       if (task.state === "cancelled") {
-        setTranslationErrors((current) => removeRecordKey(current, blockId));
         continue;
       }
       if (task.state === "failed" || !task.result?.text) {
         const message = task.state === "failed"
           ? task.error?.message ?? t("conversation.content.translationUnknownError")
           : t("conversation.content.translationUnknownError");
-        setTranslationErrors((current) => ({ ...current, [blockId]: { kind: "execution", message } }));
         onTranslationError?.(t("conversation.content.translationFailed", { message }));
         continue;
       }
@@ -197,7 +187,6 @@ export function useConversationContentController({
       void translationSaver({ partId: block.partId, recordKind, translatedText }).catch((error) => {
         if (!mountedRef.current) return;
         const message = errorMessage(error);
-        setTranslationErrors((current) => ({ ...current, [blockId]: { kind: "persistence", message } }));
         onTranslationError?.(t("conversation.content.translationSaveFailed", { message }));
       });
     }
@@ -229,7 +218,6 @@ export function useConversationContentController({
   const translateBlock = useCallback(async (block: ConversationContentBlock) => {
     if (!enabled || translationAvailability !== "available") return;
     setTranslatingBlockIds((current) => new Set(current).add(block.id));
-    setTranslationErrors((current) => removeRecordKey(current, block.id));
     const request: ConversationCardTranslationRequest = {
       agentId: translationSettings.agentId,
       model: translationSettings.model,
@@ -253,13 +241,11 @@ export function useConversationContentController({
           await translationSaver({ partId: block.partId, recordKind, translatedText: result.translated_text });
         } catch (error) {
           const message = errorMessage(error);
-          setTranslationErrors((current) => ({ ...current, [block.id]: { kind: "persistence", message } }));
           onTranslationError?.(t("conversation.content.translationSaveFailed", { message }));
         }
       }
     } catch (error) {
       const message = errorMessage(error);
-      setTranslationErrors((current) => ({ ...current, [block.id]: { kind: "execution", message } }));
       onTranslationError?.(t("conversation.content.translationFailed", { message }));
     } finally {
       if (!taskController) {
@@ -293,7 +279,6 @@ export function useConversationContentController({
       await taskController.cancelTask(taskId);
     } catch (error) {
       const message = errorMessage(error);
-      setTranslationErrors((current) => ({ ...current, [blockId]: { kind: "execution", message } }));
       onTranslationError?.(t("conversation.content.translationFailed", { message }));
     }
   }, [onTranslationError, t, taskController, translationTaskByBlockId]);
@@ -312,7 +297,6 @@ export function useConversationContentController({
     copyBlock,
     expandedBlockIds,
     getTranslatedText: (block: ConversationContentBlock) => translatedBlocks[block.id] ?? block.translatedText ?? undefined,
-    getTranslationError: (blockId: string) => translationErrors[blockId],
     getTranslationPhase: (blockId: string) => {
       const taskId = translationTaskByBlockId[blockId];
       const task = taskId ? taskController?.tasks.find((candidate) => candidate.id === taskId) : undefined;
@@ -336,7 +320,6 @@ export function useConversationContentController({
     translatedBlocks,
     translatingBlockIds,
     translationAvailability,
-    translationErrors,
     translationTaskByBlockId,
     toggleExpanded,
     translateBlock,
@@ -345,13 +328,6 @@ export function useConversationContentController({
 
 function isTerminalAiExecutionTask(task: AiExecutionTaskSnapshot) {
   return task.state === "succeeded" || task.state === "failed" || task.state === "cancelled";
-}
-
-function removeRecordKey<T>(record: Record<string, T>, key: string) {
-  if (!(key in record)) return record;
-  const next = { ...record };
-  delete next[key];
-  return next;
 }
 
 function clearCopiedResetTimer(timerRef: { current: number | null }) {

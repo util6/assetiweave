@@ -27,6 +27,8 @@ if (cleanupMode === "not_found") {
 
 if (cleanupMode === "timeout") {
   setInterval(() => {}, 1_000);
+} else if (cleanupMode === "slow_success") {
+  setTimeout(() => process.exit(0), 750);
 } else {
   process.exit(cleanupMode === "failure" ? 23 : 0);
 }
