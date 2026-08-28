@@ -3771,6 +3771,45 @@ mod tests {
     }
 
     #[test]
+    fn different_agents_can_reserve_lifecycle_tasks_concurrently() {
+        let registry = BackgroundTaskRegistry::default();
+        let begin = |agent_id: &str| {
+            registry
+                .begin_agent_lifecycle(
+                    agent_id.to_string(),
+                    "install".to_string(),
+                    Some("catalog-v1".to_string()),
+                    Some("1.0.0".to_string()),
+                    Some("fixture-system".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap()
+        };
+
+        let (first, _, first_should_start) = begin("fixture-agent-a");
+        let (second, _, second_should_start) = begin("fixture-agent-b");
+
+        assert!(first_should_start);
+        assert!(second_should_start);
+        assert_ne!(first.id, second.id);
+        let active = registry
+            .agent_lifecycle_snapshots()
+            .unwrap()
+            .into_iter()
+            .filter(|task| !task.state.is_terminal())
+            .collect::<Vec<_>>();
+        assert_eq!(active.len(), 2);
+        assert_eq!(
+            active
+                .iter()
+                .map(|task| task.agent_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>(),
+            std::collections::BTreeSet::from(["fixture-agent-a", "fixture-agent-b"])
+        );
+    }
+
+    #[test]
     fn tenant_owned_agent_lifecycle_tasks_do_not_conflict_across_tenants() {
         let registry = BackgroundTaskRegistry::default();
         let begin = |tenant_id: &str| {

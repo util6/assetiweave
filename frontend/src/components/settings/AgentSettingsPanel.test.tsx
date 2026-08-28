@@ -12,6 +12,11 @@ const agentRuntime = vi.hoisted(() => ({
   listAgentCatalog: vi.fn(),
   listAgentModels: vi.fn(),
   checkAgentConnection: vi.fn(),
+  previewAgentInstallation: vi.fn(),
+  startAgentInstallation: vi.fn(),
+  startAgentUpdate: vi.fn(),
+  startAgentReinstallation: vi.fn(),
+  getAgentLifecycleTask: vi.fn(),
 }));
 
 vi.mock("../../services/agentRuntime", () => agentRuntime);
@@ -63,6 +68,23 @@ beforeEach(() => {
     error_code: null,
     error: null,
   });
+  agentRuntime.previewAgentInstallation.mockImplementation(({ agentId, action = "install" }) => Promise.resolve({
+    agentId,
+    action,
+    catalogVersion: "fixture-catalog",
+    targetVersion: "1.0.0",
+    selectedDistribution: createMarketItem(agentId, false).distributions[0],
+    alternatives: [],
+    ownership: "managed",
+    installPath: `/tmp/${agentId}`,
+    displayInstallPath: `/tmp/${agentId}`,
+    downloadSize: null,
+    runtimeRequirements: [],
+    capabilities: ["text"],
+    conflicts: [],
+    warnings: [],
+    previewToken: `preview-${agentId}`,
+  }));
 });
 
 afterEach(() => {
@@ -224,6 +246,56 @@ describe("AgentSettingsPanel", () => {
     const install = within(row as HTMLElement).getByRole("button", { name: "安装" });
     expect((install as HTMLButtonElement).disabled).toBe(false);
     expect(within(row as HTMLElement).queryByText("当前版本不兼容")).toBeNull();
+  });
+
+  it("keeps multiple Agent downloads independently busy", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("opencode", false),
+      createMarketItem("codex", false),
+    ]);
+    agentRuntime.startAgentInstallation.mockImplementation((request) => Promise.resolve({
+      id: `task-${request.agentId}`,
+      agentId: request.agentId,
+      action: "install",
+      state: "running",
+      phase: "downloading",
+      catalogVersion: request.catalogVersion,
+      agentVersion: request.agentVersion,
+      distributionId: request.distributionId,
+      distributionType: "binary",
+      ownership: "managed",
+      progress: {
+        completedUnits: 1,
+        totalUnits: null,
+        downloadedBytes: 1,
+        totalBytes: null,
+      },
+      cancellable: true,
+      createdAt: "2026-08-29T00:00:00Z",
+      updatedAt: "2026-08-29T00:00:00Z",
+      finishedAt: null,
+      result: null,
+      error: null,
+      warnings: [],
+    }));
+    agentRuntime.getAgentLifecycleTask.mockImplementation(() => new Promise(() => undefined));
+
+    renderPanel();
+
+    const openCodeRow = (await screen.findByRole("heading", { name: "OpenCode" })).closest("article") as HTMLElement;
+    const codexRow = screen.getByRole("heading", { name: "Codex CLI" }).closest("article") as HTMLElement;
+
+    fireEvent.click(within(openCodeRow).getByRole("button", { name: "安装" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认并开始" }));
+    await waitFor(() => expect(agentRuntime.startAgentInstallation).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(within(codexRow).getByRole("button", { name: "安装" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认并开始" }));
+    await waitFor(() => expect(agentRuntime.startAgentInstallation).toHaveBeenCalledTimes(2));
+
+    expect((within(openCodeRow).getByRole("button", { name: "处理中..." }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(codexRow).getByRole("button", { name: "处理中..." }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows only installed Agents and the three compact ACP settings actions", async () => {

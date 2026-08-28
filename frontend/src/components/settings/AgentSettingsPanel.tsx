@@ -8,6 +8,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
+import {
+  isActiveAgentLifecycleTask,
+  useOptionalAgentLifecycleTasks,
+} from "../../app/backgroundTasks/AgentLifecycleTaskProvider";
 import type { AppShortcut } from "../../types";
 import {
   checkAgentConnection,
@@ -58,7 +62,7 @@ export function AgentSettingsPanel({
   const [marketCatalog, setMarketCatalog] = useState<AgentCatalogItem[] | null>(null);
   const [connectionMessages, setConnectionMessages] = useState<Record<string, string>>({});
   const [testingAgentId, setTestingAgentId] = useState<AgentId | null>(null);
-  const [marketBusyAgentId, setMarketBusyAgentId] = useState<AgentId | null>(null);
+  const [marketBusyAgentIds, setMarketBusyAgentIds] = useState<Set<AgentId>>(() => new Set());
   const [marketRefreshBusy, setMarketRefreshBusy] = useState(false);
   const [pendingLifecycle, setPendingLifecycle] = useState<{
     agent: AgentCatalogItem;
@@ -77,10 +81,29 @@ export function AgentSettingsPanel({
   const [modelError, setModelError] = useState("");
   const modelRequestId = useRef(0);
   const agentRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const lifecycleTasks = useOptionalAgentLifecycleTasks();
+  const activeLifecycleAgentIds = useMemo(() => new Set(
+    lifecycleTasks?.tasks
+      .filter(isActiveAgentLifecycleTask)
+      .map((task) => task.agentId) ?? [],
+  ), [lifecycleTasks?.tasks]);
   const canRefreshAgentMarket = Object.prototype.hasOwnProperty.call(agentRuntime, "refreshAgentMarket");
   const canPreviewAgentUninstall = Object.prototype.hasOwnProperty.call(agentRuntime, "previewAgentUninstall");
   const canManageAgentLifecycle = typeof agentRuntime.listAgentMarket === "function";
   const settingsOnly = view === "settings";
+
+  function setAgentManaging(agentId: AgentId, managing: boolean) {
+    setMarketBusyAgentIds((current) => {
+      const next = new Set(current);
+      if (managing) next.add(agentId);
+      else next.delete(agentId);
+      return next;
+    });
+  }
+
+  function isAgentManaging(agentId: AgentId) {
+    return marketBusyAgentIds.has(agentId) || activeLifecycleAgentIds.has(agentId);
+  }
 
   useEffect(() => {
     let disposed = false;
@@ -243,7 +266,7 @@ export function AgentSettingsPanel({
 
   async function runMarketLifecycle(agent: AgentCatalogItem, action: "install" | "update" | "reinstall") {
     if (typeof agentRuntime.listAgentMarket !== "function") return;
-    setMarketBusyAgentId(agent.id);
+    setAgentManaging(agent.id, true);
     try {
       if (action === "install" && agent.installed) {
         const result = agent.installed.enabled
@@ -268,13 +291,13 @@ export function AgentSettingsPanel({
     } catch (error) {
       setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
     } finally {
-      setMarketBusyAgentId(null);
+      setAgentManaging(agent.id, false);
     }
   }
 
   async function selectLifecycleDistribution(distributionId: string) {
     if (!pendingLifecycle || distributionId === pendingLifecycle.preview.selectedDistribution.distributionId) return;
-    setMarketBusyAgentId(pendingLifecycle.agent.id);
+    setAgentManaging(pendingLifecycle.agent.id, true);
     try {
       const preview = await agentRuntime.previewAgentInstallation({
         agentId: pendingLifecycle.agent.id,
@@ -285,7 +308,7 @@ export function AgentSettingsPanel({
     } catch (error) {
       setConnectionMessages((current) => ({ ...current, [pendingLifecycle.agent.id]: errorMessage(error) }));
     } finally {
-      setMarketBusyAgentId(null);
+      setAgentManaging(pendingLifecycle.agent.id, false);
     }
   }
 
@@ -293,7 +316,7 @@ export function AgentSettingsPanel({
     if (!pendingLifecycle) return;
     const { agent, action, preview } = pendingLifecycle;
     setPendingLifecycle(null);
-    setMarketBusyAgentId(agent.id);
+    setAgentManaging(agent.id, true);
     try {
       const request = {
         agentId: agent.id,
@@ -309,9 +332,11 @@ export function AgentSettingsPanel({
           ? await agentRuntime.startAgentReinstallation(request)
           : await agentRuntime.startAgentInstallation(request);
       let snapshot = task;
+      lifecycleTasks?.mergeSnapshot(snapshot);
       while (snapshot.state === "queued" || snapshot.state === "running") {
         await new Promise((resolve) => window.setTimeout(resolve, 300));
         snapshot = await agentRuntime.getAgentLifecycleTask(snapshot.id);
+        lifecycleTasks?.mergeSnapshot(snapshot);
       }
       if (snapshot.state === "failed") {
         setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || "安装失败" }));
@@ -320,20 +345,20 @@ export function AgentSettingsPanel({
     } catch (error) {
       setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
     } finally {
-      setMarketBusyAgentId(null);
+      setAgentManaging(agent.id, false);
     }
   }
 
   async function previewUninstall(agent: AgentCatalogItem) {
     if (typeof agentRuntime.previewAgentUninstall !== "function") return;
-    setMarketBusyAgentId(agent.id);
+    setAgentManaging(agent.id, true);
     try {
       const preview = await agentRuntime.previewAgentUninstall(agent.id);
       setPendingUninstall({ agent, preview });
     } catch (error) {
       setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
     } finally {
-      setMarketBusyAgentId(null);
+      setAgentManaging(agent.id, false);
     }
   }
 
@@ -341,7 +366,7 @@ export function AgentSettingsPanel({
     if (!pendingUninstall) return;
     const { agent, preview } = pendingUninstall;
     setPendingUninstall(null);
-    setMarketBusyAgentId(agent.id);
+    setAgentManaging(agent.id, true);
     try {
       const task = await agentRuntime.startAgentUninstall({
         agentId: agent.id,
@@ -349,9 +374,11 @@ export function AgentSettingsPanel({
         previewToken: preview.previewToken,
       });
       let snapshot = task;
+      lifecycleTasks?.mergeSnapshot(snapshot);
       while (snapshot.state === "queued" || snapshot.state === "running") {
         await new Promise((resolve) => window.setTimeout(resolve, 300));
         snapshot = await agentRuntime.getAgentLifecycleTask(snapshot.id);
+        lifecycleTasks?.mergeSnapshot(snapshot);
       }
       if (snapshot.state === "failed") {
         setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || t("settings.agents.uninstallFailed") }));
@@ -360,7 +387,7 @@ export function AgentSettingsPanel({
     } catch (error) {
       setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
     } finally {
-      setMarketBusyAgentId(null);
+      setAgentManaging(agent.id, false);
     }
   }
 
@@ -486,7 +513,7 @@ export function AgentSettingsPanel({
                 connectionMessage={connectionMessages[agent.id]}
                 connectionState={connectionStates[agent.id]}
                 isTesting={testingAgentId === agent.id}
-                isManaging={marketBusyAgentId === agent.id}
+                isManaging={isAgentManaging(agent.id)}
                 onInstall={!settingsOnly && canManageAgentLifecycle ? () => void manageMarketAgent(agent) : undefined}
                 onUpdate={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "update") : undefined}
                 onReinstall={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "reinstall") : undefined}
@@ -602,7 +629,7 @@ export function AgentSettingsPanel({
       {pendingLifecycle ? (
         <AgentInstallPreviewDialog
           agent={pendingLifecycle.agent}
-          busy={marketBusyAgentId === pendingLifecycle.agent.id}
+          busy={isAgentManaging(pendingLifecycle.agent.id)}
           onClose={() => setPendingLifecycle(null)}
           onConfirm={() => void confirmLifecycle()}
           onSelectDistribution={(distributionId) => void selectLifecycleDistribution(distributionId)}
@@ -613,7 +640,7 @@ export function AgentSettingsPanel({
       {pendingUninstall ? (
         <AgentUninstallPreviewDialog
           agent={pendingUninstall.agent}
-          busy={marketBusyAgentId === pendingUninstall.agent.id}
+          busy={isAgentManaging(pendingUninstall.agent.id)}
           onClose={() => setPendingUninstall(null)}
           onConfirm={(assignments) => void confirmUninstall(assignments)}
           preview={pendingUninstall.preview}
