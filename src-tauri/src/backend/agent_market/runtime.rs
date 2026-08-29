@@ -137,8 +137,8 @@ impl AgentRuntimeManager {
         self.executor.mutation_gate(agent_id)
     }
 
-    pub(crate) async fn reload(&self, tenant_id: &str) -> Result<u64, String> {
-        let installations = self.repository.list_registry_candidates(tenant_id).await?;
+    pub(crate) async fn reload(&self) -> Result<u64, String> {
+        let installations = self.repository.list_registry_candidates().await?;
         let definitions = installations
             .iter()
             .map(|installation| {
@@ -173,12 +173,8 @@ impl AgentRuntimeManager {
     /// Recover only state that can be proven to be owned by the Agent Market.
     /// This performs no network or protocol probes and is safe to call on each
     /// process start before the first registry publication.
-    pub(crate) async fn recover_startup(
-        &self,
-        tenant_id: &str,
-        runtime_root: &Path,
-    ) -> Result<Vec<String>, String> {
-        let installations = self.repository.list(tenant_id).await?;
+    pub(crate) async fn recover_startup(&self, runtime_root: &Path) -> Result<Vec<String>, String> {
+        let installations = self.repository.list().await?;
         let mut warnings = cleanup_runtime_directories(runtime_root);
         for installation in installations {
             if installation.installation_status != InstallationStatus::Ready {
@@ -222,7 +218,6 @@ impl AgentRuntimeManager {
             if let Some((runtime_status, code, message)) = entry_error {
                 self.repository
                     .mark_broken(
-                        tenant_id,
                         &installation.agent_id,
                         runtime_status,
                         code,
@@ -234,7 +229,6 @@ impl AgentRuntimeManager {
             } else if let Some(error) = definition_error {
                 self.repository
                     .mark_broken(
-                        tenant_id,
                         &installation.agent_id,
                         RuntimeStatus::Failed,
                         "definition_invalid",
@@ -248,29 +242,25 @@ impl AgentRuntimeManager {
                 ));
             }
         }
-        self.reload(tenant_id).await?;
+        self.reload().await?;
         Ok(warnings)
     }
 
-    pub(crate) async fn prepare_startup_health_refresh(
-        &self,
-        tenant_id: &str,
-    ) -> Result<u64, String> {
+    pub(crate) async fn prepare_startup_health_refresh(&self) -> Result<u64, String> {
         let changed = self
             .repository
-            .mark_acp_health_unchecked(tenant_id, &chrono::Utc::now().to_rfc3339())
+            .mark_acp_health_unchecked(&chrono::Utc::now().to_rfc3339())
             .await?;
-        self.reload(tenant_id).await?;
+        self.reload().await?;
         Ok(changed)
     }
 
     pub(crate) async fn refresh_installed_acp_health(
         &self,
-        tenant_id: &str,
     ) -> Result<AgentHealthRefreshSummary, String> {
         let agent_ids = self
             .repository
-            .list(tenant_id)
+            .list()
             .await?
             .into_iter()
             .filter(|installation| {
@@ -280,10 +270,10 @@ impl AgentRuntimeManager {
             .collect::<Vec<_>>();
         let mut summary = AgentHealthRefreshSummary::default();
         for agent_id in agent_ids {
-            let result = match self.probe_acp_health(tenant_id, &agent_id).await {
+            let result = match self.probe_acp_health(&agent_id).await {
                 Ok(result) => result,
                 Err(error) => {
-                    self.reload(tenant_id).await?;
+                    self.reload().await?;
                     return Err(error);
                 }
             };
@@ -294,53 +284,46 @@ impl AgentRuntimeManager {
                 summary.unavailable += 1;
             }
         }
-        self.reload(tenant_id).await?;
+        self.reload().await?;
         Ok(summary)
     }
 
     pub(crate) fn refresh_installed_acp_health_blocking(
         self: Arc<Self>,
-        tenant_id: String,
     ) -> Result<AgentHealthRefreshSummary, String> {
         run_process_capable_runtime(
             "aiw-acp-startup-health",
             "The ACP startup health refresh did not complete.",
-            async move { self.refresh_installed_acp_health(&tenant_id).await },
+            async move { self.refresh_installed_acp_health().await },
         )
     }
 
     pub(crate) async fn refresh_acp_health(
         &self,
-        tenant_id: &str,
         agent_id: &str,
     ) -> Result<AgentModelsResult, String> {
-        let result = self.probe_acp_health(tenant_id, agent_id).await?;
-        self.reload(tenant_id).await?;
+        let result = self.probe_acp_health(agent_id).await?;
+        self.reload().await?;
         Ok(result)
     }
 
     pub(crate) fn refresh_acp_health_blocking(
         self: Arc<Self>,
-        tenant_id: String,
         agent_id: String,
     ) -> Result<AgentModelsResult, String> {
         run_process_capable_runtime(
             "aiw-acp-health",
             "The ACP health refresh did not complete.",
-            async move { self.refresh_acp_health(&tenant_id, &agent_id).await },
+            async move { self.refresh_acp_health(&agent_id).await },
         )
     }
 
-    async fn probe_acp_health(
-        &self,
-        tenant_id: &str,
-        agent_id: &str,
-    ) -> Result<AgentModelsResult, String> {
+    async fn probe_acp_health(&self, agent_id: &str) -> Result<AgentModelsResult, String> {
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
         let mut installation = self
             .repository
-            .get(tenant_id, agent_id)
+            .get(agent_id)
             .await?
             .ok_or_else(|| "The Agent is not installed.".to_string())?;
         if installation.protocol != AgentMarketProtocol::Acp {
@@ -722,7 +705,6 @@ mod tests {
         resolved_definition["sessionCleanupNotFoundMarkers"] =
             serde_json::json!(["Session not found:"]);
         let installation = AgentInstallation {
-            tenant_id: "tenant".to_string(),
             agent_id: "agent".to_string(),
             installation_id: "id".to_string(),
             display_name: "Agent".to_string(),

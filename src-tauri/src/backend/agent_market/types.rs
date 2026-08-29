@@ -576,7 +576,6 @@ impl ProtocolStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentInstallation {
-    pub(crate) tenant_id: String,
     pub(crate) agent_id: String,
     pub(crate) installation_id: String,
     pub(crate) display_name: String,
@@ -1214,7 +1213,6 @@ mod tests {
     #[test]
     fn readiness_separates_installed_connected_and_execution_ready() {
         let mut installation = AgentInstallation {
-            tenant_id: "default".to_string(),
             agent_id: "agent".to_string(),
             installation_id: "installation".to_string(),
             display_name: "Agent".to_string(),
@@ -1261,7 +1259,6 @@ mod tests {
     #[test]
     fn package_manifest_projects_agent_invocation_and_probe_contracts() {
         let installation = AgentInstallation {
-            tenant_id: "default".to_string(),
             agent_id: "agent".to_string(),
             installation_id: "installation".to_string(),
             display_name: "Agent".to_string(),

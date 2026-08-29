@@ -147,13 +147,11 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         installed_at: package.updated_at.clone(),
     };
     let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
     let adapter_to_save = adapter.clone();
     let package_to_save = package.clone();
     let activation = service.db.block_on(async move {
         crate::backend::store::activate_conversation_adapter_package_sqlx(
             &pool,
-            &tenant_id,
             &adapter_to_save,
             &package_to_save,
             &version,

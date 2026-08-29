@@ -875,16 +875,8 @@ impl BackgroundTaskRegistry {
         self.lifecycle.spawn(task_id, detail, task)
     }
 
-    #[cfg(test)]
     pub(crate) fn begin_agent_market_refresh(
         &self,
-    ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
-        self.begin_agent_market_refresh_for_tenant("default")
-    }
-
-    pub(crate) fn begin_agent_market_refresh_for_tenant(
-        &self,
-        tenant_id: &str,
     ) -> AppResult<(AgentMarketRefreshTaskSnapshot, bool)> {
         let now = Utc::now().to_rfc3339();
         let snapshot = AgentMarketRefreshTaskSnapshot {
@@ -896,11 +888,10 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        let registration = self.register_projection_for_tenant(
-            Some(tenant_id),
+        let registration = self.register_projection(
             TaskKind::AgentMarketRefresh,
             &snapshot.id,
-            Some(format!("{tenant_id}:agent-market-refresh")),
+            Some("agent-market-refresh".to_string()),
             Vec::new(),
             &snapshot,
         )?;
@@ -945,31 +936,11 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
-    pub(crate) fn agent_market_refresh_snapshot_for_tenant(
-        &self,
-        tenant_id: &str,
-        task_id: &str,
-    ) -> AppResult<AgentMarketRefreshTaskSnapshot> {
-        self.projection_for_tenant(tenant_id, task_id)
-    }
-
     pub(crate) fn agent_market_refresh_snapshots(
         &self,
     ) -> AppResult<Vec<AgentMarketRefreshTaskSnapshot>> {
         let mut snapshots =
             self.list_projections::<AgentMarketRefreshTaskSnapshot>(TaskKind::AgentMarketRefresh)?;
-        snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-        Ok(snapshots)
-    }
-
-    pub(crate) fn agent_market_refresh_snapshots_for_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> AppResult<Vec<AgentMarketRefreshTaskSnapshot>> {
-        let mut snapshots = self.list_projections_for_tenant::<AgentMarketRefreshTaskSnapshot>(
-            tenant_id,
-            TaskKind::AgentMarketRefresh,
-        )?;
         snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
         Ok(snapshots)
     }
@@ -1095,36 +1066,8 @@ impl BackgroundTaskRegistry {
         self.projection_for_tenant(tenant_id, task_id)
     }
 
-    #[cfg(test)]
     pub(crate) fn begin_agent_lifecycle(
         &self,
-        agent_id: String,
-        action: String,
-        catalog_version: Option<String>,
-        agent_version: Option<String>,
-        distribution_id: Option<String>,
-        distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
-        ownership: Option<crate::backend::agent_market::types::Ownership>,
-    ) -> AppResult<(
-        AgentLifecycleTaskSnapshot,
-        tokio_util::sync::CancellationToken,
-        bool,
-    )> {
-        self.begin_agent_lifecycle_for_tenant(
-            "default",
-            agent_id,
-            action,
-            catalog_version,
-            agent_version,
-            distribution_id,
-            distribution_type,
-            ownership,
-        )
-    }
-
-    pub(crate) fn begin_agent_lifecycle_for_tenant(
-        &self,
-        tenant_id: &str,
         agent_id: String,
         action: String,
         catalog_version: Option<String>,
@@ -1169,10 +1112,7 @@ impl BackgroundTaskRegistry {
             error: None,
             warnings: Vec::new(),
         };
-        match self
-            .lifecycle
-            .reserve_for_tenant(tenant_id, snapshot.id.clone(), lifecycle_key)?
-        {
+        match self.lifecycle.reserve(snapshot.id.clone(), lifecycle_key)? {
             LifecycleReservationOutcome::Existing(existing_id) => {
                 let runtime = self.external_task_snapshot(&existing_id)?;
                 let cancellation = self.task_runtime.cancellation_token(&existing_id)?;
@@ -1184,6 +1124,33 @@ impl BackgroundTaskRegistry {
                 Ok((self.projection(&snapshot.id)?, cancellation, true))
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_agent_lifecycle_for_tenant(
+        &self,
+        _tenant_id: &str,
+        agent_id: String,
+        action: String,
+        catalog_version: Option<String>,
+        agent_version: Option<String>,
+        distribution_id: Option<String>,
+        distribution_type: Option<crate::backend::agent_market::types::DistributionType>,
+        ownership: Option<crate::backend::agent_market::types::Ownership>,
+    ) -> AppResult<(
+        AgentLifecycleTaskSnapshot,
+        tokio_util::sync::CancellationToken,
+        bool,
+    )> {
+        self.begin_agent_lifecycle(
+            agent_id,
+            action,
+            catalog_version,
+            agent_version,
+            distribution_id,
+            distribution_type,
+            ownership,
+        )
     }
 
     pub(crate) fn update_agent_lifecycle(
@@ -1251,12 +1218,13 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_lifecycle_snapshot_for_tenant(
         &self,
-        tenant_id: &str,
+        _tenant_id: &str,
         task_id: &str,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
-        self.projection_for_tenant(tenant_id, task_id)
+        self.projection(task_id)
     }
 
     pub(crate) fn agent_lifecycle_snapshots(&self) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
@@ -1266,16 +1234,12 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
+    #[cfg(test)]
     pub(crate) fn agent_lifecycle_snapshots_for_tenant(
         &self,
-        tenant_id: &str,
+        _tenant_id: &str,
     ) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
-        let mut snapshots = self.list_projections_for_tenant::<AgentLifecycleTaskSnapshot>(
-            tenant_id,
-            TaskKind::ExtensionLifecycle,
-        )?;
-        snapshots.sort_by(|left, right| left.created_at.cmp(&right.created_at));
-        Ok(snapshots)
+        self.agent_lifecycle_snapshots()
     }
 
     pub(crate) fn cancel_agent_lifecycle(
@@ -1286,22 +1250,13 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[cfg(test)]
     pub(crate) fn cancel_agent_lifecycle_for_tenant(
         &self,
-        tenant_id: &str,
+        _tenant_id: &str,
         task_id: &str,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
-        if self
-            .task_runtime
-            .get_for_tenant(tenant_id, task_id)
-            .is_none()
-        {
-            return Err(crate::backend::runtime::AppError::NotFound(format!(
-                "background task not found: {task_id}"
-            )));
-        }
-        self.lifecycle.cancel(task_id);
-        self.projection_for_tenant(tenant_id, task_id)
+        self.cancel_agent_lifecycle(task_id)
     }
 
     #[cfg(test)]
@@ -1619,25 +1574,12 @@ impl BackgroundTaskRegistry {
         self.projection_for_tenant(tenant_id, task_id)
     }
 
-    #[cfg(test)]
     fn begin_conversation_script_projection(
         &self,
         snapshot: &ConversationScriptInstallTaskSnapshot,
         key: LifecycleRequestKey,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_script_projection_for_tenant("default", snapshot, key)
-    }
-
-    fn begin_conversation_script_projection_for_tenant(
-        &self,
-        tenant_id: &str,
-        snapshot: &ConversationScriptInstallTaskSnapshot,
-        key: LifecycleRequestKey,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        match self
-            .lifecycle
-            .reserve_for_tenant(tenant_id, snapshot.id.clone(), key)?
-        {
+        match self.lifecycle.reserve(snapshot.id.clone(), key)? {
             LifecycleReservationOutcome::Existing(existing_id) => {
                 Ok((self.projection(&existing_id)?, false))
             }
@@ -1648,17 +1590,8 @@ impl BackgroundTaskRegistry {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn begin_conversation_script_install(
         &self,
-        params: &ConversationScriptInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_script_install_for_tenant("default", params)
-    }
-
-    pub(crate) fn begin_conversation_script_install_for_tenant(
-        &self,
-        tenant_id: &str,
         params: &ConversationScriptInstallParams,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let item_id = params.item_id.trim().to_string();
@@ -1682,8 +1615,7 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        self.begin_conversation_script_projection_for_tenant(
-            tenant_id,
+        self.begin_conversation_script_projection(
             &snapshot,
             extension_lifecycle_key(
                 PackageKind::ConversationAdapter,
@@ -1694,55 +1626,31 @@ impl BackgroundTaskRegistry {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn begin_conversation_adapter_package_install(
         &self,
         params: &ConversationAdapterPackageInstallParams,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_adapter_package_change_for_tenant(
-            "default",
-            params,
-            "install",
-            "installing",
-        )
-    }
-
-    pub(crate) fn begin_conversation_adapter_package_install_for_tenant(
-        &self,
-        tenant_id: &str,
-        params: &ConversationAdapterPackageInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_adapter_package_change_for_tenant(
-            tenant_id,
-            params,
-            "install",
-            "installing",
-        )
+        self.begin_conversation_adapter_package_change(params, "install", "installing")
     }
 
     #[cfg(test)]
+    pub(crate) fn begin_conversation_adapter_package_install_for_tenant(
+        &self,
+        _tenant_id: &str,
+        params: &ConversationAdapterPackageInstallParams,
+    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
+        self.begin_conversation_adapter_package_install(params)
+    }
+
     pub(crate) fn begin_conversation_adapter_package_update(
         &self,
         params: &ConversationAdapterPackageInstallParams,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_adapter_package_change_for_tenant(
-            "default", params, "update", "updating",
-        )
+        self.begin_conversation_adapter_package_change(params, "update", "updating")
     }
 
-    pub(crate) fn begin_conversation_adapter_package_update_for_tenant(
+    fn begin_conversation_adapter_package_change(
         &self,
-        tenant_id: &str,
-        params: &ConversationAdapterPackageInstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_adapter_package_change_for_tenant(
-            tenant_id, params, "update", "updating",
-        )
-    }
-
-    fn begin_conversation_adapter_package_change_for_tenant(
-        &self,
-        tenant_id: &str,
         params: &ConversationAdapterPackageInstallParams,
         action: &str,
         phase: &str,
@@ -1768,8 +1676,7 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        self.begin_conversation_script_projection_for_tenant(
-            tenant_id,
+        self.begin_conversation_script_projection(
             &snapshot,
             extension_lifecycle_key(
                 PackageKind::ConversationAdapter,
@@ -1780,17 +1687,8 @@ impl BackgroundTaskRegistry {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn begin_conversation_adapter_package_uninstall(
         &self,
-        params: &ConversationAdapterPackageUninstallParams,
-    ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
-        self.begin_conversation_adapter_package_uninstall_for_tenant("default", params)
-    }
-
-    pub(crate) fn begin_conversation_adapter_package_uninstall_for_tenant(
-        &self,
-        tenant_id: &str,
         params: &ConversationAdapterPackageUninstallParams,
     ) -> AppResult<(ConversationScriptInstallTaskSnapshot, bool)> {
         let package_id = params.package_id.trim().to_string();
@@ -1814,8 +1712,7 @@ impl BackgroundTaskRegistry {
             result: None,
             error: None,
         };
-        self.begin_conversation_script_projection_for_tenant(
-            tenant_id,
+        self.begin_conversation_script_projection(
             &snapshot,
             extension_lifecycle_key(
                 PackageKind::ConversationAdapter,
@@ -1849,17 +1746,12 @@ impl BackgroundTaskRegistry {
             .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
+    #[cfg(test)]
     pub(crate) fn conversation_script_install_snapshot_for_tenant(
         &self,
-        tenant_id: &str,
+        _tenant_id: &str,
     ) -> AppResult<Option<ConversationScriptInstallTaskSnapshot>> {
-        Ok(self
-            .list_projections_for_tenant::<ConversationScriptInstallTaskSnapshot>(
-                tenant_id,
-                TaskKind::ExtensionLifecycle,
-            )?
-            .into_iter()
-            .max_by(|left, right| left.started_at.cmp(&right.started_at)))
+        self.conversation_script_install_snapshot()
     }
 
     #[cfg(test)]
@@ -3810,7 +3702,7 @@ mod tests {
     }
 
     #[test]
-    fn tenant_owned_agent_lifecycle_tasks_do_not_conflict_across_tenants() {
+    fn application_owned_agent_lifecycle_tasks_conflict_across_tenants() {
         let registry = BackgroundTaskRegistry::default();
         let begin = |tenant_id: &str| {
             registry
@@ -3831,8 +3723,8 @@ mod tests {
         let (agent_b, _, started_b) = begin("tenant-b");
 
         assert!(started_a);
-        assert!(started_b);
-        assert_ne!(agent_a.id, agent_b.id);
+        assert!(!started_b);
+        assert_eq!(agent_a.id, agent_b.id);
         assert_eq!(
             registry
                 .agent_lifecycle_snapshots_for_tenant("tenant-a")
@@ -3849,14 +3741,53 @@ mod tests {
                 .iter()
                 .map(|snapshot| snapshot.id.as_str())
                 .collect::<Vec<_>>(),
-            vec![agent_b.id.as_str()]
+            vec![agent_a.id.as_str()]
         );
-        assert!(registry
-            .agent_lifecycle_snapshot_for_tenant("tenant-b", &agent_a.id)
-            .is_err());
-        assert!(registry
-            .cancel_agent_lifecycle_for_tenant("tenant-b", &agent_a.id)
-            .is_err());
+        assert_eq!(
+            registry
+                .agent_lifecycle_snapshot_for_tenant("tenant-b", &agent_a.id)
+                .unwrap()
+                .id,
+            agent_a.id
+        );
+        assert_eq!(
+            registry
+                .cancel_agent_lifecycle_for_tenant("tenant-b", &agent_a.id)
+                .unwrap()
+                .state,
+            LifecycleTaskState::Cancelling
+        );
+    }
+
+    #[test]
+    fn application_owned_conversation_script_tasks_conflict_across_tenants() {
+        let registry = BackgroundTaskRegistry::default();
+        let params = ConversationAdapterPackageInstallParams {
+            catalog_url: None,
+            package_id: "fixture-package".to_string(),
+            version: Some("1.0.0".to_string()),
+            dry_run: false,
+            yes: true,
+        };
+
+        let (tenant_a, started_a) = registry
+            .begin_conversation_adapter_package_install_for_tenant("tenant-a", &params)
+            .unwrap();
+        let (tenant_b, started_b) = registry
+            .begin_conversation_adapter_package_install_for_tenant("tenant-b", &params)
+            .unwrap();
+
+        assert!(started_a);
+        assert!(!started_b);
+        assert_eq!(tenant_a.id, tenant_b.id);
+        assert_eq!(
+            registry
+                .conversation_script_install_snapshot_for_tenant("tenant-b")
+                .unwrap()
+                .expect("global task is visible after a tenant switch")
+                .id,
+            tenant_a.id
+        );
     }
 
     #[test]

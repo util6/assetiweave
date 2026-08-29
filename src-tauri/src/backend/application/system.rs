@@ -82,18 +82,17 @@ impl AppService {
         .map_err(AppError::external)?;
         let runtime_root =
             crate::backend::agent_market::default_runtime_root().map_err(AppError::from)?;
-        db.block_on(runtime_manager.recover_startup(&context.tenant.id, &runtime_root))
+        db.block_on(runtime_manager.recover_startup(&runtime_root))
             .map_err(AppError::external)?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) = db.block_on(crate::backend::agent_market::migrate_legacy_assignments(
             db.pool().clone(),
             runtime_manager.clone(),
-            &context.tenant.id,
             &migration_scope,
         )) {
             eprintln!("agent market legacy migration deferred: {error}");
         }
-        db.block_on(runtime_manager.reload(&context.tenant.id))
+        db.block_on(runtime_manager.reload())
             .map_err(AppError::external)?;
         let agent_runtime = runtime_manager.runtime();
         let runtime = crate::backend::runtime::AppRuntime::for_test(
@@ -245,7 +244,7 @@ impl AppService {
             }
             let installation = self
                 .db
-                .block_on(repository.get(self.tenant_id(), agent_id))
+                .block_on(repository.get(agent_id))
                 .map_err(AppError::external)?
                 .ok_or_else(|| AppError::NotFound(format!("agent_not_installed: {agent_id}")))?;
             if !installation.enabled || !installation.execution_ready() {

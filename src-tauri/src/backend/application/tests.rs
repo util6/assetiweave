@@ -664,10 +664,20 @@ fn switching_tenant_rebinds_the_next_app_service_request() {
             set_active: false,
         })
         .expect("create tenant B");
+    let runtime_before_switch = service.runtime.context();
 
     service
         .switch_tenant(tenant_b.id.clone())
         .expect("switch to tenant B");
+    let runtime_after_switch = service.runtime.context();
+    assert!(std::sync::Arc::ptr_eq(
+        &runtime_before_switch.agent_runtime_manager,
+        &runtime_after_switch.agent_runtime_manager,
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &runtime_before_switch.agent_runtime,
+        &runtime_after_switch.agent_runtime,
+    ));
 
     let next_request = AppService::from_runtime(&service.runtime);
     assert_eq!(next_request.tenant_id(), "tenant-b");

@@ -210,10 +210,9 @@ impl AppService {
     pub(crate) fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        let tenant_id = self.tenant_id().to_string();
         Ok(self
             .db
-            .block_on(repository.list(&tenant_id))
+            .block_on(repository.list())
             .map_err(AppError::external)?)
     }
 
@@ -242,10 +241,9 @@ impl AppService {
     pub(crate) fn check_agent_runtime(&self, agent_id: String) -> AppResult<AgentInstallationView> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        let tenant_id = self.tenant_id().to_string();
         let mut installation = self
             .db
-            .block_on(repository.get(&tenant_id, &agent_id))
+            .block_on(repository.get(&agent_id))
             .map_err(AppError::external)?
             .ok_or_else(|| {
                 AppError::from(AgentMarketError::new(
@@ -339,7 +337,7 @@ impl AppService {
             .block_on(repository.update_health(&installation))
             .map_err(AppError::external)?;
         self.db
-            .block_on(self.agent_runtime_manager.reload(&tenant_id))
+            .block_on(self.agent_runtime_manager.reload())
             .map_err(AppError::external)?;
         Ok(installation_view(&installation))
     }
@@ -541,7 +539,6 @@ impl AppService {
         let lifecycle = self.agent_lifecycle()?;
         self.db
             .block_on(lifecycle.install_with_cancellation_and_progress(
-                self.tenant_id(),
                 request,
                 cancellation,
                 phase_sink,
@@ -630,7 +627,6 @@ impl AppService {
         let result = self
             .db
             .block_on(lifecycle.uninstall_with_cancellation_and_progress(
-                self.tenant_id(),
                 request,
                 cancellation,
                 phase_sink,
@@ -660,7 +656,7 @@ impl AppService {
     ) -> AppResult<AgentInstallationView> {
         let lifecycle = self.agent_lifecycle()?;
         self.db
-            .block_on(lifecycle.set_enabled(self.tenant_id(), &agent_id, enabled))
+            .block_on(lifecycle.set_enabled(&agent_id, enabled))
             .map(|installation| installation_view(&installation))
             .map_err(AppError::from)
     }

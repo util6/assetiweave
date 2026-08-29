@@ -93,8 +93,7 @@ const LIST_CONVERSATION_ADAPTER_PACKAGES_SQL: &str = r#"
            latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
-    FROM conversation_adapter_packages
-    WHERE tenant_id = ?1
+    FROM app_conversation_adapter_packages
     ORDER BY name ASC, package_id ASC
     "#;
 
@@ -105,8 +104,8 @@ const LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
            latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
-    FROM conversation_adapter_packages
-    WHERE tenant_id = ?1 AND package_id = ?2
+    FROM app_conversation_adapter_packages
+    WHERE package_id = ?1
     "#;
 
 const LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL: &str = r#"
@@ -116,25 +115,25 @@ const LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL: &str = r#"
            latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
            installed_content_hash, trusted_package_hash, error_message,
            created_at, updated_at
-    FROM conversation_adapter_packages
-    WHERE tenant_id = ?1 AND adapter_id = ?2
+    FROM app_conversation_adapter_packages
+    WHERE adapter_id = ?1
     ORDER BY updated_at DESC, package_id ASC
     LIMIT 1
     "#;
 
 const UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
-    INSERT INTO conversation_adapter_packages (
-        tenant_id, package_id, adapter_id, name, version, record_kind, install_dir,
+    INSERT INTO app_conversation_adapter_packages (
+        package_id, adapter_id, name, version, record_kind, install_dir,
         manifest_path, adapter_manifest_path, runtime_protocol, runtime_ready,
         origin, source_url, git_ref, git_commit, catalog_url, update_policy,
         latest_version, last_checked_at, runtime_gate_status, runtime_validated_at,
         installed_content_hash, trusted_package_hash, error_message, created_at, updated_at
     )
     VALUES (
-        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-        ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26
+        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+        ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
     )
-    ON CONFLICT(tenant_id, package_id) DO UPDATE SET
+    ON CONFLICT(package_id) DO UPDATE SET
         adapter_id = excluded.adapter_id,
         name = excluded.name,
         version = excluded.version,
@@ -161,7 +160,7 @@ const UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL: &str = r#"
     "#;
 
 const DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL: &str =
-    "DELETE FROM conversation_adapter_packages WHERE tenant_id = ?1 AND package_id = ?2";
+    "DELETE FROM app_conversation_adapter_packages WHERE package_id = ?1";
 
 const LIST_CONVERSATION_SOURCES_SQL: &str = r#"
     SELECT id, adapter_id, name, kind, location, config_json, enabled,
@@ -311,18 +310,16 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
     for adapter in list_conversation_adapters_sqlx(pool, tenant_id).await? {
         upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter).await?;
     }
-    for package in list_conversation_adapter_packages_sqlx(pool, tenant_id).await? {
-        upsert_conversation_adapter_package_sqlx(pool, tenant_id, &package).await?;
+    for package in list_conversation_adapter_packages_sqlx(pool).await? {
+        upsert_conversation_adapter_package_sqlx(pool, &package).await?;
     }
 
     let version_rows = sqlx::query(
         r#"
         SELECT package_id, version, install_dir
-        FROM conversation_adapter_package_versions
-        WHERE tenant_id = ?1
+        FROM app_conversation_adapter_package_versions
         "#,
     )
-    .bind(tenant_id)
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
@@ -332,13 +329,12 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
         let install_dir: String = row.try_get(2).map_err(AppError::external)?;
         sqlx::query(
             r#"
-            UPDATE conversation_adapter_package_versions
+            UPDATE app_conversation_adapter_package_versions
             SET install_dir = ?1
-            WHERE tenant_id = ?2 AND package_id = ?3 AND version = ?4
+            WHERE package_id = ?2 AND version = ?3
             "#,
         )
         .bind(normalize_conversation_path(&install_dir)?)
-        .bind(tenant_id)
         .bind(package_id)
         .bind(version)
         .execute(pool)
@@ -383,6 +379,50 @@ where
     Ok(())
 }
 
+async fn upsert_conversation_adapter_for_all_tenants(
+    tx: &mut Transaction<'_, Sqlite>,
+    adapter: &ConversationAdapter,
+) -> AppResult<()> {
+    let tenant_ids = sqlx::query_scalar::<_, String>("SELECT id FROM tenants ORDER BY id")
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(AppError::external)?;
+    for tenant_id in tenant_ids {
+        upsert_conversation_adapter_with_executor(&mut **tx, &tenant_id, adapter).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn set_app_conversation_adapter_projection_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapter_id: &str,
+    adapter: Option<&ConversationAdapter>,
+) -> AppResult<()> {
+    if let Some(adapter) = adapter {
+        return upsert_conversation_adapter_sqlx(pool, tenant_id, adapter).await;
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
+    sqlx::query(
+        "DELETE FROM conversation_adapters WHERE tenant_id = ?1 AND id = ?2 AND trust_state != 'built_in'",
+    )
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+        .bind(&now)
+        .bind(tenant_id)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)
+}
+
 #[cfg(test)]
 pub(crate) async fn delete_conversation_adapter_sqlx(
     pool: &SqlitePool,
@@ -423,23 +463,42 @@ pub(crate) async fn delete_conversation_adapter_registration_sqlx(
     }
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     if adapter.is_some() {
-        sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
+        if package_id.is_some() {
+            sqlx::query("DELETE FROM conversation_adapters WHERE id = ?1")
+                .bind(adapter_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(AppError::external)?;
+        } else {
+            sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
+                .bind(tenant_id)
+                .bind(adapter_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(AppError::external)?;
+        }
+    }
+    let now = Utc::now().to_rfc3339();
+    if package_id.is_some() {
+        sqlx::query(
+            "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE adapter_id = ?2",
+        )
+        .bind(&now)
+        .bind(adapter_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+    } else {
+        sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
+            .bind(&now)
             .bind(tenant_id)
             .bind(adapter_id)
             .execute(&mut *tx)
             .await
             .map_err(AppError::external)?;
     }
-    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
-        .bind(Utc::now().to_rfc3339())
-        .bind(tenant_id)
-        .bind(adapter_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(AppError::external)?;
     if let Some(package_id) = package_id {
         sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
-            .bind(tenant_id)
             .bind(package_id)
             .execute(&mut *tx)
             .await
@@ -521,10 +580,8 @@ pub(crate) async fn load_conversation_adapter_sqlx(
 
 pub(crate) async fn list_conversation_adapter_packages_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
 ) -> AppResult<Vec<ConversationAdapterPackage>> {
     let rows = sqlx::query(LIST_CONVERSATION_ADAPTER_PACKAGES_SQL)
-        .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
@@ -535,11 +592,9 @@ pub(crate) async fn list_conversation_adapter_packages_sqlx(
 
 pub(crate) async fn load_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package_id: &str,
 ) -> AppResult<Option<ConversationAdapterPackage>> {
     sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_SQL)
-        .bind(tenant_id)
         .bind(package_id)
         .fetch_optional(pool)
         .await
@@ -551,11 +606,9 @@ pub(crate) async fn load_conversation_adapter_package_sqlx(
 
 pub(crate) async fn load_conversation_adapter_package_by_adapter_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     adapter_id: &str,
 ) -> AppResult<Option<ConversationAdapterPackage>> {
     sqlx::query(LOAD_CONVERSATION_ADAPTER_PACKAGE_BY_ADAPTER_SQL)
-        .bind(tenant_id)
         .bind(adapter_id)
         .fetch_optional(pool)
         .await
@@ -567,15 +620,13 @@ pub(crate) async fn load_conversation_adapter_package_by_adapter_sqlx(
 
 pub(crate) async fn upsert_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package: &ConversationAdapterPackage,
 ) -> AppResult<()> {
-    upsert_conversation_adapter_package_with_executor(pool, tenant_id, package).await
+    upsert_conversation_adapter_package_with_executor(pool, package).await
 }
 
 async fn upsert_conversation_adapter_package_with_executor<'e, E>(
     executor: E,
-    tenant_id: &str,
     package: &ConversationAdapterPackage,
 ) -> AppResult<()>
 where
@@ -585,7 +636,6 @@ where
     let manifest_path = normalize_conversation_path(&package.manifest_path)?;
     let adapter_manifest_path = normalize_conversation_path(&package.adapter_manifest_path)?;
     sqlx::query(UPSERT_CONVERSATION_ADAPTER_PACKAGE_SQL)
-        .bind(tenant_id)
         .bind(&package.package_id)
         .bind(&package.adapter_id)
         .bind(&package.name)
@@ -619,7 +669,6 @@ where
 
 pub(crate) async fn activate_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     adapter: &ConversationAdapter,
     package: &ConversationAdapterPackage,
     version: &ConversationAdapterPackageVersion,
@@ -628,11 +677,10 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     let existing = sqlx::query(
         r#"
         SELECT artifact_hash, content_hash
-        FROM conversation_adapter_package_versions
-        WHERE tenant_id = ?1 AND package_id = ?2 AND version = ?3
+        FROM app_conversation_adapter_package_versions
+        WHERE package_id = ?1 AND version = ?2
         "#,
     )
-    .bind(tenant_id)
     .bind(&version.package_id)
     .bind(&version.version)
     .fetch_optional(&mut *tx)
@@ -649,20 +697,19 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
         }
     }
 
-    upsert_conversation_adapter_with_executor(&mut *tx, tenant_id, adapter).await?;
-    upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
+    upsert_conversation_adapter_for_all_tenants(&mut tx, adapter).await?;
+    upsert_conversation_adapter_package_with_executor(&mut *tx, package).await?;
     sqlx::query(
         r#"
-        INSERT INTO conversation_adapter_package_versions (
-            tenant_id, package_id, version, install_dir, artifact_hash,
+        INSERT INTO app_conversation_adapter_package_versions (
+            package_id, version, install_dir, artifact_hash,
             content_hash, runtime_gate_status, installed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-        ON CONFLICT(tenant_id, package_id, version) DO UPDATE SET
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ON CONFLICT(package_id, version) DO UPDATE SET
             install_dir = excluded.install_dir,
             runtime_gate_status = excluded.runtime_gate_status
         "#,
     )
-    .bind(tenant_id)
     .bind(&version.package_id)
     .bind(&version.version)
     .bind(normalize_conversation_path(&version.install_dir)?)
@@ -678,31 +725,26 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
 
 pub(crate) async fn activate_conversation_adapter_workspace_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     adapter: &ConversationAdapter,
     package: &ConversationAdapterPackage,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    upsert_conversation_adapter_with_executor(&mut *tx, tenant_id, adapter).await?;
-    upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
-    sqlx::query(
-        "DELETE FROM conversation_adapter_package_versions WHERE tenant_id = ?1 AND package_id = ?2",
-    )
-    .bind(tenant_id)
-    .bind(&package.package_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(AppError::external)?;
+    upsert_conversation_adapter_for_all_tenants(&mut tx, adapter).await?;
+    upsert_conversation_adapter_package_with_executor(&mut *tx, package).await?;
+    sqlx::query("DELETE FROM app_conversation_adapter_package_versions WHERE package_id = ?1")
+        .bind(&package.package_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
     tx.commit().await.map_err(AppError::external)
 }
 
 pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package_id: &str,
     adapter_id: &str,
 ) -> AppResult<ConversationAdapterPackage> {
-    let mut package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id)
+    let mut package = load_conversation_adapter_package_sqlx(pool, package_id)
         .await?
         .ok_or_else(|| {
             AppError::external({ format!("conversation adapter package not found: {package_id}") })
@@ -720,32 +762,31 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
 
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    sqlx::query(DELETE_CONVERSATION_ADAPTER_SQL)
-        .bind(tenant_id)
-        .bind(adapter_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(AppError::external)?;
-    sqlx::query(DISABLE_CONVERSATION_SOURCES_BY_ADAPTER_SQL)
-        .bind(&now)
-        .bind(tenant_id)
+    sqlx::query("DELETE FROM conversation_adapters WHERE id = ?1")
         .bind(adapter_id)
         .execute(&mut *tx)
         .await
         .map_err(AppError::external)?;
     sqlx::query(
+        "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE adapter_id = ?2",
+    )
+    .bind(&now)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(
         r#"
-        UPDATE conversation_adapter_packages
+        UPDATE app_conversation_adapter_packages
         SET runtime_ready = 0,
             runtime_gate_status = 'runtime_missing',
             runtime_validated_at = ?1,
             error_message = 'conversation adapter package is uninstalled',
             updated_at = ?1
-        WHERE tenant_id = ?2 AND package_id = ?3
+        WHERE package_id = ?2
         "#,
     )
     .bind(&now)
-    .bind(tenant_id)
     .bind(package_id)
     .execute(&mut *tx)
     .await
@@ -762,22 +803,21 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
 
 pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     release: &ConversationAdapterCatalogRelease,
 ) -> AppResult<()> {
     sqlx::query(
         r#"
-        INSERT INTO conversation_adapter_catalog_releases (
-            tenant_id, catalog_url, package_id, version, channel, released_at,
+        INSERT INTO app_conversation_adapter_catalog_releases (
+            catalog_url, package_id, version, channel, released_at,
             core_compatibility, artifact_url, artifact_size, artifact_sha256,
             changelog_markdown, breaking_change, runtime_protocol,
             adapter_manifest_json, etag, fetched_at, adapter_id, name, publisher,
             record_kind, package_manifest_file, adapter_manifest_file, source_json
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
-            ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+            ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
         )
-        ON CONFLICT(tenant_id, catalog_url, package_id, version) DO UPDATE SET
+        ON CONFLICT(catalog_url, package_id, version) DO UPDATE SET
             channel = excluded.channel,
             released_at = excluded.released_at,
             core_compatibility = excluded.core_compatibility,
@@ -799,7 +839,6 @@ pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
             source_json = excluded.source_json
         "#,
     )
-    .bind(tenant_id)
     .bind(&release.catalog_url)
     .bind(&release.package_id)
     .bind(&release.version)
@@ -830,7 +869,6 @@ pub(crate) async fn upsert_conversation_adapter_catalog_release_sqlx(
 
 pub(crate) async fn list_conversation_adapter_catalog_releases_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     catalog_url: &str,
     package_id: Option<&str>,
 ) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
@@ -842,13 +880,12 @@ pub(crate) async fn list_conversation_adapter_catalog_releases_sqlx(
                breaking_change, runtime_protocol, record_kind,
                package_manifest_file, adapter_manifest_file,
                adapter_manifest_json, source_json, etag, fetched_at
-        FROM conversation_adapter_catalog_releases
-        WHERE tenant_id = ?1 AND catalog_url = ?2
-          AND (?3 IS NULL OR package_id = ?3)
+        FROM app_conversation_adapter_catalog_releases
+        WHERE catalog_url = ?1
+          AND (?2 IS NULL OR package_id = ?2)
         ORDER BY package_id ASC, released_at DESC, version DESC
         "#,
     )
-    .bind(tenant_id)
     .bind(catalog_url)
     .bind(package_id)
     .fetch_all(pool)
@@ -861,19 +898,17 @@ pub(crate) async fn list_conversation_adapter_catalog_releases_sqlx(
 
 pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package_id: &str,
 ) -> AppResult<Vec<ConversationAdapterPackageVersion>> {
     let rows = sqlx::query(
         r#"
         SELECT package_id, version, install_dir, artifact_hash, content_hash,
                runtime_gate_status, installed_at
-        FROM conversation_adapter_package_versions
-        WHERE tenant_id = ?1 AND package_id = ?2
+        FROM app_conversation_adapter_package_versions
+        WHERE package_id = ?1
         ORDER BY installed_at DESC, version DESC
         "#,
     )
-    .bind(tenant_id)
     .bind(package_id)
     .fetch_all(pool)
     .await
@@ -899,7 +934,6 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
 
 pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package_id: &str,
     version: &str,
     replacement_package: Option<&ConversationAdapterPackage>,
@@ -912,9 +946,8 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     }
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let result = sqlx::query(
-        "DELETE FROM conversation_adapter_package_versions WHERE tenant_id = ?1 AND package_id = ?2 AND version = ?3",
+        "DELETE FROM app_conversation_adapter_package_versions WHERE package_id = ?1 AND version = ?2",
     )
-    .bind(tenant_id)
     .bind(package_id)
     .bind(version)
     .execute(&mut *tx)
@@ -925,10 +958,9 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
         return Ok(false);
     }
     if let Some(package) = replacement_package {
-        upsert_conversation_adapter_package_with_executor(&mut *tx, tenant_id, package).await?;
+        upsert_conversation_adapter_package_with_executor(&mut *tx, package).await?;
     } else if delete_package {
         sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
-            .bind(tenant_id)
             .bind(package_id)
             .execute(&mut *tx)
             .await
@@ -970,12 +1002,10 @@ fn map_sqlx_conversation_adapter_catalog_release(
 #[cfg(test)]
 pub(crate) async fn delete_conversation_adapter_package_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     package_id: &str,
 ) -> AppResult<Option<ConversationAdapterPackage>> {
-    let package = load_conversation_adapter_package_sqlx(pool, tenant_id, package_id).await?;
+    let package = load_conversation_adapter_package_sqlx(pool, package_id).await?;
     sqlx::query(DELETE_CONVERSATION_ADAPTER_PACKAGE_SQL)
-        .bind(tenant_id)
         .bind(package_id)
         .execute(pool)
         .await
@@ -985,7 +1015,6 @@ pub(crate) async fn delete_conversation_adapter_package_sqlx(
 
 pub(crate) async fn has_running_conversation_sync_for_adapter_sqlx(
     pool: &SqlitePool,
-    tenant_id: &str,
     adapter_id: &str,
 ) -> AppResult<bool> {
     sqlx::query_scalar::<_, i64>(
@@ -993,11 +1022,10 @@ pub(crate) async fn has_running_conversation_sync_for_adapter_sqlx(
         SELECT EXISTS(
             SELECT 1
             FROM conversation_sync_runs
-            WHERE tenant_id = ?1 AND adapter_id = ?2 AND status = 'running'
+            WHERE adapter_id = ?1 AND status = 'running'
         )
         "#,
     )
-    .bind(tenant_id)
     .bind(adapter_id)
     .fetch_one(pool)
     .await
@@ -5389,38 +5417,34 @@ mod tests {
             updated_at: "2026-07-04T00:00:00Z".to_string(),
         };
 
-        let (listed, by_package, by_adapter, deleted, missing) = database
+        let (listed, listed_after_switch, by_package, by_adapter, deleted, missing) = database
             .block_on(async {
-                upsert_conversation_adapter_package_sqlx(database.pool(), TEST_TENANT_ID, &package)
-                    .await?;
-                let listed =
-                    list_conversation_adapter_packages_sqlx(database.pool(), TEST_TENANT_ID)
+                upsert_conversation_adapter_package_sqlx(database.pool(), &package).await?;
+                let listed = list_conversation_adapter_packages_sqlx(database.pool()).await?;
+                let listed_after_switch =
+                    list_conversation_adapter_packages_sqlx(database.pool()).await?;
+                let by_package =
+                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
                         .await?;
-                let by_package = load_conversation_adapter_package_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &package.package_id,
-                )
-                .await?;
                 let by_adapter = load_conversation_adapter_package_by_adapter_sqlx(
                     database.pool(),
-                    TEST_TENANT_ID,
                     &package.adapter_id,
                 )
                 .await?;
-                let deleted = delete_conversation_adapter_package_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &package.package_id,
-                )
-                .await?;
-                let missing = load_conversation_adapter_package_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &package.package_id,
-                )
-                .await?;
-                Ok::<_, AppError>((listed, by_package, by_adapter, deleted, missing))
+                let deleted =
+                    delete_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                        .await?;
+                let missing =
+                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                        .await?;
+                Ok::<_, AppError>((
+                    listed,
+                    listed_after_switch,
+                    by_package,
+                    by_adapter,
+                    deleted,
+                    missing,
+                ))
             })
             .expect("round trip package");
 
@@ -5434,6 +5458,7 @@ mod tests {
         stored_package.adapter_manifest_path =
             format!("{}/conversation-adapter.json", stored_package.install_dir);
         assert_eq!(listed, vec![stored_package.clone()]);
+        assert_eq!(listed_after_switch, vec![stored_package.clone()]);
         assert_eq!(by_package, Some(stored_package.clone()));
         assert_eq!(by_adapter, Some(stored_package.clone()));
         assert_eq!(deleted, Some(stored_package));
@@ -5544,27 +5569,44 @@ mod tests {
             installed_at: package.created_at.clone(),
         };
 
-        let (uninstalled, remaining_versions, retained_source, missing_adapter) = database
+        let (
+            uninstalled,
+            remaining_versions,
+            projected_adapter_after_switch,
+            retained_source,
+            retained_source_after_switch,
+            missing_adapter,
+            missing_adapter_after_switch,
+        ) = database
             .block_on(async {
+                crate::backend::store::create_local_tenant_sqlx(
+                    database.pool(),
+                    "local",
+                    "Tenant B",
+                    Some("tenant-b"),
+                )
+                .await?;
                 activate_conversation_adapter_package_sqlx(
                     database.pool(),
-                    TEST_TENANT_ID,
                     &adapter,
                     &package,
                     &version,
                 )
                 .await?;
+                let projected_adapter_after_switch =
+                    load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id)
+                        .await?
+                        .expect("application package projects into every existing tenant");
                 upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+                upsert_conversation_source_sqlx(database.pool(), "tenant-b", &source).await?;
                 let uninstalled = deactivate_conversation_adapter_package_sqlx(
                     database.pool(),
-                    TEST_TENANT_ID,
                     &package.package_id,
                     &adapter.id,
                 )
                 .await?;
                 let remaining_versions = list_conversation_adapter_package_versions_sqlx(
                     database.pool(),
-                    TEST_TENANT_ID,
                     &package.package_id,
                 )
                 .await?;
@@ -5572,14 +5614,24 @@ mod tests {
                     load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                         .await?
                         .expect("source remains after uninstall");
+                let retained_source_after_switch =
+                    load_conversation_source_sqlx(database.pool(), "tenant-b", &source.id)
+                        .await?
+                        .expect("other tenant source remains after uninstall");
                 let missing_adapter =
                     load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
+                        .await?;
+                let missing_adapter_after_switch =
+                    load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id)
                         .await?;
                 Ok::<_, AppError>((
                     uninstalled,
                     remaining_versions,
+                    projected_adapter_after_switch,
                     retained_source,
+                    retained_source_after_switch,
                     missing_adapter,
+                    missing_adapter_after_switch,
                 ))
             })
             .expect("uninstall managed package runtime");
@@ -5590,15 +5642,17 @@ mod tests {
             ConversationAdapterRuntimeGateStatus::RuntimeMissing
         );
         assert_eq!(remaining_versions, vec![version]);
+        assert_eq!(projected_adapter_after_switch.id, adapter.id);
         assert!(!retained_source.enabled);
+        assert!(!retained_source_after_switch.enabled);
         assert!(missing_adapter.is_none());
+        assert!(missing_adapter_after_switch.is_none());
 
         let (deleted_version, missing_package, versions_after_delete, source_after_delete) =
             database
                 .block_on(async {
                     let deleted_version = delete_conversation_adapter_package_version_sqlx(
                         database.pool(),
-                        TEST_TENANT_ID,
                         &package.package_id,
                         &package.version,
                         None,
@@ -5607,13 +5661,11 @@ mod tests {
                     .await?;
                     let missing_package = load_conversation_adapter_package_sqlx(
                         database.pool(),
-                        TEST_TENANT_ID,
                         &package.package_id,
                     )
                     .await?;
                     let versions_after_delete = list_conversation_adapter_package_versions_sqlx(
                         database.pool(),
-                        TEST_TENANT_ID,
                         &package.package_id,
                     )
                     .await?;
@@ -5689,7 +5741,6 @@ mod tests {
         database
             .block_on(activate_conversation_adapter_package_sqlx(
                 database.pool(),
-                TEST_TENANT_ID,
                 &original_adapter,
                 &package,
                 &version,
@@ -5714,7 +5765,6 @@ mod tests {
         database
             .block_on(activate_conversation_adapter_package_sqlx(
                 database.pool(),
-                TEST_TENANT_ID,
                 &candidate_adapter,
                 &candidate_package,
                 &invalid_version,
@@ -5730,12 +5780,8 @@ mod tests {
                         &original_adapter.id,
                     )
                     .await?,
-                    load_conversation_adapter_package_sqlx(
-                        database.pool(),
-                        TEST_TENANT_ID,
-                        &package.package_id,
-                    )
-                    .await?,
+                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                        .await?,
                 ))
             })
             .expect("reload active package");

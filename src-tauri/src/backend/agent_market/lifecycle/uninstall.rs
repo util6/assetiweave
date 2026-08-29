@@ -11,7 +11,6 @@ use crate::backend::{
 
 pub(crate) async fn run(
     service: &AgentLifecycleService,
-    tenant_id: &str,
     request: AgentUninstallStartRequest,
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
@@ -23,7 +22,7 @@ pub(crate) async fn run(
     let _mutation_lease = mutation_gate.write().await;
     let installation = service
         .repository
-        .get(tenant_id, &request.agent_id)
+        .get(&request.agent_id)
         .await
         .map_err(|error| market_error("storage_failed", error, true))?
         .ok_or_else(|| market_error("agent_not_installed", "The Agent is not installed.", false))?;
@@ -89,13 +88,13 @@ pub(crate) async fn run(
     }
     service
         .repository
-        .delete(tenant_id, &request.agent_id)
+        .delete(&request.agent_id)
         .await
         .map_err(|error| market_error("uninstall_failed", error, true))?;
     if let Some(sink) = phase_sink.as_ref() {
         sink(LifecycleTaskPhase::ReloadingRegistry);
     }
-    if let Err(error) = service.runtime_manager.reload(tenant_id).await {
+    if let Err(error) = service.runtime_manager.reload().await {
         let _ = service.repository.upsert_active(&installation).await;
         return Err(market_error("registry_reload_failed", error, true));
     }

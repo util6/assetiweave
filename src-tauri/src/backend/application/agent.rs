@@ -32,10 +32,7 @@ impl AppService {
             let models = self
                 .agent_runtime_manager
                 .clone()
-                .refresh_acp_health_blocking(
-                    self.tenant_id().to_string(),
-                    agent_id.as_str().to_string(),
-                )
+                .refresh_acp_health_blocking(agent_id.as_str().to_string())
                 .map_err(AppError::external)?;
             AgentConnectionResult {
                 agent_id: agent_id.to_string(),
@@ -119,10 +116,7 @@ impl AppService {
             return self
                 .agent_runtime_manager
                 .clone()
-                .refresh_acp_health_blocking(
-                    self.tenant_id().to_string(),
-                    agent_id.as_str().to_string(),
-                )
+                .refresh_acp_health_blocking(agent_id.as_str().to_string())
                 .map_err(AppError::external);
         }
         Ok(
@@ -171,7 +165,6 @@ mod tests {
             .expect("load request context");
         let now = chrono::Utc::now().to_rfc3339();
         let installation = AgentInstallation {
-            tenant_id: context.tenant.id.clone(),
             agent_id: "fixture-agent".to_string(),
             installation_id: uuid::Uuid::new_v4().to_string(),
             display_name: "Fixture Agent".to_string(),
@@ -218,7 +211,7 @@ mod tests {
             db.pool().clone(),
             root.join("agent-executions"),
         ));
-        db.block_on(manager.reload(&context.tenant.id))
+        db.block_on(manager.reload())
             .expect("restore persisted ACP registry");
         let agent_runtime = manager.runtime();
         let app_runtime = AppRuntime::for_test(

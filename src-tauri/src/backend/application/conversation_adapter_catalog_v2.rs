@@ -188,12 +188,11 @@ impl AppService {
         }
 
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let releases_to_save = releases.clone();
         self.db.block_on(async move {
             for release in &releases_to_save {
                 crate::backend::store::upsert_conversation_adapter_catalog_release_sqlx(
-                    &pool, &tenant_id, release,
+                    &pool, release,
                 )
                 .await
                 .map_err(|error| error)?;
@@ -303,14 +302,12 @@ impl AppService {
         package_id: Option<&str>,
     ) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let catalog_url = catalog_url.to_string();
         let package_id = package_id.map(str::to_string);
         self.db
             .block_on(async move {
                 crate::backend::store::list_conversation_adapter_catalog_releases_sqlx(
                     &pool,
-                    &tenant_id,
                     &catalog_url,
                     package_id.as_deref(),
                 )

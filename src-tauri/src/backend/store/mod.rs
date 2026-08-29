@@ -46,9 +46,10 @@ pub(crate) use conversation_repo::{
     resolve_conversation_part_id_prefix_sqlx, resolve_conversation_question_id_prefix_sqlx,
     resolve_conversation_session_id_prefix_sqlx, resolve_conversation_turn_id_prefix_sqlx,
     search_conversation_cards_sqlx, seed_prepared_builtin_conversation_adapters_sqlx,
-    split_conversation_question_sqlx, update_conversation_part_translation_sqlx,
-    upsert_conversation_adapter_catalog_release_sqlx, upsert_conversation_adapter_package_sqlx,
-    upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx, ConversationImportResult,
+    set_app_conversation_adapter_projection_sqlx, split_conversation_question_sqlx,
+    update_conversation_part_translation_sqlx, upsert_conversation_adapter_catalog_release_sqlx,
+    upsert_conversation_adapter_package_sqlx, upsert_conversation_adapter_sqlx,
+    upsert_conversation_source_sqlx, ConversationImportResult,
 };
 pub(crate) use database::{
     build_runtime, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,

@@ -259,19 +259,18 @@ impl AppService {
             updated_at: now,
         };
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let adapter_to_save = adapter.clone();
+        let package_to_save = package.clone();
         self.db
             .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(
+                crate::backend::store::activate_conversation_adapter_workspace_sqlx(
                     &pool,
-                    &tenant_id,
                     &adapter_to_save,
+                    &package_to_save,
                 )
                 .await
             })
             .map_err(AppError::external)?;
-        self.save_conversation_adapter_package(&package)?;
         self.runtime.refresh_conversation_adapter_catalog()?;
 
         Ok(json!({
@@ -376,14 +375,12 @@ impl AppService {
         let mut task_conflicts = Vec::new();
         if let Some(adapter_id) = resolved_adapter_id.as_deref() {
             let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
             let adapter_id = adapter_id.to_string();
             if self
                 .db
                 .block_on(async move {
                     crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
                         &pool,
-                        &tenant_id,
                         &adapter_id,
                     )
                     .await
@@ -615,7 +612,6 @@ impl AppService {
         }
 
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let package_id = package.package_id.clone();
         let adapter_id = package.adapter_id.clone();
         let uninstalled = self
@@ -623,7 +619,6 @@ impl AppService {
             .block_on(async move {
                 crate::backend::store::deactivate_conversation_adapter_package_sqlx(
                     &pool,
-                    &tenant_id,
                     &package_id,
                     &adapter_id,
                 )
@@ -656,11 +651,9 @@ impl AppService {
         &self,
     ) -> AppResult<Vec<ConversationAdapterPackage>> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         self.db
             .block_on(async move {
-                crate::backend::store::list_conversation_adapter_packages_sqlx(&pool, &tenant_id)
-                    .await
+                crate::backend::store::list_conversation_adapter_packages_sqlx(&pool).await
             })
             .map_err(|error| error)
     }
@@ -670,16 +663,11 @@ impl AppService {
         package_id: &str,
     ) -> AppResult<Option<ConversationAdapterPackage>> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let package_id = package_id.to_string();
         self.db
             .block_on(async move {
-                crate::backend::store::load_conversation_adapter_package_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &package_id,
-                )
-                .await
+                crate::backend::store::load_conversation_adapter_package_sqlx(&pool, &package_id)
+                    .await
             })
             .map_err(|error| error)
     }
@@ -689,13 +677,11 @@ impl AppService {
         package_id: &str,
     ) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let package_id = package_id.to_string();
         self.db
             .block_on(async move {
                 crate::backend::store::list_conversation_adapter_package_versions_sqlx(
                     &pool,
-                    &tenant_id,
                     &package_id,
                 )
                 .await
@@ -827,14 +813,12 @@ impl AppService {
         let staged = version_dir.with_file_name(format!(".{}-delete-{}", version, short_uuid()));
         fs::rename(&version_dir, &staged).map_err(AppError::external)?;
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let package_id_owned = package_id.to_string();
         let version_owned = version.clone();
         let replacement_package_owned = replacement_package.clone();
         let deleted = self.db.block_on(async move {
             crate::backend::store::delete_conversation_adapter_package_version_sqlx(
                 &pool,
-                &tenant_id,
                 &package_id_owned,
                 &version_owned,
                 replacement_package_owned.as_ref(),
@@ -947,13 +931,11 @@ impl AppService {
         package.error_message = None;
         package.updated_at = now;
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let version_record = target.clone();
         self.db
             .block_on(async move {
                 crate::backend::store::activate_conversation_adapter_package_sqlx(
                     &pool,
-                    &tenant_id,
                     &adapter,
                     &package,
                     &version_record,
@@ -972,13 +954,11 @@ impl AppService {
         adapter_id: &str,
     ) -> AppResult<Option<ConversationAdapterPackage>> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let adapter_id = adapter_id.to_string();
         self.db
             .block_on(async move {
                 crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
                     &pool,
-                    &tenant_id,
                     &adapter_id,
                 )
                 .await
@@ -991,14 +971,11 @@ impl AppService {
         package: &ConversationAdapterPackage,
     ) -> AppResult<()> {
         let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let package = package.clone();
         self.db
             .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_package_sqlx(
-                    &pool, &tenant_id, &package,
-                )
-                .await
+                crate::backend::store::upsert_conversation_adapter_package_sqlx(&pool, &package)
+                    .await
             })
             .map_err(|error| error)
     }
@@ -1323,13 +1300,11 @@ fn promote_conversation_adapter_workspace_package(
             updated_at: now,
         };
         let pool = service.db.pool().clone();
-        let tenant_id = service.tenant_id().to_string();
         let adapter_to_save = adapter.clone();
         let package_to_save = package.clone();
         let activation = service.db.block_on(async move {
             crate::backend::store::activate_conversation_adapter_workspace_sqlx(
                 &pool,
-                &tenant_id,
                 &adapter_to_save,
                 &package_to_save,
             )
@@ -3042,6 +3017,95 @@ mod tests {
         assert_eq!(preflight.task_conflicts, vec!["conversation_sync"]);
         assert!(preflight.preserves_conversation_records);
         assert!(preflight.confirmation_required);
+
+        drop(service);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn package_preflight_detects_running_sync_in_another_tenant() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-cross-tenant-package-preflight-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).expect("create preflight test root");
+        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let current_tenant_id = service.tenant_id().to_string();
+        let other_tenant = service
+            .create_tenant(TenantCreateParams {
+                name: "Other tenant".to_string(),
+                slug: Some("other-tenant".to_string()),
+                set_active: false,
+            })
+            .expect("create other tenant");
+        let adapter = adapter("cross-tenant-preflight", "1.0.0");
+        let source = ConversationSource {
+            id: "cross-tenant-preflight-source".to_string(),
+            adapter_id: adapter.id.clone(),
+            name: "Cross-tenant preflight source".to_string(),
+            kind: crate::backend::models::ConversationSourceKind::Directory,
+            location: root.join("sessions").to_string_lossy().to_string(),
+            config_json: None,
+            enabled: true,
+            last_synced_at: None,
+            last_sync_status: None,
+            created_at: "2026-07-15T00:00:00Z".to_string(),
+            updated_at: "2026-07-15T00:00:00Z".to_string(),
+        };
+        let pool = service.db.pool().clone();
+        service
+            .db
+            .block_on(async move {
+                crate::backend::store::upsert_conversation_adapter_sqlx(
+                    &pool,
+                    &current_tenant_id,
+                    &adapter,
+                )
+                .await?;
+                crate::backend::store::upsert_conversation_adapter_sqlx(
+                    &pool,
+                    &other_tenant.id,
+                    &adapter,
+                )
+                .await?;
+                crate::backend::store::upsert_conversation_source_sqlx(
+                    &pool,
+                    &other_tenant.id,
+                    &source,
+                )
+                .await?;
+                sqlx::query(
+                    r#"
+                    INSERT INTO conversation_sync_runs (
+                        tenant_id, id, source_id, adapter_id, status, started_at,
+                        session_count, turn_count, warning_count
+                    ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
+                              '2026-07-15T00:00:00Z', 0, 0, 0)
+                    "#,
+                )
+                .bind(&other_tenant.id)
+                .bind(&source.id)
+                .bind(&source.adapter_id)
+                .execute(&pool)
+                .await
+                .map_err(AppError::external)?;
+                AppResult::Ok(())
+            })
+            .expect("seed cross-tenant preflight records");
+        service
+            .runtime
+            .refresh_conversation_adapter_catalog()
+            .expect("refresh test adapter catalog");
+
+        let preflight = service
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
+                action: ConversationAdapterPackageChangeAction::Unregister,
+                package_id: None,
+                adapter_id: Some("cross-tenant-preflight".to_string()),
+            })
+            .expect("prepare unregister");
+
+        assert_eq!(preflight.task_conflicts, vec!["conversation_sync"]);
 
         drop(service);
         let _ = fs::remove_dir_all(root);

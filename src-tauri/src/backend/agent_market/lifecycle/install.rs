@@ -39,7 +39,6 @@ pub(crate) struct InstallOutcome {
 
 pub(crate) async fn run(
     service: &AgentLifecycleService,
-    tenant_id: &str,
     request: AgentInstallStartRequest,
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
@@ -85,7 +84,7 @@ pub(crate) async fn run(
 
     let current = service
         .repository
-        .get(tenant_id, &request.agent_id)
+        .get(&request.agent_id)
         .await
         .map_err(|error| market_error("storage_failed", error, true))?;
     match request.action.as_str() {
@@ -136,7 +135,6 @@ pub(crate) async fn run(
         .map_err(|error| market_error("staging_unavailable", error.to_string(), true))?;
     let result = materialize_and_activate(
         service,
-        tenant_id,
         item,
         distribution,
         current.as_ref(),
@@ -154,7 +152,6 @@ pub(crate) async fn run(
 
 async fn materialize_and_activate(
     service: &AgentLifecycleService,
-    tenant_id: &str,
     item: &crate::backend::agent_market::types::CatalogItem,
     distribution: &Distribution,
     current: Option<&AgentInstallation>,
@@ -252,7 +249,6 @@ async fn materialize_and_activate(
         "sessionCleanupNotFoundMarkers": distribution.session_cleanup_not_found_markers(),
     });
     let installation = AgentInstallation {
-        tenant_id: tenant_id.to_string(),
         agent_id: item.id.clone(),
         installation_id: context.installation_id.clone(),
         display_name: item.display_name.clone(),
@@ -306,17 +302,12 @@ async fn materialize_and_activate(
             market_error("activation_failed", error, true)
         })?;
     context.report_phase(LifecycleTaskPhase::ReloadingRegistry);
-    if let Err(error) = service.runtime_manager.reload(tenant_id).await {
+    if let Err(error) = service.runtime_manager.reload().await {
         let restore_result = match current {
             Some(previous) => service.repository.upsert_active(previous).await,
-            None => {
-                service
-                    .repository
-                    .delete(tenant_id, &installation.agent_id)
-                    .await
-            }
+            None => service.repository.delete(&installation.agent_id).await,
         };
-        let _ = service.runtime_manager.reload(tenant_id).await;
+        let _ = service.runtime_manager.reload().await;
         if let Some(path) = installation.install_dir.as_ref() {
             if is_safe_managed_install_path(
                 &service.runtime_root,

@@ -52,10 +52,7 @@ pub(crate) fn refresh_agent_market(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let (snapshot, should_start) = state
-        .background_tasks
-        .begin_agent_market_refresh_for_tenant(&tenant_id)?;
+    let (snapshot, should_start) = state.background_tasks.begin_agent_market_refresh()?;
     let _ = app.emit(AGENT_MARKET_REFRESH_TASK_UPDATED_EVENT, &snapshot);
     if should_start {
         let tasks = state.background_tasks.clone();
@@ -82,19 +79,15 @@ pub(crate) fn get_agent_market_refresh_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     Ok(state
         .background_tasks
-        .agent_market_refresh_snapshot_for_tenant(&tenant_id, &task_id)?)
+        .agent_market_refresh_snapshot(&task_id)?)
 }
 
 pub(crate) fn list_agent_market_refresh_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<crate::adapters::tauri::background_tasks::AgentMarketRefreshTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    Ok(state
-        .background_tasks
-        .agent_market_refresh_snapshots_for_tenant(&tenant_id)?)
+    Ok(state.background_tasks.agent_market_refresh_snapshots()?)
 }
 
 pub(crate) async fn preview_agent_installation(
@@ -160,19 +153,13 @@ pub(crate) fn get_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    Ok(state
-        .background_tasks
-        .agent_lifecycle_snapshot_for_tenant(&tenant_id, &task_id)?)
+    Ok(state.background_tasks.agent_lifecycle_snapshot(&task_id)?)
 }
 
 pub(crate) fn list_agent_lifecycle_tasks(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentLifecycleTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    Ok(state
-        .background_tasks
-        .agent_lifecycle_snapshots_for_tenant(&tenant_id)?)
+    Ok(state.background_tasks.agent_lifecycle_snapshots()?)
 }
 
 pub(crate) fn cancel_agent_lifecycle_task(
@@ -180,10 +167,7 @@ pub(crate) fn cancel_agent_lifecycle_task(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let snapshot = state
-        .background_tasks
-        .cancel_agent_lifecycle_for_tenant(&tenant_id, &task_id)?;
+    let snapshot = state.background_tasks.cancel_agent_lifecycle(&task_id)?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     Ok(snapshot)
 }
@@ -223,18 +207,15 @@ fn start_agent_installation_with_action(
             "agent lifecycle action mismatch: expected {action}"
         )));
     }
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let (snapshot, cancellation, should_start) =
-        state.background_tasks.begin_agent_lifecycle_for_tenant(
-            &tenant_id,
-            params.agent_id.clone(),
-            action.to_string(),
-            Some(params.catalog_version.clone()),
-            Some(params.agent_version.clone()),
-            Some(params.distribution_id.clone()),
-            None,
-            None,
-        )?;
+    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
+        params.agent_id.clone(),
+        action.to_string(),
+        Some(params.catalog_version.clone()),
+        Some(params.agent_version.clone()),
+        Some(params.distribution_id.clone()),
+        None,
+        None,
+    )?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     if !should_start {
         return Ok(snapshot);
@@ -248,18 +229,15 @@ pub(crate) fn start_agent_uninstall(
     state: State<'_, AppState>,
     params: AgentUninstallStartRequest,
 ) -> AppResult<AgentLifecycleTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let (snapshot, cancellation, should_start) =
-        state.background_tasks.begin_agent_lifecycle_for_tenant(
-            &tenant_id,
-            params.agent_id.clone(),
-            "uninstall".to_string(),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )?;
+    let (snapshot, cancellation, should_start) = state.background_tasks.begin_agent_lifecycle(
+        params.agent_id.clone(),
+        "uninstall".to_string(),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     let _ = app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
     if !should_start {
         return Ok(snapshot);

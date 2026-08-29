@@ -126,14 +126,13 @@ impl AppRuntime {
         let runtime_root = crate::backend::agent_market::default_runtime_root()
             .map_err(|error| AppError::External(error.to_string()))?;
         runtime
-            .block_on(agent_runtime_manager.recover_startup(&tenant_id, &runtime_root))
+            .block_on(agent_runtime_manager.recover_startup(&runtime_root))
             .map_err(AppError::External)?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) =
             runtime.block_on(crate::backend::agent_market::migrate_legacy_assignments(
                 pool.clone(),
                 agent_runtime_manager.clone(),
-                &tenant_id,
                 &migration_scope,
             ))
         {
@@ -144,11 +143,11 @@ impl AppRuntime {
             );
         }
         runtime
-            .block_on(agent_runtime_manager.reload(&tenant_id))
+            .block_on(agent_runtime_manager.reload())
             .map_err(AppError::External)?;
         if role == RuntimeRole::ResidentHost {
             if let Err(error) =
-                runtime.block_on(agent_runtime_manager.prepare_startup_health_refresh(&tenant_id))
+                runtime.block_on(agent_runtime_manager.prepare_startup_health_refresh())
             {
                 crate::backend::operation_log::log_warn(
                     "app.startup.agent_health_prepare",
@@ -266,13 +265,11 @@ impl AppRuntime {
 
     fn start_agent_health_refresh(&self) {
         let snapshot = self.context();
-        let tenant_id = snapshot.tenant.id.clone();
         let runtime_manager = snapshot.agent_runtime_manager.clone();
-        let mut spec = super::tasks::TaskSpec::new(
+        let mut spec = super::tasks::TaskSpec::global(
             super::tasks::TaskKind::Other,
-            Some(format!("agent-health-startup:{tenant_id}")),
-        )
-        .with_tenant_id(tenant_id.clone());
+            Some("agent-health-startup".to_string()),
+        );
         spec.detail = serde_json::json!({
             "domain": "agent_market",
             "operation": "startup_health_refresh",
@@ -286,7 +283,7 @@ impl AppRuntime {
                     ));
                 }
                 let summary = runtime_manager
-                    .refresh_installed_acp_health_blocking(tenant_id)
+                    .refresh_installed_acp_health_blocking()
                     .map_err(AppError::External)?;
                 Ok(serde_json::json!({
                     "checked": summary.checked,
@@ -377,47 +374,16 @@ impl AppRuntime {
         request_context: RequestContext,
     ) -> AppResult<RequestContextSnapshot> {
         let tenant_id = request_context.tenant.id.clone();
-        let workspace_root = self
-            .db_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("agent-executions");
-        let manager = Arc::new(AgentRuntimeManager::new(
-            self.pool().clone(),
-            workspace_root,
-        ));
-        let runtime_root = crate::backend::agent_market::default_runtime_root()
-            .map_err(|error| AppError::External(error.to_string()))?;
+        let current = self.context();
+        let manager = current.agent_runtime_manager.clone();
         let pool = self.pool().clone();
-        manager
-            .recover_startup(&tenant_id, &runtime_root)
-            .await
-            .map_err(AppError::External)?;
-        let migration_scope = self.db_path.to_string_lossy().to_string();
-        if let Err(error) = crate::backend::agent_market::migrate_legacy_assignments(
-            pool.clone(),
-            manager.clone(),
-            &tenant_id,
-            &migration_scope,
-        )
-        .await
-        {
-            crate::backend::operation_log::log_warn(
-                "tenant.switch.agent_market_migration",
-                "agent market legacy migration deferred during tenant switch",
-                &[("tenant_id", tenant_id.clone()), ("error", error)],
-            );
-        }
-        manager
-            .reload(&tenant_id)
-            .await
-            .map_err(AppError::External)?;
+        crate::backend::bootstrap::reconcile_app_conversation_adapters(&pool, &tenant_id).await?;
         let adapters =
             crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id).await?;
         Ok(RequestContextSnapshot {
             tenant: request_context.tenant.clone(),
             request_context,
-            agent_runtime: manager.runtime(),
+            agent_runtime: current.agent_runtime.clone(),
             agent_runtime_manager: manager,
             conversation_adapter_catalog: Arc::new(ConversationAdapterCatalog::new(adapters)),
         })

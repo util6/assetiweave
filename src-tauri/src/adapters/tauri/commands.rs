@@ -2369,7 +2369,6 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     params: ConversationAdapterPackageChangeParams,
 ) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
     let runtime = state.runtime.clone();
-    let tenant_id = state.runtime.context().tenant.id.clone();
     let mut preflight = tauri::async_runtime::spawn_blocking(move || {
         AppService::from_runtime(&runtime).prepare_conversation_adapter_package_change(params)
     })
@@ -2377,7 +2376,7 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     .map_err(|error| AppError::External(error.to_string()))??;
     if state
         .background_tasks
-        .conversation_script_install_snapshot_for_tenant(&tenant_id)?
+        .conversation_script_install_snapshot()?
         .is_some_and(|task| task.status == BackgroundTaskStatus::Running)
     {
         preflight.task_conflicts.push("package_change".to_string());
@@ -2509,10 +2508,9 @@ pub(crate) fn install_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_install_for_tenant(&tenant_id, &params)?;
+        .begin_conversation_adapter_package_install(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2536,10 +2534,9 @@ pub(crate) fn update_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_update_for_tenant(&tenant_id, &params)?;
+        .begin_conversation_adapter_package_update(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2563,10 +2560,9 @@ pub(crate) fn uninstall_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUninstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_adapter_package_uninstall_for_tenant(&tenant_id, &params)?;
+        .begin_conversation_adapter_package_uninstall(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2586,10 +2582,9 @@ pub(crate) fn uninstall_conversation_adapter_package(
 pub(crate) fn get_conversation_adapter_package_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     state
         .background_tasks
-        .conversation_script_install_snapshot_for_tenant(&tenant_id)
+        .conversation_script_install_snapshot()
 }
 
 #[tauri::command]
@@ -2598,10 +2593,9 @@ pub(crate) fn install_conversation_script(
     state: State<'_, AppState>,
     params: ConversationScriptInstallParams,
 ) -> RuntimeAppResult<ConversationScriptInstallTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     let (snapshot, should_start) = state
         .background_tasks
-        .begin_conversation_script_install_for_tenant(&tenant_id, &params)?;
+        .begin_conversation_script_install(&params)?;
     if !should_start {
         return Ok(snapshot);
     }
@@ -2623,10 +2617,9 @@ pub(crate) fn install_conversation_script(
 pub(crate) fn get_conversation_script_install_task(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Option<ConversationScriptInstallTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
     state
         .background_tasks
-        .conversation_script_install_snapshot_for_tenant(&tenant_id)
+        .conversation_script_install_snapshot()
 }
 
 #[tauri::command]

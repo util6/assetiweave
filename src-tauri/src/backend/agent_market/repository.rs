@@ -17,37 +17,26 @@ impl AgentInstallationRepository {
         Self { pool }
     }
 
-    pub(crate) async fn get(
-        &self,
-        tenant_id: &str,
-        agent_id: &str,
-    ) -> Result<Option<AgentInstallation>, String> {
-        let row =
-            sqlx::query("SELECT * FROM agent_installations WHERE tenant_id = ?1 AND agent_id = ?2")
-                .bind(tenant_id)
-                .bind(agent_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|error| error.to_string())?;
+    pub(crate) async fn get(&self, agent_id: &str) -> Result<Option<AgentInstallation>, String> {
+        let row = sqlx::query("SELECT * FROM app_agent_installations WHERE agent_id = ?1")
+            .bind(agent_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|error| error.to_string())?;
         row.map(row_to_installation).transpose()
     }
 
-    pub(crate) async fn list(&self, tenant_id: &str) -> Result<Vec<AgentInstallation>, String> {
-        let rows =
-            sqlx::query("SELECT * FROM agent_installations WHERE tenant_id = ?1 ORDER BY agent_id")
-                .bind(tenant_id)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|error| error.to_string())?;
+    pub(crate) async fn list(&self) -> Result<Vec<AgentInstallation>, String> {
+        let rows = sqlx::query("SELECT * FROM app_agent_installations ORDER BY agent_id")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| error.to_string())?;
         rows.into_iter().map(row_to_installation).collect()
     }
 
-    pub(crate) async fn list_registry_candidates(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<AgentInstallation>, String> {
-        let rows = sqlx::query("SELECT * FROM agent_installations WHERE tenant_id = ?1 AND enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' AND (protocol != 'acp' OR model_status = 'ready') ORDER BY agent_id")
-            .bind(tenant_id).fetch_all(&self.pool).await.map_err(|error| error.to_string())?;
+    pub(crate) async fn list_registry_candidates(&self) -> Result<Vec<AgentInstallation>, String> {
+        let rows = sqlx::query("SELECT * FROM app_agent_installations WHERE enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' AND (protocol != 'acp' OR model_status = 'ready') ORDER BY agent_id")
+            .fetch_all(&self.pool).await.map_err(|error| error.to_string())?;
         rows.into_iter().map(row_to_installation).collect()
     }
 
@@ -63,9 +52,9 @@ impl AgentInstallationRepository {
             .as_ref()
             .map(ToString::to_string);
         sqlx::query(
-            "INSERT INTO agent_installations (tenant_id, agent_id, installation_id, display_name, catalog_item_version, agent_version, protocol, distribution_id, distribution_type, ownership, install_dir, resolved_program, args_json, definition_json, integrity_json, source_registry, catalog_version, enabled, installation_status, runtime_status, runtime_error_code, runtime_error_message, runtime_checked_at, protocol_status, protocol_error_code, protocol_error_message, protocol_checked_at, model_status, model_error_code, model_checked_at, installed_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32) ON CONFLICT (tenant_id, agent_id) DO UPDATE SET installation_id=excluded.installation_id, display_name=excluded.display_name, catalog_item_version=excluded.catalog_item_version, agent_version=excluded.agent_version, protocol=excluded.protocol, distribution_id=excluded.distribution_id, distribution_type=excluded.distribution_type, ownership=excluded.ownership, install_dir=excluded.install_dir, resolved_program=excluded.resolved_program, args_json=excluded.args_json, definition_json=excluded.definition_json, integrity_json=excluded.integrity_json, source_registry=excluded.source_registry, catalog_version=excluded.catalog_version, enabled=excluded.enabled, installation_status=excluded.installation_status, runtime_status=excluded.runtime_status, runtime_error_code=excluded.runtime_error_code, runtime_error_message=excluded.runtime_error_message, runtime_checked_at=excluded.runtime_checked_at, protocol_status=excluded.protocol_status, protocol_error_code=excluded.protocol_error_code, protocol_error_message=excluded.protocol_error_message, protocol_checked_at=excluded.protocol_checked_at, model_status=excluded.model_status, model_error_code=excluded.model_error_code, model_checked_at=excluded.model_checked_at, installed_at=excluded.installed_at, updated_at=excluded.updated_at"
+            "INSERT INTO app_agent_installations (agent_id, installation_id, display_name, catalog_item_version, agent_version, protocol, distribution_id, distribution_type, ownership, install_dir, resolved_program, args_json, definition_json, integrity_json, source_registry, catalog_version, enabled, installation_status, runtime_status, runtime_error_code, runtime_error_message, runtime_checked_at, protocol_status, protocol_error_code, protocol_error_message, protocol_checked_at, model_status, model_error_code, model_checked_at, installed_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31) ON CONFLICT (agent_id) DO UPDATE SET installation_id=excluded.installation_id, display_name=excluded.display_name, catalog_item_version=excluded.catalog_item_version, agent_version=excluded.agent_version, protocol=excluded.protocol, distribution_id=excluded.distribution_id, distribution_type=excluded.distribution_type, ownership=excluded.ownership, install_dir=excluded.install_dir, resolved_program=excluded.resolved_program, args_json=excluded.args_json, definition_json=excluded.definition_json, integrity_json=excluded.integrity_json, source_registry=excluded.source_registry, catalog_version=excluded.catalog_version, enabled=excluded.enabled, installation_status=excluded.installation_status, runtime_status=excluded.runtime_status, runtime_error_code=excluded.runtime_error_code, runtime_error_message=excluded.runtime_error_message, runtime_checked_at=excluded.runtime_checked_at, protocol_status=excluded.protocol_status, protocol_error_code=excluded.protocol_error_code, protocol_error_message=excluded.protocol_error_message, protocol_checked_at=excluded.protocol_checked_at, model_status=excluded.model_status, model_error_code=excluded.model_error_code, model_checked_at=excluded.model_checked_at, installed_at=excluded.installed_at, updated_at=excluded.updated_at"
         )
-        .bind(&installation.tenant_id).bind(&installation.agent_id).bind(&installation.installation_id).bind(&installation.display_name)
+        .bind(&installation.agent_id).bind(&installation.installation_id).bind(&installation.display_name)
         .bind(&installation.catalog_item_version).bind(&installation.agent_version).bind(installation.protocol.as_str())
         .bind(&installation.distribution_id).bind(installation.distribution_type.as_str()).bind(installation.ownership.as_str())
         .bind(installation.install_dir.as_ref().map(|path| path.to_string_lossy().to_string()))
@@ -82,13 +71,19 @@ impl AgentInstallationRepository {
 
     pub(crate) async fn update_enabled(
         &self,
-        tenant_id: &str,
         agent_id: &str,
         enabled: bool,
         updated_at: &str,
     ) -> Result<(), String> {
-        sqlx::query("UPDATE agent_installations SET enabled = ?1, updated_at = ?2 WHERE tenant_id = ?3 AND agent_id = ?4")
-            .bind(enabled as i64).bind(updated_at).bind(tenant_id).bind(agent_id).execute(&self.pool).await.map_err(|error| error.to_string())?;
+        sqlx::query(
+            "UPDATE app_agent_installations SET enabled = ?1, updated_at = ?2 WHERE agent_id = ?3",
+        )
+        .bind(enabled as i64)
+        .bind(updated_at)
+        .bind(agent_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| error.to_string())?;
         Ok(())
     }
 
@@ -96,23 +91,18 @@ impl AgentInstallationRepository {
         &self,
         installation: &AgentInstallation,
     ) -> Result<(), String> {
-        sqlx::query("UPDATE agent_installations SET installation_status = ?1, runtime_status = ?2, runtime_error_code = ?3, runtime_error_message = ?4, runtime_checked_at = ?5, protocol_status = ?6, protocol_error_code = ?7, protocol_error_message = ?8, protocol_checked_at = ?9, model_status = ?10, model_error_code = ?11, model_checked_at = ?12, updated_at = ?13 WHERE tenant_id = ?14 AND agent_id = ?15")
+        sqlx::query("UPDATE app_agent_installations SET installation_status = ?1, runtime_status = ?2, runtime_error_code = ?3, runtime_error_message = ?4, runtime_checked_at = ?5, protocol_status = ?6, protocol_error_code = ?7, protocol_error_message = ?8, protocol_checked_at = ?9, model_status = ?10, model_error_code = ?11, model_checked_at = ?12, updated_at = ?13 WHERE agent_id = ?14")
             .bind(installation.installation_status.as_str())
             .bind(installation.runtime_status.as_str()).bind(&installation.runtime_error_code).bind(&installation.runtime_error_message).bind(&installation.runtime_checked_at)
             .bind(installation.protocol_status.as_str()).bind(&installation.protocol_error_code).bind(&installation.protocol_error_message).bind(&installation.protocol_checked_at)
             .bind(&installation.model_status).bind(&installation.model_error_code).bind(&installation.model_checked_at).bind(&installation.updated_at)
-            .bind(&installation.tenant_id).bind(&installation.agent_id).execute(&self.pool).await.map_err(|error| error.to_string())?;
+            .bind(&installation.agent_id).execute(&self.pool).await.map_err(|error| error.to_string())?;
         Ok(())
     }
 
-    pub(crate) async fn mark_acp_health_unchecked(
-        &self,
-        tenant_id: &str,
-        updated_at: &str,
-    ) -> Result<u64, String> {
-        let result = sqlx::query("UPDATE agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND enabled = 1 AND protocol = 'acp' AND installation_status IN ('ready', 'broken')")
+    pub(crate) async fn mark_acp_health_unchecked(&self, updated_at: &str) -> Result<u64, String> {
+        let result = sqlx::query("UPDATE app_agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE enabled = 1 AND protocol = 'acp' AND installation_status IN ('ready', 'broken')")
             .bind(updated_at)
-            .bind(tenant_id)
             .execute(&self.pool)
             .await
             .map_err(|error| error.to_string())?;
@@ -121,20 +111,18 @@ impl AgentInstallationRepository {
 
     pub(crate) async fn mark_broken(
         &self,
-        tenant_id: &str,
         agent_id: &str,
         runtime_status: RuntimeStatus,
         error_code: &str,
         error_message: &str,
         updated_at: &str,
     ) -> Result<(), String> {
-        sqlx::query("UPDATE agent_installations SET installation_status = 'broken', runtime_status = ?1, runtime_error_code = ?2, runtime_error_message = ?3, runtime_checked_at = ?4, updated_at = ?5 WHERE tenant_id = ?6 AND agent_id = ?7")
+        sqlx::query("UPDATE app_agent_installations SET installation_status = 'broken', runtime_status = ?1, runtime_error_code = ?2, runtime_error_message = ?3, runtime_checked_at = ?4, updated_at = ?5 WHERE agent_id = ?6")
             .bind(runtime_status.as_str())
             .bind(error_code)
             .bind(error_message)
             .bind(updated_at)
             .bind(updated_at)
-            .bind(tenant_id)
             .bind(agent_id)
             .execute(&self.pool)
             .await
@@ -142,9 +130,8 @@ impl AgentInstallationRepository {
         Ok(())
     }
 
-    pub(crate) async fn delete(&self, tenant_id: &str, agent_id: &str) -> Result<(), String> {
-        sqlx::query("DELETE FROM agent_installations WHERE tenant_id = ?1 AND agent_id = ?2")
-            .bind(tenant_id)
+    pub(crate) async fn delete(&self, agent_id: &str) -> Result<(), String> {
+        sqlx::query("DELETE FROM app_agent_installations WHERE agent_id = ?1")
             .bind(agent_id)
             .execute(&self.pool)
             .await
@@ -218,9 +205,6 @@ fn row_to_installation(row: sqlx::sqlite::SqliteRow) -> Result<AgentInstallation
     let integrity_json = integrity_string
         .map(|value| serde_json::from_str(&value).map_err(|error| error.to_string()))
         .transpose()?;
-    let tenant_id: String = row
-        .try_get("tenant_id")
-        .map_err(|error| error.to_string())?;
     let agent_id: String = row.try_get("agent_id").map_err(|error| error.to_string())?;
     let installation_id: String = row
         .try_get("installation_id")
@@ -284,7 +268,6 @@ fn row_to_installation(row: sqlx::sqlite::SqliteRow) -> Result<AgentInstallation
         .try_get("updated_at")
         .map_err(|error| error.to_string())?;
     Ok(AgentInstallation {
-        tenant_id,
         agent_id,
         installation_id,
         display_name,
@@ -336,7 +319,7 @@ mod tests {
     use std::time::SystemTime;
 
     #[test]
-    fn repository_is_tenant_scoped_and_upsert_keeps_one_current_row() {
+    fn repository_is_application_scoped_and_upsert_keeps_one_current_row() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-agent-repo-{}.db",
             uuid::Uuid::new_v4()
@@ -344,7 +327,7 @@ mod tests {
         let database = Database::open_initialized(&path).expect("database");
         let repository = AgentInstallationRepository::new(database.pool().clone());
         let now = format!("{:?}", SystemTime::now());
-        let installation = fixture("default", "agent", "installation", &now);
+        let installation = fixture("agent", "installation", &now);
         database
             .block_on(repository.upsert_active(&installation))
             .expect("upsert");
@@ -354,24 +337,14 @@ mod tests {
                 ..installation.clone()
             }))
             .expect("replacement");
-        let rows = database.block_on(repository.list("default")).expect("list");
+        let rows = database.block_on(repository.list()).expect("list");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].installation_id, "replacement");
-        assert!(database
-            .block_on(repository.list("tenant-b"))
-            .unwrap()
-            .is_empty());
         let _ = std::fs::remove_file(path);
     }
 
-    fn fixture(
-        tenant_id: &str,
-        agent_id: &str,
-        installation_id: &str,
-        now: &str,
-    ) -> AgentInstallation {
+    fn fixture(agent_id: &str, installation_id: &str, now: &str) -> AgentInstallation {
         AgentInstallation {
-            tenant_id: tenant_id.to_string(),
             agent_id: agent_id.to_string(),
             installation_id: installation_id.to_string(),
             display_name: "Agent".to_string(),

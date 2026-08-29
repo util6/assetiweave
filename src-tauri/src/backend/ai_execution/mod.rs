@@ -30,14 +30,6 @@ pub(crate) fn agent_runtime_manager(
             operation: "runtime_database_initialize",
         }
     })?;
-    let pool = db.pool().clone();
-    let context = db
-        .block_on(
-            async move { crate::backend::store::load_local_request_context_sqlx(&pool).await },
-        )
-        .map_err(|_| AiExecutionError::Protocol {
-            operation: "runtime_context_initialize",
-        })?;
     let workspace_root = db_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -51,7 +43,7 @@ pub(crate) fn agent_runtime_manager(
             operation: "runtime_root_initialize",
         }
     })?;
-    db.block_on(manager.recover_startup(&context.tenant.id, &runtime_root))
+    db.block_on(manager.recover_startup(&runtime_root))
         .map_err(|_| AiExecutionError::Protocol {
             operation: "runtime_registry_reload",
         })?;

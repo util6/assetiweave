@@ -13,7 +13,6 @@ use super::{
 pub(crate) async fn migrate_legacy_assignments(
     pool: sqlx::SqlitePool,
     manager: Arc<AgentRuntimeManager>,
-    tenant_id: &str,
     scope_key: &str,
 ) -> Result<Vec<String>, String> {
     let settings = crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool)
@@ -42,7 +41,7 @@ pub(crate) async fn migrate_legacy_assignments(
     if agent_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let scope_id = migration_scope_id(scope_key, tenant_id);
+    let scope_id = migration_scope_id(scope_key);
     let processed_ids = settings
         .get("agentMarketMigration")
         .and_then(serde_json::Value::as_object)
@@ -80,12 +79,7 @@ pub(crate) async fn migrate_legacy_assignments(
     let lifecycle = AgentLifecycleService::new(pool, manager, runtime_root)
         .map_err(|error| error.to_string())?;
     for agent_id in agent_ids {
-        if lifecycle
-            .repository
-            .get(tenant_id, &agent_id)
-            .await?
-            .is_some()
-        {
+        if lifecycle.repository.get(&agent_id).await?.is_some() {
             continue;
         }
         let Some(item) = catalog.item(&agent_id) else {
@@ -111,7 +105,7 @@ pub(crate) async fn migrate_legacy_assignments(
             preview_token: catalog.preview_token(item, distribution.id(), "install"),
         };
         match lifecycle
-            .install_with_cancellation_and_progress(tenant_id, request, None, None)
+            .install_with_cancellation_and_progress(request, None, None)
             .await
         {
             Ok(outcome) => {
@@ -155,8 +149,8 @@ pub(crate) async fn migrate_legacy_assignments(
     .await
     .map_err(|error| error.to_string())?;
     Ok(
-        updated_settings["agentMarketMigration"]["scopes"]
-            [migration_scope_id(scope_key, tenant_id)]["notices"]
+        updated_settings["agentMarketMigration"]["scopes"][migration_scope_id(scope_key)]
+            ["notices"]
             .as_array()
             .into_iter()
             .flatten()
@@ -166,12 +160,10 @@ pub(crate) async fn migrate_legacy_assignments(
     )
 }
 
-fn migration_scope_id(scope_key: &str, tenant_id: &str) -> String {
+fn migration_scope_id(scope_key: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut digest = Sha256::new();
     digest.update(scope_key.as_bytes());
-    digest.update([0]);
-    digest.update(tenant_id.as_bytes());
     digest
         .finalize()
         .iter()

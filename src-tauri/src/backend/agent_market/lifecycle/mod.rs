@@ -64,37 +64,33 @@ impl AgentLifecycleService {
 
     pub(crate) async fn install_with_cancellation_and_progress(
         &self,
-        tenant_id: &str,
         request: AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
         phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
     ) -> Result<InstallOutcome, AgentMarketError> {
-        install::run(self, tenant_id, request, cancellation, phase_sink).await
+        install::run(self, request, cancellation, phase_sink).await
     }
 
     #[cfg(test)]
     pub(crate) async fn install(
         &self,
-        tenant_id: &str,
         request: AgentInstallStartRequest,
     ) -> Result<InstallOutcome, AgentMarketError> {
-        self.install_with_cancellation_and_progress(tenant_id, request, None, None)
+        self.install_with_cancellation_and_progress(request, None, None)
             .await
     }
 
     pub(crate) async fn uninstall_with_cancellation_and_progress(
         &self,
-        tenant_id: &str,
         request: AgentUninstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
         phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
     ) -> Result<AgentInstallation, AgentMarketError> {
-        uninstall::run(self, tenant_id, request, cancellation, phase_sink).await
+        uninstall::run(self, request, cancellation, phase_sink).await
     }
 
     pub(crate) async fn set_enabled(
         &self,
-        tenant_id: &str,
         agent_id: &str,
         enabled: bool,
     ) -> Result<AgentInstallation, AgentMarketError> {
@@ -102,7 +98,7 @@ impl AgentLifecycleService {
         let _mutation_lease = mutation_gate.write().await;
         let installation = self
             .repository
-            .get(tenant_id, agent_id)
+            .get(agent_id)
             .await
             .map_err(|error| market_error("storage_failed", error, true))?
             .ok_or_else(|| {
@@ -117,13 +113,13 @@ impl AgentLifecycleService {
         }
         let updated_at = chrono::Utc::now().to_rfc3339();
         self.repository
-            .update_enabled(tenant_id, agent_id, enabled, &updated_at)
+            .update_enabled(agent_id, enabled, &updated_at)
             .await
             .map_err(|error| market_error("storage_failed", error, true))?;
-        if self.runtime_manager.reload(tenant_id).await.is_err() {
+        if self.runtime_manager.reload().await.is_err() {
             let _ = self
                 .repository
-                .update_enabled(tenant_id, agent_id, installation.enabled, &updated_at)
+                .update_enabled(agent_id, installation.enabled, &updated_at)
                 .await;
             return Err(market_error(
                 "registry_reload_failed",
@@ -132,7 +128,7 @@ impl AgentLifecycleService {
             ));
         }
         self.repository
-            .get(tenant_id, agent_id)
+            .get(agent_id)
             .await
             .map_err(|error| market_error("storage_failed", error, true))?
             .ok_or_else(|| {
@@ -277,7 +273,7 @@ mod tests {
         install_request.catalog_version = "observed-old-catalog".to_string();
         install_request.agent_version = "0.0.1".to_string();
         let installed = service_v1
-            .install("default", install_request)
+            .install(install_request)
             .await
             .expect("observational request versions must not block install");
         assert_eq!(
@@ -299,7 +295,7 @@ mod tests {
             CatalogService::from_catalog(fixture_catalog("1.1.0", &url_v2, &good_v2)),
         );
         let updated = service_v2
-            .install("default", request_for(&service_v2, "update", "1.1.0"))
+            .install(request_for(&service_v2, "update", "1.1.0"))
             .await
             .expect("fixture update");
         assert_eq!(updated.installation.catalog_item_version, "1.1.0");
@@ -319,13 +315,13 @@ mod tests {
             CatalogService::from_catalog(fixture_catalog("1.2.0", &url_v3, &failed_v3)),
         );
         let failed = service_v3
-            .install("default", request_for(&service_v3, "update", "1.2.0"))
+            .install(request_for(&service_v3, "update", "1.2.0"))
             .await
             .expect_err("failed fixture update");
         assert_eq!(failed.code, "acp_connection_failed");
         let current = service_v3
             .repository
-            .get("default", AGENT_ID)
+            .get(AGENT_ID)
             .await
             .expect("current installation")
             .expect("previous installation remains active");
@@ -340,7 +336,7 @@ mod tests {
             workspace_root.clone(),
         ));
         let warnings = recovered_manager
-            .recover_startup("default", &runtime_root)
+            .recover_startup(&runtime_root)
             .await
             .expect("restart recovery");
         assert!(
@@ -359,13 +355,13 @@ mod tests {
         )
         .expect("replace fixture with an ACP agent that returns no models");
         let scheduled = recovered_manager
-            .prepare_startup_health_refresh("default")
+            .prepare_startup_health_refresh()
             .await
             .expect("mark persisted ACP health pending");
         assert_eq!(scheduled, 1);
         let pending = service_v3
             .repository
-            .get("default", AGENT_ID)
+            .get(AGENT_ID)
             .await
             .expect("pending installation")
             .expect("pending installation remains downloaded");
@@ -377,7 +373,7 @@ mod tests {
             .is_none());
 
         let failed_refresh = recovered_manager
-            .refresh_installed_acp_health("default")
+            .refresh_installed_acp_health()
             .await
             .expect("startup ACP health refresh");
         assert_eq!(failed_refresh.checked, 1);
@@ -385,7 +381,7 @@ mod tests {
         assert_eq!(failed_refresh.unavailable, 1);
         let unavailable = service_v3
             .repository
-            .get("default", AGENT_ID)
+            .get(AGENT_ID)
             .await
             .expect("unavailable installation")
             .expect("unavailable installation remains downloaded");
@@ -400,19 +396,19 @@ mod tests {
         )
         .expect("restore usable ACP fixture");
         let recovered_refresh = recovered_manager
-            .refresh_installed_acp_health("default")
+            .refresh_installed_acp_health()
             .await
             .expect("repeat ACP health refresh after recovery");
         assert_eq!(recovered_refresh.available, 1);
         let blocking_refresh = recovered_manager
             .clone()
-            .refresh_acp_health_blocking("default".to_string(), AGENT_ID.to_string())
+            .refresh_acp_health_blocking(AGENT_ID.to_string())
             .expect("blocking ACP refresh uses a process-capable runtime");
         assert!(blocking_refresh.available);
         assert!(!blocking_refresh.models.is_empty());
         let available = service_v3
             .repository
-            .get("default", AGENT_ID)
+            .get(AGENT_ID)
             .await
             .expect("available installation")
             .expect("available installation remains downloaded");
@@ -426,7 +422,6 @@ mod tests {
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let cancelled = service_v3
             .install_with_cancellation_and_progress(
-                "default",
                 request_for(&service_v3, "reinstall", "1.2.0"),
                 Some(cancellation),
                 None,
@@ -436,7 +431,7 @@ mod tests {
         assert_eq!(cancelled.code, "cancelled");
         let after_cancel = service_v3
             .repository
-            .get("default", AGENT_ID)
+            .get(AGENT_ID)
             .await
             .expect("installation after cancellation")
             .expect("installation preserved after cancellation");
