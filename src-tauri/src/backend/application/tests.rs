@@ -640,6 +640,21 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
         .list_profiles()
         .expect("list tenant profiles")
         .is_empty());
+    let builtin_adapter_ids = tenant_service
+        .list_conversation_adapters()
+        .expect("list tenant conversation adapters")
+        .into_iter()
+        .filter(|adapter| adapter.trust_state == ConversationAdapterTrustState::BuiltIn)
+        .map(|adapter| adapter.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let prepared_builtin_adapter_ids = tenant_service
+        .runtime
+        .builtin_conversation_adapters()
+        .iter()
+        .map(|adapter| adapter.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(!prepared_builtin_adapter_ids.is_empty());
+    assert_eq!(builtin_adapter_ids, prepared_builtin_adapter_ids);
 
     drop(tenant_service);
     fs::remove_dir_all(root).ok();

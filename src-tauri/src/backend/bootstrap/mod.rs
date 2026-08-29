@@ -5,7 +5,7 @@
 //! making Runtime depend on an Application workflow module.
 
 use crate::backend::{
-    models::ConversationAdapterRuntimeGateStatus,
+    models::{ConversationAdapter, ConversationAdapterRuntimeGateStatus},
     runtime::{AppError, AppResult},
     store,
 };
@@ -14,14 +14,28 @@ use sqlx::SqlitePool;
 pub(crate) async fn materialize_and_seed_builtin_adapters(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> AppResult<()> {
+) -> AppResult<Vec<ConversationAdapter>> {
     let adapters = tokio::task::spawn_blocking(
         crate::backend::conversations::ensure_official_conversation_adapters,
     )
     .await
     .map_err(AppError::external)?
     .map_err(AppError::external)?;
-    store::seed_prepared_builtin_conversation_adapters_sqlx(pool, tenant_id, adapters)
+    seed_prepared_builtin_adapters(pool, tenant_id, &adapters).await?;
+    Ok(adapters)
+}
+
+/// Project an application-owned built-in adapter environment into one tenant.
+///
+/// The prepared adapter list belongs to `AppRuntime`; tenant creation only
+/// writes the tenant-owned enablement/source projections and never mutates the
+/// shared adapter files.
+pub(crate) async fn seed_prepared_builtin_adapters(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    adapters: &[ConversationAdapter],
+) -> AppResult<()> {
+    store::seed_prepared_builtin_conversation_adapters_sqlx(pool, tenant_id, adapters.to_vec())
         .await
         .map_err(AppError::external)?;
     store::migrate_legacy_conversation_adapter_hashes_sqlx(pool, tenant_id)

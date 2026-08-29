@@ -21,6 +21,7 @@ const SHELL_PROJECTOR_ADAPTER_SCRIPT: &str =
 const SHELL_PROJECTOR_MANIFEST: &str =
     include_str!("../../../../builtin-assets/adapters/common/projector-manifest.json");
 const SHELL_PROJECTOR_RUNTIME_VERSION: &str = "shell-projector-v1";
+static OFFICIAL_ADAPTER_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 static SHELL_PROJECTOR_MATERIALIZE_LOCK: Mutex<()> = Mutex::new(());
 
 const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
@@ -79,6 +80,9 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
 ];
 
 pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<ConversationAdapter>> {
+    let _guard = OFFICIAL_ADAPTER_MATERIALIZE_LOCK
+        .lock()
+        .map_err(|_| AppError::external("official adapter materialization lock poisoned"))?;
     let root = conversation_adapter_dir()?;
     let mut adapters = Vec::new();
     for asset in OFFICIAL_ADAPTERS {

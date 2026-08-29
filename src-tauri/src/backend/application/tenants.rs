@@ -21,6 +21,7 @@ impl AppService {
         let slug = params.slug;
         let set_active = params.set_active;
         let target_catalog = self.runtime.target_catalog();
+        let builtin_conversation_adapters = self.runtime.builtin_conversation_adapters();
         let tenant = self.db.block_on(async move {
             let tenant = crate::backend::store::create_local_tenant_sqlx(
                 &pool,
@@ -36,8 +37,10 @@ impl AppService {
             )
             .await
             .map_err(AppError::external)?;
-            crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
-                &pool, &tenant.id,
+            crate::backend::application::bootstrap::seed_prepared_builtin_adapters(
+                &pool,
+                &tenant.id,
+                builtin_conversation_adapters.as_ref(),
             )
             .await?;
             AppResult::Ok(tenant)

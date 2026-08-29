@@ -74,12 +74,24 @@ impl AppService {
         })
         .map_err(AppError::external)?;
         let pool = db.pool().clone();
-        db.block_on(
-            crate::backend::application::bootstrap::materialize_and_seed_builtin_adapters(
+        let prepared_builtin_adapters = db
+            .block_on(crate::backend::store::list_conversation_adapters_sqlx(
                 &pool, &tenant_id,
+            ))
+            .map_err(AppError::external)?
+            .into_iter()
+            .filter(|adapter| {
+                adapter.trust_state
+                    == crate::backend::models::ConversationAdapterTrustState::BuiltIn
+            })
+            .collect::<Vec<_>>();
+        db.block_on(
+            crate::backend::application::bootstrap::seed_prepared_builtin_adapters(
+                &pool,
+                &tenant_id,
+                &prepared_builtin_adapters,
             ),
-        )
-        .map_err(AppError::external)?;
+        )?;
         let runtime_root =
             crate::backend::agent_market::default_runtime_root().map_err(AppError::from)?;
         db.block_on(runtime_manager.recover_startup(&runtime_root))

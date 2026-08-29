@@ -13,14 +13,14 @@ use crate::backend::{
     conversations::ConversationAdapterCatalog,
     events::{EventDispatcher, EventDispatcherHandle},
     extension_kernel::RegistrySnapshot,
-    models::{RequestContext, Tenant},
+    models::{ConversationAdapter, RequestContext, Tenant},
     path_utils::ensure_app_library_dirs,
     store::{self, Database},
     target_catalog::TargetCatalog,
 };
 
 #[cfg(test)]
-use crate::backend::models::TargetProfileDescriptor;
+use crate::backend::models::{ConversationAdapterTrustState, TargetProfileDescriptor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RuntimeRole {
@@ -88,6 +88,7 @@ pub(crate) struct AppRuntime {
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
+    builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
 }
 
 static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
@@ -111,7 +112,7 @@ impl AppRuntime {
         ))?;
         let context = runtime.block_on(store::load_local_request_context_sqlx(&pool))?;
         let tenant_id = context.tenant.id.clone();
-        runtime.block_on(
+        let builtin_conversation_adapters = runtime.block_on(
             crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id),
         )?;
         let conversation_adapters = runtime.block_on(
@@ -178,6 +179,7 @@ impl AppRuntime {
             dispatcher: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
+            builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
         });
         // The ResidentHost owns long-lived dispatchers. OneShot deliberately only
         // gets the in-process task runtime and never starts a dispatcher.
@@ -227,6 +229,11 @@ impl AppRuntime {
                 &context.tenant.id,
             ))
             .unwrap_or_default();
+        let builtin_conversation_adapters = adapters
+            .iter()
+            .filter(|adapter| adapter.trust_state == ConversationAdapterTrustState::BuiltIn)
+            .cloned()
+            .collect();
         Arc::new(Self {
             db_path,
             db,
@@ -243,6 +250,7 @@ impl AppRuntime {
             dispatcher: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
+            builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
         })
     }
 
@@ -453,6 +461,10 @@ impl AppRuntime {
 
     pub(crate) fn conversation_adapter_catalog(&self) -> Arc<ConversationAdapterCatalog> {
         self.context().conversation_adapter_catalog.clone()
+    }
+
+    pub(crate) fn builtin_conversation_adapters(&self) -> Arc<Vec<ConversationAdapter>> {
+        self.builtin_conversation_adapters.clone()
     }
 
     pub(crate) fn refresh_conversation_adapter_catalog(&self) -> AppResult<()> {

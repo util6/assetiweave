@@ -1,15 +1,16 @@
-//! Bootstrap-only filesystem materialization and prepared adapter persistence.
+//! Application projection of prepared, application-owned built-in adapters.
 
-use crate::backend::runtime::AppResult;
+use crate::backend::{models::ConversationAdapter, runtime::AppResult};
 use sqlx::SqlitePool;
 
-/// Materialize built-in adapter files outside the store, then pass the prepared
-/// model data to the persistence layer. The store never performs filesystem I/O.
-pub(crate) async fn materialize_and_seed_builtin_adapters(
+/// Seed one tenant from the immutable built-in environment prepared by
+/// `AppRuntime`. This boundary performs no filesystem writes.
+pub(crate) async fn seed_prepared_builtin_adapters(
     pool: &SqlitePool,
     tenant_id: &str,
+    adapters: &[ConversationAdapter],
 ) -> AppResult<()> {
-    crate::backend::bootstrap::materialize_and_seed_builtin_adapters(pool, tenant_id).await
+    crate::backend::bootstrap::seed_prepared_builtin_adapters(pool, tenant_id, adapters).await
 }
 
 #[cfg(test)]
@@ -68,10 +69,10 @@ mod tests {
             updated_at: "now".to_string(),
         };
 
-        let seed_result = store::seed_prepared_builtin_conversation_adapters_sqlx(
+        let seed_result = super::seed_prepared_builtin_adapters(
             &pool,
             "default",
-            vec![prepared.clone()],
+            std::slice::from_ref(&prepared),
         )
         .await;
 

@@ -255,6 +255,10 @@ mod tests {
             snapshot.kind,
             crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle
         );
+        assert_eq!(
+            snapshot.tenant_id, None,
+            "application-owned extension lifecycle tasks must not use a tenant sentinel"
+        );
     }
 
     #[test]

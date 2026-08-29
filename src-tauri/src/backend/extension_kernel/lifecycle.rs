@@ -125,22 +125,9 @@ impl LifecycleTaskCoordinator {
         task_id: String,
         key: LifecycleRequestKey,
     ) -> Result<LifecycleReservationOutcome, AppError> {
-        self.reserve_for_tenant("default", task_id, key)
-    }
-
-    pub(crate) fn reserve_for_tenant(
-        &self,
-        tenant_id: &str,
-        task_id: String,
-        key: LifecycleRequestKey,
-    ) -> Result<LifecycleReservationOutcome, AppError> {
-        let task_spec = TaskSpec::new(
-            TaskKind::ExtensionLifecycle,
-            Some(format!("{tenant_id}:{}", key.dedup_key())),
-        )
-        .with_task_id(task_id.clone())
-        .with_tenant_id(tenant_id)
-        .with_conflict_key(format!("{tenant_id}:{}", key.conflict_key()));
+        let task_spec = TaskSpec::global(TaskKind::ExtensionLifecycle, Some(key.dedup_key()))
+            .with_task_id(task_id.clone())
+            .with_conflict_key(key.conflict_key());
         match self.runtime.register_external(task_spec)? {
             ExternalRegistrationOutcome::Started(_) => Ok(LifecycleReservationOutcome::Started),
             ExternalRegistrationOutcome::Existing(existing) => {
