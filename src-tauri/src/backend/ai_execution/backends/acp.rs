@@ -1299,6 +1299,26 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn connection_probe_accepts_declared_delete_not_found_from_error_data() {
+        let (root, record) = test_paths("connection-probe-delete-not-found-data");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+        let mut agent = definition("delete_not_found_in_data", &record);
+        agent.session_cleanup_not_found_markers =
+            vec!["Internal error: no rollout found for thread id".to_string()];
+
+        backend
+            .check_connection(&agent)
+            .await
+            .expect("an absent empty probe session is already deleted");
+
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"delete\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn life_03_connection_probe_requires_a_non_empty_model_list() {
         let (root, record) = test_paths("connection-probe-no-models");
         let workspace_root = root.join("workspaces");

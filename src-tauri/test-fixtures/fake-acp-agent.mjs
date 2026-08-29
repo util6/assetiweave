@@ -22,11 +22,11 @@ function respond(id, result) {
   send({ jsonrpc: "2.0", id, result });
 }
 
-function fail(id, code = -32603, message = "FAKE_PRIVATE_ERROR_MUST_NOT_ESCAPE") {
+function fail(id, code = -32603, message = "FAKE_PRIVATE_ERROR_MUST_NOT_ESCAPE", data) {
   send({
     jsonrpc: "2.0",
     id,
-    error: { code, message },
+    error: { code, message, ...(data === undefined ? {} : { data }) },
   });
 }
 
@@ -226,6 +226,12 @@ function handleDelete(message) {
   }
   if (mode === "delete_not_found") {
     fail(message.id, -32602, `Session not found: ${sessionId}`);
+    return;
+  }
+  if (mode === "delete_not_found_in_data") {
+    fail(message.id, -32603, "Internal error", {
+      details: `no rollout found for thread id ${sessionId}`,
+    });
     return;
   }
   if (mode === "delete_hang") {

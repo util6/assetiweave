@@ -1,9 +1,9 @@
 {
   "schema": "assetiweave.agent-market/release-evidence/v1",
-  "catalogVersion": "2026.08.21.1",
-  "catalogContentSha256": "2f708308ed54e9769fffb6fff4842bf5c338c1dc9c840a33b35d34d72ac732bf",
+  "catalogVersion": "2026.08.29.1",
+  "catalogContentSha256": "80339b6191cad4c1c6258c3c0a840f479926a4cb06d6420c6978b2c7843dab7b",
   "coreVersion": "0.6.1",
-  "capturedAt": "2026-08-21T07:15:00Z",
+  "capturedAt": "2026-08-29T02:44:34Z",
   "upstream": {
     "name": "agentclientprotocol/registry",
     "revision": "066208e41d95e12108fcd7d282b601ed8b2b53c8",

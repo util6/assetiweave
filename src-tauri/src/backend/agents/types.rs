@@ -243,11 +243,6 @@ impl AgentDefinition {
                 });
             }
         }
-        if self.session_cleanup.is_none() && !self.session_cleanup_not_found_markers.is_empty() {
-            return Err(AgentDefinitionError::InvalidCommand(
-                "session cleanup not-found markers require a cleanup command".to_string(),
-            ));
-        }
         if self
             .session_cleanup_not_found_markers
             .iter()

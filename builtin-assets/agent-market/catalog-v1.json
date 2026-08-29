@@ -1,7 +1,7 @@
 {
   "schema": "assetiweave.agent-market/v1",
-  "catalogVersion": "2026.08.21.1",
-  "generatedAt": "2026-08-21T00:00:00Z",
+  "catalogVersion": "2026.08.29.1",
+  "generatedAt": "2026-08-29T00:00:00Z",
   "source": {
     "kind": "assetiweave_curated",
     "upstream": "agentclientprotocol/registry",
@@ -231,6 +231,9 @@
           "version": "1.6.2",
           "bin": "codex-acp",
           "launchArgs": [],
+          "sessionCleanupNotFoundMarkers": [
+            "Internal error: no rollout found for thread id"
+          ],
           "nodeRange": ">=20"
         }
       ]

@@ -975,14 +975,6 @@ impl CatalogItem {
                     distribution.id()
                 ));
             }
-            if distribution.session_cleanup_args().is_none()
-                && !distribution.session_cleanup_not_found_markers().is_empty()
-            {
-                return Err(format!(
-                    "session cleanup markers require cleanup arguments: {}",
-                    distribution.id()
-                ));
-            }
             if let Distribution::System {
                 command_candidates, ..
             } = distribution

@@ -406,9 +406,19 @@ impl fmt::Display for AcpError {
 impl std::error::Error for AcpError {}
 
 fn request_failed(operation: AcpOperation, error: agent_client_protocol::Error) -> AcpError {
+    let summary = sanitize_protocol_error_message(&error.message);
+    let details = error
+        .data
+        .as_ref()
+        .and_then(|data| data.get("details"))
+        .and_then(serde_json::Value::as_str)
+        .map(sanitize_protocol_error_message)
+        .filter(|details| details != &summary);
     AcpError::RequestFailed {
         operation,
-        message: sanitize_protocol_error_message(&error.message),
+        message: details
+            .map(|details| format!("{summary}: {details}"))
+            .unwrap_or(summary),
     }
 }
 
