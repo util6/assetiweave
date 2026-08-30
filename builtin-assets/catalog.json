@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-08-26T00:00:00Z",
+  "updated_at": "2026-08-29T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
       "name": "Codex Session Parser",
-      "version": "1.6.1",
+      "version": "1.6.2",
       "record_kind": "session",
       "provider": "codex",
       "adapter_id": "codex",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "723379729801199d5e1d653b3c3a8d6011deaa5888d00e175a4ffe42ed7aa822",
+      "expected_package_hash": "a548e9cf6c61bfdbb1daeb3895e5fc78af17dcaa3db4e73f6860a771fb40215a",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",

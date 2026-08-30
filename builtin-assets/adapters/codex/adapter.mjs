@@ -21,7 +21,7 @@ const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 
 /** 标识当前 Codex 内容卡片的 Schema 版本号，用于增量 Token 生成与缓存失效判定 */
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v17";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v18";
 
 /** 单条 Part 节点的文本最大字符数上限 (96KB)，超长则触发截断规则 */
 const MAX_PART_TEXT_CHARS = 96 * 1024;
@@ -979,10 +979,125 @@ function canonicalLegacyApplyPatch(value, projectPath) {
   return diffs.length ? { diff: diffs.join("\n"), files } : null;
 }
 
+/**
+ * Modern Codex rollouts wrap apply_patch in an exec script and omit patch_apply_end.
+ * Resolve only static string literals (or identifiers bound to one); never execute
+ * or evaluate rollout code while reconstructing the persisted diff.
+ */
+function staticNestedApplyPatchInputs(value) {
+  const source = String(value ?? "");
+  const bindings = new Map();
+  const patches = [];
+  const declarationPattern = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*/y;
+  const applyCallPattern = /tools\s*\.\s*apply_patch\s*\(\s*/y;
+  const identifierPattern = /([A-Za-z_$][\w$]*)/y;
+  for (let index = 0; index < source.length; index += 1) {
+    if (source.startsWith("//", index)) {
+      const lineEnd = source.indexOf("\n", index + 2);
+      index = lineEnd < 0 ? source.length : lineEnd;
+      continue;
+    }
+    if (source.startsWith("/*", index)) {
+      const commentEnd = source.indexOf("*/", index + 2);
+      index = commentEnd < 0 ? source.length : commentEnd + 1;
+      continue;
+    }
+    if (["\"", "'", "`"].includes(source[index])) {
+      const literal = readStaticJavaScriptString(source, index);
+      if (literal) index = literal.end - 1;
+      continue;
+    }
+
+    declarationPattern.lastIndex = index;
+    const declaration = declarationPattern.exec(source);
+    if (declaration) {
+      const literalStart = declarationPattern.lastIndex;
+      const literal = readStaticJavaScriptString(source, literalStart);
+      if (typeof literal?.value === "string") bindings.set(declaration[1], literal.value);
+      continue;
+    }
+
+    applyCallPattern.lastIndex = index;
+    const applyCall = applyCallPattern.exec(source);
+    if (!applyCall) continue;
+    const argumentStart = applyCallPattern.lastIndex;
+    const literal = readStaticJavaScriptString(source, argumentStart);
+    identifierPattern.lastIndex = argumentStart;
+    const identifier = literal ? null : identifierPattern.exec(source)?.[1] ?? null;
+    const patch = literal?.value ?? (identifier ? bindings.get(identifier) : null);
+    if (patch?.includes("*** Begin Patch") && patch.includes("*** End Patch")) {
+      patches.push(patch);
+    }
+  }
+  return patches;
+}
+
+function readStaticJavaScriptString(source, start) {
+  const quote = source[start];
+  if (!["\"", "'", "`"].includes(quote)) return null;
+  let value = "";
+  let dynamic = false;
+  for (let index = start + 1; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === quote) return { value: dynamic ? null : value, end: index + 1 };
+    if (quote === "`" && character === "$" && source[index + 1] === "{") dynamic = true;
+    if (character !== "\\") {
+      if (quote !== "`" && (character === "\n" || character === "\r")) return null;
+      value += character;
+      continue;
+    }
+
+    const escaped = source[index + 1];
+    if (escaped == null) return null;
+    index += 1;
+    if (escaped === "\n") continue;
+    if (escaped === "\r") {
+      if (source[index + 1] === "\n") index += 1;
+      continue;
+    }
+    const simpleEscape = {
+      "0": "\0",
+      b: "\b",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v",
+    }[escaped];
+    if (simpleEscape != null) {
+      value += simpleEscape;
+      continue;
+    }
+    if (escaped === "x") {
+      const digits = source.slice(index + 1, index + 3);
+      if (!/^[0-9a-f]{2}$/i.test(digits)) return null;
+      value += String.fromCharCode(Number.parseInt(digits, 16));
+      index += 2;
+      continue;
+    }
+    if (escaped === "u") {
+      const braced = source.slice(index + 1).match(/^\{([0-9a-f]{1,6})\}/i);
+      if (braced) {
+        value += String.fromCodePoint(Number.parseInt(braced[1], 16));
+        index += braced[0].length;
+        continue;
+      }
+      const digits = source.slice(index + 1, index + 5);
+      if (!/^[0-9a-f]{4}$/i.test(digits)) return null;
+      value += String.fromCharCode(Number.parseInt(digits, 16));
+      index += 4;
+      continue;
+    }
+    value += escaped;
+  }
+  return null;
+}
+
 function patchExecutionsFromRollout(text) {
   let projectPath = null;
   const patchInputs = new Map();
   const records = new Map();
+  const failedPatchCallIds = new Set();
   const nestedPatchCallIds = new Set();
   const openNestedPatchCalls = [];
   const nestedPatchCallsByTurn = new Map();
@@ -1010,6 +1125,8 @@ function patchExecutionsFromRollout(text) {
       && typeof payload.input === "string"
       && /\btools\s*\.\s*apply_patch\s*\(/.test(payload.input)
     ) {
+      const staticPatches = staticNestedApplyPatchInputs(payload.input);
+      if (staticPatches.length > 0) patchInputs.set(callId, staticPatches.join("\n"));
       nestedPatchCallIds.add(callId);
       openNestedPatchCalls.push(callId);
       const turnId = payload.turn_id ?? payload.internal_chat_message_metadata_passthrough?.turn_id;
@@ -1021,20 +1138,27 @@ function patchExecutionsFromRollout(text) {
         nestedPatchTurnIds.set(callId, normalizedTurnId);
       }
     }
-    if (callId && payload?.type === "patch_apply_end" && payload.success !== false) {
-      const record = canonicalPatchChanges(payload.changes, projectPath);
-      if (record) {
-        const turnId = typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
-        const turnCallId = turnId ? nestedPatchCallsByTurn.get(turnId)?.at(-1) : null;
-        const targetCallId = patchInputs.has(callId) ? callId : turnCallId ?? openNestedPatchCalls.at(-1) ?? callId;
-        const existing = records.get(targetCallId);
-        records.set(targetCallId, {
-          diff: existing ? `${existing.diff}\n${record.diff}` : record.diff,
-          files: [...new Set([...(existing?.files ?? []), ...record.files])],
-          status: payload.status ?? "completed",
-          exitCode: 0,
-        });
+    if (callId && payload?.type === "patch_apply_end") {
+      const turnId = typeof payload.turn_id === "string" ? payload.turn_id.trim() : "";
+      const turnCallId = turnId ? nestedPatchCallsByTurn.get(turnId)?.at(-1) : null;
+      const targetCallId = patchInputs.has(callId) ? callId : turnCallId ?? openNestedPatchCalls.at(-1) ?? callId;
+      if (payload.success === false) {
+        failedPatchCallIds.add(targetCallId);
+      } else {
+        const record = canonicalPatchChanges(payload.changes, projectPath);
+        if (record) {
+          const existing = records.get(targetCallId);
+          records.set(targetCallId, {
+            diff: existing ? `${existing.diff}\n${record.diff}` : record.diff,
+            files: [...new Set([...(existing?.files ?? []), ...record.files])],
+            status: payload.status ?? "completed",
+            exitCode: 0,
+          });
+        }
       }
+    }
+    if (callId && isToolResultPayload(payload) && patchInputs.has(callId) && patchResultFailed(payload)) {
+      failedPatchCallIds.add(callId);
     }
     if (callId && isToolResultPayload(payload) && nestedPatchCallIds.has(callId)) {
       const index = openNestedPatchCalls.lastIndexOf(callId);
@@ -1047,11 +1171,20 @@ function patchExecutionsFromRollout(text) {
     }
   }
   for (const [callId, patchInput] of patchInputs) {
-    if (records.has(callId)) continue;
+    if (records.has(callId) || failedPatchCallIds.has(callId)) continue;
     const record = canonicalLegacyApplyPatch(patchInput, projectPath);
     if (record) records.set(callId, { ...record, status: "completed", exitCode: 0 });
   }
   return { projectPath, records, nestedPatchCallIds };
+}
+
+function patchResultFailed(payload) {
+  const status = String(statusFromPayload(payload) ?? "").toLowerCase();
+  const exitCode = exitCodeFromPayload(payload);
+  const output = outputTextFromPayload(payload);
+  return (exitCode != null && exitCode !== 0)
+    || /^(?:error|failed|failure|cancelled|canceled|interrupted|timeout|timed_out)$/.test(status)
+    || /(?:^|\n)Script failed(?:\n|$)|apply_patch (?:verification )?failed:/i.test(output);
 }
 
 /** 从 Payload 提取工作目录 (CWD) 绝对路径 */

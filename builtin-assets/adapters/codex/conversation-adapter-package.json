@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -14,6 +14,14 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.6.2",
+      "date": "2026-08-29",
+      "notes": [
+        "Reconstruct File Change cards from modern nested apply_patch calls when Codex logs omit patch_apply_end events.",
+        "Invalidate incremental session versions so previously missed diffs are hydrated on the next sync."
+      ]
+    },
     {
       "version": "1.6.1",
       "date": "2026-08-26",

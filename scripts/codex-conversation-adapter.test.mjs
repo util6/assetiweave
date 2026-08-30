@@ -926,6 +926,134 @@ test("Codex adapter correlates a nested apply_patch event with its outer exec ca
   }
 });
 
+test("Codex adapter reconstructs a nested apply_patch when modern logs omit patch_apply_end", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-modern-nested-patch-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/main.ts",
+      "@@",
+      "-export const value = 1;",
+      "+export const value = 2;",
+      "*** End Patch",
+    ].join("\n");
+    writeFileSync(rolloutPath, [
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:00Z",
+        type: "session_meta",
+        payload: { cwd: "/tmp/project" },
+      }),
+      event("2026-08-29T00:00:01Z", "user", "修改入口文件"),
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          status: "completed",
+          name: "exec",
+          call_id: "call-modern-outer-exec",
+          input: `const patch = ${JSON.stringify(patch)};\ntext(await tools.apply_patch(patch));\n`,
+          internal_chat_message_metadata_passthrough: { turn_id: "turn-modern-runtime" },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:03Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-modern-outer-exec",
+          output: [
+            { type: "input_text", text: "Script completed\nWall time 0.0 seconds\nOutput:\n" },
+            { type: "input_text", text: "{}" },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-29T00:00:03Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.length, 2);
+    assert.equal(parts[0].command, "src/main.ts");
+    assert.equal(parts[0].command_label, "Edit");
+    assert.equal(parts[0].source_execution_id, "call-modern-outer-exec");
+    assert.equal(parts[1].source_execution_id, "call-modern-outer-exec");
+    assert.equal(parts[1].kind, "file_change");
+    assert.equal(parts[1].content_card?.kind, "codex.file-change");
+    assert.equal(parts[1].content_card?.renderer, "diff");
+    assert.match(parts[1].text, /^diff --git a\/src\/main\.ts b\/src\/main\.ts/m);
+    assert.match(parts[1].text, /-export const value = 1;\n\+export const value = 2;/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter does not emit a file change for a failed modern nested apply_patch", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-failed-modern-patch-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/main.ts",
+      "@@",
+      "-missing old line",
+      "+replacement line",
+      "*** End Patch",
+    ].join("\n");
+    writeFileSync(rolloutPath, [
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:00Z",
+        type: "session_meta",
+        payload: { cwd: "/tmp/project" },
+      }),
+      event("2026-08-29T00:00:01Z", "user", "修改入口文件"),
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:02Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          status: "completed",
+          name: "exec",
+          call_id: "call-failed-modern-patch",
+          input: `const patch = ${JSON.stringify(patch)};\ntext(await tools.apply_patch(patch));\n`,
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-29T00:00:03Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "call-failed-modern-patch",
+          output: [
+            { type: "input_text", text: "Script failed\nWall time 0.0 seconds\nOutput:\n" },
+            {
+              type: "input_text",
+              text: "Script error:\napply_patch verification failed: Failed to find expected lines in src/main.ts",
+            },
+          ],
+        },
+      }),
+    ].join("\n"));
+
+    runSqlite(fixtureRoot, [
+      "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+      `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-08-29T00:00:03Z');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(fixtureRoot);
+    const parts = session.turns[0].parts;
+    assert.equal(parts.some((part) => part.kind === "file_change"), false);
+    assert.equal(parts.some((part) => part.text?.includes("apply_patch verification failed")), true);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 test("Codex adapter extracts update_plan tool calls into codex.plan Markdown cards and hides redundant ack results", () => {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-plan-"));
   try {
