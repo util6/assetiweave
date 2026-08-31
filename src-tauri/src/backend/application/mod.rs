@@ -20,6 +20,7 @@ mod prelude;
 mod profiles_navigation;
 mod recent;
 mod service;
+mod session_memory;
 mod skill_remote;
 mod skills;
 mod sources;

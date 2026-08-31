@@ -77,6 +77,10 @@ impl Database {
     pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
         self.inner.runtime.block_on(future)
     }
+
+    pub(crate) fn run_sync<F: Future>(&self, future: F) -> F::Output {
+        self.inner.runtime.block_on(future)
+    }
 }
 
 pub(crate) async fn latest_scan_status(pool: &SqlitePool, tenant_id: &str) -> AppResult<String> {
@@ -676,7 +680,7 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 39);
+        assert_eq!(migration_count, 40);
         cleanup_database(&db_path);
     }
 
@@ -967,7 +971,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 39);
+        assert_eq!(migration_count, 40);
         cleanup_database(&db_path);
     }
 
@@ -1028,7 +1032,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 39);
+        assert_eq!(migration_count, 40);
         cleanup_database(&db_path);
     }
 
@@ -1091,7 +1095,7 @@ mod tests {
         let database = Database::open(&db_path).expect("open database");
 
         let source_count = database
-            .block_on(async {
+            .run_sync(async {
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
                     .fetch_one(database.pool())
                     .await

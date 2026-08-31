@@ -1,6 +1,6 @@
 use super::{
     ConsumerCx, DomainEventConsumer, InitialPosition, MemoryEvidenceStaleConsumer,
-    SearchIndexAdvanceConsumer, SequencedEvent,
+    SearchIndexAdvanceConsumer, SequencedEvent, SessionMemoryConsumer,
 };
 use crate::backend::{runtime::AppError, store::Database};
 use sqlx::Row;
@@ -165,6 +165,7 @@ impl EventDispatcher {
             vec![
                 Arc::new(SearchIndexAdvanceConsumer),
                 Arc::new(MemoryEvidenceStaleConsumer),
+                Arc::new(SessionMemoryConsumer),
             ],
         )
     }
@@ -191,16 +192,52 @@ impl EventDispatcher {
             .iter()
             .map(|consumer| (consumer.id().to_string(), consumer.initial_position()))
             .collect::<Vec<_>>();
+        let cutoff_seq = self.database.run_sync(async {
+            sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT MAX(seq) FROM domain_event_outbox WHERE tenant_id = ?1",
+            )
+            .bind(&tenant)
+            .fetch_one(self.database.pool())
+            .await
+            .map(|value| value.unwrap_or(0))
+            .map_err(AppError::Db)
+        })?;
+        for consumer in &self.consumers {
+            if consumer.initial_position() != InitialPosition::BackfillThenCutoff {
+                continue;
+            }
+            let consumer_id = consumer.id().to_string();
+            let already_initialized = self.database.run_sync(async {
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT EXISTS (SELECT 1 FROM domain_event_consumer_offsets WHERE consumer_id = ?1 AND tenant_id = ?2)",
+                )
+                .bind(&consumer_id)
+                .bind(&tenant)
+                .fetch_one(self.database.pool())
+                .await
+                .map(|value| value != 0)
+                .map_err(AppError::Db)
+            })?;
+            if already_initialized {
+                continue;
+            }
+            let cx = ConsumerCx {
+                database: self.database.clone(),
+                pool: self.database.pool().clone(),
+                db_path: self.db_path.clone(),
+                consumer_id,
+                tenant_id: tenant.clone(),
+                batch_last_seq: cutoff_seq,
+            };
+            catch_unwind(AssertUnwindSafe(|| consumer.backfill(&cx)))
+                .map_err(|_| AppError::External("领域事件消费者发生 panic".to_string()))??;
+        }
         self.database.block_on(async move {
             let now = chrono::Utc::now().to_rfc3339();
             for (consumer_id, initial_position) in consumers {
                 let initial_seq = match initial_position {
                     InitialPosition::GenesisZero => 0,
-                    InitialPosition::BackfillThenCutoff => {
-                        return Err(AppError::Conflict(format!(
-                            "consumer {consumer_id} requires a backfill-and-cutoff registration"
-                        )))
-                    }
+                    InitialPosition::BackfillThenCutoff => cutoff_seq,
                 };
                 sqlx::query(
                     "INSERT OR IGNORE INTO domain_event_consumer_offsets (consumer_id, tenant_id, last_seq, updated_at) VALUES (?1, ?2, ?3, ?4)",
@@ -327,6 +364,7 @@ impl EventDispatcher {
                 pool: self.database.pool().clone(),
                 db_path: self.db_path.clone(),
                 consumer_id: consumer_id.clone(),
+                tenant_id: tenant.clone(),
                 batch_last_seq: batch.last().map(|item| item.seq).unwrap_or_default(),
             };
             catch_unwind(AssertUnwindSafe(|| consumer.handle(&interested, &cx)))

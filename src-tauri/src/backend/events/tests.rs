@@ -1,6 +1,6 @@
 use super::{
     append_outbox_event_sqlx_tx, ConsumerCx, DomainEvent, DomainEventConsumer, EventDispatcher,
-    InitialPosition, SequencedEvent,
+    InitialPosition, SequencedEvent, SessionMemoryConsumer,
 };
 use crate::backend::{runtime::AppError, store::Database};
 use std::sync::{
@@ -48,10 +48,88 @@ fn built_in_consumers_declare_their_initial_position() {
     let consumers: Vec<Arc<dyn DomainEventConsumer>> = vec![
         Arc::new(super::SearchIndexAdvanceConsumer),
         Arc::new(super::MemoryEvidenceStaleConsumer),
+        Arc::new(super::SessionMemoryConsumer),
     ];
-    assert!(consumers
-        .iter()
-        .all(|consumer| consumer.initial_position() == InitialPosition::GenesisZero));
+    assert_eq!(
+        consumers[0].initial_position(),
+        InitialPosition::GenesisZero
+    );
+    assert_eq!(
+        consumers[1].initial_position(),
+        InitialPosition::GenesisZero
+    );
+    assert_eq!(
+        consumers[2].initial_position(),
+        InitialPosition::BackfillThenCutoff
+    );
+}
+
+#[test]
+fn session_commit_creates_one_durable_phase1_job() {
+    let path = std::env::temp_dir().join(format!(
+        "assetiweave-session-memory-job-red-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let database = Database::open_initialized(&path).expect("open test database");
+    let dispatcher = EventDispatcher::with_consumers(
+        database.clone(),
+        path.clone(),
+        vec![Arc::new(SessionMemoryConsumer)],
+    );
+    dispatcher
+        .initialize_tenant("default")
+        .expect("initialize session memory consumer");
+    database.run_sync(async {
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                project_path, started_at, updated_at, source_locator,
+                source_fingerprint, missing, created_at, imported_at
+            ) VALUES (
+                'default', 'session-memory-red', 'source-red', 'adapter-red',
+                'external-red', 'Red fixture', '/tmp/project-red',
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
+                'fixture://session-memory-red', 'revision-red', 0,
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(database.pool())
+        .await
+        .expect("insert conversation fixture");
+        let event = DomainEvent::conversation_source_committed(
+            "default",
+            "sync-session-memory-red",
+            "source-red",
+            1,
+            ["session-memory-red".to_string()],
+        );
+        let mut tx = database
+            .pool()
+            .begin()
+            .await
+            .expect("begin event transaction");
+        append_outbox_event_sqlx_tx(&mut tx, &event)
+            .await
+            .expect("append conversation commit");
+        tx.commit().await.expect("commit conversation event");
+    });
+    dispatcher
+        .dispatch_once("default")
+        .expect("dispatch conversation commit");
+    dispatcher
+        .initialize_tenant("default")
+        .expect("reinitialize session memory consumer");
+    let jobs: i64 = database.run_sync(async {
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_memory_jobs WHERE tenant_id = 'default'")
+            .fetch_one(database.pool())
+            .await
+            .expect("read durable phase1 jobs")
+    });
+    assert_eq!(jobs, 1);
+    drop(database);
+    let _ = std::fs::remove_file(&path);
 }
 
 struct BackfillTestConsumer;
@@ -168,7 +246,7 @@ fn resident_dispatcher_initializes_offsets_for_all_tenants() {
         .await
         .expect("count consumer offsets")
     });
-    assert_eq!(count, 2);
+    assert_eq!(count, 3);
     drop(database);
     let _ = std::fs::remove_file(&path);
 }

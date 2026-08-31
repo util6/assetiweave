@@ -88,6 +88,7 @@ pub(crate) enum AgentSessionMode {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AiExecutionPurpose {
     Translation,
+    SessionMemory,
     PromptOptimization,
     ConnectionTest,
     ModelDiscovery,

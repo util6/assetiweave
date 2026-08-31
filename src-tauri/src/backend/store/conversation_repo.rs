@@ -37,6 +37,7 @@ pub(crate) struct RecentConversationSessionRecord {
     pub(crate) last_activity_at: String,
     pub(crate) cwd: Option<String>,
     pub(crate) source_agent: String,
+    pub(crate) recent_events: Vec<crate::backend::models::RecentMemoryEvent>,
 }
 
 const LIST_CONVERSATION_ADAPTERS_SQL: &str = r#"
@@ -1487,6 +1488,7 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
                 last_activity_at: row.try_get(15).map_err(AppError::external)?,
                 cwd: row.try_get(16).map_err(AppError::external)?,
                 source_agent: row.try_get(17).map_err(AppError::external)?,
+                recent_events: Vec::new(),
             })
         })
         .collect()

@@ -15,7 +15,9 @@ use uuid::Uuid;
 mod consumers;
 mod dispatcher;
 
-pub(crate) use consumers::{MemoryEvidenceStaleConsumer, SearchIndexAdvanceConsumer};
+pub(crate) use consumers::{
+    MemoryEvidenceStaleConsumer, SearchIndexAdvanceConsumer, SessionMemoryConsumer,
+};
 pub(crate) use dispatcher::{EventDispatcher, EventDispatcherHandle};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -143,6 +145,7 @@ pub(crate) struct ConsumerCx {
     pub(crate) pool: sqlx::SqlitePool,
     pub(crate) db_path: PathBuf,
     pub(crate) consumer_id: String,
+    pub(crate) tenant_id: String,
     pub(crate) batch_last_seq: i64,
 }
 
@@ -165,6 +168,12 @@ pub(crate) trait DomainEventConsumer: Send + Sync {
     /// `BackfillThenCutoff` until the domain's backfill and cutoff migration
     /// are supplied, rather than degrading it to `last_seq = 0`.
     fn initial_position(&self) -> InitialPosition;
+    fn backfill(&self, _cx: &ConsumerCx) -> Result<(), AppError> {
+        Err(AppError::Conflict(format!(
+            "consumer {} requires a backfill-and-cutoff registration",
+            self.id()
+        )))
+    }
     fn interested(&self, event: &DomainEvent) -> bool;
     fn handle(&self, batch: &[SequencedEvent], cx: &ConsumerCx) -> Result<(), AppError>;
 }

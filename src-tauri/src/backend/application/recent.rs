@@ -1,5 +1,5 @@
 use super::prelude::*;
-use crate::backend::models::ConversationSession;
+use crate::backend::models::{ConversationSession, RecentMemoryEvent};
 use chrono::{DateTime, Utc};
 use std::cmp::Ordering;
 use std::path::{Component, Path, PathBuf};
@@ -30,6 +30,7 @@ pub(crate) struct RecentConversationSession {
     pub(crate) source_agent: String,
     pub(crate) question_count: usize,
     pub(crate) turn_count: usize,
+    pub(crate) recent_events: Vec<RecentMemoryEvent>,
 }
 
 impl AppService {
@@ -50,10 +51,28 @@ impl AppService {
         let cutoff = (now - chrono::Duration::hours(RECENT_WINDOW_HOURS)).to_rfc3339();
         let now_text = now.to_rfc3339();
         let (records, registered_roots) = self.runtime.run_sync(async move {
-            let records = crate::backend::store::list_recent_conversation_sessions_sqlx(
+            let mut records = crate::backend::store::list_recent_conversation_sessions_sqlx(
                 &pool, &tenant_id, &cutoff, &now_text,
             )
             .await?;
+            let session_ids = records
+                .iter()
+                .map(|record| record.session.session.id.clone())
+                .collect::<Vec<_>>();
+            let mut events_by_session =
+                crate::backend::store::list_recent_memory_events_for_sessions_sqlx(
+                    &pool,
+                    &tenant_id,
+                    &session_ids,
+                    &cutoff,
+                    &now_text,
+                )
+                .await?;
+            for record in &mut records {
+                record.recent_events = events_by_session
+                    .remove(&record.session.session.id)
+                    .unwrap_or_default();
+            }
             // Source.repo_root is the current app-owned registry of project roots.
             let registered_roots = crate::backend::store::load_sources_sqlx(&pool, &tenant_id)
                 .await?
@@ -87,6 +106,7 @@ impl AppService {
                     source_agent: record.source_agent,
                     question_count: record.session.question_count,
                     turn_count: record.session.turn_count,
+                    recent_events: record.recent_events,
                 })
             })
             .collect::<Vec<_>>();
@@ -131,7 +151,10 @@ fn compare_activity_desc(
         .then_with(|| left.session.id.cmp(&right.session.id))
 }
 
-fn resolve_project_directory(raw_path: &str, registered_roots: &[String]) -> Option<String> {
+pub(super) fn resolve_project_directory(
+    raw_path: &str,
+    registered_roots: &[String],
+) -> Option<String> {
     let cwd = crate::backend::path_utils::expand_path(raw_path).ok()?;
     let cwd = canonicalize_or_normalize(&cwd);
     let filesystem = crate::backend::host_filesystem::HostFilesystem::current();

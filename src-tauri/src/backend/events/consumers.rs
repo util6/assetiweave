@@ -42,6 +42,66 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
 
 pub(crate) struct MemoryEvidenceStaleConsumer;
 
+pub(crate) struct SessionMemoryConsumer;
+
+impl DomainEventConsumer for SessionMemoryConsumer {
+    fn id(&self) -> &'static str {
+        "memory.session_enqueue"
+    }
+
+    fn initial_position(&self) -> InitialPosition {
+        InitialPosition::BackfillThenCutoff
+    }
+
+    fn backfill(&self, cx: &ConsumerCx) -> Result<(), AppError> {
+        cx.database
+            .run_sync(crate::backend::store::backfill_session_memory_jobs_sqlx(
+                &cx.pool,
+                &cx.tenant_id,
+                &chrono::Utc::now().to_rfc3339(),
+            ))?;
+        Ok(())
+    }
+
+    fn interested(&self, event: &DomainEvent) -> bool {
+        matches!(event, DomainEvent::ConversationSourceCommitted { .. })
+    }
+
+    fn handle(&self, batch: &[SequencedEvent], cx: &ConsumerCx) -> Result<(), AppError> {
+        for item in batch {
+            let DomainEvent::ConversationSourceCommitted {
+                event_id,
+                tenant_id,
+                sync_run_id,
+                source_id,
+                revision_end,
+                changed_session_ids,
+                ..
+            } = &item.event
+            else {
+                continue;
+            };
+            if tenant_id != &cx.tenant_id {
+                return Err(AppError::Conflict(
+                    "领域事件租户与消费者租户不一致".to_string(),
+                ));
+            }
+            cx.database
+                .run_sync(crate::backend::store::enqueue_session_memory_jobs_sqlx(
+                    &cx.pool,
+                    &cx.tenant_id,
+                    source_id,
+                    sync_run_id,
+                    *revision_end,
+                    event_id,
+                    changed_session_ids.as_deref(),
+                    &chrono::Utc::now().to_rfc3339(),
+                ))?;
+        }
+        Ok(())
+    }
+}
+
 impl DomainEventConsumer for MemoryEvidenceStaleConsumer {
     fn id(&self) -> &'static str {
         "memory.evidence_stale"
