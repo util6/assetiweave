@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Users,
 } from "lucide-react";
 import type { NavigationIcon } from "./types";
 
@@ -31,6 +32,7 @@ const iconRegistry = {
   settings: Settings,
   shield: ShieldCheck,
   sparkles: Sparkles,
+  users: Users,
 } satisfies Record<NavigationIcon, typeof Archive>;
 
 export function MenuIcon({ name, size = 19 }: { name: NavigationIcon; size?: number }) {

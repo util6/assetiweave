@@ -14,7 +14,8 @@ export type NavigationIcon =
   | "rocket"
   | "settings"
   | "shield"
-  | "sparkles";
+  | "sparkles"
+  | "users";
 
 export type MenuScope = "global" | "asset-catalog" | "profile" | "settings";
 export type NavigationLocale = "zh" | "en";

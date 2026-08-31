@@ -172,6 +172,7 @@ const zh = {
   "nav.header.profiles": "目标配置",
   "nav.header.conversations": "对话记录",
   "nav.header.memory": "记忆",
+  "nav.header.team": "团队与成员",
   "nav.sub.skills.overview": "目录总览",
   "nav.sub.skills.groups": "分组管理",
   "nav.sub.skills.sources": "技能源管理",
@@ -194,6 +195,7 @@ const zh = {
   "nav.sub.memory.dreams": "自动 Dream",
   "nav.sub.memory.recall": "深度回忆",
   "nav.sub.memory.library": "Memory 库",
+  "nav.sub.team.overview": "团队与花名册",
 
   "memory.page.eyebrow": "渐进式回忆",
   "memory.incomplete.description": "此视图将在后续阶段接入，目前不会调用 AI。",
@@ -1773,6 +1775,7 @@ const en: Record<TranslationKey, string> = {
   "nav.header.profiles": "Profiles",
   "nav.header.conversations": "Conversations",
   "nav.header.memory": "Memory",
+  "nav.header.team": "Team",
   "nav.sub.skills.overview": "Catalog Overview",
   "nav.sub.skills.groups": "Groups",
   "nav.sub.skills.sources": "Skill Sources",
@@ -1795,6 +1798,7 @@ const en: Record<TranslationKey, string> = {
   "nav.sub.memory.dreams": "Dreams",
   "nav.sub.memory.recall": "Recall",
   "nav.sub.memory.library": "Library",
+  "nav.sub.team.overview": "Teams & Rosters",
 
   "memory.page.eyebrow": "Progressive Recall",
   "memory.incomplete.description": "This view will be connected in a later phase and does not call AI yet.",

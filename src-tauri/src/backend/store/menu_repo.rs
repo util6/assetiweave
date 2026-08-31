@@ -355,6 +355,8 @@ mod tests {
         );
         assert!(loaded.header_tabs.iter().any(|tab| tab.id == "memory"));
         assert_eq!(loaded.sub_nav_items["memory"].len(), 4);
+        assert!(loaded.header_tabs.iter().any(|tab| tab.id == "team"));
+        assert_eq!(loaded.sub_nav_items["team"].len(), 1);
 
         drop(database);
         let _ = std::fs::remove_file(&db_path);

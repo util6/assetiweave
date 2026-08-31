@@ -173,8 +173,15 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             header_tab("profiles", "Profiles", Some("profile")),
             header_tab("conversations", "Conversations", None),
             header_tab("memory", "Memory", None),
+            header_tab("team", "Team", None),
         ],
         sub_nav_items: BTreeMap::from([
+            (
+                "team".to_string(),
+                vec![
+                    sub_nav("overview", "团队与花名册", "team.overview"),
+                ],
+            ),
             (
                 "skills".to_string(),
                 vec![
@@ -320,6 +327,25 @@ mod tests {
                 "memory.recall",
                 "memory.library",
             ]
+        );
+    }
+
+    #[test]
+    fn team_is_an_independent_default_navigation_module() {
+        let navigation = default_navigation_model();
+        let team = navigation
+            .header_tabs
+            .iter()
+            .find(|tab| tab.id == "team")
+            .expect("team header tab");
+
+        assert_eq!(team.asset_kind, None);
+        assert_eq!(
+            navigation.sub_nav_items["team"]
+                .iter()
+                .map(|item| item.route_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["team.overview"]
         );
     }
 

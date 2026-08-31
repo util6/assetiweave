@@ -18,6 +18,7 @@ export const navigationIconSchema = z.enum([
   "settings",
   "shield",
   "sparkles",
+  "users",
 ]);
 
 export const menuScopeSchema = z.enum(["global", "asset-catalog", "profile", "settings"]);

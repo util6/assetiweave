@@ -44,6 +44,7 @@ const headerLabelKeys: Partial<Record<string, TranslationKey>> = {
   profiles: "nav.header.profiles",
   conversations: "nav.header.conversations",
   memory: "nav.header.memory",
+  team: "nav.header.team",
 };
 
 const headerDefaultLabels: Partial<Record<string, string[]>> = {
@@ -80,6 +81,7 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "memory.dreams": "nav.sub.memory.dreams",
   "memory.recall": "nav.sub.memory.recall",
   "memory.library": "nav.sub.memory.library",
+  "team.overview": "nav.sub.team.overview",
 };
 
 const subNavDefaultLabels: Partial<Record<string, string[]>> = {
