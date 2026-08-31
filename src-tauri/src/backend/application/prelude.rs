@@ -24,9 +24,10 @@ pub(super) use crate::backend::{
         MemoryDreamTrigger, MemoryEvidenceRecordKind, MemoryItem, MemoryItemDetail,
         MemoryItemFilter, MemoryItemKind, MemoryItemOrigin, MemoryItemStatus, MemoryRawMemory,
         MemoryRecallCandidate, MemoryRecallClaim, MemoryRecallConflict, MemoryRecallEvidence,
-        MemoryRecallMode, MemoryRecallQuestion, MemoryRecallQuestionRef, MemoryRevisionChangeKind,
-        MemoryRunKind, MemoryScope, MemoryStaleReason, NewMemoryEvidenceSnapshot, NewMemoryItem,
-        RequestContext, Source, SourceOrigin, SourceScannerKind, TargetProfile, Tenant,
+        MemoryRecallMode, MemoryRecallQuestion, MemoryRecallQuestionRef, MemoryRecallSearchHit,
+        MemoryRecallSearchResult, MemoryRevisionChangeKind, MemoryRunKind, MemoryScope,
+        MemoryStaleReason, NewMemoryEvidenceSnapshot, NewMemoryItem, RequestContext, Source,
+        SourceOrigin, SourceScannerKind, TargetProfile, Tenant,
     },
 };
 pub(super) use chrono::Utc;

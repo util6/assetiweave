@@ -131,6 +131,29 @@ pub(crate) struct MemoryRecallPreviewParams {
     pub(crate) include_unavailable: bool,
     pub(crate) limit: Option<usize>,
     pub(crate) offset: Option<usize>,
+    #[serde(alias = "fileHint")]
+    pub(crate) file: Option<String>,
+    #[serde(alias = "commandHint")]
+    pub(crate) command: Option<String>,
+    #[serde(alias = "errorHint")]
+    pub(crate) error: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallSearchParams {
+    pub(crate) query: String,
+    #[serde(default)]
+    pub(crate) scope: MemoryScope,
+    pub(crate) since: Option<String>,
+    pub(crate) until: Option<String>,
+    #[serde(alias = "fileHint")]
+    pub(crate) file: Option<String>,
+    #[serde(alias = "commandHint")]
+    pub(crate) command: Option<String>,
+    #[serde(alias = "errorHint")]
+    pub(crate) error: Option<String>,
+    pub(crate) limit: Option<usize>,
+    pub(crate) offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

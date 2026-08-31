@@ -53,9 +53,10 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
                q.created_at AS sort_time
         FROM conversation_questions q
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
+        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR s.missing=0)
+          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
         UNION ALL
         SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
@@ -63,9 +64,10 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
                q.created_at
         FROM web_record_questions q
         JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
+        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR s.missing=0)
+          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
       )
       SELECT COUNT(*) FROM all_questions
@@ -92,9 +94,10 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
                q.created_at AS sort_time
         FROM conversation_questions q
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
+        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR s.missing=0)
+          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
         UNION ALL
         SELECT 'web', s.source_id, s.id, s.title, NULL, q.id,
@@ -102,9 +105,10 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
                q.created_at
         FROM web_record_questions q
         JOIN web_record_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
+        JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND ?4 IS NULL
-          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR s.missing=0)
+          AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
           AND (?7 IS NULL OR q.created_at>=?7) AND (?8 IS NULL OR q.created_at<=?8)
       )
       SELECT record_kind,source_id,session_id,session_title,project_path,question_id,question_index
@@ -152,7 +156,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
     offset: usize,
 ) -> AppResult<(usize, Vec<MemoryRecallQuestionRef>)> {
     let mut count = QueryBuilder::<Sqlite>::new(
-        "SELECT COUNT(*) FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
+        "SELECT COUNT(*) FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE q.tenant_id=",
     );
     count.push_bind(tenant_id);
     push_session_recall_scope(&mut count, scope, since, until, include_unavailable);
@@ -163,7 +167,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
         .map_err(AppError::external)?;
 
     let mut page = QueryBuilder::<Sqlite>::new(
-        "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id WHERE q.tenant_id=",
+        "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE q.tenant_id=",
     );
     page.push_bind(tenant_id);
     push_session_recall_scope(&mut page, scope, since, until, include_unavailable);
@@ -211,7 +215,7 @@ fn push_session_recall_scope(
         query.push(" AND s.id=").push_bind(session_id);
     }
     if !include_unavailable {
-        query.push(" AND s.missing=0");
+        query.push(" AND s.missing=0 AND source.enabled=1");
     }
     if let Some(since) = since {
         query.push(" AND q.created_at>=").push_bind(since);
