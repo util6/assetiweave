@@ -615,6 +615,15 @@ pub(crate) async fn persist_session_memory_sqlx(
         .await
         .map_err(AppError::Db)?;
     }
+    if let Some(project_path) = input.project_path.as_deref() {
+        super::project_memory_repo::enqueue_project_memory_job_tx(
+            &mut tx,
+            &input.tenant_id,
+            project_path,
+            &input.generated_at,
+        )
+        .await?;
+    }
     tx.commit().await.map_err(AppError::Db)
 }
 
@@ -668,6 +677,22 @@ pub(crate) async fn load_session_memory_sqlx(
     .map_err(AppError::Db)?;
     let Some(row) = row else { return Ok(None) };
     Ok(Some(map_memory(&row)?))
+}
+
+pub(crate) async fn list_session_memories_for_project_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_path: &str,
+) -> AppResult<Vec<SessionMemory>> {
+    let rows = sqlx::query(
+        "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, status, project_path, summary, goal, result, decisions_json, verification_json, blockers_json, follow_up_json, topics_json, generated_at, created_at, updated_at FROM session_memories WHERE tenant_id = ?1 AND project_path = ?2 AND status = 'active' ORDER BY id ASC",
+    )
+    .bind(tenant_id)
+    .bind(project_path)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::Db)?;
+    rows.iter().map(map_memory).collect()
 }
 
 pub(crate) async fn load_session_memory_for_job_sqlx(

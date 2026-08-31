@@ -18,6 +18,7 @@ mod memory_recall;
 mod params;
 mod prelude;
 mod profiles_navigation;
+mod project_memory;
 mod recent;
 mod service;
 mod session_memory;

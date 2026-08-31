@@ -266,6 +266,7 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "cardTranslation",
         "memory",
         "memory.extraction",
+        "memory.project",
         "memory.dream",
         "promptOptimization",
     ];
@@ -291,7 +292,7 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .and_then(Value::as_str)
         .unwrap_or(cli)
         .to_string();
-    for service_id in ["memory.extraction", "memory.dream"] {
+    for service_id in ["memory.extraction", "memory.project", "memory.dream"] {
         let agent_id =
             normalize_agent_capability_agent_id(agent_capabilities.get(service_id), &memory_agent);
         agent_capabilities.insert(service_id.to_string(), Value::String(agent_id));
@@ -354,6 +355,7 @@ fn normalize_canonical_agent_assignments(
     let action_sources = [
         ("translation.card", "cardTranslation"),
         ("memory.extraction", "memory.extraction"),
+        ("memory.project", "memory.project"),
         ("memory.dream", "memory.dream"),
         ("prompt.optimization", "promptOptimization"),
     ];
@@ -362,7 +364,10 @@ fn normalize_canonical_agent_assignments(
         let existing_assignment = existing
             .and_then(|values| values.get(action_id))
             .and_then(Value::as_object);
-        if has_canonical_assignments && existing_assignment.is_none() {
+        if has_canonical_assignments
+            && existing_assignment.is_none()
+            && action_id != "memory.project"
+        {
             continue;
         }
         let legacy_agent = legacy

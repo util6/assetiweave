@@ -10,6 +10,7 @@ mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
+mod project_memory_repo;
 mod search_index_repo;
 mod session_memory_repo;
 mod settings_repo;
@@ -96,6 +97,7 @@ pub(crate) use mount_repo::{
 pub(crate) use profile_repo::{
     delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
+pub(crate) use project_memory_repo::*;
 pub(crate) use search_index_repo::{
     bump_conversation_search_source_revision_sqlx_tx,
     complete_conversation_search_index_rebuild_with_offset_sqlx,

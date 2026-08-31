@@ -344,6 +344,18 @@ impl AppRuntime {
                                         &[("error", error.to_string())],
                                     );
                                 }
+                                if let Err(error) = service
+                                    .reconcile_project_memory_jobs_for_tenant_at(
+                                        &tenant.id,
+                                        chrono::Utc::now(),
+                                    )
+                                {
+                                    crate::backend::operation_log::log_warn(
+                                        "project_memory.coordinator.recovery",
+                                        "Project Memory durable coordinator reconciliation failed",
+                                        &[("error", error.to_string())],
+                                    );
+                                }
                             }
                         }
                         Err(error) => {

@@ -308,11 +308,7 @@ impl AppService {
             ));
         }
         let evidence = build_evidence_references(&detail);
-        let project_path = detail
-            .session
-            .project_path
-            .as_deref()
-            .and_then(|path| super::recent::resolve_project_directory(path, &registered_roots));
+        let project_path = session_project_path(&detail, &registered_roots);
         let persist =
             match validated_persist_input(&job, &output, &evidence, project_path, &now_text) {
                 Ok(persist) => persist,
@@ -822,6 +818,25 @@ fn session_has_completion_signal(detail: &ConversationSessionDetail) -> bool {
         .filter_map(|part| part.metadata_json.as_deref())
         .filter_map(|metadata| serde_json::from_str::<Value>(metadata).ok())
         .any(|metadata| value_marks_completion(&metadata))
+}
+
+fn session_project_path(
+    detail: &ConversationSessionDetail,
+    registered_roots: &[String],
+) -> Option<String> {
+    detail
+        .session
+        .project_path
+        .as_deref()
+        .or_else(|| {
+            detail
+                .questions
+                .iter()
+                .flat_map(|question| question.parts.iter())
+                .filter_map(|part| part.cwd.as_deref())
+                .find(|path| !path.trim().is_empty())
+        })
+        .and_then(|path| super::recent::resolve_project_directory(path, registered_roots))
 }
 
 fn value_marks_completion(value: &Value) -> bool {
