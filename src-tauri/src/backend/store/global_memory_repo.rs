@@ -48,7 +48,7 @@ pub(crate) async fn load_global_memory_inputs_sqlx(
     tenant_id: &str,
 ) -> AppResult<GlobalMemoryInputSet> {
     let rows = sqlx::query(
-        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' ORDER BY pm.project_path ASC, pm.id ASC",
+        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' AND NOT EXISTS (SELECT 1 FROM project_memory_sources source WHERE source.tenant_id = v.tenant_id AND source.version_id = v.id AND NOT EXISTS (SELECT 1 FROM session_memories m WHERE m.tenant_id = source.tenant_id AND m.id = source.session_memory_id AND m.status = 'active' AND m.project_path = pm.project_path AND m.source_revision = source.source_revision AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source_record WHERE source_record.tenant_id = c.tenant_id AND source_record.id = c.source_id AND source_record.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))))) ORDER BY pm.project_path ASC, pm.id ASC",
     )
     .bind(tenant_id)
     .fetch_all(pool)
@@ -120,7 +120,7 @@ pub(crate) async fn enqueue_global_memory_job_tx(
     now: &str,
 ) -> AppResult<Option<String>> {
     let rows = sqlx::query(
-        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' ORDER BY pm.project_path ASC, pm.id ASC",
+        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' AND NOT EXISTS (SELECT 1 FROM project_memory_sources source WHERE source.tenant_id = v.tenant_id AND source.version_id = v.id AND NOT EXISTS (SELECT 1 FROM session_memories m WHERE m.tenant_id = source.tenant_id AND m.id = source.session_memory_id AND m.status = 'active' AND m.project_path = pm.project_path AND m.source_revision = source.source_revision AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source_record WHERE source_record.tenant_id = c.tenant_id AND source_record.id = c.source_id AND source_record.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))))) ORDER BY pm.project_path ASC, pm.id ASC",
     )
     .bind(tenant_id)
     .fetch_all(&mut **tx)
@@ -488,7 +488,25 @@ pub(crate) async fn load_global_memory_latest_version_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    row.as_ref().map(map_version).transpose()
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let version = map_version(&row)?;
+    let sources = load_global_memory_sources_sqlx(pool, tenant_id, &version.id).await?;
+    for source in sources {
+        let current_project = super::project_memory_repo::load_project_memory_latest_version_sqlx(
+            pool,
+            tenant_id,
+            &source.project_id,
+        )
+        .await?;
+        if current_project.as_ref().map(|value| value.id.as_str())
+            != Some(source.project_version_id.as_str())
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(version))
 }
 
 pub(crate) async fn load_global_memory_sources_sqlx(

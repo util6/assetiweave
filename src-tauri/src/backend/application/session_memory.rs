@@ -1255,7 +1255,7 @@ mod tests {
             )
             .expect("read Recent projection");
         assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].recent_events.len(), 12);
+        assert_eq!(recent[0].recent_events.len(), 6);
         let requests = fake.requests.lock().expect("fake request lock");
         assert_eq!(requests.len(), 2);
         assert_eq!(requests[0].purpose, AiExecutionPurpose::SessionMemory);

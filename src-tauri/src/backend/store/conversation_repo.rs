@@ -429,6 +429,15 @@ pub(crate) async fn set_app_conversation_adapter_projection_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(AppError::external)?;
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
+    )
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
     tx.commit().await.map_err(AppError::external)
 }
 
@@ -513,6 +522,15 @@ pub(crate) async fn delete_conversation_adapter_registration_sqlx(
             .await
             .map_err(AppError::external)?;
     }
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
+    )
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
     tx.commit().await.map_err(AppError::external)?;
     Ok(adapter)
 }
@@ -549,6 +567,15 @@ pub(crate) async fn disable_builtin_conversation_adapter_sqlx(
         .execute(&mut *tx)
         .await
         .map_err(AppError::external)?;
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?2 AND adapter_id = ?3)",
+    )
+    .bind(&now)
+    .bind(tenant_id)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
     tx.commit().await.map_err(AppError::external)?;
 
     adapter.enabled = false;
@@ -778,6 +805,14 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
         .map_err(AppError::external)?;
     sqlx::query(
         "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE adapter_id = ?2",
+    )
+    .bind(&now)
+    .bind(adapter_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE source_id IN (SELECT id FROM conversation_sources WHERE adapter_id = ?2)",
     )
     .bind(&now)
     .bind(adapter_id)
@@ -1108,7 +1143,26 @@ pub(crate) async fn disable_conversation_source_sqlx(
         })?;
     source.enabled = false;
     source.updated_at = Utc::now().to_rfc3339();
-    upsert_conversation_source_sqlx(pool, tenant_id, &source).await?;
+    let mut tx = pool.begin().await.map_err(AppError::external)?;
+    sqlx::query(
+        "UPDATE conversation_sources SET enabled = 0, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3",
+    )
+    .bind(&source.updated_at)
+    .bind(tenant_id)
+    .bind(source_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    sqlx::query(
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND source_id = ?3 AND status = 'active'",
+    )
+    .bind(&source.updated_at)
+    .bind(tenant_id)
+    .bind(source_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(AppError::external)?;
+    tx.commit().await.map_err(AppError::external)?;
     Ok(source)
 }
 
@@ -1209,6 +1263,15 @@ async fn import_conversation_sessions_with_presence_sqlx(
                 skipped_session_count += 1;
                 continue;
             }
+            sqlx::query(
+                "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
+            )
+            .bind(&now)
+            .bind(tenant_id)
+            .bind(&session.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::external)?;
             upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
             for turn in &normalized.turns {
                 if turn.user_text.trim().is_empty() {
@@ -1454,6 +1517,10 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
                ) AS cwd,
                COALESCE(NULLIF(trim(a.name), ''), s.adapter_id) AS source_agent
         FROM conversation_sessions s
+        JOIN conversation_sources source
+          ON source.tenant_id = s.tenant_id
+         AND source.id = s.source_id
+         AND source.enabled = 1
         LEFT JOIN conversation_adapters a
           ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
         WHERE s.tenant_id = ?1
@@ -3666,6 +3733,15 @@ async fn mark_missing_conversation_sessions_sqlx_tx(
             SET missing = 1, imported_at = ?1
             WHERE tenant_id = ?2 AND id = ?3
             "#,
+        )
+        .bind(now)
+        .bind(tenant_id)
+        .bind(&session_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(AppError::external)?;
+        sqlx::query(
+            "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
         )
         .bind(now)
         .bind(tenant_id)
