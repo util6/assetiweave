@@ -1,4 +1,5 @@
 pub(super) use super::params::*;
+pub(super) use super::recent::*;
 pub(super) use super::service::AppService;
 pub(super) use super::utils::slug_path_segment;
 pub(super) use crate::backend::capabilities;

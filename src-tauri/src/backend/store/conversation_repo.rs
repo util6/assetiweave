@@ -31,6 +31,14 @@ use super::codec::{decode_enum, decode_json, encode_enum, encode_json};
 
 pub(super) const CONVERSATION_IMPORT_BATCH_SIZE: usize = 8;
 
+#[derive(Debug, Clone)]
+pub(crate) struct RecentConversationSessionRecord {
+    pub(crate) session: ConversationSessionListItem,
+    pub(crate) last_activity_at: String,
+    pub(crate) cwd: Option<String>,
+    pub(crate) source_agent: String,
+}
+
 const LIST_CONVERSATION_ADAPTERS_SQL: &str = r#"
     SELECT id, name, kind, version, enabled, manifest_path, executable_path,
            content_hash, trusted_hash, trust_state, protocol_version,
@@ -1401,6 +1409,84 @@ pub(crate) async fn list_conversation_sessions_sqlx(
                 session: map_sqlx_conversation_session(row)?,
                 question_count,
                 turn_count,
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn list_recent_conversation_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    cutoff: &str,
+    now: &str,
+) -> AppResult<Vec<RecentConversationSessionRecord>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
+               s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
+               s.missing, s.created_at, s.imported_at,
+               (
+                   SELECT COUNT(*)
+                   FROM conversation_questions q
+                   WHERE q.tenant_id = s.tenant_id AND q.session_id = s.id
+               ) AS question_count,
+               (
+                   SELECT COUNT(*)
+                   FROM conversation_turns t
+                   WHERE t.tenant_id = s.tenant_id AND t.session_id = s.id
+               ) AS turn_count,
+               s.updated_at AS last_activity_at,
+               (
+                   SELECT p.cwd
+                   FROM conversation_parts p
+                   JOIN conversation_turns t
+                     ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
+                   WHERE p.tenant_id = s.tenant_id
+                     AND t.session_id = s.id
+                     AND p.cwd IS NOT NULL
+                     AND trim(p.cwd) <> ''
+                   ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
+                            t.turn_index DESC,
+                            p.part_index DESC,
+                            p.id DESC
+                   LIMIT 1
+               ) AS cwd,
+               COALESCE(NULLIF(trim(a.name), ''), s.adapter_id) AS source_agent
+        FROM conversation_sessions s
+        LEFT JOIN conversation_adapters a
+          ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
+        WHERE s.tenant_id = ?1
+          AND s.missing = 0
+          AND s.updated_at IS NOT NULL
+          AND datetime(s.updated_at) >= datetime(?2)
+          AND datetime(s.updated_at) <= datetime(?3)
+        ORDER BY s.updated_at DESC, s.id ASC
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(cutoff)
+    .bind(now)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+
+    rows.iter()
+        .map(|row| {
+            let question_count =
+                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
+                    .map_err(|_| AppError::external("invalid recent question count"))?;
+            let turn_count =
+                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
+                    .map_err(|_| AppError::external("invalid recent turn count"))?;
+            Ok(RecentConversationSessionRecord {
+                session: ConversationSessionListItem {
+                    session: map_sqlx_conversation_session(row)?,
+                    question_count,
+                    turn_count,
+                },
+                last_activity_at: row.try_get(15).map_err(AppError::external)?,
+                cwd: row.try_get(16).map_err(AppError::external)?,
+                source_agent: row.try_get(17).map_err(AppError::external)?,
             })
         })
         .collect()

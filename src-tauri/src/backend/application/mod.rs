@@ -18,6 +18,7 @@ mod memory_recall;
 mod params;
 mod prelude;
 mod profiles_navigation;
+mod recent;
 mod service;
 mod skill_remote;
 mod skills;
@@ -38,5 +39,8 @@ pub(crate) use assets::{BatchMountWorkflowInput, BatchMountWorkflowOutput};
 pub(crate) use conversation_adapter_catalog_v2::*;
 pub(crate) use conversation_script_catalog::*;
 pub(crate) use params::*;
+pub(crate) use recent::{
+    RecentConversationSession, RecentConversationSessionListParams, RecentConversationView,
+};
 pub(crate) use service::AppService;
 pub(crate) use sources::{SourceScanResult, SourceScanWorkflow};

@@ -228,6 +228,405 @@ fn load_test_assets(service: &AppService) -> Vec<Asset> {
         .expect("load assets")
 }
 
+#[cfg(unix)]
+#[test]
+fn recent_conversation_sessions_use_last_activity_and_resolve_project_directories() {
+    use chrono::Duration as ChronoDuration;
+    use std::os::unix::fs::symlink;
+
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-recent-conversation-sessions-{}",
+        Uuid::new_v4()
+    ));
+    let registered_root = root.join("registered-project");
+    let registered_worktree = registered_root.join("worktree");
+    let git_root = root.join("git-project");
+    let git_alias = root.join("git-project-alias");
+    let other_worktree = root.join("other-worktree");
+    let plain_directory = root.join("plain-directory");
+    for path in [
+        registered_worktree.join("src"),
+        git_root.join("packages/app"),
+        other_worktree.join("src"),
+        plain_directory.join("nested"),
+    ] {
+        fs::create_dir_all(path).expect("create recent conversation fixture directory");
+    }
+    fs::write(
+        registered_worktree.join(".git"),
+        "gitdir: ../.git/worktree\n",
+    )
+    .expect("create registered worktree marker");
+    fs::create_dir_all(git_root.join(".git")).expect("create git root marker");
+    fs::create_dir_all(other_worktree.join(".git")).expect("create other worktree marker");
+    symlink(&git_root, &git_alias).expect("create project symlink");
+
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let now = chrono::DateTime::parse_from_rfc3339("2026-08-31T12:00:00Z")
+        .expect("parse fixture clock")
+        .with_timezone(&Utc);
+    let expected_registered_root = registered_root
+        .canonicalize()
+        .expect("canonicalize registered project root")
+        .to_string_lossy()
+        .to_string();
+    let expected_git_root = git_root
+        .canonicalize()
+        .expect("canonicalize git project root")
+        .to_string_lossy()
+        .to_string();
+    let expected_other_worktree = other_worktree
+        .canonicalize()
+        .expect("canonicalize other worktree root")
+        .to_string_lossy()
+        .to_string();
+    let expected_plain_directory = plain_directory
+        .join("nested")
+        .canonicalize()
+        .expect("canonicalize plain directory")
+        .to_string_lossy()
+        .to_string();
+    let now_text = now.to_rfc3339();
+    let adapter = ConversationAdapter {
+        id: "recent-fixture-adapter".to_string(),
+        name: "Fixture Agent".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "1.0.0".to_string(),
+        enabled: true,
+        manifest_path: None,
+        executable_path: None,
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: now_text.clone(),
+        updated_at: now_text.clone(),
+    };
+    let conversation_source = ConversationSource {
+        id: "recent-fixture-source".to_string(),
+        adapter_id: adapter.id.clone(),
+        name: "Fixture Conversation Source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now_text.clone(),
+        updated_at: now_text,
+    };
+    let registered_source = Source {
+        id: "recent-registered-project".to_string(),
+        name: "Registered Project".to_string(),
+        kind: SourceKind::Local,
+        root_path: registered_root.to_string_lossy().to_string(),
+        scanner_kind: SourceScannerKind::Mixed,
+        source_origin: SourceOrigin::LocalFolder,
+        repo_root: Some(registered_root.to_string_lossy().to_string()),
+        scan_root: String::new(),
+        origin_app_kind: None,
+        origin_provider_id: None,
+        include_globs: vec!["**/*".to_string()],
+        exclude_globs: Vec::new(),
+        default_kind: None,
+        enabled: true,
+        priority: 0,
+        last_scanned_at: None,
+        last_scan_status: None,
+    };
+    upsert_test_source(&service, &registered_source);
+
+    let fixture_session = |external_id: &str,
+                           title: &str,
+                           started_at: chrono::DateTime<Utc>,
+                           updated_at: chrono::DateTime<Utc>,
+                           cwd: Option<&Path>|
+     -> NormalizedConversationSession {
+        NormalizedConversationSession {
+            external_id: external_id.to_string(),
+            title: Some(title.to_string()),
+            project_path: None,
+            started_at: Some(started_at.to_rfc3339()),
+            updated_at: Some(updated_at.to_rfc3339()),
+            source_locator: Some(format!("fixture://{external_id}")),
+            source_fingerprint: Some(format!("fingerprint-{external_id}")),
+            turns: vec![NormalizedConversationTurn {
+                external_id: format!("turn-{external_id}"),
+                turn_index: 0,
+                user_text: title.to_string(),
+                title: None,
+                started_at: Some(updated_at.to_rfc3339()),
+                ended_at: Some(updated_at.to_rfc3339()),
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("fixture answer".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: cwd.map(|path| path.to_string_lossy().to_string()),
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+            }],
+        }
+    };
+    let sessions = vec![
+        fixture_session(
+            "old-but-active",
+            "Old but active",
+            now - ChronoDuration::days(5),
+            now - ChronoDuration::hours(24),
+            Some(&registered_worktree.join("src")),
+        ),
+        fixture_session(
+            "recently-imported-old",
+            "Recently imported old session",
+            now - ChronoDuration::days(10),
+            now - ChronoDuration::days(10),
+            Some(&other_worktree.join("src")),
+        ),
+        fixture_session(
+            "registered-project",
+            "Registered project session",
+            now - ChronoDuration::hours(5),
+            now - ChronoDuration::hours(2),
+            Some(&registered_worktree.join("src")),
+        ),
+        fixture_session(
+            "git-project",
+            "Git project session",
+            now - ChronoDuration::hours(4),
+            now - ChronoDuration::hours(3),
+            Some(&git_root.join("packages/app")),
+        ),
+        fixture_session(
+            "git-project-through-symlink",
+            "Git project symlink session",
+            now - ChronoDuration::hours(3),
+            now - ChronoDuration::hours(1),
+            Some(&git_alias.join("packages/app")),
+        ),
+        fixture_session(
+            "other-worktree",
+            "Other worktree session",
+            now - ChronoDuration::hours(3),
+            now - ChronoDuration::minutes(30),
+            Some(&other_worktree.join("src")),
+        ),
+        fixture_session(
+            "without-cwd",
+            "Without cwd",
+            now - ChronoDuration::hours(2),
+            now - ChronoDuration::hours(1),
+            None,
+        ),
+        fixture_session(
+            "plain-directory",
+            "Plain directory session",
+            now - ChronoDuration::hours(5),
+            now - ChronoDuration::hours(4),
+            Some(&plain_directory.join("nested")),
+        ),
+    ];
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let adapter_for_default = adapter.clone();
+    let source_for_default = conversation_source.clone();
+    service
+        .runtime
+        .run_sync(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(
+                &pool,
+                &tenant_id,
+                &adapter_for_default,
+            )
+            .await?;
+            crate::backend::store::upsert_conversation_source_sqlx(
+                &pool,
+                &tenant_id,
+                &source_for_default,
+            )
+            .await?;
+            crate::backend::store::import_conversation_sessions_sqlx(
+                &pool,
+                &tenant_id,
+                &source_for_default,
+                &sessions,
+                false,
+            )
+            .await
+            .map(|_| ())
+        })
+        .expect("import recent conversation fixtures");
+
+    let other_tenant_session = fixture_session(
+        "other-tenant-session",
+        "Other tenant session",
+        now - ChronoDuration::hours(2),
+        now - ChronoDuration::minutes(15),
+        Some(&other_worktree.join("src")),
+    );
+    let pool = service.db.pool().clone();
+    service
+        .runtime
+        .run_sync(async move {
+            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, "tenant-a", &adapter)
+                .await?;
+            crate::backend::store::upsert_conversation_source_sqlx(
+                &pool,
+                "tenant-a",
+                &conversation_source,
+            )
+            .await?;
+            crate::backend::store::import_conversation_sessions_sqlx(
+                &pool,
+                "tenant-a",
+                &conversation_source,
+                &[other_tenant_session],
+                false,
+            )
+            .await
+            .map(|_| ())
+        })
+        .expect("import other tenant conversation fixture");
+
+    let project_view = service
+        .list_recent_conversation_sessions_at(
+            RecentConversationSessionListParams {
+                view: RecentConversationView::Project,
+                limit: Some(50),
+                offset: Some(0),
+            },
+            now,
+        )
+        .expect("list recent sessions by project");
+    let time_view = service
+        .list_recent_conversation_sessions_at(
+            RecentConversationSessionListParams {
+                view: RecentConversationView::Time,
+                limit: Some(50),
+                offset: Some(0),
+            },
+            now,
+        )
+        .expect("list recent sessions by time");
+
+    let project_ids = project_view
+        .iter()
+        .map(|item| item.session.external_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let time_ids = time_view
+        .iter()
+        .map(|item| item.session.external_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(project_ids, time_ids);
+    assert!(!project_ids.contains("recently-imported-old"));
+    assert!(project_ids.contains("old-but-active"));
+
+    fn by_id<'a>(
+        items: &'a [RecentConversationSession],
+        id: &str,
+    ) -> &'a RecentConversationSession {
+        items
+            .iter()
+            .find(|item| item.session.external_id == id)
+            .expect("recent session fixture is present")
+    }
+    assert_eq!(
+        by_id(&project_view, "old-but-active")
+            .project_path
+            .as_deref(),
+        Some(expected_registered_root.as_str())
+    );
+    assert_eq!(
+        by_id(&project_view, "registered-project")
+            .project_path
+            .as_deref(),
+        Some(expected_registered_root.as_str())
+    );
+    assert_eq!(
+        by_id(&project_view, "git-project").project_path.as_deref(),
+        Some(expected_git_root.as_str())
+    );
+    assert_eq!(
+        by_id(&project_view, "git-project-through-symlink")
+            .project_path
+            .as_deref(),
+        Some(expected_git_root.as_str())
+    );
+    assert_eq!(
+        by_id(&project_view, "other-worktree")
+            .project_path
+            .as_deref(),
+        Some(expected_other_worktree.as_str())
+    );
+    assert_eq!(
+        by_id(&project_view, "plain-directory")
+            .project_path
+            .as_deref(),
+        Some(expected_plain_directory.as_str())
+    );
+    assert_eq!(by_id(&project_view, "without-cwd").project_path, None);
+    assert_eq!(
+        by_id(&project_view, "old-but-active").source_agent,
+        "Fixture Agent"
+    );
+    assert!(!project_ids.contains("other-tenant-session"));
+
+    let project_order = project_view
+        .iter()
+        .map(|item| item.session.external_id.as_str())
+        .collect::<Vec<_>>();
+    let time_order = time_view
+        .iter()
+        .map(|item| item.session.external_id.as_str())
+        .collect::<Vec<_>>();
+    assert_ne!(project_order, time_order);
+    assert_eq!(time_order.first().copied(), Some("other-worktree"));
+
+    drop(service);
+    let reopened =
+        AppService::open_with_db_path(root.join("app.db")).expect("reopen application service");
+    let reopened_view = reopened
+        .list_recent_conversation_sessions_at(
+            RecentConversationSessionListParams {
+                view: RecentConversationView::Project,
+                limit: Some(50),
+                offset: Some(0),
+            },
+            now,
+        )
+        .expect("list recent sessions after reopening database");
+    assert_eq!(
+        reopened_view
+            .iter()
+            .map(|item| (
+                item.session.external_id.as_str(),
+                item.project_path.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        project_view
+            .iter()
+            .map(|item| (
+                item.session.external_id.as_str(),
+                item.project_path.as_deref()
+            ))
+            .collect::<Vec<_>>()
+    );
+
+    drop(reopened);
+    fs::remove_dir_all(root).ok();
+}
+
 #[test]
 fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotently() {
     let root = std::env::temp_dir().join(format!(
