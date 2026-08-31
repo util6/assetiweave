@@ -89,6 +89,7 @@ pub(crate) struct AppRuntime {
     context_update_gate: Mutex<()>,
     shutdown: ShutdownState,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
+    session_memory_coordinator: Mutex<Option<SessionMemoryCoordinatorHandle>>,
     team_coordinator: Mutex<Option<TeamCoordinatorHandle>>,
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
@@ -98,6 +99,20 @@ pub(crate) struct AppRuntime {
 struct TeamCoordinatorHandle {
     cancellation: CancellationToken,
     join: Option<thread::JoinHandle<()>>,
+}
+
+struct SessionMemoryCoordinatorHandle {
+    cancellation: CancellationToken,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl SessionMemoryCoordinatorHandle {
+    fn stop(mut self) {
+        self.cancellation.cancel();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 impl TeamCoordinatorHandle {
@@ -198,6 +213,7 @@ impl AppRuntime {
             context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
+            session_memory_coordinator: Mutex::new(None),
             team_coordinator: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
@@ -270,6 +286,7 @@ impl AppRuntime {
             context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
+            session_memory_coordinator: Mutex::new(None),
             team_coordinator: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
@@ -280,6 +297,7 @@ impl AppRuntime {
     fn start_resident_services(self: &Arc<Self>) {
         self.start_agent_health_refresh();
         self.start_team_coordinator();
+        self.start_session_memory_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants() {
             crate::backend::operation_log::log_warn(
@@ -292,6 +310,64 @@ impl AppRuntime {
         let handle = dispatcher.start();
         if let Ok(mut slot) = self.dispatcher.lock() {
             *slot = Some(handle);
+        }
+    }
+
+    /// Rehydrate durable Session Memory work independently of the Memory page.
+    /// The loop only owns scheduling; SQLite owns leases, retries, watermarks,
+    /// and terminal state, so an interrupted process can be rebuilt safely.
+    fn start_session_memory_coordinator(self: &Arc<Self>) {
+        let cancellation = CancellationToken::new();
+        let thread_cancellation = cancellation.clone();
+        let runtime = self.clone();
+        let join = thread::Builder::new()
+            .name("aiw-session-memory-coordinator".to_string())
+            .spawn(move || {
+                while !thread_cancellation.is_cancelled() {
+                    let service = AppService::from_runtime(&runtime);
+                    let principal_id = runtime.context().request_context.principal.id.clone();
+                    let result = runtime.run_sync(async {
+                        store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id).await
+                    });
+                    match result {
+                        Ok(tenants) => {
+                            for tenant in tenants {
+                                if let Err(error) = service
+                                    .reconcile_session_memory_jobs_for_tenant_at(
+                                        &tenant.id,
+                                        chrono::Utc::now(),
+                                    )
+                                {
+                                    crate::backend::operation_log::log_warn(
+                                        "session_memory.coordinator.recovery",
+                                        "Session Memory durable coordinator reconciliation failed",
+                                        &[("error", error.to_string())],
+                                    );
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            crate::backend::operation_log::log_warn(
+                                "session_memory.coordinator.tenants",
+                                "Session Memory tenant enumeration failed",
+                                &[("error", error.to_string())],
+                            );
+                        }
+                    }
+                    for _ in 0..10 {
+                        if thread_cancellation.is_cancelled() {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            })
+            .expect("Session Memory coordinator thread must start");
+        if let Ok(mut slot) = self.session_memory_coordinator.lock() {
+            *slot = Some(SessionMemoryCoordinatorHandle {
+                cancellation,
+                join: Some(join),
+            });
         }
     }
 
@@ -474,10 +550,19 @@ impl AppRuntime {
     /// persistence runs. The final dispatcher/database shutdown remains in
     /// `shutdown_with_grace` so callers can persist through this same runtime.
     pub(crate) fn stop_tasks_with_grace(&self, grace: Duration) -> Vec<String> {
+        self.stop_session_memory_coordinator();
         self.task_runtime.stop_accepting();
         self.task_runtime
             .shutdown_with_grace(grace)
             .unfinished_task_ids
+    }
+
+    fn stop_session_memory_coordinator(&self) {
+        if let Ok(mut slot) = self.session_memory_coordinator.lock() {
+            if let Some(handle) = slot.take() {
+                handle.stop();
+            }
+        }
     }
     pub(crate) fn target_catalog(&self) -> Arc<TargetCatalog> {
         self.target_catalog.load()
@@ -567,6 +652,7 @@ impl AppRuntime {
         // Workers must converge and publish their final state while the
         // resident dispatcher is still alive; only then can the dispatcher
         // drain and the database close.
+        self.stop_session_memory_coordinator();
         if let Ok(mut slot) = self.team_coordinator.lock() {
             if let Some(handle) = slot.take() {
                 handle.stop();

@@ -9,6 +9,7 @@ pub(crate) enum SessionMemoryJobStatus {
     Succeeded,
     Failed,
     Skipped,
+    Canceled,
 }
 
 impl SessionMemoryJobStatus {
@@ -19,6 +20,7 @@ impl SessionMemoryJobStatus {
             Self::Succeeded => "succeeded",
             Self::Failed => "failed",
             Self::Skipped => "skipped",
+            Self::Canceled => "canceled",
         }
     }
 }
@@ -108,6 +110,12 @@ pub(crate) struct SessionMemoryJob {
     pub(crate) finished_at: Option<String>,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
+    pub(crate) ownership_token: Option<String>,
+    pub(crate) lease_expires_at: Option<String>,
+    pub(crate) heartbeat_at: Option<String>,
+    pub(crate) retry_count: i64,
+    pub(crate) retry_at: Option<String>,
+    pub(crate) watermark: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
