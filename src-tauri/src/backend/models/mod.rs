@@ -1,5 +1,6 @@
 mod assets;
 mod conversation;
+mod global_memory;
 mod memory;
 mod project_memory;
 mod session_memory;
@@ -8,6 +9,7 @@ mod tenant;
 
 pub(crate) use assets::*;
 pub(crate) use conversation::*;
+pub(crate) use global_memory::*;
 pub(crate) use memory::*;
 pub(crate) use project_memory::*;
 pub(crate) use session_memory::*;

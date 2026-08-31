@@ -267,6 +267,7 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "memory",
         "memory.extraction",
         "memory.project",
+        "memory.global",
         "memory.dream",
         "promptOptimization",
     ];
@@ -292,7 +293,12 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .and_then(Value::as_str)
         .unwrap_or(cli)
         .to_string();
-    for service_id in ["memory.extraction", "memory.project", "memory.dream"] {
+    for service_id in [
+        "memory.extraction",
+        "memory.project",
+        "memory.global",
+        "memory.dream",
+    ] {
         let agent_id =
             normalize_agent_capability_agent_id(agent_capabilities.get(service_id), &memory_agent);
         agent_capabilities.insert(service_id.to_string(), Value::String(agent_id));
@@ -356,6 +362,7 @@ fn normalize_canonical_agent_assignments(
         ("translation.card", "cardTranslation"),
         ("memory.extraction", "memory.extraction"),
         ("memory.project", "memory.project"),
+        ("memory.global", "memory.global"),
         ("memory.dream", "memory.dream"),
         ("prompt.optimization", "promptOptimization"),
     ];
@@ -366,7 +373,7 @@ fn normalize_canonical_agent_assignments(
             .and_then(Value::as_object);
         if has_canonical_assignments
             && existing_assignment.is_none()
-            && action_id != "memory.project"
+            && !matches!(action_id, "memory.project" | "memory.global")
         {
             continue;
         }

@@ -93,6 +93,7 @@ pub(crate) enum AiExecutionPurpose {
     ConnectionTest,
     ModelDiscovery,
     ProjectMemory,
+    GlobalMemory,
     TeamLeaderChat,
     TeamDraft,
     TeamTask,

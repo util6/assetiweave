@@ -4,6 +4,7 @@ mod codec;
 mod conversation_repo;
 mod database;
 mod deployment_repo;
+mod global_memory_repo;
 mod group_repo;
 mod memory_repo;
 mod menu_repo;
@@ -67,6 +68,7 @@ pub(crate) use deployment_repo::{
     is_managed_deployment_sqlx, load_managed_deployment_targets_by_profile_sqlx,
     upsert_deployment_state_sqlx,
 };
+pub(crate) use global_memory_repo::*;
 pub(crate) use group_repo::{
     delete_asset_group_sqlx, delete_orphan_asset_group_members_sqlx, load_skill_group_detail_sqlx,
     load_skill_group_details_by_ids_sqlx, load_skill_group_details_sqlx,

@@ -10,6 +10,7 @@ mod conversation_maintenance;
 mod conversation_records;
 mod conversation_script_catalog;
 mod conversation_search;
+mod global_memory;
 mod memory;
 mod memory_consolidation;
 mod memory_dream;

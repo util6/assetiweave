@@ -461,6 +461,7 @@ pub(crate) async fn persist_project_memory_success_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(AppError::Db)?;
+    super::global_memory_repo::enqueue_global_memory_job_tx(&mut tx, &input.tenant_id, now).await?;
     tx.commit().await.map_err(AppError::Db)?;
     Ok(ProjectMemoryVersion {
         tenant_id: input.tenant_id.clone(),

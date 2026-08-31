@@ -149,6 +149,15 @@ pub(crate) struct MemoryVerifyParams {
     pub(crate) item_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryContextResolveParams {
+    #[serde(default, alias = "projectPath")]
+    pub(crate) project_path: Option<String>,
+    pub(crate) query: Option<String>,
+    #[serde(default, alias = "tokenBudget")]
+    pub(crate) token_budget: Option<usize>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 pub(crate) struct MemoryDreamPreviewParams {
     #[serde(default)]

@@ -38,6 +38,9 @@ static ACTIONS: &[ActionRegistration] = &[
     ActionRegistration {
         id: "memory.project",
     },
+    ActionRegistration {
+        id: "memory.global",
+    },
     ActionRegistration { id: "memory.dream" },
     ActionRegistration {
         id: "prompt.optimization",

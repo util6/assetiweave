@@ -1,11 +1,12 @@
 use crate::backend::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationPartRole,
     ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationTurn,
-    DeploymentStrategy, MemoryDreamCursor, MemoryDreamDeltaSession, MemoryDreamGateResult,
-    MemoryDreamNote, MemoryDreamNoteDetail, MemoryDreamState, MemoryDreamTrigger, MemoryExtraction,
-    MemoryItem, MemoryRecallCandidate, MemoryRecallClaim, MemoryRecallConflict,
-    MemoryRecallEvidence, MemoryRecallMode, MemoryRecallQuestion, MemoryScope, ProfileSafety,
-    RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
+    DeploymentStrategy, GlobalMemoryVersion, MemoryDreamCursor, MemoryDreamDeltaSession,
+    MemoryDreamGateResult, MemoryDreamNote, MemoryDreamNoteDetail, MemoryDreamState,
+    MemoryDreamTrigger, MemoryExtraction, MemoryItem, MemoryRecallCandidate, MemoryRecallClaim,
+    MemoryRecallConflict, MemoryRecallEvidence, MemoryRecallMode, MemoryRecallQuestion,
+    MemoryScope, ProfileSafety, ProjectMemorySource, ProjectMemoryVersion, RuleSet, SourceKind,
+    SourceOrigin, SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
@@ -101,6 +102,26 @@ pub(crate) struct MemoryRecallRunResult {
     pub(crate) conflicts: Vec<MemoryRecallConflict>,
     pub(crate) insufficient_evidence: bool,
     pub(crate) extractions: Vec<MemoryExtraction>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryContextReference {
+    pub(crate) kind: String,
+    pub(crate) id: String,
+    pub(crate) source_revision: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryContextResult {
+    pub(crate) text: String,
+    pub(crate) revision: String,
+    pub(crate) generated_at: Option<String>,
+    pub(crate) estimated_tokens: usize,
+    pub(crate) token_budget: usize,
+    pub(crate) references: Vec<MemoryContextReference>,
+    pub(crate) global_version: Option<GlobalMemoryVersion>,
+    pub(crate) project_version: Option<ProjectMemoryVersion>,
+    pub(crate) project_sources: Vec<ProjectMemorySource>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
