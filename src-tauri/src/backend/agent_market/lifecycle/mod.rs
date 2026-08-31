@@ -489,6 +489,7 @@ mod tests {
                     purposes: vec!["text_prompt".to_string()],
                     text_prompt: true,
                     model_discovery: false,
+                    ..CatalogCapabilities::default()
                 },
                 verification: Verification {
                     status: VerificationStatus::Tested,

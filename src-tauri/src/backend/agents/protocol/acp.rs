@@ -14,10 +14,12 @@ use agent_client_protocol::{
         v1::{
             CancelNotification, ClientCapabilities, CloseSessionRequest, CloseSessionResponse,
             ContentBlock, DeleteSessionRequest, DeleteSessionResponse, Implementation,
-            InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse,
-            PromptRequest, PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
-            RequestPermissionResponse, SessionId, SessionNotification, SessionUpdate,
-            SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, TextContent,
+            InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+            McpServer, NewSessionRequest, NewSessionResponse, PromptRequest, PromptResponse,
+            RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+            ResumeSessionRequest, ResumeSessionResponse, SessionId, SessionNotification,
+            SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+            StopReason, TextContent,
         },
         ProtocolVersion,
     },
@@ -135,11 +137,75 @@ impl AcpProtocol {
     }
 
     pub(crate) async fn new_session(&self, cwd: PathBuf) -> Result<NewSessionResponse, AcpError> {
+        self.new_session_with_mcp(cwd, Vec::new()).await
+    }
+
+    pub(crate) async fn new_session_with_mcp(
+        &self,
+        cwd: PathBuf,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<NewSessionResponse, AcpError> {
         self.connection
-            .send_request(NewSessionRequest::new(cwd))
+            .send_request(NewSessionRequest::new(cwd).mcp_servers(mcp_servers))
             .block_task()
             .await
             .map_err(|error| request_failed(AcpOperation::NewSession, error))
+    }
+
+    pub(crate) fn supports_load(&self) -> bool {
+        self.initialize.agent_capabilities.load_session
+    }
+
+    pub(crate) fn supports_resume(&self) -> bool {
+        self.initialize
+            .agent_capabilities
+            .session_capabilities
+            .resume
+            .is_some()
+    }
+
+    pub(crate) async fn load_session(
+        &self,
+        session_id: SessionId,
+        cwd: PathBuf,
+    ) -> Result<LoadSessionResponse, AcpError> {
+        self.load_session_with_mcp(session_id, cwd, Vec::new())
+            .await
+    }
+
+    pub(crate) async fn load_session_with_mcp(
+        &self,
+        session_id: SessionId,
+        cwd: PathBuf,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<LoadSessionResponse, AcpError> {
+        self.connection
+            .send_request(LoadSessionRequest::new(session_id, cwd).mcp_servers(mcp_servers))
+            .block_task()
+            .await
+            .map_err(|error| request_failed(AcpOperation::LoadSession, error))
+    }
+
+    pub(crate) async fn resume_session(
+        &self,
+        session_id: SessionId,
+        cwd: PathBuf,
+    ) -> Result<ResumeSessionResponse, AcpError> {
+        self.resume_session_with_mcp(session_id, cwd, Vec::new())
+            .await
+    }
+
+    pub(crate) async fn resume_session_with_mcp(
+        &self,
+        session_id: SessionId,
+        cwd: PathBuf,
+        mcp_servers: Vec<McpServer>,
+    ) -> Result<ResumeSessionResponse, AcpError> {
+        self.connection
+            .send_request(ResumeSessionRequest::new(session_id, cwd).mcp_servers(mcp_servers))
+            .block_task()
+            .await
+            .map_err(|error| request_failed(AcpOperation::ResumeSession, error))
     }
 
     pub(crate) async fn set_model(
@@ -345,6 +411,8 @@ pub(crate) enum AcpDisconnectReason {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AcpOperation {
     NewSession,
+    LoadSession,
+    ResumeSession,
     SetModel,
     Prompt,
     Cancel,

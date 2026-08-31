@@ -41,4 +41,3 @@ T03。
 ## Ticket-specific stop
 
 结构化输出必须靠解析不受约束的自然语言或重新调用 Conversation Adapter 时停止；应回到 typed/validated draft contract。
-

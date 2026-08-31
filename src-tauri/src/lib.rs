@@ -81,6 +81,10 @@ where
         .any(|argument| argument.as_ref() == STARTUP_SELF_CHECK_ARG)
 }
 
+pub fn has_team_mcp_stdio_arg() -> bool {
+    std::env::args().any(|argument| argument == "--team-mcp-stdio")
+}
+
 fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), String> {
     backend::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
@@ -181,6 +185,14 @@ pub fn run() {
         };
     let conversation_payload_policy_reparse_required = {
         let service = AppService::from_runtime(&runtime);
+        if let Err(error) = service.recover_team_runs() {
+            log_error(
+                "app.startup.team_recovery",
+                "failed to schedule durable Team runs",
+                &error,
+                &[],
+            );
+        }
         if let Err(error) = service.interrupt_stale_memory_runs() {
             log_error(
                 "app.startup.memory_recovery",
@@ -244,7 +256,9 @@ pub fn run() {
                 if state.allow_close.swap(false, Ordering::SeqCst) {
                     return;
                 }
-                if state.background_tasks.has_running_tasks() {
+                if state.background_tasks.has_running_tasks()
+                    || state.runtime.task_runtime().has_active_tasks()
+                {
                     api.prevent_close();
                     if state.exit_prompt_open.swap(true, Ordering::SeqCst) {
                         return;
@@ -338,6 +352,20 @@ pub fn run() {
             log_error("app.startup.tauri", "error while running AssetIWeave", &error, &[]);
             panic!("error while running AssetIWeave: {error}");
         });
+    let mut team_task_events = runtime.task_runtime().subscribe();
+    let task_event_app = app.handle().clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match team_task_events.recv().await {
+                Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::TeamRun => {
+                    let _ = task_event_app.emit("team-run-task-updated", snapshot);
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
     if conversation_full_sync_on_startup_enabled && conversation_payload_policy_reparse_required {
         let state = app.state::<AppState>();
         let params = backend::application::ConversationSyncParams {
@@ -367,7 +395,9 @@ pub fn run() {
             if state.allow_exit.swap(false, Ordering::SeqCst) {
                 return;
             }
-            if state.background_tasks.has_running_tasks() {
+            if state.background_tasks.has_running_tasks()
+                || state.runtime.task_runtime().has_active_tasks()
+            {
                 api.prevent_exit();
                 if state.exit_prompt_open.swap(true, Ordering::SeqCst) {
                     return;
@@ -523,6 +553,259 @@ pub fn run_engine_stdio() {
         eprintln!("{error}");
         std::process::exit(1);
     }
+}
+
+/// Runs the restricted Team MCP bridge used by ACP session declarations.
+/// The bridge is a separate process with only a tenant/member-scoped opaque
+/// credential in its environment; every operation still crosses AppService.
+pub fn run_team_mcp_stdio() {
+    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(backend::path_utils::app_db_path);
+    let runtime = match db_path.and_then(|path| {
+        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
+    }) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to initialize Team MCP runtime: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_TEAM_TOOL_TENANT_ID") {
+        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+            eprintln!("failed to activate Team MCP tenant: {error}");
+            std::process::exit(1);
+        }
+    }
+    let service = backend::application::AppService::from_runtime(&runtime);
+    let credential = std::env::var("ASSETIWEAVE_TEAM_TOOL_CREDENTIAL").unwrap_or_default();
+    let member_id = std::env::var("ASSETIWEAVE_TEAM_TOOL_MEMBER_ID").unwrap_or_default();
+    if credential.trim().is_empty() || member_id.trim().is_empty() {
+        eprintln!("Team MCP credentials are missing");
+        std::process::exit(1);
+    }
+    if let Err(error) = run_team_mcp_loop(&service, &credential, &member_id) {
+        eprintln!("Team MCP bridge stopped: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_team_mcp_loop(
+    service: &backend::application::AppService,
+    credential: &str,
+    member_id: &str,
+) -> Result<(), String> {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: serde_json::Value =
+            serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        let id = request.get("id").cloned();
+        let method = request
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if method.starts_with("notifications/") {
+            continue;
+        }
+        let result = match method {
+            "initialize" => Ok(team_mcp_initialize_result()),
+            "tools/list" => Ok(team_mcp_tools_result()),
+            "tools/call" => team_mcp_call(
+                service,
+                credential,
+                member_id,
+                request.get("params").unwrap_or(&serde_json::Value::Null),
+            ),
+            _ => Err("unsupported Team MCP method".to_string()),
+        };
+        let response = match (id, result) {
+            (Some(id), Ok(result)) => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result })
+            }
+            (Some(id), Err(error)) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32001, "message": error }
+            }),
+            (None, _) => continue,
+        };
+        serde_json::to_writer(&mut stdout, &response).map_err(|error| error.to_string())?;
+        stdout.write_all(b"\n").map_err(|error| error.to_string())?;
+        stdout.flush().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn team_mcp_initialize_result() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": "2025-06-18",
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": { "name": "assetiweave-team", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
+fn team_mcp_tools_result() -> serde_json::Value {
+    let object = |properties: serde_json::Value, required: &[&str]| {
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        })
+    };
+    serde_json::json!({
+        "tools": [
+            {
+                "name": "team_tasks",
+                "description": "List tasks owned by the authenticated Team member.",
+                "inputSchema": object(serde_json::json!({
+                    "team_id": { "type": "string" },
+                    "run_id": { "type": "string" }
+                }), &["team_id", "run_id"])
+            },
+            {
+                "name": "team_task_update",
+                "description": "Update only the authenticated member's Team task.",
+                "inputSchema": object(serde_json::json!({
+                    "team_id": { "type": "string" },
+                    "run_id": { "type": "string" },
+                    "task_id": { "type": "string" },
+                    "state": { "type": "string", "enum": ["running", "succeeded", "failed", "canceled"] },
+                    "result": { "type": ["string", "null"] },
+                    "error_code": { "type": ["string", "null"] }
+                }), &["team_id", "run_id", "task_id", "state"])
+            },
+            {
+                "name": "team_mailbox_send",
+                "description": "Send a scoped message to another frozen Team member.",
+                "inputSchema": object(serde_json::json!({
+                    "team_id": { "type": "string" },
+                    "run_id": { "type": "string" },
+                    "recipient_member_id": { "type": "string" },
+                    "task_id": { "type": ["string", "null"] },
+                    "message_type": { "type": "string" },
+                    "body": { "type": "string" },
+                    "idempotency_key": { "type": "string" }
+                }), &["team_id", "run_id", "recipient_member_id", "message_type", "body", "idempotency_key"])
+            },
+            {
+                "name": "team_mailbox_read",
+                "description": "Read messages addressed to the authenticated Team member.",
+                "inputSchema": object(serde_json::json!({
+                    "team_id": { "type": "string" },
+                    "run_id": { "type": "string" },
+                    "ack": { "type": "boolean" }
+                }), &["team_id", "run_id"])
+            }
+        ]
+    })
+}
+
+fn team_mcp_call(
+    service: &backend::application::AppService,
+    credential: &str,
+    member_id: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let name = params
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let string = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let required_string =
+        |key: &str| string(key).ok_or_else(|| format!("missing Team MCP argument: {key}"));
+    let team_id = required_string("team_id")?;
+    let run_id = required_string("run_id")?;
+    let value = match name {
+        "team_tasks" => serde_json::to_value(
+            service
+                .team_tool_list_tasks(
+                    credential,
+                    backend::models::TeamToolTaskListInput { team_id, run_id },
+                    member_id,
+                )
+                .map_err(|error| error.view().message)?,
+        )
+        .map_err(|error| error.to_string())?,
+        "team_task_update" => {
+            let state: backend::models::TeamTaskState =
+                serde_json::from_value(serde_json::json!(required_string("state")?))
+                    .map_err(|error| error.to_string())?;
+            serde_json::to_value(
+                service
+                    .team_tool_update_task(
+                        credential,
+                        backend::models::TeamTaskUpdateInput {
+                            team_id,
+                            run_id,
+                            task_id: required_string("task_id")?,
+                            member_id: member_id.to_string(),
+                            state,
+                            result: string("result"),
+                            error_code: string("error_code"),
+                        },
+                    )
+                    .map_err(|error| error.view().message)?,
+            )
+            .map_err(|error| error.to_string())?
+        }
+        "team_mailbox_send" => serde_json::to_value(
+            service
+                .team_tool_send_mailbox(
+                    credential,
+                    backend::models::TeamMailboxSendInput {
+                        team_id,
+                        run_id,
+                        task_id: string("task_id"),
+                        sender_member_id: member_id.to_string(),
+                        recipient_member_id: required_string("recipient_member_id")?,
+                        message_type: required_string("message_type")?,
+                        body: required_string("body")?,
+                        idempotency_key: required_string("idempotency_key")?,
+                    },
+                )
+                .map_err(|error| error.view().message)?,
+        )
+        .map_err(|error| error.to_string())?,
+        "team_mailbox_read" => serde_json::to_value(
+            service
+                .team_tool_read_mailbox(
+                    credential,
+                    backend::models::TeamMailboxReadInput {
+                        team_id,
+                        run_id,
+                        recipient_member_id: member_id.to_string(),
+                        ack: arguments
+                            .get("ack")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
+                    },
+                )
+                .map_err(|error| error.view().message)?,
+        )
+        .map_err(|error| error.to_string())?,
+        _ => return Err(format!("unsupported Team MCP tool: {name}")),
+    };
+    Ok(serde_json::json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&value).map_err(|error| error.to_string())? }]
+    }))
 }
 
 fn install_engine_termination_handlers(

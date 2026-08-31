@@ -66,16 +66,20 @@ function handleInitialize(message) {
   }
   const supportsClose = !["no_close", "initialize_timeout"].includes(mode);
   const supportsDelete = !["initialize_timeout", "no_delete", "no_delete_empty"].includes(mode);
+  const supportsLoad = !["initialize_timeout", "no_load", "load_error"].includes(mode);
+  const supportsResume = !["initialize_timeout", "no_resume", "resume_error"].includes(mode);
   respond(message.id, {
     protocolVersion: 1,
     agentCapabilities: supportsClose || supportsDelete
       ? {
+          loadSession: supportsLoad,
           sessionCapabilities: {
             ...(supportsClose ? { close: {} } : {}),
             ...(supportsDelete ? { delete: {} } : {}),
+            ...(supportsResume ? { resume: {} } : {}),
           },
-        }
-      : {},
+      }
+      : { loadSession: supportsLoad, sessionCapabilities: supportsResume ? { resume: {} } : {} },
     agentInfo: { name: "assetiweave-fake-acp", version: "1" },
   });
 }
@@ -122,6 +126,26 @@ function handleSetConfig(message) {
     return;
   }
   respond(message.id, { configOptions: [] });
+}
+
+function handleLoadSession(message) {
+  record("load", { sessionId: message.params?.sessionId });
+  if (mode === "load_error") {
+    fail(message.id);
+    return;
+  }
+  text("replayed:", message.params?.sessionId ?? sessionId);
+  text("fixture-history", message.params?.sessionId ?? sessionId);
+  respond(message.id, {});
+}
+
+function handleResumeSession(message) {
+  record("resume", { sessionId: message.params?.sessionId });
+  if (mode === "resume_error") {
+    fail(message.id);
+    return;
+  }
+  respond(message.id, {});
 }
 
 function handlePrompt(message) {
@@ -279,6 +303,10 @@ input.on("line", (line) => {
     handleNewSession(message);
   } else if (message.method === "session/set_config_option") {
     handleSetConfig(message);
+  } else if (message.method === "session/load") {
+    handleLoadSession(message);
+  } else if (message.method === "session/resume") {
+    handleResumeSession(message);
   } else if (message.method === "session/prompt") {
     handlePrompt(message);
   } else if (message.method === "session/cancel") {

@@ -251,13 +251,23 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "prompt.optimization.run",
-        tauri_command: Some("optimize_prompt"),
+        canonical_method: "conversation.command_projection.project",
+        tauri_command: Some("project_conversation_command_parts"),
         note: None,
     },
     SurfaceMapping {
-        canonical_method: "prompt.optimization.availability",
-        tauri_command: Some("check_prompt_optimization_availability"),
+        canonical_method: "conversation.data.audit",
+        tauri_command: Some("audit_conversation_data"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "conversation.data.repair",
+        tauri_command: Some("repair_conversation_data"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "conversation.data.rollback",
+        tauri_command: Some("rollback_conversation_data"),
         note: None,
     },
     SurfaceMapping {
@@ -323,21 +333,6 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     SurfaceMapping {
         canonical_method: "conversation.session.get",
         tauri_command: Some("get_conversation_session"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "conversation.data.audit",
-        tauri_command: Some("audit_conversation_data"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "conversation.data.repair",
-        tauri_command: Some("repair_conversation_data"),
-        note: None,
-    },
-    SurfaceMapping {
-        canonical_method: "conversation.data.rollback",
-        tauri_command: Some("rollback_conversation_data"),
         note: None,
     },
     SurfaceMapping {
@@ -586,6 +581,16 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "prompt.optimization.availability",
+        tauri_command: Some("check_prompt_optimization_availability"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "prompt.optimization.run",
+        tauri_command: Some("optimize_prompt"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "refresh_asset_mount_statuses",
         tauri_command: Some("refresh_asset_mount_statuses"),
         note: None,
@@ -773,6 +778,121 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
     SurfaceMapping {
         canonical_method: "target.catalog.refresh",
         tauri_command: Some("refresh_target_profile_descriptors"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.create",
+        tauri_command: Some("create_team"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.delete",
+        tauri_command: Some("delete_team"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.get",
+        tauri_command: Some("get_team"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.leader.chat",
+        tauri_command: Some("team_leader_chat"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.list",
+        tauri_command: Some("list_teams"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.mailbox.read",
+        tauri_command: Some("team_mailbox_read"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.mailbox.send",
+        tauri_command: Some("team_mailbox_send"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.cancel",
+        tauri_command: Some("team_run_cancel"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.confirm",
+        tauri_command: Some("team_run_confirm"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.draft",
+        tauri_command: Some("team_run_draft"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.get",
+        tauri_command: Some("team_run_get"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.latest",
+        tauri_command: Some("team_run_latest"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.restore",
+        tauri_command: Some("team_run_restore"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.review",
+        tauri_command: Some("team_run_review"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.task",
+        tauri_command: Some("team_run_task"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.run.tasks",
+        tauri_command: Some("list_team_run_tasks"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.task.update",
+        tauri_command: Some("team_task_update"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.tool.credential.issue",
+        tauri_command: Some("team_tool_credential_issue"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.tool.mailbox.read",
+        tauri_command: Some("team_tool_mailbox_read"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.tool.mailbox.send",
+        tauri_command: Some("team_tool_mailbox_send"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.tool.task.update",
+        tauri_command: Some("team_tool_task_update"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.tool.tasks",
+        tauri_command: Some("team_tool_tasks"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "team.update",
+        tauri_command: Some("update_team"),
         note: None,
     },
     SurfaceMapping {

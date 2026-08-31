@@ -178,9 +178,7 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
         sub_nav_items: BTreeMap::from([
             (
                 "team".to_string(),
-                vec![
-                    sub_nav("overview", "团队与花名册", "team.overview"),
-                ],
+                vec![sub_nav("overview", "团队与花名册", "team.overview")],
             ),
             (
                 "skills".to_string(),

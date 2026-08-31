@@ -792,6 +792,12 @@ fn execute_memory_dream_ai(
         },
         cancellation: cancellation.unwrap_or_default(),
         progress: None,
+        tenant_id: None,
+        execution_context_key: None,
+        binding: None,
+        replay: false,
+        restore_only: false,
+        team_tools: None,
     };
     crate::backend::ai_execution::execute_agent_blocking(runtime, request).map(|result| result.text)
 }

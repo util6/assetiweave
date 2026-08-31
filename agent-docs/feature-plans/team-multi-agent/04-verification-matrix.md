@@ -111,4 +111,3 @@ pnpm agent-catalog:check
 ## 交付证据
 
 每条命令记录：命令、退出码、实际测试数量或关键摘要。不得只写“tests pass”。手工 smoke 记录 Provider 版本、使用的 capability、结果和 cleanup，不记录 prompt 或正文。
-

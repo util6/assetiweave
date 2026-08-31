@@ -140,6 +140,58 @@ struct TeamDeleteParams {
     yes: bool,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamRunGetParams {
+    run_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamTaskRuntimeGetParams {
+    task_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamToolCredentialIssueParams {
+    team_id: String,
+    run_id: String,
+    member_id: String,
+    ttl_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamToolTaskListParams {
+    credential: String,
+    team_id: String,
+    run_id: String,
+    member_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamToolTaskUpdateParams {
+    credential: String,
+    team_id: String,
+    run_id: String,
+    task_id: String,
+    member_id: String,
+    state: crate::backend::models::TeamTaskState,
+    result: Option<String>,
+    error_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamToolMailboxSendParams {
+    credential: String,
+    #[serde(flatten)]
+    input: crate::backend::models::TeamMailboxSendInput,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamToolMailboxReadParams {
+    credential: String,
+    #[serde(flatten)]
+    input: crate::backend::models::TeamMailboxReadInput,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ParamViolation {
     param: String,
@@ -841,6 +893,193 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("yes", "Confirm deletion of team"),
         ],
         Some("assetiweave-cli team delete <team-id> --yes")
+    ),
+    command!(
+        "team.leader.chat",
+        "team.leader.chat",
+        "Send a message to the persistent Team leader session or replay its history",
+        Write,
+        Friendly,
+        false,
+        crate::backend::models::TeamLeaderChatInput,
+        Service => |service, params| service.leader_chat(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("message", "Leader message"),
+            param!("replay", "Replay the persistent leader history"),
+        ],
+        Some("assetiweave-cli team leader chat <team-id> --message <message>")
+    ),
+    command!(
+        "team.run.draft",
+        "team.run.draft",
+        "Ask the Team leader for a structured task draft",
+        Write,
+        Friendly,
+        false,
+        crate::backend::models::TeamDraftInput,
+        Service => |service, params| service.draft_team(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("leader_message", "Leader request", ["leaderMessage"]),
+        ],
+        Some("assetiweave-cli team run draft <team-id> --message <message>")
+    ),
+    command!(
+        "team.run.get",
+        "team.run.get",
+        "Get a Team run, frozen roster snapshot, task board, and mailbox count",
+        Read,
+        Friendly,
+        false,
+        TeamRunGetParams,
+        Service => |service, params| service.get_team_run(&params.run_id),
+        &[param!("run_id", "Run identifier", ["runId"])],
+        Some("assetiweave-cli team run get <run-id>")
+    ),
+    command!(
+        "team.run.restore",
+        "team.run.restore",
+        "Restore Team leader history and per-member readiness",
+        Read,
+        Friendly,
+        false,
+        TeamRunGetParams,
+        Service => |service, params| service.restore_team_run(&params.run_id),
+        &[param!("run_id", "Run identifier", ["runId"])],
+        Some("assetiweave-cli team run restore <run-id>")
+    ),
+    command!(
+        "team.run.review",
+        "team.run.review",
+        "Apply the human Team review assignment and order",
+        Write,
+        Friendly,
+        false,
+        crate::backend::models::TeamReviewInput,
+        Service => |service, params| service.review_team_run(params),
+        &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision"), param!("tasks", "Reviewed ordered task assignments")],
+        Some("assetiweave-cli team run review <run-id> --tasks <json>")
+    ),
+    command!(
+        "team.run.confirm",
+        "team.run.confirm",
+        "Atomically confirm a reviewed Team run and execute its frozen tasks",
+        HighRiskWrite,
+        Friendly,
+        false,
+        crate::backend::models::TeamConfirmInput,
+        Service => |service, params| service.confirm_team_run(params),
+        &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision")],
+        Some("assetiweave-cli team run confirm <run-id> --revision <revision> --yes")
+    ),
+    command!(
+        "team.tool.tasks",
+        "team.tool.tasks",
+        "List only tasks owned by the authenticated Team teammate",
+        Read,
+        Friendly,
+        false,
+        TeamToolTaskListParams,
+        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
+        Some("assetiweave-cli team tool tasks --credential <credential>")
+    ),
+    command!(
+        "team.tool.task.update",
+        "team.tool.task.update",
+        "Update a task using a scoped Team tool credential",
+        Write,
+        Friendly,
+        false,
+        TeamToolTaskUpdateParams,
+        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        &[param!("credential", "Scoped Team tool credential"), param!("task_id", "Task identifier", ["taskId"]), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
+        Some("assetiweave-cli team task update <task-id> --credential <credential>")
+    ),
+    command!(
+        "team.tool.mailbox.send",
+        "team.tool.mailbox.send",
+        "Send a mailbox message with a scoped Team tool credential",
+        Write,
+        Friendly,
+        false,
+        TeamToolMailboxSendParams,
+        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
+        Some("assetiweave-cli team mailbox send <run-id> --credential <credential>")
+    ),
+    command!(
+        "team.tool.mailbox.read",
+        "team.tool.mailbox.read",
+        "Read mailbox messages with a scoped Team tool credential",
+        Write,
+        Friendly,
+        false,
+        TeamToolMailboxReadParams,
+        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
+        Some("assetiweave-cli team mailbox read <run-id> --credential <credential>")
+    ),
+    command!(
+        "team_tool_credential_issue",
+        "team.tool.credential.issue",
+        "Issue a short-lived scoped Team tool credential",
+        Write,
+        App,
+        false,
+        TeamToolCredentialIssueParams,
+        Service => |service, params| service.issue_team_tool_credential(crate::backend::models::TeamToolCredentialInput { team_id: params.team_id, run_id: params.run_id, member_id: params.member_id, ttl_seconds: params.ttl_seconds }),
+        &[param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Teammate identifier", ["memberId"]), param!("ttl_seconds", "Credential lifetime", ["ttlSeconds"])],
+        None
+    ),
+    command!(
+        "team_tool_tasks",
+        "team.tool.tasks",
+        "List only tasks owned by the authenticated Team teammate",
+        Read,
+        App,
+        false,
+        TeamToolTaskListParams,
+        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
+        None
+    ),
+    command!(
+        "team_tool_task_update",
+        "team.tool.task.update",
+        "Update a task using a scoped Team tool credential",
+        Write,
+        App,
+        false,
+        TeamToolTaskUpdateParams,
+        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("task_id", "Task identifier", ["taskId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
+        None
+    ),
+    command!(
+        "team_tool_mailbox_send",
+        "team.tool.mailbox.send",
+        "Send a mailbox message with a scoped Team tool credential",
+        Write,
+        App,
+        false,
+        TeamToolMailboxSendParams,
+        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
+        None
+    ),
+    command!(
+        "team_tool_mailbox_read",
+        "team.tool.mailbox.read",
+        "Read mailbox messages with a scoped Team tool credential",
+        Write,
+        App,
+        false,
+        TeamToolMailboxReadParams,
+        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
+        None
     ),
     command!(
         "asset.list",
@@ -4241,6 +4480,197 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("yes", "Confirm deletion of team"),
         ],
+        None
+    ),
+    command!(
+        "team_leader_chat",
+        "team.leader.chat",
+        "Send a message to the persistent Team leader session or replay its history",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamLeaderChatInput,
+        Service => |service, params| service.leader_chat(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("message", "Leader message"),
+            param!("replay", "Replay the persistent leader history"),
+        ],
+        None
+    ),
+    command!(
+        "team_run_draft",
+        "team.run.draft",
+        "Ask the Team leader for a structured task draft",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamDraftInput,
+        Service => |service, params| service.draft_team(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("leader_message", "Leader request", ["leaderMessage"]),
+        ],
+        None
+    ),
+    command!(
+        "team_run_get",
+        "team.run.get",
+        "Get a Team run, frozen roster snapshot, task board, and mailbox count",
+        Read,
+        App,
+        false,
+        TeamRunGetParams,
+        Service => |service, params| service.get_team_run(&params.run_id),
+        &[param!("run_id", "Run identifier", ["runId"])],
+        None
+    ),
+    command!(
+        "team_run_latest",
+        "team.run.latest",
+        "Get the latest active or terminal Team run for a team",
+        Read,
+        App,
+        false,
+        TeamGetParams,
+        Service => |service, params| service.latest_team_run(&params.team_id),
+        &[param!("team_id", "Team identifier", ["teamId"])],
+        None
+    ),
+    command!(
+        "team_run_restore",
+        "team.run.restore",
+        "Restore Team leader history and per-member readiness",
+        Read,
+        App,
+        false,
+        TeamRunGetParams,
+        Service => |service, params| service.restore_team_run(&params.run_id),
+        &[param!("run_id", "Run identifier", ["runId"])],
+        None
+    ),
+    command!(
+        "team_run_cancel",
+        "team.run.cancel",
+        "Cancel the active Team background task",
+        Write,
+        App,
+        false,
+        TeamRunGetParams,
+        Service => |service, params| service.cancel_team_run_task(&params.run_id),
+        &[param!("run_id", "Run identifier", ["runId"])],
+        None
+    ),
+    command!(
+        "team_run_review",
+        "team.run.review",
+        "Apply the human Team review assignment and order",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamReviewInput,
+        Service => |service, params| service.review_team_run(params),
+        &[
+            param!("run_id", "Run identifier", ["runId"]),
+            param!("revision", "Run revision"),
+            param!("tasks", "Reviewed ordered task assignments"),
+        ],
+        None
+    ),
+    command!(
+        "team_run_confirm",
+        "team.run.confirm",
+        "Atomically confirm a reviewed Team run and execute its frozen tasks",
+        HighRiskWrite,
+        App,
+        false,
+        crate::backend::models::TeamConfirmInput,
+        Service => |service, params| service.confirm_team_run(params),
+        &[
+            param!("run_id", "Run identifier", ["runId"]),
+            param!("revision", "Run revision"),
+        ],
+        None
+    ),
+    command!(
+        "team_task_update",
+        "team.task.update",
+        "Update a Team task from its assigned teammate",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamTaskUpdateInput,
+        Service => |service, params| service.update_team_task(params),
+        &[
+            param!("task_id", "Task identifier", ["taskId"]),
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("run_id", "Run identifier", ["runId"]),
+            param!("member_id", "Member identifier", ["memberId"]),
+            param!("state", "Task state"),
+            param!("result", "Task result"),
+            param!("error_code", "Task error code", ["errorCode"]),
+        ],
+        None
+    ),
+    command!(
+        "team_mailbox_send",
+        "team.mailbox.send",
+        "Send an idempotent message through a Team run mailbox",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamMailboxSendInput,
+        Service => |service, params| service.send_team_mailbox(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("run_id", "Run identifier", ["runId"]),
+            param!("sender_member_id", "Sender member", ["senderMemberId"]),
+            param!("recipient_member_id", "Recipient member", ["recipientMemberId"]),
+            param!("message_type", "Message type", ["messageType"]),
+            param!("body", "Message body"),
+            param!("idempotency_key", "Idempotency key", ["idempotencyKey"]),
+        ],
+        None
+    ),
+    command!(
+        "team_mailbox_read",
+        "team.mailbox.read",
+        "Read and optionally acknowledge a Team run mailbox",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamMailboxReadInput,
+        Service => |service, params| service.read_team_mailbox(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("run_id", "Run identifier", ["runId"]),
+            param!("recipient_member_id", "Recipient member", ["recipientMemberId"]),
+            param!("ack", "Acknowledge messages"),
+        ],
+        None
+    ),
+    command!(
+        "team_run_task",
+        "team.run.task",
+        "Get a Team background task snapshot",
+        Read,
+        App,
+        false,
+        TeamTaskRuntimeGetParams,
+        Service => |service, params| service.team_run_task(&params.task_id),
+        &[param!("task_id", "Background task identifier", ["taskId"])],
+        None
+    ),
+    command!(
+        "list_team_run_tasks",
+        "team.run.tasks",
+        "List Team background task snapshots",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_team_run_tasks(),
+        &[],
         None
     ),
 ];

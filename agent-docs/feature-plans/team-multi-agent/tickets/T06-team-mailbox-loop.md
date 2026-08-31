@@ -40,4 +40,3 @@ MCP transport、CLI fallback、多 Teammate 调度、restart outbox 和长期 ma
 ## Ticket-specific stop
 
 如果必须把 mailbox 当作 UI 聊天记录，或用前端本地状态作为 unread Authority，停止并报告。
-

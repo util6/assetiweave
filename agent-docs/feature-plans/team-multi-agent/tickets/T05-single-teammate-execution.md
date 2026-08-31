@@ -40,4 +40,3 @@ Leader 最终总结、TeamMailboxMessage、Team MCP、CLI Agent 工具、多任�
 ## Ticket-specific stop
 
 如果 dispatch 只能由前端 effect 驱动，或需要把 TaskRuntime 当作 TeamTask 权威存储，停止并回到 AppService+SQLite。
-

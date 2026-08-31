@@ -4,7 +4,9 @@ use std::{
     time::Instant,
 };
 
-use agent_client_protocol::schema::v1::{SessionId, StopReason};
+use agent_client_protocol::schema::v1::{
+    EnvVariable, McpServer, McpServerStdio, SessionId, StopReason,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -49,8 +51,18 @@ impl AcpExecutionBackend {
             return Err(cancelled_error(definition));
         }
         let started = Instant::now();
-        let workspace = create_workspace(&self.workspace_root)?;
+        let (workspace, bound_session) = if let Some(binding) = request.binding.as_ref() {
+            let workspace = PathBuf::from(&binding.workspace_path);
+            if !workspace.is_absolute() || !workspace.is_dir() {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            (workspace, Some(binding.provider_session_id.clone()))
+        } else {
+            (create_workspace(&self.workspace_root)?, None)
+        };
         let mut guard = AcpExecutionGuard::new(workspace);
+        guard.bound_session = bound_session;
+        guard.preserve_session = matches!(request.session_mode, AgentSessionMode::Persistent);
 
         let outcome = {
             let execution = run_execution(&mut guard, definition, &request, started);
@@ -71,6 +83,13 @@ impl AcpExecutionBackend {
         if outcome.is_err() {
             request.report_phase(AiExecutionPhase::Cancelling);
         }
+        // A bound Persistent session is the durable resume anchor. Keep it
+        // intact even when the restore attempt itself fails so the next
+        // recovery pass can retry the same provider session instead of
+        // turning a transient provider error into permanent data loss.
+        guard.preserve_session =
+            guard.preserve_session && (outcome.is_ok() || request.binding.is_some());
+        guard.preserve_workspace = guard.preserve_session;
         request.report_phase(AiExecutionPhase::Closing);
         let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
         request.report_cleanup(AiExecutionCleanupReport {
@@ -118,18 +137,20 @@ impl AcpExecutionBackend {
         if let Some(exit_code) = cleanup.exit_code {
             cleanup_fields.push(("exit_code", exit_code.to_string()));
         }
-        if cleanup.failures.is_empty() {
-            log_info(
-                "ai_execution.cleanup",
-                "AI execution cleanup completed",
-                &cleanup_fields,
-            );
-        } else {
-            log_warn(
-                "ai_execution.cleanup",
-                "AI execution cleanup reported failures",
-                &cleanup_fields,
-            );
+        if !request.replay {
+            if cleanup.failures.is_empty() {
+                log_info(
+                    "ai_execution.cleanup",
+                    "AI execution cleanup completed",
+                    &cleanup_fields,
+                );
+            } else {
+                log_warn(
+                    "ai_execution.cleanup",
+                    "AI execution cleanup reported failures",
+                    &cleanup_fields,
+                );
+            }
         }
 
         if cleanup.failures.is_empty() {
@@ -295,6 +316,12 @@ fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest 
         },
         cancellation: AiExecutionCancellation::default(),
         progress: None,
+        tenant_id: None,
+        execution_context_key: None,
+        binding: None,
+        replay: false,
+        restore_only: false,
+        team_tools: None,
     }
 }
 
@@ -401,20 +428,30 @@ async fn run_execution(
     )
     .await
     .map_err(|error| map_process_error(definition, error))?;
-    log_info(
-        "ai_execution.process",
-        "AI agent process started",
-        &[
-            ("execution_id", request.execution_id.clone()),
-            ("agent_id", definition.id.to_string()),
-            ("protocol", "acp".to_string()),
-            ("phase", "spawning".to_string()),
-            ("pid", process.process_id().to_string()),
-            ("arg_count", definition.args.len().to_string()),
-            ("env_key_count", definition.env.len().to_string()),
-            ("cwd_kind", "ephemeral".to_string()),
-        ],
-    );
+    if !request.replay {
+        log_info(
+            "ai_execution.process",
+            "AI agent process started",
+            &[
+                ("execution_id", request.execution_id.clone()),
+                ("agent_id", definition.id.to_string()),
+                ("protocol", "acp".to_string()),
+                ("phase", "spawning".to_string()),
+                ("pid", process.process_id().to_string()),
+                ("arg_count", definition.args.len().to_string()),
+                ("env_key_count", definition.env.len().to_string()),
+                (
+                    "cwd_kind",
+                    if matches!(request.session_mode, AgentSessionMode::Persistent) {
+                        "stable"
+                    } else {
+                        "ephemeral"
+                    }
+                    .to_string(),
+                ),
+            ],
+        );
+    }
     guard.process = Some(process);
 
     let (stdin, stdout) = guard
@@ -429,21 +466,82 @@ async fn run_execution(
     let mut config = AcpConnectConfig::new(request.limits.initialize_timeout);
     config.event_channel_capacity = PROTOCOL_EVENT_CAPACITY;
     request.report_phase(AiExecutionPhase::Initializing);
-    let (protocol, channels) = AcpProtocol::connect(stdin, stdout, config)
+    let (protocol, mut channels) = AcpProtocol::connect(stdin, stdout, config)
         .await
         .map_err(|error| map_acp_error("initialize", error))?;
     guard.protocol = Some(protocol);
 
     request.report_phase(AiExecutionPhase::CreatingSession);
-    let session = guard
+    let protocol = guard
         .protocol
         .as_ref()
-        .expect("protocol stored before session")
-        .new_session(guard.workspace.clone())
-        .await
-        .map_err(|error| map_acp_error("session_new", error))?
-        .session_id;
+        .expect("protocol stored before session");
+    let mcp_servers = team_mcp_servers(request.team_tools.as_ref())?;
+    let session = if let Some(bound_session) = guard.bound_session.clone() {
+        let session_id = SessionId::new(bound_session);
+        if request.replay {
+            if !protocol.supports_load() {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            protocol
+                .load_session_with_mcp(
+                    session_id.clone(),
+                    guard.workspace.clone(),
+                    mcp_servers.clone(),
+                )
+                .await
+                .map_err(|_| AiExecutionError::ResumeUnavailable)?;
+        } else {
+            if !protocol.supports_resume() {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            protocol
+                .resume_session_with_mcp(
+                    session_id.clone(),
+                    guard.workspace.clone(),
+                    mcp_servers.clone(),
+                )
+                .await
+                .map_err(|_| AiExecutionError::ResumeUnavailable)?;
+        }
+        session_id
+    } else if request.replay {
+        return Err(AiExecutionError::ResumeUnavailable);
+    } else {
+        protocol
+            .new_session_with_mcp(guard.workspace.clone(), mcp_servers)
+            .await
+            .map_err(|error| map_acp_error("session_new", error))?
+            .session_id
+    };
     guard.session_id = Some(session.clone());
+
+    if request.restore_only {
+        return Ok(AiExecutionResult {
+            text: String::new(),
+            agent_id: definition.id.clone(),
+            protocol: AgentProtocol::Acp,
+            requested_model: request.model.clone(),
+            elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            persistent_binding: None,
+            replay_text: None,
+        });
+    }
+
+    if request.replay {
+        request.report_phase(AiExecutionPhase::Prompting);
+        let replay_text =
+            collect_replay_text(&mut channels.events, &session, request.limits.text_bytes).await;
+        return Ok(AiExecutionResult {
+            text: replay_text.clone(),
+            agent_id: definition.id.clone(),
+            protocol: AgentProtocol::Acp,
+            requested_model: request.model.clone(),
+            elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            persistent_binding: None,
+            replay_text: Some(replay_text),
+        });
+    }
 
     if let Some(model) = request.model.as_deref() {
         request.report_phase(AiExecutionPhase::Configuring);
@@ -476,7 +574,7 @@ async fn run_execution(
             .as_ref()
             .expect("process stored before prompt"),
         channels,
-        session,
+        session.clone(),
         request,
         definition,
     )
@@ -488,7 +586,84 @@ async fn run_execution(
         protocol: AgentProtocol::Acp,
         requested_model: request.model.clone(),
         elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        persistent_binding: if matches!(request.session_mode, AgentSessionMode::Persistent)
+            && request.binding.is_none()
+        {
+            Some(crate::backend::ai_execution::PersistentExecutionBinding {
+                tenant_id: request.tenant_id.clone().unwrap_or_default(),
+                execution_context_key: request.execution_context_key.clone().unwrap_or_default(),
+                provider_session_id: session.to_string(),
+                agent_id: definition.id.to_string(),
+                installation_id: definition.installation_id.clone(),
+                model: request.model.clone(),
+                workspace_path: guard.workspace.to_string_lossy().into_owned(),
+                binding_version: 1,
+                provider_metadata_json: "{\"protocol\":\"acp\"}".to_string(),
+            })
+        } else {
+            None
+        },
+        replay_text: None,
     })
+}
+
+fn team_mcp_servers(
+    team_tools: Option<&crate::backend::ai_execution::AiTeamTools>,
+) -> Result<Vec<McpServer>, AiExecutionError> {
+    let Some(team_tools) = team_tools else {
+        return Ok(Vec::new());
+    };
+    let executable = std::env::current_exe().map_err(|_| AiExecutionError::Protocol {
+        operation: "team_mcp_executable",
+    })?;
+    Ok(vec![McpServer::Stdio(
+        McpServerStdio::new("assetiweave-team", executable)
+            .args(vec!["--team-mcp-stdio".to_string()])
+            .env(vec![
+                EnvVariable::new("ASSETIWEAVE_DB_PATH", team_tools.database_path.clone()),
+                EnvVariable::new(
+                    "ASSETIWEAVE_TEAM_TOOL_TENANT_ID",
+                    team_tools.tenant_id.clone(),
+                ),
+                EnvVariable::new(
+                    "ASSETIWEAVE_TEAM_TOOL_MEMBER_ID",
+                    team_tools.member_id.clone(),
+                ),
+                EnvVariable::new(
+                    "ASSETIWEAVE_TEAM_TOOL_CREDENTIAL",
+                    team_tools.credential.clone(),
+                ),
+            ]),
+    )])
+}
+
+async fn collect_replay_text(
+    events: &mut tokio::sync::mpsc::Receiver<
+        crate::backend::agents::protocol::acp::AcpRuntimeEvent,
+    >,
+    session_id: &SessionId,
+    max_bytes: usize,
+) -> String {
+    let deadline = tokio::time::sleep(std::time::Duration::from_millis(250));
+    tokio::pin!(deadline);
+    let mut text = String::new();
+    loop {
+        tokio::select! {
+            _ = &mut deadline => break,
+            event = events.recv() => {
+                let Some(event) = event else { break; };
+                match event {
+                    crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentText { session_id: event_session, text: chunk } if &event_session == session_id => {
+                        if text.len().saturating_add(chunk.len()) > max_bytes { break; }
+                        text.push_str(&chunk);
+                    }
+                    crate::backend::agents::protocol::acp::AcpRuntimeEvent::TurnCompleted { session_id: event_session, .. } if &event_session == session_id => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    text
 }
 
 async fn run_prompt_and_aggregate(
@@ -547,21 +722,23 @@ async fn run_prompt_and_aggregate(
                             _ => Err(AiExecutionError::Protocol { operation: "prompt_stopped" }),
                         };
                         let text_bytes = outcome.as_ref().map(|text| text.len()).unwrap_or_default();
-                        log_info(
-                            "ai_execution.output",
-                            "AI execution output aggregated",
-                            &[
-                                ("execution_id", request.execution_id.clone()),
-                                ("agent_id", definition.id.to_string()),
-                                ("protocol", "acp".to_string()),
-                                ("phase", "prompting".to_string()),
-                                ("text_bytes", text_bytes.to_string()),
-                                ("chunk_count", diagnostics.0.to_string()),
-                                ("thinking_chunk_count", diagnostics.1.to_string()),
-                                ("ignored_session_event_count", diagnostics.2.to_string()),
-                                ("stop_reason", format!("{stop_reason:?}").to_ascii_lowercase()),
-                            ],
-                        );
+                        if !request.replay {
+                            log_info(
+                                "ai_execution.output",
+                                "AI execution output aggregated",
+                                &[
+                                    ("execution_id", request.execution_id.clone()),
+                                    ("agent_id", definition.id.to_string()),
+                                    ("protocol", "acp".to_string()),
+                                    ("phase", "prompting".to_string()),
+                                    ("text_bytes", text_bytes.to_string()),
+                                    ("chunk_count", diagnostics.0.to_string()),
+                                    ("thinking_chunk_count", diagnostics.1.to_string()),
+                                    ("ignored_session_event_count", diagnostics.2.to_string()),
+                                    ("stop_reason", format!("{stop_reason:?}").to_ascii_lowercase()),
+                                ],
+                            );
+                        }
                         return outcome;
                     }
                 }
@@ -671,6 +848,9 @@ struct AcpExecutionGuard {
     protocol: Option<AcpProtocol>,
     session_id: Option<SessionId>,
     cleaned: bool,
+    bound_session: Option<String>,
+    preserve_session: bool,
+    preserve_workspace: bool,
 }
 
 impl AcpExecutionGuard {
@@ -681,6 +861,9 @@ impl AcpExecutionGuard {
             protocol: None,
             session_id: None,
             cleaned: false,
+            bound_session: None,
+            preserve_session: false,
+            preserve_workspace: false,
         }
     }
 
@@ -715,41 +898,52 @@ impl AcpExecutionGuard {
                 }
             }
             if let Some(session_id) = self.session_id.clone() {
-                match tokio::time::timeout(
-                    request.limits.close_timeout,
-                    protocol.close_session(session_id),
-                )
-                .await
-                {
-                    Ok(Ok(Some(_))) => report.session_closed = Some(true),
-                    Ok(Ok(None)) => report.session_closed = None,
-                    Ok(Err(_)) => report.failures.push("close".to_owned()),
-                    Err(_) => report.failures.push("close_timeout".to_owned()),
+                if self.preserve_session {
+                    // Persistent keeps the provider session resumable; only
+                    // the process is reaped below.
+                } else {
+                    match tokio::time::timeout(
+                        request.limits.close_timeout,
+                        protocol.close_session(session_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(Some(_))) => report.session_closed = Some(true),
+                        Ok(Ok(None)) => report.session_closed = None,
+                        Ok(Err(_)) => report.failures.push("close".to_owned()),
+                        Err(_) => report.failures.push("close_timeout".to_owned()),
+                    }
                 }
             }
             if let Some(session_id) = self.session_id.clone() {
-                match tokio::time::timeout(
-                    request.limits.close_timeout,
-                    protocol.delete_session(session_id),
-                )
-                .await
-                {
-                    Ok(Ok(Some(_))) => {
-                        report.session_deleted = Some(true);
-                        report.session_delete_method = Some(AiExecutionSessionDeleteMethod::Acp);
-                    }
-                    Ok(Ok(None)) => standard_delete_failure = Some("delete_unsupported"),
-                    Ok(Err(AcpError::RequestFailed { message, .. }))
-                        if matches_declared_not_found(
-                            &message,
-                            &definition.session_cleanup_not_found_markers,
-                        ) =>
+                if self.preserve_session {
+                    // Persistent sessions must not be deleted.
+                } else {
+                    match tokio::time::timeout(
+                        request.limits.close_timeout,
+                        protocol.delete_session(session_id),
+                    )
+                    .await
                     {
-                        report.session_deleted = Some(true);
-                        report.session_delete_method = Some(AiExecutionSessionDeleteMethod::Acp);
+                        Ok(Ok(Some(_))) => {
+                            report.session_deleted = Some(true);
+                            report.session_delete_method =
+                                Some(AiExecutionSessionDeleteMethod::Acp);
+                        }
+                        Ok(Ok(None)) => standard_delete_failure = Some("delete_unsupported"),
+                        Ok(Err(AcpError::RequestFailed { message, .. }))
+                            if matches_declared_not_found(
+                                &message,
+                                &definition.session_cleanup_not_found_markers,
+                            ) =>
+                        {
+                            report.session_deleted = Some(true);
+                            report.session_delete_method =
+                                Some(AiExecutionSessionDeleteMethod::Acp);
+                        }
+                        Ok(Err(_)) => standard_delete_failure = Some("delete"),
+                        Err(_) => standard_delete_failure = Some("delete_timeout"),
                     }
-                    Ok(Err(_)) => standard_delete_failure = Some("delete"),
-                    Err(_) => standard_delete_failure = Some("delete_timeout"),
                 }
             }
             if protocol
@@ -794,7 +988,10 @@ impl AcpExecutionGuard {
         }
         self.process.take();
 
-        if self.session_id.is_some() && report.session_deleted != Some(true) {
+        if !self.preserve_session
+            && self.session_id.is_some()
+            && report.session_deleted != Some(true)
+        {
             if let Some(cleanup) = definition.session_cleanup.as_ref() {
                 let session_id = self
                     .session_id
@@ -864,12 +1061,16 @@ impl AcpExecutionGuard {
             }
         }
 
-        report.workspace_removed = match fs::remove_dir_all(&self.workspace) {
-            Ok(()) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => {
-                report.failures.push("workspace_remove".to_owned());
-                false
+        report.workspace_removed = if self.preserve_workspace {
+            false
+        } else {
+            match fs::remove_dir_all(&self.workspace) {
+                Ok(()) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(_) => {
+                    report.failures.push("workspace_remove".to_owned());
+                    false
+                }
             }
         };
         report
@@ -1013,6 +1214,12 @@ mod tests {
             },
             cancellation: AiExecutionCancellation::default(),
             progress: None,
+            tenant_id: None,
+            execution_context_key: None,
+            binding: None,
+            replay: false,
+            restore_only: false,
+            team_tools: None,
         }
     }
 
@@ -1260,21 +1467,58 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn persistent_mode_is_rejected_before_spawning_the_agent() {
-        let (root, record) = test_paths("persistent-rejected");
+    async fn persistent_mode_creates_a_stable_binding_and_reuses_resume() {
+        let (root, record) = test_paths("persistent-resume");
         let workspace_root = root.join("workspaces");
         let backend = AcpExecutionBackend::new(workspace_root.clone());
         let definition = definition("happy", &record);
-        let mut request = request(None);
-        request.session_mode = AgentSessionMode::Persistent;
-
-        let error = backend
-            .execute(&definition, request)
+        let mut first_request = request(None);
+        first_request.session_mode = AgentSessionMode::Persistent;
+        first_request.tenant_id = Some("tenant-fixture".to_string());
+        first_request.execution_context_key = Some("team-member-fixture".to_string());
+        let first = backend
+            .execute(&definition, first_request)
             .await
-            .expect_err("Persistent is reserved for a later specification");
+            .expect("first persistent execution");
+        let binding = first
+            .persistent_binding
+            .clone()
+            .expect("first execution returns a binding");
+        assert!(Path::new(&binding.workspace_path).is_dir());
 
-        assert_eq!(error.to_view().code, "unsupported_session_mode");
-        assert!(!record.exists(), "the Agent process must not be started");
+        let mut second_request = request(None);
+        second_request.session_mode = AgentSessionMode::Persistent;
+        second_request.tenant_id = Some("tenant-fixture".to_string());
+        second_request.execution_context_key = Some("team-member-fixture".to_string());
+        second_request.binding = Some(binding.clone());
+        backend
+            .execute(&definition, second_request)
+            .await
+            .expect("resumed persistent execution");
+
+        let mut replay_request = request(None);
+        replay_request.session_mode = AgentSessionMode::Persistent;
+        replay_request.tenant_id = Some("tenant-fixture".to_string());
+        replay_request.execution_context_key = Some("team-member-fixture".to_string());
+        replay_request.binding = Some(binding);
+        replay_request.replay = true;
+        let replay = backend
+            .execute(&definition, replay_request)
+            .await
+            .expect("persistent history replay");
+        assert_eq!(
+            replay.replay_text.as_deref(),
+            Some("replayed:fixture-history")
+        );
+
+        let records = records(&record);
+        assert_eq!(records.matches("\"event\":\"new\"").count(), 1);
+        assert_eq!(records.matches("\"event\":\"resume\"").count(), 1);
+        assert_eq!(records.matches("\"event\":\"load\"").count(), 1);
+        assert_eq!(records.matches("\"event\":\"prompt\"").count(), 2);
+        assert!(!records.contains("\"event\":\"close\""));
+        assert!(!records.contains("\"event\":\"delete\""));
+        assert!(Path::new(&first.persistent_binding.unwrap().workspace_path).is_dir());
         let _ = fs::remove_dir_all(root);
     }
 

@@ -85,7 +85,10 @@ use crate::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
         source_input_log_fields, source_log_fields, status_summary_fields,
     },
-    backend::runtime::{tasks::TaskContext, AppError},
+    backend::runtime::{
+        tasks::{TaskContext, TaskFilter, TaskKind},
+        AppError,
+    },
 };
 use serde_json::Value;
 use std::{
@@ -2186,6 +2189,12 @@ fn prepare_ai_execution_task_for_tenant(
         limits: AiExecutionLimits::default(),
         cancellation,
         progress: Some(progress),
+        tenant_id: None,
+        execution_context_key: None,
+        binding: None,
+        replay: false,
+        restore_only: false,
+        team_tools: None,
     };
     emitter.emit(&snapshot);
     Ok((snapshot, request))
@@ -3521,6 +3530,166 @@ pub(crate) fn delete_team(state: State<'_, AppState>, team_id: String) -> Runtim
     AppService::from_runtime(&state.runtime).delete_team(&team_id)
 }
 
+#[tauri::command]
+pub(crate) fn team_leader_chat(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamLeaderChatInput,
+) -> RuntimeAppResult<crate::backend::models::TeamLeaderChatResult> {
+    AppService::from_runtime(&state.runtime).leader_chat(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_draft(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamDraftInput,
+) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
+    AppService::from_runtime(&state.runtime).draft_team(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_get(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> RuntimeAppResult<Option<crate::backend::models::TeamRunSnapshot>> {
+    AppService::from_runtime(&state.runtime).get_team_run(&run_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_latest(
+    state: State<'_, AppState>,
+    team_id: String,
+) -> RuntimeAppResult<Option<crate::backend::models::TeamRunSnapshot>> {
+    AppService::from_runtime(&state.runtime).latest_team_run(&team_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_restore(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> RuntimeAppResult<crate::backend::runtime::tasks::TaskSnapshot> {
+    AppService::from_runtime(&state.runtime).restore_team_run(&run_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_cancel(
+    state: State<'_, AppState>,
+    run_id: String,
+) -> RuntimeAppResult<crate::backend::runtime::tasks::TaskSnapshot> {
+    AppService::from_runtime(&state.runtime).cancel_team_run_task(&run_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_task(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> RuntimeAppResult<Option<crate::backend::runtime::tasks::TaskSnapshot>> {
+    let service = AppService::from_runtime(&state.runtime);
+    Ok(state
+        .runtime
+        .task_runtime()
+        .get_for_tenant(service.tenant_id(), &task_id)
+        .filter(|snapshot| snapshot.kind == TaskKind::TeamRun))
+}
+
+#[tauri::command]
+pub(crate) fn list_team_run_tasks(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<crate::backend::runtime::tasks::TaskSnapshot>> {
+    let service = AppService::from_runtime(&state.runtime);
+    Ok(state.runtime.task_runtime().list_for_tenant(
+        service.tenant_id(),
+        TaskFilter {
+            kind: Some(TaskKind::TeamRun),
+            active_only: false,
+        },
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn team_run_review(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamReviewInput,
+) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
+    AppService::from_runtime(&state.runtime).review_team_run(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_run_confirm(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamConfirmInput,
+) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
+    AppService::from_runtime(&state.runtime).confirm_team_run(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_task_update(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamTaskUpdateInput,
+) -> RuntimeAppResult<crate::backend::models::TeamTask> {
+    AppService::from_runtime(&state.runtime).update_team_task(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_mailbox_send(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamMailboxSendInput,
+) -> RuntimeAppResult<crate::backend::models::TeamMailboxMessage> {
+    AppService::from_runtime(&state.runtime).send_team_mailbox(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_mailbox_read(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamMailboxReadInput,
+) -> RuntimeAppResult<Vec<crate::backend::models::TeamMailboxMessage>> {
+    AppService::from_runtime(&state.runtime).read_team_mailbox(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_tool_credential_issue(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamToolCredentialInput,
+) -> RuntimeAppResult<crate::backend::models::TeamToolCredential> {
+    AppService::from_runtime(&state.runtime).issue_team_tool_credential(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_tool_tasks(
+    state: State<'_, AppState>,
+    credential: String,
+    input: crate::backend::models::TeamToolTaskListInput,
+    member_id: String,
+) -> RuntimeAppResult<Vec<crate::backend::models::TeamTask>> {
+    AppService::from_runtime(&state.runtime).team_tool_list_tasks(&credential, input, &member_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_tool_task_update(
+    state: State<'_, AppState>,
+    credential: String,
+    input: crate::backend::models::TeamTaskUpdateInput,
+) -> RuntimeAppResult<crate::backend::models::TeamTask> {
+    AppService::from_runtime(&state.runtime).team_tool_update_task(&credential, input)
+}
+
+#[tauri::command]
+pub(crate) fn team_tool_mailbox_send(
+    state: State<'_, AppState>,
+    credential: String,
+    input: crate::backend::models::TeamMailboxSendInput,
+) -> RuntimeAppResult<crate::backend::models::TeamMailboxMessage> {
+    AppService::from_runtime(&state.runtime).team_tool_send_mailbox(&credential, input)
+}
+
+#[tauri::command]
+pub(crate) fn team_tool_mailbox_read(
+    state: State<'_, AppState>,
+    credential: String,
+    input: crate::backend::models::TeamMailboxReadInput,
+) -> RuntimeAppResult<Vec<crate::backend::models::TeamMailboxMessage>> {
+    AppService::from_runtime(&state.runtime).team_tool_read_mailbox(&credential, input)
+}
+
 pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
@@ -3713,7 +3882,25 @@ pub(crate) fn command_handler(
         get_team,
         list_teams,
         update_team,
-        delete_team
+        delete_team,
+        team_leader_chat,
+        team_run_draft,
+        team_run_get,
+        team_run_latest,
+        team_run_restore,
+        team_run_cancel,
+        team_run_task,
+        list_team_run_tasks,
+        team_run_review,
+        team_run_confirm,
+        team_task_update,
+        team_mailbox_send,
+        team_mailbox_read,
+        team_tool_credential_issue,
+        team_tool_tasks,
+        team_tool_task_update,
+        team_tool_mailbox_send,
+        team_tool_mailbox_read
     ]
 }
 
@@ -3768,6 +3955,8 @@ mod tests {
                     protocol: crate::backend::agents::types::AgentProtocol::Acp,
                     requested_model: request.model,
                     elapsed_ms: 1,
+                    persistent_binding: None,
+                    replay_text: None,
                 })
             })
         }

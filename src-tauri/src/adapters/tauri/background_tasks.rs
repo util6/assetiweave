@@ -4003,6 +4003,8 @@ mod tests {
             protocol: crate::backend::agents::types::AgentProtocol::Acp,
             requested_model: None,
             elapsed_ms: 1,
+            persistent_binding: None,
+            replay_text: None,
         }
     }
 

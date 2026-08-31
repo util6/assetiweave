@@ -435,6 +435,12 @@ fn execute_agent_translation(
         limits,
         cancellation: AiExecutionCancellation::default(),
         progress: None,
+        tenant_id: None,
+        execution_context_key: None,
+        binding: None,
+        replay: false,
+        restore_only: false,
+        team_tools: None,
     };
     request.validate().map_err(app_error_from_ai)?;
     let result = execute_agent_blocking(runtime, request).map_err(app_error_from_ai)?;
@@ -597,6 +603,8 @@ mod tests {
                     protocol: AgentProtocol::Acp,
                     requested_model: request.model,
                     elapsed_ms: 1,
+                    persistent_binding: None,
+                    replay_text: None,
                 })
             })
         }

@@ -41,4 +41,3 @@ T06。
 ## Ticket-specific stop
 
 需要把 token 写入 Agent Market/Team 持久表，或让 MCP handler 直接使用 repository 时停止。
-

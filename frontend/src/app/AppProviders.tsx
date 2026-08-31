@@ -11,6 +11,7 @@ import { AppUpdateProvider } from "./updates/AppUpdateProvider";
 import { ConversationCardKindRegistryProvider } from "../components/conversations/ConversationCardKindRegistry";
 import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
 import { ConversationDataMaintenanceProvider } from "./backgroundTasks/ConversationDataMaintenanceProvider";
+import { TeamTaskProvider } from "./backgroundTasks/TeamTaskProvider";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
@@ -25,7 +26,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
                     <SearchIndexProvider>
                       <SkillBackupProvider>
                         <CatalogTaskProvider>
-                          <AppUpdateProvider>{children}</AppUpdateProvider>
+                          <TeamTaskProvider>
+                            <AppUpdateProvider>{children}</AppUpdateProvider>
+                          </TeamTaskProvider>
                         </CatalogTaskProvider>
                       </SkillBackupProvider>
                     </SearchIndexProvider>

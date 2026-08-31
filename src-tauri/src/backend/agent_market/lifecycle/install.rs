@@ -244,6 +244,7 @@ async fn materialize_and_activate(
         "program": active_program.to_string_lossy(),
         "args": materialized.args,
         "env": [],
+        "capabilities": item.capabilities,
         "modelDiscoveryArgs": model_discovery_args(distribution),
         "sessionCleanupArgs": session_cleanup_args(distribution),
         "sessionCleanupNotFoundMarkers": distribution.session_cleanup_not_found_markers(),
@@ -464,7 +465,11 @@ fn definition_for(
             .iter()
             .map(|(name, value)| crate::backend::agents::types::AgentEnvEntry::new(name, value))
             .collect(),
-        declared_capabilities: DeclaredAgentCapabilities::acp_text(),
+        declared_capabilities: if matches!(protocol, AgentProtocol::Acp) {
+            DeclaredAgentCapabilities::acp_text()
+        } else {
+            DeclaredAgentCapabilities::default()
+        },
         availability_probe: Some(AgentCommandDefinition::with_command(
             runtime.resolved_program.to_string_lossy().to_string(),
             ["--version"],

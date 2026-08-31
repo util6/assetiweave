@@ -124,6 +124,8 @@ mod tests {
                     protocol: AgentProtocol::Acp,
                     requested_model: request.model,
                     elapsed_ms: 1,
+                    persistent_binding: None,
+                    replay_text: None,
                 })
             })
         }

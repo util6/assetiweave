@@ -42,4 +42,3 @@ T09、T10。
 ## Ticket-specific stop
 
 如果幂等必须依赖内存 HashMap、sleep 顺序或删除 durable facts，停止并回到 SQLite claim/idempotency 设计。
-

@@ -40,4 +40,3 @@ TeamRun、任务草稿、Teammate 执行、mailbox、MCP、完整 Team restore �
 ## Ticket-specific stop
 
 Provider 只能恢复模型上下文但不能读取历史时，不解析 Conversation Adapter 记录补齐正文；报告 capability 缺口。
-

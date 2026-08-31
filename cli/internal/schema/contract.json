@@ -38,6 +38,21 @@
     "team.create",
     "team.update",
     "team.delete",
+    "team.leader.chat",
+    "team.run.draft",
+    "team.run.get",
+    "team.run.restore",
+    "team.run.review",
+    "team.run.confirm",
+    "team.tool.tasks",
+    "team.tool.task.update",
+    "team.tool.mailbox.send",
+    "team.tool.mailbox.read",
+    "team_tool_credential_issue",
+    "team_tool_tasks",
+    "team_tool_task_update",
+    "team_tool_mailbox_send",
+    "team_tool_mailbox_read",
     "asset.list",
     "skill.list",
     "skill.import",
@@ -265,7 +280,20 @@
     "get_team",
     "list_teams",
     "update_team",
-    "delete_team"
+    "delete_team",
+    "team_leader_chat",
+    "team_run_draft",
+    "team_run_get",
+    "team_run_latest",
+    "team_run_restore",
+    "team_run_cancel",
+    "team_run_review",
+    "team_run_confirm",
+    "team_task_update",
+    "team_mailbox_send",
+    "team_mailbox_read",
+    "team_run_task",
+    "list_team_run_tasks"
   ],
   "commands": [
     {
@@ -2235,6 +2263,854 @@
         "additionalProperties": false
       },
       "cli": "assetiweave-cli team delete <team-id> --yes",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.leader.chat",
+      "canonical_method": "team.leader.chat",
+      "description": "Send a message to the persistent Team leader session or replay its history",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "message",
+          "replay"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Leader message"
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "Replay the persistent leader history"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team leader chat <team-id> --message <message>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.run.draft",
+      "canonical_method": "team.run.draft",
+      "description": "Ask the Team leader for a structured task draft",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "leader_message"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "leader_message": {
+            "type": "string",
+            "description": "Leader request",
+            "aliases": [
+              "leaderMessage"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team run draft <team-id> --message <message>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.run.get",
+      "canonical_method": "team.run.get",
+      "description": "Get a Team run, frozen roster snapshot, task board, and mailbox count",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team run get <run-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.run.restore",
+      "canonical_method": "team.run.restore",
+      "description": "Restore Team leader history and per-member readiness",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team run restore <run-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.run.review",
+      "canonical_method": "team.run.review",
+      "description": "Apply the human Team review assignment and order",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id",
+          "revision",
+          "tasks"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run revision"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string"
+                },
+                "owner_member_id": {
+                  "type": "string"
+                },
+                "sort_order": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "required": [
+                "task_id",
+                "owner_member_id",
+                "sort_order"
+              ]
+            },
+            "description": "Reviewed ordered task assignments"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team run review <run-id> --tasks <json>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.run.confirm",
+      "canonical_method": "team.run.confirm",
+      "description": "Atomically confirm a reviewed Team run and execute its frozen tasks",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run revision"
+          },
+          "yes": {
+            "type": "boolean",
+            "description": "Confirm the high-risk operation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team run confirm <run-id> --revision <revision> --yes",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.tool.tasks",
+      "canonical_method": "team.tool.tasks",
+      "description": "List only tasks owned by the authenticated Team teammate",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "member_id"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Authenticated member",
+            "aliases": [
+              "memberId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team tool tasks --credential <credential>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.tool.task.update",
+      "canonical_method": "team.tool.task.update",
+      "description": "Update a task using a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "task_id",
+          "member_id",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Authenticated member",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "Task state"
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task result"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task error code",
+            "aliases": [
+              "errorCode"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team task update <task-id> --credential <credential>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.tool.mailbox.send",
+      "canonical_method": "team.tool.mailbox.send",
+      "description": "Send a mailbox message with a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "sender_member_id",
+          "recipient_member_id",
+          "message_type",
+          "body",
+          "idempotency_key"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "task id"
+          },
+          "sender_member_id": {
+            "type": "string",
+            "description": "Sender member",
+            "aliases": [
+              "senderMemberId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "message_type": {
+            "type": "string",
+            "description": "Message type",
+            "aliases": [
+              "messageType"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "description": "Message body"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Idempotency key",
+            "aliases": [
+              "idempotencyKey"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team mailbox send <run-id> --credential <credential>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.tool.mailbox.read",
+      "canonical_method": "team.tool.mailbox.read",
+      "description": "Read mailbox messages with a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "recipient_member_id",
+          "ack"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "ack": {
+            "type": "boolean",
+            "description": "Acknowledge messages"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team mailbox read <run-id> --credential <credential>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_tool_credential_issue",
+      "canonical_method": "team.tool.credential.issue",
+      "description": "Issue a short-lived scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "run_id",
+          "member_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Teammate identifier",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "ttl_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Credential lifetime",
+            "aliases": [
+              "ttlSeconds"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_tool_tasks",
+      "canonical_method": "team.tool.tasks",
+      "description": "List only tasks owned by the authenticated Team teammate",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "member_id"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Authenticated member",
+            "aliases": [
+              "memberId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_tool_task_update",
+      "canonical_method": "team.tool.task.update",
+      "description": "Update a task using a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "task_id",
+          "member_id",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Authenticated member",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "Task state"
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task result"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task error code",
+            "aliases": [
+              "errorCode"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_tool_mailbox_send",
+      "canonical_method": "team.tool.mailbox.send",
+      "description": "Send a mailbox message with a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "sender_member_id",
+          "recipient_member_id",
+          "message_type",
+          "body",
+          "idempotency_key"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "task id"
+          },
+          "sender_member_id": {
+            "type": "string",
+            "description": "Sender member",
+            "aliases": [
+              "senderMemberId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "message_type": {
+            "type": "string",
+            "description": "Message type",
+            "aliases": [
+              "messageType"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "description": "Message body"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Idempotency key",
+            "aliases": [
+              "idempotencyKey"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_tool_mailbox_read",
+      "canonical_method": "team.tool.mailbox.read",
+      "description": "Read mailbox messages with a scoped Team tool credential",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "credential",
+          "team_id",
+          "run_id",
+          "recipient_member_id",
+          "ack"
+        ],
+        "type": "object",
+        "properties": {
+          "credential": {
+            "type": "string",
+            "description": "Scoped Team tool credential"
+          },
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "ack": {
+            "type": "boolean",
+            "description": "Acknowledge messages"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
       "since": "0.1.0",
       "deprecated": false
     },
@@ -14139,6 +15015,559 @@
           }
         },
         "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_leader_chat",
+      "canonical_method": "team.leader.chat",
+      "description": "Send a message to the persistent Team leader session or replay its history",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "message",
+          "replay"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Leader message"
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "Replay the persistent leader history"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_draft",
+      "canonical_method": "team.run.draft",
+      "description": "Ask the Team leader for a structured task draft",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "leader_message"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "leader_message": {
+            "type": "string",
+            "description": "Leader request",
+            "aliases": [
+              "leaderMessage"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_get",
+      "canonical_method": "team.run.get",
+      "description": "Get a Team run, frozen roster snapshot, task board, and mailbox count",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_latest",
+      "canonical_method": "team.run.latest",
+      "description": "Get the latest active or terminal Team run for a team",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_restore",
+      "canonical_method": "team.run.restore",
+      "description": "Restore Team leader history and per-member readiness",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_cancel",
+      "canonical_method": "team.run.cancel",
+      "description": "Cancel the active Team background task",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_review",
+      "canonical_method": "team.run.review",
+      "description": "Apply the human Team review assignment and order",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id",
+          "revision",
+          "tasks"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run revision"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string"
+                },
+                "owner_member_id": {
+                  "type": "string"
+                },
+                "sort_order": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "required": [
+                "task_id",
+                "owner_member_id",
+                "sort_order"
+              ]
+            },
+            "description": "Reviewed ordered task assignments"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_confirm",
+      "canonical_method": "team.run.confirm",
+      "description": "Atomically confirm a reviewed Team run and execute its frozen tasks",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "run_id",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Run revision"
+          },
+          "yes": {
+            "type": "boolean",
+            "description": "Confirm the high-risk operation"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_task_update",
+      "canonical_method": "team.task.update",
+      "description": "Update a Team task from its assigned teammate",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "run_id",
+          "task_id",
+          "member_id",
+          "state"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Member identifier",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ],
+            "description": "Task state"
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task result"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Task error code",
+            "aliases": [
+              "errorCode"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_mailbox_send",
+      "canonical_method": "team.mailbox.send",
+      "description": "Send an idempotent message through a Team run mailbox",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "run_id",
+          "sender_member_id",
+          "recipient_member_id",
+          "message_type",
+          "body",
+          "idempotency_key"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "task id"
+          },
+          "sender_member_id": {
+            "type": "string",
+            "description": "Sender member",
+            "aliases": [
+              "senderMemberId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "message_type": {
+            "type": "string",
+            "description": "Message type",
+            "aliases": [
+              "messageType"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "description": "Message body"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Idempotency key",
+            "aliases": [
+              "idempotencyKey"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_mailbox_read",
+      "canonical_method": "team.mailbox.read",
+      "description": "Read and optionally acknowledge a Team run mailbox",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "run_id",
+          "recipient_member_id",
+          "ack"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run identifier",
+            "aliases": [
+              "runId"
+            ]
+          },
+          "recipient_member_id": {
+            "type": "string",
+            "description": "Recipient member",
+            "aliases": [
+              "recipientMemberId"
+            ]
+          },
+          "ack": {
+            "type": "boolean",
+            "description": "Acknowledge messages"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_run_task",
+      "canonical_method": "team.run.task",
+      "description": "Get a Team background task snapshot",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "task_id"
+        ],
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Background task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_team_run_tasks",
+      "canonical_method": "team.run.tasks",
+      "description": "List Team background task snapshots",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
       },
       "cli": null,
       "since": "0.1.0",

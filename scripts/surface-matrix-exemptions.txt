@@ -25,6 +25,11 @@ list_agent_market_refresh_tasks
 get_agent_lifecycle_task
 list_agent_lifecycle_tasks
 cancel_agent_lifecycle_task
+# Conversation data maintenance task controls use the resident Tauri
+# TaskRuntime; the canonical repair workflow remains desktop-only today.
+get_conversation_data_maintenance_task
+list_conversation_data_maintenance_tasks
+cancel_conversation_data_maintenance
 start_agent_installation
 start_agent_update
 start_agent_reinstallation

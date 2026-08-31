@@ -30,6 +30,12 @@ pub(crate) enum DomainEvent {
         revision_end: i64,
         changed_session_ids: Option<Vec<String>>,
     },
+    TeamRunConfirmed {
+        event_id: String,
+        tenant_id: String,
+        run_id: String,
+        team_id: String,
+    },
 }
 
 impl DomainEvent {
@@ -51,6 +57,15 @@ impl DomainEvent {
         }
     }
 
+    pub(crate) fn team_run_confirmed(tenant_id: &str, run_id: &str, team_id: &str) -> Self {
+        Self::TeamRunConfirmed {
+            event_id: format!("evt-{}", Uuid::new_v4().simple()),
+            tenant_id: tenant_id.to_string(),
+            run_id: run_id.to_string(),
+            team_id: team_id.to_string(),
+        }
+    }
+
     fn metadata(&self) -> (&str, &str, Option<&str>, Option<i64>, Option<i64>) {
         match self {
             Self::ConversationSourceCommitted {
@@ -66,6 +81,9 @@ impl DomainEvent {
                 Some(*revision_start),
                 Some(*revision_end),
             ),
+            Self::TeamRunConfirmed {
+                tenant_id, team_id, ..
+            } => (tenant_id, "team_run_confirmed", Some(team_id), None, None),
         }
     }
 }
@@ -88,6 +106,7 @@ pub(crate) async fn append_outbox_event_sqlx_tx(
         serde_json::to_string(event).map_err(|error| AppError::External(error.to_string()))?;
     let event_id = match event {
         DomainEvent::ConversationSourceCommitted { event_id, .. } => event_id,
+        DomainEvent::TeamRunConfirmed { event_id, .. } => event_id,
     };
     sqlx::query(
         r#"

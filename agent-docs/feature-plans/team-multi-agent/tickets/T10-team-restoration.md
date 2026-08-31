@@ -41,4 +41,3 @@ fake runtime 配置 Leader 和 Teammate A 可恢复、Teammate B dead anchor。�
 ## Ticket-specific stop
 
 如果 UI 必须读取 Conversation 数据才能显示 Leader 历史，或 restore 需要修改 TeamRun 事实状态来表达每个成员进度，停止并修正投影边界。
-

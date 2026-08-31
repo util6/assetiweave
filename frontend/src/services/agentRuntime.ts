@@ -112,6 +112,10 @@ export interface AgentMarketItem {
     purposes: string[];
     textPrompt: boolean;
     modelDiscovery: boolean;
+    resume?: boolean;
+    historyReplay?: boolean;
+    teamTools?: boolean;
+    resumeArgs?: string[] | null;
   };
   verification: {
     status: "tested" | "experimental";

@@ -129,4 +129,3 @@ FILES LEFT UNCHANGED:
 - **Frontend 直连**：所有页面调用进入 `frontend/src/services`。
 - **CLI 直写 SQLite**：Go CLI 只调用 Engine。
 - **测试只断言 mock 次数**：最终通过 TS01 断言持久状态和外部行为。
-

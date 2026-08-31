@@ -4725,40 +4725,227 @@ fn team_roster_rules_and_persistence_ts01() {
     // Scope 3: Zero-write constraint on Conversation tables (C-D04)
     {
         let conn = Connection::open(&db_path).expect("open connection");
-        let session_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_sessions", [], |r| {
-                r.get(0)
-            })
-            .expect("count conversation_sessions");
-        let turn_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_turns", [], |r| r.get(0))
-            .expect("count conversation_turns");
-        let question_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_questions", [], |r| {
-                r.get(0)
-            })
-            .expect("count conversation_questions");
-        let part_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM conversation_parts", [], |r| r.get(0))
-            .expect("count conversation_parts");
-
-        assert_eq!(
-            session_count, 0,
-            "Conversation sessions must remain untouched (0 rows)"
-        );
-        assert_eq!(
-            turn_count, 0,
-            "Conversation turns must remain untouched (0 rows)"
-        );
-        assert_eq!(
-            question_count, 0,
-            "Conversation questions must remain untouched (0 rows)"
-        );
-        assert_eq!(
-            part_count, 0,
-            "Conversation parts must remain untouched (0 rows)"
-        );
+        for table in [
+            "conversation_sessions",
+            "conversation_turns",
+            "conversation_parts",
+            "conversation_questions",
+            "conversation_question_turns",
+            "conversation_question_turn_audits",
+            "web_record_sessions",
+            "web_record_turns",
+            "web_record_parts",
+            "web_record_questions",
+            "web_record_question_turns",
+            "conversation_sync_runs",
+            "conversation_sync_deltas",
+            "conversation_sync_deltas_v2",
+            "conversation_data_audit_issues",
+            "conversation_payload_policy_state",
+            "conversation_question_redirects",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|error| panic!("check {table}: {error}"));
+            if exists == 0 {
+                continue;
+            }
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap_or_else(|error| panic!("count {table}: {error}"));
+            assert_eq!(count, 0, "Conversation table {table} must remain untouched");
+        }
     }
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
+    use crate::backend::{
+        models::{
+            CreateTeamInput, TeamConfirmInput, TeamMemberInput, TeamReviewInput, TeamRole,
+            TeamTaskState,
+        },
+        store,
+    };
+
+    let root = std::env::temp_dir().join(format!("assetiweave-team-run-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create Team run test root");
+    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    service
+        .create_team(CreateTeamInput {
+            id: Some("team-run".to_string()),
+            name: "Run team".to_string(),
+            description: None,
+            members: vec![
+                TeamMemberInput {
+                    id: Some("leader".to_string()),
+                    role: TeamRole::Leader,
+                    sort_order: Some(99),
+                    agent_id: "claude-code".to_string(),
+                    model: None,
+                },
+                TeamMemberInput {
+                    id: Some("worker".to_string()),
+                    role: TeamRole::Teammate,
+                    sort_order: Some(-10),
+                    agent_id: "codex".to_string(),
+                    model: None,
+                },
+            ],
+        })
+        .expect("create Team");
+
+    let pool = service.db.pool().clone();
+    let tenant_id = service.tenant_id().to_string();
+    let shell = service.runtime.run_sync(store::create_team_run_shell_sqlx(
+        &pool, &tenant_id, "team-run",
+    ));
+    let shell = shell.expect("create durable drafting shell");
+    assert_eq!(
+        shell.run.state,
+        crate::backend::models::TeamRunState::Drafting
+    );
+    assert_eq!(shell.run.roster_snapshot[0].member_id, "leader");
+    assert_eq!(shell.run.roster_snapshot[1].sort_order, 1);
+
+    let run_id = shell.run.id.clone();
+    let roster = shell.run.roster_snapshot.clone();
+    let update_while_active = service.update_team(crate::backend::models::UpdateTeamInput {
+        team_id: "team-run".to_string(),
+        name: "Changed".to_string(),
+        description: None,
+        members: vec![
+            TeamMemberInput {
+                id: Some("leader".to_string()),
+                role: TeamRole::Leader,
+                sort_order: Some(0),
+                agent_id: "claude-code".to_string(),
+                model: None,
+            },
+            TeamMemberInput {
+                id: Some("worker".to_string()),
+                role: TeamRole::Teammate,
+                sort_order: Some(1),
+                agent_id: "codex".to_string(),
+                model: None,
+            },
+        ],
+    });
+    assert!(
+        update_while_active.is_err(),
+        "active run must freeze its roster"
+    );
+
+    let reviewed = service
+        .runtime
+        .run_sync(store::complete_team_run_draft_sqlx(
+            &pool,
+            &tenant_id,
+            &run_id,
+            &[crate::backend::models::TeamTaskDraft {
+                id: Some("task-one".to_string()),
+                title: "Inspect fixture".to_string(),
+                description: "Inspect the local fixture and report findings.".to_string(),
+                recommended_member_id: "worker".to_string(),
+                sort_order: Some(77),
+            }],
+        ))
+        .expect("complete draft");
+    assert_eq!(
+        reviewed.run.state,
+        crate::backend::models::TeamRunState::AwaitingReview
+    );
+    assert_eq!(reviewed.tasks[0].sort_order, 0);
+
+    let reviewed = service
+        .runtime
+        .run_sync(store::review_team_run_sqlx(
+            &pool,
+            &tenant_id,
+            &TeamReviewInput {
+                run_id: run_id.clone(),
+                revision: reviewed.run.revision,
+                tasks: vec![crate::backend::models::TeamReviewTaskInput {
+                    task_id: "task-one".to_string(),
+                    owner_member_id: "worker".to_string(),
+                    sort_order: 123,
+                }],
+            },
+        ))
+        .expect("save human review");
+    assert_eq!(reviewed.tasks[0].owner_member_id.as_deref(), Some("worker"));
+    assert_eq!(reviewed.tasks[0].sort_order, 0);
+    assert_eq!(reviewed.run.roster_snapshot, roster);
+
+    let executing = service
+        .runtime
+        .run_sync(store::confirm_team_run_sqlx(
+            &pool,
+            &tenant_id,
+            &TeamConfirmInput {
+                run_id: run_id.clone(),
+                revision: reviewed.run.revision,
+            },
+        ))
+        .expect("confirm reviewed run");
+    assert_eq!(
+        executing.run.state,
+        crate::backend::models::TeamRunState::Executing
+    );
+    assert_eq!(executing.tasks[0].state, TeamTaskState::Queued);
+    let outbox_count: i64 = service
+        .runtime
+        .run_sync(
+            sqlx::query_scalar(
+                "SELECT COUNT(*) FROM domain_event_outbox WHERE event_type = 'team_run_confirmed'",
+            )
+            .fetch_one(&pool),
+        )
+        .expect("count confirmation outbox");
+    assert_eq!(outbox_count, 1);
+
+    let claimed = service
+        .runtime
+        .run_sync(store::claim_team_task_sqlx(&pool, &tenant_id, "task-one"))
+        .expect("claim task")
+        .expect("task is queued");
+    assert_eq!(claimed.state, TeamTaskState::Running);
+    let finished = service
+        .runtime
+        .run_sync(store::finish_team_task_sqlx(
+            &pool,
+            &tenant_id,
+            "task-one",
+            TeamTaskState::Succeeded,
+            Some("done"),
+            None,
+        ))
+        .expect("finish task");
+    assert_eq!(finished.state, TeamTaskState::Succeeded);
+    let repeated = service
+        .runtime
+        .run_sync(store::finish_team_task_sqlx(
+            &pool,
+            &tenant_id,
+            "task-one",
+            TeamTaskState::Succeeded,
+            Some("different"),
+            None,
+        ))
+        .expect("repeat terminal callback");
+    assert_eq!(repeated.result.as_deref(), Some("done"));
+    let terminal_mail_count: i64 = service.runtime.run_sync(sqlx::query_scalar(
+        "SELECT COUNT(*) FROM team_mailbox_messages WHERE run_id = ?1 AND message_type = 'task_terminal'",
+    ).bind(&run_id).fetch_one(&pool)).expect("count terminal mailbox");
+    assert_eq!(terminal_mail_count, 1);
 
     let _ = fs::remove_dir_all(root);
 }

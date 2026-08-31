@@ -109,7 +109,7 @@ pub(crate) struct CoreCompatibility {
     pub(crate) max_exclusive: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CatalogCapabilities {
     #[serde(default)]
@@ -118,6 +118,18 @@ pub(crate) struct CatalogCapabilities {
     pub(crate) text_prompt: bool,
     #[serde(default)]
     pub(crate) model_discovery: bool,
+    /// The Agent can attach to a previously-created execution context.
+    #[serde(default)]
+    pub(crate) resume: bool,
+    /// The Agent can return prior session content without creating a live turn.
+    #[serde(default)]
+    pub(crate) history_replay: bool,
+    /// The Agent can receive the restricted Team tool surface.
+    #[serde(default)]
+    pub(crate) team_tools: bool,
+    /// Native resume arguments. `{session_id}` is replaced without shell parsing.
+    #[serde(default)]
+    pub(crate) resume_args: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -1146,6 +1158,7 @@ mod tests {
                 purposes: vec!["card_translation".to_string()],
                 text_prompt: true,
                 model_discovery: false,
+                ..CatalogCapabilities::default()
             },
             verification: Verification {
                 status: VerificationStatus::Tested,

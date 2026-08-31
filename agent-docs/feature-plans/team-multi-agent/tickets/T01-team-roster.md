@@ -39,4 +39,3 @@ TeamRun、聊天、Persistent Session、草稿、执行、mailbox、MCP 和后�
 ## Ticket-specific stop
 
 如果必须修改 Conversation schema、把 roster 放入 settings JSON，或为 Team 创建前端直连 invoke，按 Stop protocol 报告。
-

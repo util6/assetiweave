@@ -11,6 +11,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
@@ -31,6 +32,7 @@ pub(crate) enum TaskKind {
     Scan,
     Backup,
     BatchMount,
+    TeamRun,
     Other,
 }
 
@@ -164,14 +166,22 @@ pub(crate) struct ProgressHandle {
 
 impl ProgressHandle {
     pub(crate) fn progress(&self, current: u64, total: Option<u64>, note: Option<&str>) {
-        if let Ok(mut tasks) = self.runtime.tasks.lock() {
+        let snapshot = if let Ok(mut tasks) = self.runtime.tasks.lock() {
             if let Some(entry) = tasks.get_mut(&self.task_id) {
                 entry.snapshot.progress = Some(TaskProgress {
                     current,
                     total,
                     note: note.map(str::to_string),
                 });
+                Some(entry.snapshot.clone())
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(snapshot) = snapshot {
+            self.runtime.publish(&snapshot);
         }
     }
 }
@@ -185,13 +195,20 @@ struct TaskEntry {
     started: bool,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct TaskRuntime {
     tasks: Arc<Mutex<HashMap<String, TaskEntry>>>,
     sequence: Arc<AtomicU64>,
     accepting: Arc<AtomicBool>,
     runtime_handle: Option<tokio::runtime::Handle>,
     active: Arc<(Mutex<usize>, Condvar)>,
+    events: Arc<broadcast::Sender<TaskSnapshot>>,
+}
+
+impl Default for TaskRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -225,9 +242,14 @@ pub(crate) struct ShutdownReport {
 
 impl TaskRuntime {
     pub(crate) fn new() -> Self {
+        let (events, _) = broadcast::channel(256);
         Self {
+            tasks: Arc::new(Mutex::new(HashMap::new())),
+            sequence: Arc::new(AtomicU64::new(0)),
             accepting: Arc::new(AtomicBool::new(true)),
-            ..Self::default()
+            runtime_handle: None,
+            active: Arc::new((Mutex::new(0), Condvar::new())),
+            events: Arc::new(events),
         }
     }
 
@@ -236,6 +258,14 @@ impl TaskRuntime {
             runtime_handle: Some(handle),
             ..Self::new()
         }
+    }
+
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<TaskSnapshot> {
+        self.events.subscribe()
+    }
+
+    fn publish(&self, snapshot: &TaskSnapshot) {
+        let _ = self.events.send(snapshot.clone());
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -297,6 +327,7 @@ impl TaskRuntime {
         if let Ok(mut active) = self.active.0.lock() {
             *active += 1;
         }
+        self.publish(&snapshot);
 
         self.launch_task(task_id.clone(), cancellation, task)?;
         Ok(SpawnOutcome::Started)
@@ -380,23 +411,28 @@ impl TaskRuntime {
         if let Ok(mut active) = self.active.0.lock() {
             *active += 1;
         }
+        self.publish(&snapshot);
         Ok(ExternalRegistrationOutcome::Started(snapshot))
     }
 
     pub(crate) fn start_external(&self, task_id: &str) -> AppResult<TaskSnapshot> {
-        let mut tasks = self
-            .tasks
-            .lock()
-            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        Self::prune_terminal_tasks_locked(&mut tasks);
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        if entry.snapshot.state == TaskState::Pending {
-            entry.snapshot.state = TaskState::Running;
-            entry.started = true;
-        }
-        Ok(entry.snapshot.clone())
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if entry.snapshot.state == TaskState::Pending {
+                entry.snapshot.state = TaskState::Running;
+                entry.started = true;
+            }
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
     }
 
     /// Mark a reserved external task as running without claiming its worker
@@ -407,19 +443,23 @@ impl TaskRuntime {
         task_id: &str,
         detail: Value,
     ) -> AppResult<TaskSnapshot> {
-        let mut tasks = self
-            .tasks
-            .lock()
-            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        Self::prune_terminal_tasks_locked(&mut tasks);
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        if entry.snapshot.state == TaskState::Pending {
-            entry.snapshot.state = TaskState::Running;
-            entry.snapshot.detail = detail;
-        }
-        Ok(entry.snapshot.clone())
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if entry.snapshot.state == TaskState::Pending {
+                entry.snapshot.state = TaskState::Running;
+                entry.snapshot.detail = detail;
+            }
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
     }
 
     pub(crate) fn cancellation_token(&self, task_id: &str) -> AppResult<CancellationToken> {
@@ -451,31 +491,39 @@ impl TaskRuntime {
         total: Option<u64>,
         note: Option<&str>,
     ) -> AppResult<()> {
-        let mut tasks = self
-            .tasks
-            .lock()
-            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        Self::prune_terminal_tasks_locked(&mut tasks);
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        if entry.snapshot.state.is_active() {
-            if total.is_some_and(|total| current > total) {
-                return Err(AppError::Validation("任务进度不得超过总数".to_string()));
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if entry.snapshot.state.is_active() {
+                if total.is_some_and(|total| current > total) {
+                    return Err(AppError::Validation("任务进度不得超过总数".to_string()));
+                }
+                if entry
+                    .snapshot
+                    .progress
+                    .as_ref()
+                    .is_some_and(|progress| current < progress.current)
+                {
+                    return Err(AppError::Validation("任务进度不得回退".to_string()));
+                }
+                entry.snapshot.progress = Some(TaskProgress {
+                    current,
+                    total,
+                    note: note.map(str::to_string),
+                });
+                Some(entry.snapshot.clone())
+            } else {
+                None
             }
-            if entry
-                .snapshot
-                .progress
-                .as_ref()
-                .is_some_and(|progress| current < progress.current)
-            {
-                return Err(AppError::Validation("任务进度不得回退".to_string()));
-            }
-            entry.snapshot.progress = Some(TaskProgress {
-                current,
-                total,
-                note: note.map(str::to_string),
-            });
+        };
+        if let Some(snapshot) = snapshot {
+            self.publish(&snapshot);
         }
         Ok(())
     }
@@ -484,16 +532,20 @@ impl TaskRuntime {
     /// Tauri and Engine adapters must derive their public snapshots from this
     /// value rather than keeping a second mutable task registry.
     pub(crate) fn update_detail(&self, task_id: &str, detail: Value) -> AppResult<TaskSnapshot> {
-        let mut tasks = self
-            .tasks
-            .lock()
-            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
-        Self::prune_terminal_tasks_locked(&mut tasks);
-        let entry = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
-        entry.snapshot.detail = sanitize_task_detail(detail);
-        Ok(entry.snapshot.clone())
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            entry.snapshot.detail = sanitize_task_detail(detail);
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
     }
 
     /// Start a task that was registered before its adapter had assembled the
@@ -528,6 +580,7 @@ impl TaskRuntime {
                 should_launch,
             )
         };
+        self.publish(&snapshot);
         if should_launch {
             self.launch_task(task_id.to_string(), cancellation, task)?;
         } else if snapshot.state == TaskState::Cancelling {
@@ -583,6 +636,7 @@ impl TaskRuntime {
         }
         let snapshot = entry.snapshot.clone();
         drop(tasks);
+        self.publish(&snapshot);
         self.release_active_slot();
         Ok(snapshot)
     }
@@ -651,6 +705,7 @@ impl TaskRuntime {
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
                 .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
             let mut release_slot = false;
+            let mut terminal_snapshot = None;
             if let Ok(mut tasks) = runtime.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
                     if matches!(
@@ -687,9 +742,13 @@ impl TaskRuntime {
                                 entry.snapshot.error = Some(error.view());
                             }
                         }
+                        terminal_snapshot = Some(entry.snapshot.clone());
                         release_slot = true;
                     }
                 }
+            }
+            if let Some(snapshot) = terminal_snapshot {
+                runtime.publish(&snapshot);
             }
             if release_slot {
                 runtime.release_active_slot();
@@ -698,13 +757,21 @@ impl TaskRuntime {
         if let Some(handle) = self.runtime_handle.clone() {
             handle.spawn_blocking(run);
         } else if let Err(error) = std::thread::Builder::new().name(thread_name).spawn(run) {
-            if let Ok(mut tasks) = self.tasks.lock() {
+            let failed_snapshot = if let Ok(mut tasks) = self.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&task_id) {
                     entry.snapshot.state = TaskState::Failed;
                     entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
                     entry.snapshot.error =
                         Some(AppError::External(format!("启动后台任务失败: {error}")).view());
+                    Some(entry.snapshot.clone())
+                } else {
+                    None
                 }
+            } else {
+                None
+            };
+            if let Some(snapshot) = failed_snapshot {
+                self.publish(&snapshot);
             }
             self.release_active_slot();
             return Err(AppError::External(format!("启动后台任务失败: {error}")));
@@ -769,7 +836,10 @@ impl TaskRuntime {
         if entry.snapshot.state.is_active() {
             entry.cancellation.cancel();
             entry.snapshot.state = TaskState::Cancelling;
-            return CancelOutcome::Requested(entry.snapshot.clone());
+            let snapshot = entry.snapshot.clone();
+            drop(tasks);
+            self.publish(&snapshot);
+            return CancelOutcome::Requested(snapshot);
         }
         CancelOutcome::AlreadyFinished(entry.snapshot.clone())
     }

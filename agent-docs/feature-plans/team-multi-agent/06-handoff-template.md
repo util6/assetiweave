@@ -54,4 +54,3 @@ AUTHORITY CHANGED: ...
 4. 当前代码和测试。
 
 未提交工作通过 `git status` 和 diff 识别，不通过聊天摘要猜测所有权。
-

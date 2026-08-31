@@ -27,8 +27,8 @@ use crate::backend::{
 use super::{
     repository::AgentInstallationRepository,
     types::{
-        AgentInstallation, AgentMarketProtocol, InstallationStatus, Ownership, ProtocolStatus,
-        RuntimeStatus,
+        AgentInstallation, AgentMarketProtocol, CatalogCapabilities, InstallationStatus, Ownership,
+        ProtocolStatus, RuntimeStatus,
     },
 };
 
@@ -105,11 +105,14 @@ impl AgentRuntimeManager {
                 .expect("empty agent registry is valid"),
         ));
         let registry = AgentRuntimeRegistry::from_snapshot(registry_snapshot.clone());
-        let executor = Arc::new(AgentExecutor::with_registry_handle(
+        let executor = Arc::new(AgentExecutor::with_registry_handle_and_bindings(
             registry.clone(),
             Arc::new(AcpExecutionBackend::new(workspace_root.clone())),
             Arc::new(NativeExecutionBackend::new(workspace_root.clone())),
             2,
+            Arc::new(crate::backend::ai_execution::PersistentBindingStore::new(
+                pool.clone(),
+            )),
         ));
         Self {
             repository: AgentInstallationRepository::new(pool),
@@ -528,6 +531,8 @@ struct ResolvedDefinition {
     id: String,
     display_name: String,
     protocol: String,
+    #[serde(default)]
+    capabilities: Option<CatalogCapabilities>,
     #[serde(default, alias = "sessionCleanupArgs")]
     session_cleanup_args: Option<Vec<String>>,
     #[serde(default, alias = "sessionCleanupNotFoundMarkers")]
@@ -615,7 +620,10 @@ pub(crate) fn definition_from_installation(
             .into_iter()
             .map(|entry| AgentEnvEntry::new(entry.key, entry.value))
             .collect(),
-        declared_capabilities: DeclaredAgentCapabilities::acp_text(),
+        declared_capabilities: declared_capabilities_from_catalog(
+            resolved.capabilities.as_ref(),
+            protocol,
+        ),
         availability_probe: Some(AgentCommandDefinition {
             command: availability_probe.program,
             args: availability_probe.args,
@@ -629,11 +637,34 @@ pub(crate) fn definition_from_installation(
             .map(AgentCommandDefinition::new),
         session_cleanup_not_found_markers: resolved.session_cleanup_not_found_markers,
     };
-    if installation.protocol == AgentMarketProtocol::Acp {
-        definition.declared_capabilities = DeclaredAgentCapabilities::acp_text();
-    }
     definition.validate().map_err(|error| error.to_string())?;
     Ok(definition)
+}
+
+fn declared_capabilities_from_catalog(
+    capabilities: Option<&CatalogCapabilities>,
+    protocol: AgentProtocol,
+) -> DeclaredAgentCapabilities {
+    match protocol {
+        AgentProtocol::Acp => capabilities
+            .map(|value| DeclaredAgentCapabilities {
+                text_prompt: value.text_prompt,
+                resume: value.resume,
+                history_replay: value.history_replay,
+                team_tools: value.team_tools,
+                resume_args: None,
+            })
+            .unwrap_or_else(DeclaredAgentCapabilities::acp_text),
+        AgentProtocol::Native => capabilities
+            .map(|value| DeclaredAgentCapabilities {
+                text_prompt: value.text_prompt,
+                resume: value.resume,
+                history_replay: value.history_replay,
+                team_tools: value.team_tools,
+                resume_args: value.resume_args.clone(),
+            })
+            .unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]

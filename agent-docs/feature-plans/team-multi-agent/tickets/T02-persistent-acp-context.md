@@ -41,4 +41,3 @@ Team 表、Leader UI、历史 Replay、Native resume、MCP 和进程池。
 ## Ticket-specific stop
 
 ACP SDK typed API 与预期不同时，贴出准确 capability/type/signature；生产代码需要 raw JSON-RPC 或 Vendor switch 时停止。
-

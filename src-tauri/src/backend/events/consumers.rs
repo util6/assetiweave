@@ -24,6 +24,7 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
                 DomainEvent::ConversationSourceCommitted { tenant_id, .. } => {
                     Some(tenant_id.clone())
                 }
+                DomainEvent::TeamRunConfirmed { .. } => None,
             })
             .collect::<BTreeSet<_>>();
         for tenant_id in tenants {
@@ -62,7 +63,10 @@ impl DomainEventConsumer for MemoryEvidenceStaleConsumer {
                 revision_end,
                 changed_session_ids,
                 ..
-            } = &item.event;
+            } = &item.event
+            else {
+                continue;
+            };
             let tenant_id = tenant_id.clone();
             let sync_run_id = sync_run_id.clone();
             let session_ids = changed_session_ids.clone();

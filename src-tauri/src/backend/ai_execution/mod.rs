@@ -1,15 +1,17 @@
 pub(crate) mod backends;
+pub(crate) mod bindings;
 pub(crate) mod composition;
 mod error;
 pub(crate) mod executor;
 mod types;
 
+pub(crate) use bindings::{PersistentBindingStore, PersistentExecutionBinding};
 pub(crate) use error::{AiExecutionError, AiExecutionErrorView};
 pub(crate) use executor::AgentExecutionRuntime;
 pub(crate) use types::{
     AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits,
     AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
-    AiExecutionResult, AiExecutionSessionDeleteMethod,
+    AiExecutionResult, AiExecutionSessionDeleteMethod, AiTeamTools,
 };
 
 use crate::backend::agents::types::{

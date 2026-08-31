@@ -39,4 +39,3 @@
 | CP5 完成 | T13–T14 | Native 能力与全入口验收闭合 |
 
 每个 Checkpoint 使用新上下文只做 review；发现 P0/P1 时先创建或重开修复工单，再进入后续 frontier。
-

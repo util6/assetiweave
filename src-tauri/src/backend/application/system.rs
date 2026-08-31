@@ -131,7 +131,16 @@ impl AppService {
         agent_runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
     ) -> AppResult<Self> {
         let mut service = Self::open_with_db_path(db_path)?;
+        let runtime = crate::backend::runtime::AppRuntime::for_test(
+            service.db_path.clone(),
+            service.db.clone(),
+            service.context.clone(),
+            service.agent_runtime_manager.clone(),
+            agent_runtime.clone(),
+        );
+        service.runtime = runtime.clone();
         service.agent_runtime = agent_runtime;
+        service.conversation_adapter_catalog = runtime.conversation_adapter_catalog();
         Ok(service)
     }
 

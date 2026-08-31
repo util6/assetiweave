@@ -42,4 +42,3 @@ Frontend provider 收到一次 running event 后卸载/重挂并漏掉 terminal 
 ## Ticket-specific stop
 
 如果页面需要 page-level busy 覆盖整个 Team workspace，或另建第二个任务 registry，停止并复用现有 provider/runtime 模式。
-

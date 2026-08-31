@@ -4,12 +4,15 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
+    thread,
     time::{Duration, Instant},
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::backend::{
     agent_market::AgentRuntimeManager,
     ai_execution::AgentExecutionRuntime,
+    application::AppService,
     conversations::ConversationAdapterCatalog,
     events::{EventDispatcher, EventDispatcherHandle},
     extension_kernel::RegistrySnapshot,
@@ -86,9 +89,27 @@ pub(crate) struct AppRuntime {
     context_update_gate: Mutex<()>,
     shutdown: ShutdownState,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
+    team_coordinator: Mutex<Option<TeamCoordinatorHandle>>,
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
     builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
+}
+
+struct TeamCoordinatorHandle {
+    cancellation: CancellationToken,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl TeamCoordinatorHandle {
+    fn stop(mut self) {
+        self.cancellation.cancel();
+        // The coordinator performs only the bounded durable reconciliation
+        // query and task registration; join it before closing the shared pool
+        // so no recovery pass can race database shutdown.
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
 }
 
 static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
@@ -177,6 +198,7 @@ impl AppRuntime {
             context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
+            team_coordinator: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
@@ -248,14 +270,16 @@ impl AppRuntime {
             context_update_gate: Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
+            team_coordinator: Mutex::new(None),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
         })
     }
 
-    fn start_resident_services(&self) {
+    fn start_resident_services(self: &Arc<Self>) {
         self.start_agent_health_refresh();
+        self.start_team_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants() {
             crate::backend::operation_log::log_warn(
@@ -268,6 +292,42 @@ impl AppRuntime {
         let handle = dispatcher.start();
         if let Ok(mut slot) = self.dispatcher.lock() {
             *slot = Some(handle);
+        }
+    }
+
+    /// Reconcile durable Team facts independently of the UI and provider
+    /// process. Confirm writes the run and wake-up event first; this resident
+    /// loop then makes startup, duplicate delivery, and mid-run interruption
+    /// converge through the same AppService scheduling path.
+    fn start_team_coordinator(self: &Arc<Self>) {
+        let cancellation = CancellationToken::new();
+        let thread_cancellation = cancellation.clone();
+        let runtime = self.clone();
+        let join = thread::Builder::new()
+            .name("aiw-team-coordinator".to_string())
+            .spawn(move || {
+                while !thread_cancellation.is_cancelled() {
+                    if let Err(error) = AppService::from_runtime(&runtime).recover_team_runs() {
+                        crate::backend::operation_log::log_warn(
+                            "team.coordinator.recovery",
+                            "Team durable coordinator reconciliation failed",
+                            &[("error", error.to_string())],
+                        );
+                    }
+                    for _ in 0..10 {
+                        if thread_cancellation.is_cancelled() {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            })
+            .expect("Team coordinator thread must start");
+        if let Ok(mut slot) = self.team_coordinator.lock() {
+            *slot = Some(TeamCoordinatorHandle {
+                cancellation,
+                join: Some(join),
+            });
         }
     }
 
@@ -316,6 +376,12 @@ impl AppRuntime {
         self.db.pool()
     }
     pub(crate) fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.db.block_on(future)
+    }
+    /// Named synchronous boundary for short application projections.
+    /// Application modules should use this seam instead of embedding their
+    /// own database/runtime synchronization calls.
+    pub(crate) fn run_sync<F: std::future::Future>(&self, future: F) -> F::Output {
         self.db.block_on(future)
     }
     pub(crate) fn db_path(&self) -> &Path {
@@ -442,7 +508,7 @@ impl AppRuntime {
         let pool = self.db.pool().clone();
         let principal_id = self.context().request_context.principal.id.clone();
         let catalog_for_seed = catalog.clone();
-        self.db.block_on(async move {
+        self.run_sync(async move {
             let tenants =
                 crate::backend::store::list_tenants_for_principal_sqlx(&pool, &principal_id)
                     .await?;
@@ -501,6 +567,11 @@ impl AppRuntime {
         // Workers must converge and publish their final state while the
         // resident dispatcher is still alive; only then can the dispatcher
         // drain and the database close.
+        if let Ok(mut slot) = self.team_coordinator.lock() {
+            if let Some(handle) = slot.take() {
+                handle.stop();
+            }
+        }
         self.task_runtime.stop_accepting();
         let task_report = self
             .task_runtime

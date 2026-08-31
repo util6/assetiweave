@@ -46,4 +46,3 @@ T12、T13，以及所有 Checkpoint P0/P1 finding 已关闭。
 ## Ticket-specific stop
 
 验收发现架构缺口时创建或重开聚焦修复工单；不在本卡用大范围补丁掩盖。任何 P0/P1 未关闭时父 Issue 保持打开。
-

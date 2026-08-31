@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::agents::types::{AgentId, AgentProtocol};
 
-use super::{normalize_model, normalize_prompt, AiExecutionError};
+use super::{
+    bindings::PersistentExecutionBinding, normalize_model, normalize_prompt, AiExecutionError,
+};
 
 pub(crate) trait AiExecutionProgressSink: Send + Sync {
     fn set_phase(&self, phase: AiExecutionPhase);
@@ -89,6 +91,34 @@ pub(crate) enum AiExecutionPurpose {
     PromptOptimization,
     ConnectionTest,
     ModelDiscovery,
+    TeamLeaderChat,
+    TeamDraft,
+    TeamTask,
+    TeamSummary,
+}
+
+#[derive(Clone)]
+pub(crate) struct AiTeamTools {
+    pub(crate) tenant_id: String,
+    pub(crate) team_id: String,
+    pub(crate) run_id: String,
+    pub(crate) member_id: String,
+    pub(crate) credential: String,
+    pub(crate) database_path: String,
+}
+
+impl fmt::Debug for AiTeamTools {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiTeamTools")
+            .field("tenant_id", &self.tenant_id)
+            .field("team_id", &self.team_id)
+            .field("run_id", &self.run_id)
+            .field("member_id", &self.member_id)
+            .field("credential", &"<redacted>")
+            .field("database_path", &self.database_path)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -127,16 +157,35 @@ pub(crate) struct AiExecutionRequest {
     pub(crate) limits: AiExecutionLimits,
     pub(crate) cancellation: AiExecutionCancellation,
     pub(crate) progress: Option<Arc<dyn AiExecutionProgressSink>>,
+    pub(crate) tenant_id: Option<String>,
+    pub(crate) execution_context_key: Option<String>,
+    pub(crate) binding: Option<PersistentExecutionBinding>,
+    pub(crate) replay: bool,
+    pub(crate) restore_only: bool,
+    pub(crate) team_tools: Option<AiTeamTools>,
 }
 
 impl AiExecutionRequest {
     pub(crate) fn validate(&self) -> Result<(), AiExecutionError> {
-        if matches!(self.session_mode, AgentSessionMode::Persistent) {
-            return Err(AiExecutionError::UnsupportedSessionMode {
-                mode: self.session_mode,
-            });
+        if matches!(self.session_mode, AgentSessionMode::Persistent)
+            && self
+                .execution_context_key
+                .as_deref()
+                .is_none_or(|key| key.trim().is_empty())
+        {
+            return Err(AiExecutionError::InvalidContextKey);
         }
-        normalize_prompt(&self.prompt)?;
+        if self.replay && !matches!(self.session_mode, AgentSessionMode::Persistent) {
+            return Err(AiExecutionError::InvalidReplayMode);
+        }
+        if self.restore_only
+            && (!matches!(self.session_mode, AgentSessionMode::Persistent) || self.replay)
+        {
+            return Err(AiExecutionError::InvalidReplayMode);
+        }
+        if !self.restore_only {
+            normalize_prompt(&self.prompt)?;
+        }
         normalize_model(self.model.as_deref())?;
         Ok(())
     }
@@ -167,6 +216,12 @@ impl fmt::Debug for AiExecutionRequest {
             .field("limits", &self.limits)
             .field("cancellation", &self.cancellation)
             .field("progress", &self.progress.as_ref().map(|_| "<sink>"))
+            .field("tenant_id", &self.tenant_id)
+            .field("execution_context_key", &self.execution_context_key)
+            .field("binding", &self.binding)
+            .field("replay", &self.replay)
+            .field("restore_only", &self.restore_only)
+            .field("team_tools", &self.team_tools)
             .finish()
     }
 }
@@ -178,6 +233,8 @@ pub(crate) struct AiExecutionResult {
     pub(crate) protocol: AgentProtocol,
     pub(crate) requested_model: Option<String>,
     pub(crate) elapsed_ms: u64,
+    pub(crate) persistent_binding: Option<PersistentExecutionBinding>,
+    pub(crate) replay_text: Option<String>,
 }
 
 impl fmt::Debug for AiExecutionResult {
@@ -192,6 +249,11 @@ impl fmt::Debug for AiExecutionResult {
                 &self.requested_model.as_ref().map(|_| "<redacted>"),
             )
             .field("elapsed_ms", &self.elapsed_ms)
+            .field("persistent_binding", &self.persistent_binding)
+            .field(
+                "replay_text",
+                &self.replay_text.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -260,6 +322,8 @@ mod tests {
             protocol: AgentProtocol::Acp,
             requested_model: Some("SECRET_MODEL".to_string()),
             elapsed_ms: 1,
+            persistent_binding: None,
+            replay_text: None,
         };
 
         let debug = format!("{result:?}");
@@ -280,6 +344,12 @@ mod tests {
             limits: AiExecutionLimits::default(),
             cancellation: AiExecutionCancellation::default(),
             progress: None,
+            tenant_id: None,
+            execution_context_key: None,
+            binding: None,
+            replay: false,
+            restore_only: false,
+            team_tools: None,
         }
     }
 }

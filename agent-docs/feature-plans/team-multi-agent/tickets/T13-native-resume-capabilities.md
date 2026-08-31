@@ -42,4 +42,3 @@ fake Native Definition 声明 resume argv 但不声明 history replay：第一�
 ## Ticket-specific stop
 
 Provider history 只能通过未声明、无版本契约的私有文件猜测时，不把该 Provider 标为 Leader-capable。
-

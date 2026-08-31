@@ -124,11 +124,31 @@ impl AgentCommandDefinition {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct DeclaredAgentCapabilities {
     pub(crate) text_prompt: bool,
+    pub(crate) resume: bool,
+    pub(crate) history_replay: bool,
+    pub(crate) team_tools: bool,
+    pub(crate) resume_args: Option<Vec<String>>,
 }
 
 impl DeclaredAgentCapabilities {
     pub(crate) fn acp_text() -> Self {
-        Self { text_prompt: true }
+        Self {
+            text_prompt: true,
+            resume: true,
+            history_replay: true,
+            team_tools: false,
+            resume_args: None,
+        }
+    }
+
+    pub(crate) fn native_text_with_resume(resume_args: Vec<String>) -> Self {
+        Self {
+            text_prompt: true,
+            resume: true,
+            history_replay: false,
+            team_tools: false,
+            resume_args: Some(resume_args),
+        }
     }
 }
 
@@ -205,6 +225,37 @@ impl AgentDefinition {
         }
         if let Some(discovery) = &self.model_discovery {
             discovery.validate("model_discovery")?;
+        }
+        if let Some(resume_args) = &self.declared_capabilities.resume_args {
+            let mut placeholder_index = None;
+            for (index, arg) in resume_args.iter().enumerate() {
+                if arg == SESSION_ID_PLACEHOLDER {
+                    if placeholder_index.is_some() {
+                        return Err(AgentDefinitionError::InvalidArgument {
+                            field: "resume_args",
+                            index,
+                            message: "must contain exactly one standalone {session_id} argument"
+                                .to_string(),
+                        });
+                    }
+                    placeholder_index = Some(index);
+                } else if arg.contains(['{', '}']) {
+                    return Err(AgentDefinitionError::InvalidArgument {
+                        field: "resume_args",
+                        index,
+                        message: "only a standalone {session_id} placeholder is allowed"
+                            .to_string(),
+                    });
+                }
+            }
+            if placeholder_index.is_none() {
+                return Err(AgentDefinitionError::InvalidArgument {
+                    field: "resume_args",
+                    index: resume_args.len(),
+                    message: "must contain exactly one standalone {session_id} argument"
+                        .to_string(),
+                });
+            }
         }
         if let Some(cleanup) = &self.session_cleanup {
             if cleanup.command.is_some() {

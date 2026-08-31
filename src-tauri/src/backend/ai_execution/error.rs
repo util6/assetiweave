@@ -12,6 +12,10 @@ pub(crate) enum AiExecutionError {
     UnsupportedSessionMode {
         mode: AgentSessionMode,
     },
+    InvalidContextKey,
+    InvalidReplayMode,
+    ResumeUnavailable,
+    TeamToolsUnavailable,
     AgentNotFound {
         agent_id: AgentId,
     },
@@ -72,6 +76,21 @@ impl AiExecutionError {
             Self::UnsupportedSessionMode { .. } => (
                 "unsupported_session_mode",
                 "The requested Agent session mode is not supported yet.",
+                false,
+            ),
+            Self::InvalidContextKey | Self::InvalidReplayMode => (
+                "invalid_request",
+                "The persistent execution context is invalid.",
+                false,
+            ),
+            Self::ResumeUnavailable => (
+                "resume_unavailable",
+                "The saved AI execution session is no longer available for resume.",
+                false,
+            ),
+            Self::TeamToolsUnavailable => (
+                "team_tools_unavailable",
+                "The selected AI agent has not declared the Team tool capability.",
                 false,
             ),
             Self::AgentNotFound { .. } => (
@@ -190,6 +209,10 @@ impl fmt::Display for AiExecutionError {
             Self::UnsupportedSessionMode { mode } => {
                 write!(formatter, "Agent session mode {mode:?} is not supported yet")
             }
+            Self::InvalidContextKey => formatter.write_str("persistent execution requires a context key"),
+            Self::InvalidReplayMode => formatter.write_str("history replay requires a persistent session"),
+            Self::ResumeUnavailable => formatter.write_str("the saved AI execution session is unavailable"),
+            Self::TeamToolsUnavailable => formatter.write_str("the selected AI agent has no Team tool capability"),
             Self::AgentNotFound { agent_id } => {
                 write!(formatter, "AI agent '{agent_id}' is not registered")
             }

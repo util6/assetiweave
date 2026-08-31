@@ -10,11 +10,11 @@ use uuid::Uuid;
 use crate::backend::{
     agents::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
-        types::{AgentDefinition, AgentModelOption, AgentProtocol},
+        types::{AgentDefinition, AgentModelOption, AgentProtocol, SESSION_ID_PLACEHOLDER},
     },
     ai_execution::{
-        AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase, AiExecutionRequest,
-        AiExecutionResult,
+        AgentSessionMode, AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase,
+        AiExecutionRequest, AiExecutionResult,
     },
     extension_kernel::{
         EnvEntry, ExtensionLauncher, InvocationLimits, ProbeKind, ProbeSpec, ProcessInvocation,
@@ -44,8 +44,17 @@ impl NativeExecutionBackend {
             return Err(cancelled_error(definition));
         }
         let started = Instant::now();
-        let workspace = create_workspace(&self.workspace_root)?;
+        let workspace = if let Some(binding) = request.binding.as_ref() {
+            let path = PathBuf::from(&binding.workspace_path);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            path
+        } else {
+            create_workspace(&self.workspace_root)?
+        };
         let mut guard = NativeExecutionGuard::new(workspace);
+        guard.preserve_workspace = matches!(request.session_mode, AgentSessionMode::Persistent);
 
         let outcome = {
             let execution = run_native_execution(&mut guard, definition, &request, started);
@@ -72,7 +81,10 @@ impl NativeExecutionBackend {
         request.report_cleanup(AiExecutionCleanupReport {
             process_reaped: cleanup.process_reaped,
             workspace_removed: cleanup.workspace_removed,
-            failure_count: usize::from(!cleanup.process_reaped || !cleanup.workspace_removed),
+            failure_count: usize::from(
+                !cleanup.process_reaped
+                    || (!cleanup.workspace_removed && !guard.preserve_workspace),
+            ),
             session_closed: None,
             session_deleted: None,
             session_delete_method: None,
@@ -93,7 +105,9 @@ impl NativeExecutionBackend {
             &cleanup_fields,
         );
 
-        if (!cleanup.process_reaped || !cleanup.workspace_removed) && outcome.is_ok() {
+        if (!cleanup.process_reaped || (!cleanup.workspace_removed && !guard.preserve_workspace))
+            && outcome.is_ok()
+        {
             return Err(AiExecutionError::CleanupFailed {
                 failures: vec!["process or workspace cleanup failed".to_string()],
             });
@@ -278,6 +292,7 @@ fn looks_like_model_id(token: &str) -> bool {
 struct NativeExecutionGuard {
     workspace: PathBuf,
     process: Option<ManagedAgentProcess>,
+    preserve_workspace: bool,
 }
 
 impl NativeExecutionGuard {
@@ -285,6 +300,7 @@ impl NativeExecutionGuard {
         Self {
             workspace,
             process: None,
+            preserve_workspace: false,
         }
     }
 
@@ -297,8 +313,11 @@ impl NativeExecutionGuard {
             }
         }
         self.process.take();
-        let workspace_removed =
-            fs::remove_dir_all(&self.workspace).is_ok() || !self.workspace.exists();
+        let workspace_removed = if self.preserve_workspace {
+            false
+        } else {
+            fs::remove_dir_all(&self.workspace).is_ok() || !self.workspace.exists()
+        };
         NativeCleanupOutcome {
             process_reaped,
             workspace_removed,
@@ -319,14 +338,60 @@ async fn run_native_execution(
 ) -> Result<AiExecutionResult, AiExecutionError> {
     request.report_phase(AiExecutionPhase::Spawning);
 
-    let mut args = vec![
-        "-p".to_string(),
-        request.prompt.clone(),
-        "--output-format".to_string(),
-        "stream-json".to_string(),
-        "--print-timeout".to_string(),
-        "10m".to_string(),
-    ];
+    let persistent_session_id = if matches!(
+        request.session_mode,
+        crate::backend::ai_execution::AgentSessionMode::Persistent
+    ) {
+        let Some(resume_args) = definition.declared_capabilities.resume_args.as_ref() else {
+            return Err(AiExecutionError::ResumeUnavailable);
+        };
+        if resume_args.is_empty() || !definition.declared_capabilities.resume {
+            return Err(AiExecutionError::ResumeUnavailable);
+        }
+        Some(
+            request
+                .binding
+                .as_ref()
+                .map(|binding| binding.provider_session_id.clone())
+                .unwrap_or_else(|| format!("native-session-{}", Uuid::new_v4().simple())),
+        )
+    } else {
+        None
+    };
+    let mut args = if let Some(session_id) = persistent_session_id.as_deref() {
+        definition
+            .declared_capabilities
+            .resume_args
+            .as_ref()
+            .expect("persistent session id requires resume args")
+            .iter()
+            .map(|arg| {
+                if arg == SESSION_ID_PLACEHOLDER {
+                    session_id.to_string()
+                } else {
+                    arg.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        vec![
+            "-p".to_string(),
+            request.prompt.clone(),
+            "--output-format".to_string(),
+            "stream-json".to_string(),
+            "--print-timeout".to_string(),
+            "10m".to_string(),
+        ]
+    };
+
+    if matches!(
+        request.session_mode,
+        crate::backend::ai_execution::AgentSessionMode::Persistent
+    ) && !request.restore_only
+    {
+        args.push("-p".to_string());
+        args.push(request.prompt.clone());
+    }
 
     if let Some(model) = &request.model {
         if !model.trim().is_empty() {
@@ -432,6 +497,33 @@ async fn run_native_execution(
         return Err(AiExecutionError::Output { message: err });
     }
 
+    if request.restore_only {
+        return Ok(AiExecutionResult {
+            text: String::new(),
+            agent_id: definition.id.clone(),
+            protocol: AgentProtocol::Native,
+            requested_model: request.model.clone(),
+            elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            persistent_binding: persistent_session_id.map(|provider_session_id| {
+                crate::backend::ai_execution::PersistentExecutionBinding {
+                    tenant_id: request.tenant_id.clone().unwrap_or_default(),
+                    execution_context_key: request
+                        .execution_context_key
+                        .clone()
+                        .unwrap_or_default(),
+                    provider_session_id,
+                    agent_id: definition.id.to_string(),
+                    installation_id: definition.installation_id.clone(),
+                    model: request.model.clone(),
+                    workspace_path: guard.workspace.to_string_lossy().into_owned(),
+                    binding_version: 1,
+                    provider_metadata_json: "{\"protocol\":\"native\"}".to_string(),
+                }
+            }),
+            replay_text: None,
+        });
+    }
+
     let text = if !accumulated_text.is_empty() {
         accumulated_text
     } else {
@@ -450,6 +542,20 @@ async fn run_native_execution(
         protocol: AgentProtocol::Native,
         requested_model: request.model.clone(),
         elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        persistent_binding: persistent_session_id.map(|provider_session_id| {
+            crate::backend::ai_execution::PersistentExecutionBinding {
+                tenant_id: request.tenant_id.clone().unwrap_or_default(),
+                execution_context_key: request.execution_context_key.clone().unwrap_or_default(),
+                provider_session_id,
+                agent_id: definition.id.to_string(),
+                installation_id: definition.installation_id.clone(),
+                model: request.model.clone(),
+                workspace_path: guard.workspace.to_string_lossy().into_owned(),
+                binding_version: 1,
+                provider_metadata_json: "{\"protocol\":\"native\"}".to_string(),
+            }
+        }),
+        replay_text: None,
     })
 }
 
@@ -574,6 +680,10 @@ fn map_process_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::{
+        agents::types::{AgentEnvEntry, AgentId, DeclaredAgentCapabilities},
+        ai_execution::{AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose},
+    };
 
     #[test]
     fn test_parse_agy_models_tsv() {
@@ -619,5 +729,99 @@ mod tests {
             ),
             Err(AiExecutionError::PermissionDenied)
         ));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn persistent_native_resume_uses_declared_session_argument() {
+        let root = std::env::temp_dir().join(format!("assetiweave-native-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let record = root.join("argv.ndjson");
+        let definition = AgentDefinition {
+            id: AgentId::parse("fake-native").unwrap(),
+            installation_id: Some("fixture-installation".to_string()),
+            display_name: "Fake Native".to_string(),
+            protocol: AgentProtocol::Native,
+            command: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("test-fixtures/fake-native-agent")
+                .to_string_lossy()
+                .into_owned(),
+            args: vec!["unused-launch-arg-is-replaced-by-the-native-invocation".to_string()],
+            env: vec![AgentEnvEntry::new(
+                "ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH",
+                record.to_string_lossy(),
+            )],
+            declared_capabilities: DeclaredAgentCapabilities::native_text_with_resume(vec![
+                "--session".to_string(),
+                "{session_id}".to_string(),
+            ]),
+            availability_probe: None,
+            model_discovery: None,
+            session_cleanup: None,
+            session_cleanup_not_found_markers: Vec::new(),
+        };
+        let backend = NativeExecutionBackend::new(root.join("workspaces"));
+        let request = |execution_id: &str| AiExecutionRequest {
+            execution_id: execution_id.to_string(),
+            agent_id: definition.id.clone(),
+            purpose: AiExecutionPurpose::TeamTask,
+            session_mode: AgentSessionMode::Persistent,
+            prompt: "fixture prompt".to_string(),
+            model: Some("fixture-model".to_string()),
+            limits: AiExecutionLimits::default(),
+            cancellation: AiExecutionCancellation::default(),
+            progress: None,
+            tenant_id: Some("tenant-fixture".to_string()),
+            execution_context_key: Some("member-context".to_string()),
+            binding: None,
+            replay: false,
+            restore_only: false,
+            team_tools: None,
+        };
+
+        let first = backend
+            .execute(&definition, request("native-first"))
+            .await
+            .expect("first native persistent execution");
+        let binding = first
+            .persistent_binding
+            .clone()
+            .expect("first native execution returns a binding");
+        assert_eq!(first.text, "native fixture response");
+
+        let mut resumed = request("native-second");
+        resumed.binding = Some(binding.clone());
+        let second = backend
+            .execute(&definition, resumed)
+            .await
+            .expect("resumed native persistent execution");
+        assert_eq!(second.text, "native fixture response");
+        assert_eq!(
+            second.persistent_binding.unwrap().provider_session_id,
+            binding.provider_session_id
+        );
+
+        let mut restored = request("native-restore");
+        restored.binding = Some(binding);
+        restored.restore_only = true;
+        let restored = backend
+            .execute(&definition, restored)
+            .await
+            .expect("native restore probe");
+        assert!(restored.text.is_empty());
+
+        let records = fs::read_to_string(&record).unwrap();
+        let records = records
+            .split("--END--\n")
+            .filter(|record| !record.is_empty())
+            .map(|record| record.lines().map(str::to_string).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 3);
+        let session = records[0][1].as_str();
+        assert_eq!(records[1][1].as_str(), session);
+        assert_eq!(records[2][1].as_str(), session);
+        assert!(records[0].iter().any(|arg| arg == "fixture prompt"));
+        assert!(!records[2].iter().any(|arg| arg == "fixture prompt"));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

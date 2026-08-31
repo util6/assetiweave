@@ -288,5 +288,6 @@ fn dispatcher_shutdown_is_bounded_when_a_consumer_does_not_cooperate() {
 fn event_id(event: &DomainEvent) -> &str {
     match event {
         DomainEvent::ConversationSourceCommitted { event_id, .. } => event_id,
+        DomainEvent::TeamRunConfirmed { event_id, .. } => event_id,
     }
 }

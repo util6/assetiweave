@@ -137,4 +137,3 @@ Leader 和 Teammate 通过任务板与 mailbox 协作。MCP 或 CLI fallback 最
 ### C-S02 — 本地确定性测试
 
 自动测试使用 fake ACP/Native 和临时数据库。真实 Provider 与网络只用于最终可选 smoke。
-

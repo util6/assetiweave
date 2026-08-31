@@ -13,7 +13,7 @@ use crate::backend::agents::{
     registry::{AgentAvailability, AgentProbeError, AgentRegistry, AgentRegistryHandle},
     types::{
         AgentCatalogEntry, AgentConnectionResult, AgentDefinition, AgentId, AgentModelOption,
-        AgentModelsResult, AgentProtocol,
+        AgentModelsResult, AgentProtocol, DeclaredAgentCapabilities,
     },
 };
 use crate::backend::operation_log::{log_info, log_warn, LogField};
@@ -21,7 +21,7 @@ use crate::backend::operation_log::{log_info, log_warn, LogField};
 use super::{
     backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
     AiExecutionCleanupReport, AiExecutionError, AiExecutionPhase, AiExecutionProgressSink,
-    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult,
+    AiExecutionPurpose, AiExecutionRequest, AiExecutionResult, PersistentBindingStore,
 };
 
 pub(crate) type BackendFuture<'a> =
@@ -69,6 +69,10 @@ pub(crate) trait AgentExecutionRuntime: Send + Sync {
 
     fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
         Vec::new()
+    }
+
+    fn agent_capabilities(&self, _agent_id: &AgentId) -> Option<DeclaredAgentCapabilities> {
+        None
     }
 
     fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
@@ -163,6 +167,7 @@ pub(crate) struct AgentExecutor {
     active:
         Arc<Mutex<HashMap<uuid::Uuid, (AgentId, Option<String>, super::AiExecutionCancellation)>>>,
     mutation_gates: Arc<Mutex<HashMap<String, Arc<tokio::sync::RwLock<()>>>>>,
+    persistent_bindings: Option<Arc<PersistentBindingStore>>,
 }
 
 impl AgentExecutor {
@@ -188,6 +193,25 @@ impl AgentExecutor {
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
             mutation_gates: Arc::new(Mutex::new(HashMap::new())),
+            persistent_bindings: None,
+        }
+    }
+
+    pub(crate) fn with_registry_handle_and_bindings(
+        registry: AgentRegistryHandle,
+        acp: Arc<dyn AgentExecutionBackend>,
+        native: Arc<dyn AgentExecutionBackend>,
+        max_concurrency: usize,
+        persistent_bindings: Arc<PersistentBindingStore>,
+    ) -> Self {
+        Self {
+            registry,
+            acp,
+            native,
+            permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
+            active: Arc::new(Mutex::new(HashMap::new())),
+            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
+            persistent_bindings: Some(persistent_bindings),
         }
     }
 
@@ -204,6 +228,7 @@ impl AgentExecutor {
             permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
             active: Arc::new(Mutex::new(HashMap::new())),
             mutation_gates: Arc::new(Mutex::new(HashMap::new())),
+            persistent_bindings: None,
         }
     }
 
@@ -215,22 +240,42 @@ impl AgentExecutor {
         let execution_id = request.execution_id.clone();
         let agent_id = request.agent_id.to_string();
         let purpose = request.purpose;
-        log_info(
-            "ai_execution.lifecycle",
-            "AI execution started",
-            &execution_log_fields(&execution_id, &agent_id, purpose, 0),
-        );
+        let suppress_diagnostics = request.replay;
+        let session_mode = request.session_mode;
+        if !suppress_diagnostics {
+            log_info(
+                "ai_execution.lifecycle",
+                "AI execution started",
+                &execution_log_fields(&execution_id, &agent_id, purpose, 0),
+            );
+        }
         let downstream_progress = request.progress.take();
         request.progress = Some(Arc::new(ObservedProgressSink {
             execution_id: execution_id.clone(),
             agent_id: agent_id.clone(),
             purpose,
             started,
+            suppress_diagnostics,
             downstream: downstream_progress,
         }));
 
         let outcome = async {
             request.validate()?;
+            if matches!(request.session_mode, super::AgentSessionMode::Persistent)
+                && request.binding.is_none()
+            {
+                if let (Some(store), Some(tenant_id), Some(context_key)) = (
+                    self.persistent_bindings.as_ref(),
+                    request.tenant_id.as_deref(),
+                    request.execution_context_key.as_deref(),
+                ) {
+                    request.binding = store.load(tenant_id, context_key).await.map_err(|_| {
+                        AiExecutionError::Protocol {
+                            operation: "persistent_binding_load",
+                        }
+                    })?;
+                }
+            }
             let mutation_gate = self.mutation_gate(request.agent_id.as_str());
             let _execution_lease = mutation_gate.read().await;
             let active_id = uuid::Uuid::new_v4();
@@ -275,6 +320,26 @@ impl AgentExecutor {
                     agent_id: request.agent_id.clone(),
                 });
             };
+            if request.binding.as_ref().is_some_and(|binding| {
+                binding.agent_id != definition.id.as_str()
+                    || binding.installation_id != definition.installation_id
+            }) {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            if request.restore_only && request.binding.is_none() {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            if matches!(request.session_mode, super::AgentSessionMode::Persistent)
+                && !definition.declared_capabilities.resume
+            {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            if request.replay && !definition.declared_capabilities.history_replay {
+                return Err(AiExecutionError::ResumeUnavailable);
+            }
+            if request.team_tools.is_some() && !definition.declared_capabilities.team_tools {
+                return Err(AiExecutionError::TeamToolsUnavailable);
+            }
             if let Ok(mut active) = self.active.lock() {
                 if let Some((_, installation_id, _)) = active.get_mut(&active_id) {
                     *installation_id = definition.installation_id.clone();
@@ -310,26 +375,45 @@ impl AgentExecutor {
         }
         .await;
 
-        let mut fields = execution_log_fields(
-            &execution_id,
-            &agent_id,
-            purpose,
-            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-        );
-        match &outcome {
-            Ok(result) => {
-                fields.extend([
-                    (
-                        "protocol",
-                        format!("{:?}", result.protocol).to_ascii_lowercase(),
-                    ),
-                    ("text_bytes", result.text.len().to_string()),
-                ]);
-                log_info("ai_execution.lifecycle", "AI execution completed", &fields);
+        let outcome = match outcome {
+            Ok(result) if matches!(session_mode, super::AgentSessionMode::Persistent) => {
+                if let (Some(store), Some(binding)) = (
+                    self.persistent_bindings.as_ref(),
+                    result.persistent_binding.as_ref(),
+                ) {
+                    store
+                        .save(binding)
+                        .await
+                        .map_err(|_| AiExecutionError::Protocol {
+                            operation: "persistent_binding_save",
+                        })?;
+                }
+                Ok(result)
             }
-            Err(error) => {
-                fields.push(("error_code", error.to_view().code));
-                log_warn("ai_execution.lifecycle", "AI execution failed", &fields);
+            other => other,
+        };
+        if !suppress_diagnostics {
+            let mut fields = execution_log_fields(
+                &execution_id,
+                &agent_id,
+                purpose,
+                started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            );
+            match &outcome {
+                Ok(result) => {
+                    fields.extend([
+                        (
+                            "protocol",
+                            format!("{:?}", result.protocol).to_ascii_lowercase(),
+                        ),
+                        ("text_bytes", result.text.len().to_string()),
+                    ]);
+                    log_info("ai_execution.lifecycle", "AI execution completed", &fields);
+                }
+                Err(error) => {
+                    fields.push(("error_code", error.to_view().code));
+                    log_warn("ai_execution.lifecycle", "AI execution failed", &fields);
+                }
             }
         }
         outcome
@@ -457,6 +541,7 @@ struct ObservedProgressSink {
     agent_id: String,
     purpose: AiExecutionPurpose,
     started: Instant,
+    suppress_diagnostics: bool,
     downstream: Option<Arc<dyn AiExecutionProgressSink>>,
 }
 
@@ -465,14 +550,16 @@ impl AiExecutionProgressSink for ObservedProgressSink {
         if let Some(downstream) = self.downstream.as_ref() {
             downstream.set_phase(phase);
         }
-        let mut fields = execution_log_fields(
-            &self.execution_id,
-            &self.agent_id,
-            self.purpose,
-            self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-        );
-        fields.push(("phase", format!("{phase:?}").to_ascii_lowercase()));
-        log_info("ai_execution.phase", "AI execution phase changed", &fields);
+        if !self.suppress_diagnostics {
+            let mut fields = execution_log_fields(
+                &self.execution_id,
+                &self.agent_id,
+                self.purpose,
+                self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            );
+            fields.push(("phase", format!("{phase:?}").to_ascii_lowercase()));
+            log_info("ai_execution.phase", "AI execution phase changed", &fields);
+        }
     }
 
     fn failure_phase(&self) -> Option<AiExecutionPhase> {
@@ -513,6 +600,12 @@ impl AgentExecutionRuntime for AgentExecutor {
 
     fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
         self.registry.catalog()
+    }
+
+    fn agent_capabilities(&self, agent_id: &AgentId) -> Option<DeclaredAgentCapabilities> {
+        self.registry
+            .get(agent_id)
+            .map(|definition| definition.declared_capabilities.clone())
     }
 
     fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
@@ -747,6 +840,8 @@ mod tests {
                     protocol: definition.protocol,
                     requested_model: request.model,
                     elapsed_ms: 1,
+                    persistent_binding: None,
+                    replay_text: None,
                 })
             })
         }
@@ -982,6 +1077,12 @@ mod tests {
             },
             cancellation: AiExecutionCancellation::default(),
             progress: None,
+            tenant_id: None,
+            execution_context_key: None,
+            binding: None,
+            replay: false,
+            restore_only: false,
+            team_tools: None,
         }
     }
 }

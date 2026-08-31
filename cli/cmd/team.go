@@ -16,6 +16,186 @@ func newCmdTeam(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdTeamCreate(f))
 	cmd.AddCommand(newCmdTeamUpdate(f))
 	cmd.AddCommand(newCmdTeamDelete(f))
+	cmd.AddCommand(newCmdTeamLeader(f))
+	cmd.AddCommand(newCmdTeamRun(f))
+	cmd.AddCommand(newCmdTeamTask(f))
+	cmd.AddCommand(newCmdTeamMailbox(f))
+	cmd.AddCommand(newCmdTeamTool(f))
+	return cmd
+}
+
+func newCmdTeamLeader(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "leader", Short: "Chat with the Team leader"}
+	cmd.AddCommand(newCmdTeamLeaderChat(f))
+	return cmd
+}
+
+func newCmdTeamLeaderChat(f *cmdutil.Factory) *cobra.Command {
+	var message string
+	var replay bool
+	cmd := &cobra.Command{
+		Use:   "chat <team-id>",
+		Short: "Chat with or replay the persistent Team leader",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamLeaderChat, map[string]any{
+				"team_id": args[0], "message": message, "replay": replay,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&message, "message", "", "message for the Team leader")
+	cmd.Flags().BoolVar(&replay, "replay", false, "replay the saved leader history")
+	return cmd
+}
+
+func newCmdTeamRun(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "run", Short: "Draft, review, inspect, and confirm Team runs"}
+	cmd.AddCommand(newCmdTeamRunDraft(f))
+	cmd.AddCommand(newCmdTeamRunGet(f))
+	cmd.AddCommand(newCmdTeamRunReview(f))
+	cmd.AddCommand(newCmdTeamRunConfirm(f))
+	cmd.AddCommand(newCmdTeamRunRestore(f))
+	return cmd
+}
+
+func newCmdTeamRunRestore(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{Use: "restore <run-id>", Short: "Restore Team history and member readiness", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamRunRestore, map[string]any{"run_id": args[0]})
+	}}
+}
+
+func newCmdTeamRunDraft(f *cmdutil.Factory) *cobra.Command {
+	var message string
+	cmd := &cobra.Command{Use: "draft <team-id>", Short: "Create a structured Team task draft", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamRunDraft, map[string]any{"team_id": args[0], "leader_message": message})
+	}}
+	cmd.Flags().StringVar(&message, "message", "", "request for the Team leader")
+	_ = cmd.MarkFlagRequired("message")
+	return cmd
+}
+
+func newCmdTeamRunGet(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{Use: "get <run-id>", Short: "Get a Team run snapshot", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamRunGet, map[string]any{"run_id": args[0]})
+	}}
+}
+
+func newCmdTeamRunReview(f *cmdutil.Factory) *cobra.Command {
+	var revision int64
+	var tasksJSON string
+	cmd := &cobra.Command{Use: "review <run-id>", Short: "Apply human Team task assignments", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var tasks []any
+		if err := json.Unmarshal([]byte(tasksJSON), &tasks); err != nil {
+			return fmt.Errorf("invalid tasks JSON: %w", err)
+		}
+		return callAndPrint(cmd, f, schema.MethodTeamRunReview, map[string]any{"run_id": args[0], "revision": revision, "tasks": tasks})
+	}}
+	cmd.Flags().Int64Var(&revision, "revision", 0, "run revision")
+	cmd.Flags().StringVar(&tasksJSON, "tasks", "[]", "JSON array of reviewed task assignments")
+	_ = cmd.MarkFlagRequired("revision")
+	return cmd
+}
+
+func newCmdTeamRunConfirm(f *cmdutil.Factory) *cobra.Command {
+	var revision int64
+	var yes bool
+	cmd := &cobra.Command{Use: "confirm <run-id>", Short: "Confirm and execute a reviewed Team run", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireYes(yes, "Team run confirm"); err != nil {
+			return err
+		}
+		return callAndPrint(cmd, f, schema.MethodTeamRunConfirm, map[string]any{"run_id": args[0], "revision": revision})
+	}}
+	cmd.Flags().Int64Var(&revision, "revision", 0, "run revision")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm execution")
+	_ = cmd.MarkFlagRequired("revision")
+	return cmd
+}
+
+func newCmdTeamTask(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "task", Short: "Update Team tasks"}
+	cmd.AddCommand(newCmdTeamTaskUpdate(f))
+	return cmd
+}
+
+func newCmdTeamTaskUpdate(f *cmdutil.Factory) *cobra.Command {
+	var credential, teamID, runID, memberID, state, result, errorCode string
+	cmd := &cobra.Command{Use: "update <task-id>", Short: "Update an assigned Team task", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		params := map[string]any{"credential": credential, "task_id": args[0], "team_id": teamID, "run_id": runID, "member_id": memberID, "state": state, "result": result, "error_code": errorCode}
+		return callAndPrint(cmd, f, schema.MethodTeamToolTaskUpdate, params)
+	}}
+	cmd.Flags().StringVar(&credential, "credential", "", "scoped Team tool credential")
+	cmd.Flags().StringVar(&teamID, "team-id", "", "Team identifier")
+	cmd.Flags().StringVar(&runID, "run-id", "", "run identifier")
+	cmd.Flags().StringVar(&memberID, "member-id", "", "assigned member identifier")
+	cmd.Flags().StringVar(&state, "state", "", "queued, running, succeeded, failed, or canceled")
+	cmd.Flags().StringVar(&result, "result", "", "task result")
+	cmd.Flags().StringVar(&errorCode, "error-code", "", "terminal error code")
+	for _, name := range []string{"credential", "team-id", "run-id", "member-id", "state"} {
+		_ = cmd.MarkFlagRequired(name)
+	}
+	return cmd
+}
+
+func newCmdTeamMailbox(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "mailbox", Short: "Exchange Team mailbox messages"}
+	cmd.AddCommand(newCmdTeamMailboxSend(f))
+	cmd.AddCommand(newCmdTeamMailboxRead(f))
+	return cmd
+}
+
+func newCmdTeamMailboxSend(f *cmdutil.Factory) *cobra.Command {
+	var credential, teamID, senderID, recipientID, messageType, body, idempotency, taskID string
+	cmd := &cobra.Command{Use: "send <run-id>", Short: "Send a mailbox message", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamToolMailboxSend, map[string]any{"credential": credential, "team_id": teamID, "run_id": args[0], "task_id": taskID, "sender_member_id": senderID, "recipient_member_id": recipientID, "message_type": messageType, "body": body, "idempotency_key": idempotency})
+	}}
+	cmd.Flags().StringVar(&credential, "credential", "", "scoped Team tool credential")
+	cmd.Flags().StringVar(&teamID, "team-id", "", "Team identifier")
+	cmd.Flags().StringVar(&taskID, "task-id", "", "optional task identifier")
+	cmd.Flags().StringVar(&senderID, "sender", "", "sender member identifier")
+	cmd.Flags().StringVar(&recipientID, "recipient", "", "recipient member identifier")
+	cmd.Flags().StringVar(&messageType, "type", "note", "message type")
+	cmd.Flags().StringVar(&body, "body", "", "message body")
+	cmd.Flags().StringVar(&idempotency, "idempotency-key", "", "idempotency key")
+	for _, name := range []string{"credential", "team-id", "sender", "recipient", "body", "idempotency-key"} {
+		_ = cmd.MarkFlagRequired(name)
+	}
+	return cmd
+}
+
+func newCmdTeamMailboxRead(f *cmdutil.Factory) *cobra.Command {
+	var credential, teamID, memberID string
+	var ack bool
+	cmd := &cobra.Command{Use: "read <run-id>", Short: "Read a mailbox", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamToolMailboxRead, map[string]any{"credential": credential, "team_id": teamID, "run_id": args[0], "recipient_member_id": memberID, "ack": ack})
+	}}
+	cmd.Flags().StringVar(&credential, "credential", "", "scoped Team tool credential")
+	cmd.Flags().StringVar(&teamID, "team-id", "", "Team identifier")
+	cmd.Flags().StringVar(&memberID, "member", "", "recipient member identifier")
+	cmd.Flags().BoolVar(&ack, "ack", false, "acknowledge messages")
+	for _, name := range []string{"credential", "team-id", "member"} {
+		_ = cmd.MarkFlagRequired(name)
+	}
+	return cmd
+}
+
+func newCmdTeamTool(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "tool", Short: "Use scoped Team tools through Engine"}
+	cmd.AddCommand(newCmdTeamToolTasks(f))
+	return cmd
+}
+
+func newCmdTeamToolTasks(f *cmdutil.Factory) *cobra.Command {
+	var credential, teamID, runID, memberID string
+	cmd := &cobra.Command{Use: "tasks", Short: "List tasks owned by a Team member", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodTeamToolTasks, map[string]any{"credential": credential, "team_id": teamID, "run_id": runID, "member_id": memberID})
+	}}
+	cmd.Flags().StringVar(&credential, "credential", "", "scoped Team tool credential")
+	cmd.Flags().StringVar(&teamID, "team-id", "", "Team identifier")
+	cmd.Flags().StringVar(&runID, "run-id", "", "run identifier")
+	cmd.Flags().StringVar(&memberID, "member-id", "", "authenticated member identifier")
+	for _, name := range []string{"credential", "team-id", "run-id", "member-id"} {
+		_ = cmd.MarkFlagRequired(name)
+	}
 	return cmd
 }
 

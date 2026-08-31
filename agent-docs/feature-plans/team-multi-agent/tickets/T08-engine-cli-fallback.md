@@ -40,4 +40,3 @@ Native Provider 启动参数、Agent 安装、Team UI、通用 admin CLI 和直�
 ## Ticket-specific stop
 
 如果 Engine contract 无法表达成员身份而需要 CLI 自行授权，停止并修改共享 AppService/DTO 设计。
-

@@ -4,6 +4,7 @@ import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProv
 import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
 import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
 import { useMemoryTasks } from "../app/backgroundTasks/MemoryTaskProvider";
+import { useOptionalTeamTasks } from "../app/backgroundTasks/TeamTaskProvider";
 import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
 import { ConversationsPageSkeleton } from "../components/conversations/ConversationSkeleton";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
@@ -61,6 +62,8 @@ export function AppRouter() {
   const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
   const { tasks: memoryTasks } = useMemoryTasks();
+  const teamTaskContext = useOptionalTeamTasks();
+  const teamTasks = teamTaskContext?.tasks ?? [];
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
   const runningSkillBackupTaskIds = useRef(new Set<string>());
@@ -290,6 +293,18 @@ export function AppRouter() {
       ) : null}
       <AppUpdateDialog />
       <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
+        {teamTasks.filter((task) => ["Pending", "Running", "Cancelling"].includes(task.state)).map((task) => (
+          <div
+            className="rounded-lg border border-primary/30 bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
+            key={task.task_id}
+          >
+            <div className="font-medium">{t("team.task.global")}</div>
+            <div className="mt-1 text-on-surface-variant">
+              {task.progress ? `${task.progress.current}/${task.progress.total ?? "?"}` : t("team.task.active")}
+              {task.progress?.note ? ` · ${task.progress.note}` : ""}
+            </div>
+          </div>
+        ))}
         {searchIndexTask?.status === "running" ? (
           <div className="aurora-task-indicator rounded-xl border px-4 py-3 text-body-sm text-on-surface">
             {t("conversation.searchIndex.building")}
