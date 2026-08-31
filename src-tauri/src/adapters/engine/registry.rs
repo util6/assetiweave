@@ -128,6 +128,18 @@ struct AgentRuntimeCheckParams {
     agent_id: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamGetParams {
+    team_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamDeleteParams {
+    team_id: String,
+    #[serde(default)]
+    yes: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct ParamViolation {
     param: String,
@@ -756,6 +768,79 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[param!("item_id", "Candidate Memory item identifier", ["itemId"])],
         Some("assetiweave-cli memory candidate reject <item-id>"),
         since: "0.5.2", deprecated: false
+    ),
+    command!(
+        "team.list",
+        "team.list",
+        "List all teams and rosters",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_teams(),
+        &[],
+        Some("assetiweave-cli team list")
+    ),
+    command!(
+        "team.get",
+        "team.get",
+        "Get team details and member roster",
+        Read,
+        Friendly,
+        false,
+        TeamGetParams,
+        Service => |service, params| service.get_team(&params.team_id),
+        &[param!("team_id", "Team identifier", ["teamId"])],
+        Some("assetiweave-cli team get <team-id>")
+    ),
+    command!(
+        "team.create",
+        "team.create",
+        "Create a team with fixed leader and members",
+        Write,
+        Friendly,
+        false,
+        crate::backend::models::CreateTeamInput,
+        Service => |service, params| service.create_team(params),
+        &[
+            param!("id", "Optional team identifier"),
+            param!("name", "Team name"),
+            param!("description", "Optional team description"),
+            param!("members", "Ordered team members with roles and agent configs"),
+        ],
+        Some("assetiweave-cli team create --name <name>")
+    ),
+    command!(
+        "team.update",
+        "team.update",
+        "Update team details and roster",
+        Write,
+        Friendly,
+        false,
+        crate::backend::models::UpdateTeamInput,
+        Service => |service, params| service.update_team(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("name", "Team name"),
+            param!("description", "Optional team description"),
+            param!("members", "Updated ordered team members"),
+        ],
+        Some("assetiweave-cli team update <team-id> --name <name>")
+    ),
+    command!(
+        "team.delete",
+        "team.delete",
+        "Delete a team and its roster",
+        HighRiskWrite,
+        Friendly,
+        false,
+        TeamDeleteParams,
+        Service => |service, params| service.delete_team(&params.team_id),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("yes", "Confirm deletion of team"),
+        ],
+        Some("assetiweave-cli team delete <team-id> --yes")
     ),
     command!(
         "asset.list",
@@ -4083,6 +4168,79 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         RevealPathParams,
         System => |params| crate::adapters::platform::reveal_path(params.path),
         &[param!("path", "Local path to reveal")],
+        None
+    ),
+    command!(
+        "create_team",
+        "team.create",
+        "Create a team with fixed leader and members",
+        Write,
+        App,
+        false,
+        crate::backend::models::CreateTeamInput,
+        Service => |service, params| service.create_team(params),
+        &[
+            param!("id", "Optional team identifier"),
+            param!("name", "Team name"),
+            param!("description", "Optional team description"),
+            param!("members", "Ordered team members with roles and agent configs"),
+        ],
+        None
+    ),
+    command!(
+        "get_team",
+        "team.get",
+        "Get team details and member roster",
+        Read,
+        App,
+        false,
+        TeamGetParams,
+        Service => |service, params| service.get_team(&params.team_id),
+        &[param!("team_id", "Team identifier", ["teamId"])],
+        None
+    ),
+    command!(
+        "list_teams",
+        "team.list",
+        "List all teams and rosters",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_teams(),
+        &[],
+        None
+    ),
+    command!(
+        "update_team",
+        "team.update",
+        "Update team details and roster",
+        Write,
+        App,
+        false,
+        crate::backend::models::UpdateTeamInput,
+        Service => |service, params| service.update_team(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("name", "Team name"),
+            param!("description", "Optional team description"),
+            param!("members", "Updated ordered team members"),
+        ],
+        None
+    ),
+    command!(
+        "delete_team",
+        "team.delete",
+        "Delete a team and its roster",
+        HighRiskWrite,
+        App,
+        false,
+        TeamDeleteParams,
+        Service => |service, params| service.delete_team(&params.team_id),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("yes", "Confirm deletion of team"),
+        ],
         None
     ),
 ];

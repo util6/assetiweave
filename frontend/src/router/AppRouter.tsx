@@ -25,6 +25,7 @@ import {
   loadSkillMountsPage,
   preloadRoute,
   loadSourcesPage,
+  loadTeamPage,
   routeRegistry,
 } from "./routeLoaders";
 import {
@@ -47,6 +48,7 @@ const ConversationsPage = lazy(loadConversationsPage);
 const LogViewerModal = lazy(loadLogViewerModal);
 const ManualPage = lazy(loadManualPage);
 const MemoryPage = lazy(loadMemoryPage);
+const TeamPage = lazy(loadTeamPage);
 
 const SkillGroupsPage = lazy(loadSkillGroupsPage);
 const PromptOverviewPage = lazy(loadPromptOverviewPage);
@@ -435,6 +437,11 @@ const routeRenderers: Record<AppRouteId, (context: RouteRenderContext) => ReactN
   memory: (context) => (
     <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(context.activeSubNavId)} />}>
       <MemoryPage activeSubNavId={context.activeSubNavId} onEvidenceOpen={context.handleMemoryEvidenceOpen} />
+    </Suspense>
+  ),
+  team: () => (
+    <Suspense fallback={<RouteLoadingState layout="columns" />}>
+      <TeamPage />
     </Suspense>
   ),
   "under-construction": (context) => (

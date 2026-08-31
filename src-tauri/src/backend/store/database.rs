@@ -676,7 +676,7 @@ mod tests {
         assert_eq!(memory_table_count, 3);
         assert_eq!(memory_recall_index_count, 2);
         assert_eq!(execution_projection_index_count, 0);
-        assert_eq!(migration_count, 37);
+        assert_eq!(migration_count, 38);
         cleanup_database(&db_path);
     }
 
@@ -967,7 +967,7 @@ mod tests {
             )
         );
         assert_eq!(cursor_target_path, "@config/Cursor/skills");
-        assert_eq!(migration_count, 37);
+        assert_eq!(migration_count, 38);
         cleanup_database(&db_path);
     }
 
@@ -1028,7 +1028,7 @@ mod tests {
                 row.get(0)
             })
             .expect("query migrations");
-        assert_eq!(migration_count, 37);
+        assert_eq!(migration_count, 38);
         cleanup_database(&db_path);
     }
 

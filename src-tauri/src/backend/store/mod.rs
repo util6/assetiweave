@@ -16,6 +16,7 @@ mod shortcut_repo;
 mod skill_remote_repo;
 mod source_repo;
 mod sql;
+mod team_repo;
 mod tenant_repo;
 mod web_record_repo;
 
@@ -113,6 +114,9 @@ pub(crate) use skill_remote_repo::{
 pub(crate) use source_repo::{
     delete_source_sqlx, load_skill_sources_sqlx, load_source_sqlx, load_sources_sqlx,
     normalize_source_with_catalog, upsert_source_sqlx, upsert_source_sqlx_with_catalog,
+};
+pub(crate) use team_repo::{
+    create_team_sqlx, delete_team_sqlx, get_team_detail_sqlx, list_teams_sqlx, update_team_sqlx,
 };
 pub(crate) use tenant_repo::{
     create_local_tenant_sqlx, list_tenants_for_principal_sqlx, load_local_request_context_sqlx,

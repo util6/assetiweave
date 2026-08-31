@@ -53,6 +53,10 @@ export const loadManualPage = createCachedLoader(() =>
   import("../manuals/ManualPage").then((module) => ({ default: module.ManualPage })),
 );
 
+export const loadTeamPage = createCachedLoader(() =>
+  import("../pages/team/TeamPage").then((module) => ({ default: module.TeamPage })),
+);
+
 export interface RouteDefinition {
   loader?: () => Promise<{ default: ComponentType<any> }>;
   skeleton: SkeletonLayoutName;
@@ -68,6 +72,7 @@ export const routeRegistry: Record<AppRouteId, RouteDefinition> = {
   "skill-mounts": { loader: loadSkillMountsPage, skeleton: "columns", transition: "columns" },
   "web-records": { loader: loadConversationsPage, skeleton: "columns", transition: "columns" },
   memory: { loader: loadMemoryPage, skeleton: "columns", transition: "memory" },
+  team: { loader: loadTeamPage, skeleton: "columns", transition: "columns" },
   "under-construction": { skeleton: "list", transition: null },
 };
 

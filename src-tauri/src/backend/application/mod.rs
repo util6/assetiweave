@@ -23,6 +23,7 @@ mod skill_remote;
 mod skills;
 mod sources;
 mod system;
+mod team;
 mod tenants;
 mod utils;
 

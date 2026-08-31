@@ -4545,3 +4545,220 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
     );
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn team_roster_rules_and_persistence_ts01() {
+    use crate::backend::models::{CreateTeamInput, TeamMemberInput, TeamRole};
+    use rusqlite::Connection;
+
+    let root = std::env::temp_dir().join(format!("assetiweave-team-test-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create team test root");
+    let db_path = root.join("app.db");
+
+    // Scope 1: Create teams and verify validation & persistence
+    {
+        let service = AppService::open_with_db_path(db_path.clone()).expect("open service");
+
+        // 1. Validation test: Team with two leaders must fail
+        let two_leaders_res = service.create_team(CreateTeamInput {
+            id: Some("team-invalid-1".to_string()),
+            name: "Two Leaders Team".to_string(),
+            description: None,
+            members: vec![
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Leader,
+                    sort_order: Some(0),
+                    agent_id: "claude-code".to_string(),
+                    model: Some("claude-3-7-sonnet".to_string()),
+                },
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Leader,
+                    sort_order: Some(1),
+                    agent_id: "codex".to_string(),
+                    model: Some("gpt-4o".to_string()),
+                },
+            ],
+        });
+        assert!(two_leaders_res.is_err(), "team with 2 leaders must fail");
+
+        // 2. Validation test: Team with zero teammates must fail
+        let zero_teammates_res = service.create_team(CreateTeamInput {
+            id: Some("team-invalid-2".to_string()),
+            name: "Zero Teammates Team".to_string(),
+            description: None,
+            members: vec![TeamMemberInput {
+                id: None,
+                role: TeamRole::Leader,
+                sort_order: Some(0),
+                agent_id: "claude-code".to_string(),
+                model: Some("claude-3-7-sonnet".to_string()),
+            }],
+        });
+        assert!(
+            zero_teammates_res.is_err(),
+            "team with 0 teammates must fail"
+        );
+
+        // 3. Valid team creation: 1 Leader + 2 Teammates with identical agent_id & model
+        let valid_res = service.create_team(CreateTeamInput {
+            id: Some("team-alpha".to_string()),
+            name: "Alpha Engineering Team".to_string(),
+            description: Some("Autonomous pair programming unit".to_string()),
+            members: vec![
+                TeamMemberInput {
+                    id: Some("mem-leader".to_string()),
+                    role: TeamRole::Leader,
+                    sort_order: Some(0),
+                    agent_id: "claude-code".to_string(),
+                    model: Some("claude-3-7-sonnet".to_string()),
+                },
+                TeamMemberInput {
+                    id: Some("mem-worker-1".to_string()),
+                    role: TeamRole::Teammate,
+                    sort_order: Some(1),
+                    agent_id: "codex".to_string(),
+                    model: Some("gpt-4o".to_string()),
+                },
+                TeamMemberInput {
+                    id: Some("mem-worker-2".to_string()),
+                    role: TeamRole::Teammate,
+                    sort_order: Some(2),
+                    agent_id: "codex".to_string(),
+                    model: Some("gpt-4o".to_string()),
+                },
+            ],
+        });
+        assert!(
+            valid_res.is_ok(),
+            "valid team creation should succeed: {:?}",
+            valid_res.err()
+        );
+        let team_detail = valid_res.unwrap();
+        assert_eq!(team_detail.team.name, "Alpha Engineering Team");
+        assert_eq!(team_detail.members.len(), 3);
+        assert_ne!(
+            team_detail.members[1].execution_context_key,
+            team_detail.members[2].execution_context_key,
+            "two identical agent/model members must receive distinct execution_context_key"
+        );
+    }
+
+    // Scope 2: Reopen database and verify roster order, agent/model, and context keys remain stable
+    {
+        let service = AppService::open_with_db_path(db_path.clone()).expect("reopen service");
+        let team = service
+            .get_team("team-alpha")
+            .expect("get team")
+            .expect("team exists");
+
+        assert_eq!(team.team.id, "team-alpha");
+        assert_eq!(team.members.len(), 3);
+
+        // Verify member order and roles
+        assert_eq!(team.members[0].id, "mem-leader");
+        assert_eq!(team.members[0].role, TeamRole::Leader);
+        assert_eq!(team.members[0].sort_order, 0);
+
+        assert_eq!(team.members[1].id, "mem-worker-1");
+        assert_eq!(team.members[1].role, TeamRole::Teammate);
+        assert_eq!(team.members[1].sort_order, 1);
+        assert_eq!(team.members[1].agent_id, "codex");
+        assert_eq!(team.members[1].model.as_deref(), Some("gpt-4o"));
+
+        assert_eq!(team.members[2].id, "mem-worker-2");
+        assert_eq!(team.members[2].role, TeamRole::Teammate);
+        assert_eq!(team.members[2].sort_order, 2);
+        assert_eq!(team.members[2].agent_id, "codex");
+        assert_eq!(team.members[2].model.as_deref(), Some("gpt-4o"));
+
+        assert_ne!(
+            team.members[1].execution_context_key,
+            team.members[2].execution_context_key
+        );
+
+        // Test update: reorder members and verify context key stability
+        let updated = service
+            .update_team(crate::backend::models::UpdateTeamInput {
+                team_id: "team-alpha".to_string(),
+                name: "Alpha Engineering Team Renamed".to_string(),
+                description: None,
+                members: vec![
+                    TeamMemberInput {
+                        id: Some("mem-leader".to_string()),
+                        role: TeamRole::Leader,
+                        sort_order: Some(0),
+                        agent_id: "claude-code".to_string(),
+                        model: Some("claude-3-7-sonnet".to_string()),
+                    },
+                    TeamMemberInput {
+                        id: Some("mem-worker-2".to_string()),
+                        role: TeamRole::Teammate,
+                        sort_order: Some(1), // swapped order
+                        agent_id: "codex".to_string(),
+                        model: Some("gpt-4o".to_string()),
+                    },
+                    TeamMemberInput {
+                        id: Some("mem-worker-1".to_string()),
+                        role: TeamRole::Teammate,
+                        sort_order: Some(2), // swapped order
+                        agent_id: "codex".to_string(),
+                        model: Some("gpt-4o".to_string()),
+                    },
+                ],
+            })
+            .expect("update team");
+
+        assert_eq!(updated.members[1].id, "mem-worker-2");
+        assert_eq!(updated.members[2].id, "mem-worker-1");
+        assert_eq!(
+            updated.members[1].execution_context_key,
+            team.members[2].execution_context_key
+        );
+        assert_eq!(
+            updated.members[2].execution_context_key,
+            team.members[1].execution_context_key
+        );
+    }
+
+    // Scope 3: Zero-write constraint on Conversation tables (C-D04)
+    {
+        let conn = Connection::open(&db_path).expect("open connection");
+        let session_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_sessions", [], |r| {
+                r.get(0)
+            })
+            .expect("count conversation_sessions");
+        let turn_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_turns", [], |r| r.get(0))
+            .expect("count conversation_turns");
+        let question_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_questions", [], |r| {
+                r.get(0)
+            })
+            .expect("count conversation_questions");
+        let part_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversation_parts", [], |r| r.get(0))
+            .expect("count conversation_parts");
+
+        assert_eq!(
+            session_count, 0,
+            "Conversation sessions must remain untouched (0 rows)"
+        );
+        assert_eq!(
+            turn_count, 0,
+            "Conversation turns must remain untouched (0 rows)"
+        );
+        assert_eq!(
+            question_count, 0,
+            "Conversation questions must remain untouched (0 rows)"
+        );
+        assert_eq!(
+            part_count, 0,
+            "Conversation parts must remain untouched (0 rows)"
+        );
+    }
+
+    let _ = fs::remove_dir_all(root);
+}

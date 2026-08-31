@@ -95,6 +95,7 @@ var commandAliases = map[string][]string{
 	"sync":           {"sy"},
 	"template":       {"tpl"},
 	"tenant":         {"t", "tn"},
+	"team":           {"tm"},
 	"translation":    {"tr"},
 	"try-run":        {"try"},
 	"uninstall":      {"un"},

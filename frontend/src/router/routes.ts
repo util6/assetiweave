@@ -9,6 +9,7 @@ export type AppRouteId =
   | "skill-groups"
   | "skill-mounts"
   | "memory"
+  | "team"
   | "under-construction";
 
 const retiredRouteKeys = new Set(["conversations.sources", "conversations.adapters"]);
@@ -21,6 +22,7 @@ const implementedRoutes: Record<string, AppRouteId> = {
   "memory.dreams": "memory",
   "memory.recall": "memory",
   "memory.library": "memory",
+  "team.overview": "team",
   "skills.groups": "skill-groups",
   "skills.mounts": "skill-mounts",
   "skills.overview": "catalog",

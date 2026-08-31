@@ -33,6 +33,11 @@
     "memory.item.archive",
     "memory.candidate.accept",
     "memory.candidate.reject",
+    "team.list",
+    "team.get",
+    "team.create",
+    "team.update",
+    "team.delete",
     "asset.list",
     "skill.list",
     "skill.import",
@@ -255,7 +260,12 @@
     "logs_get_snapshot",
     "logs_open_log_directory",
     "logs_write_operation",
-    "reveal_path"
+    "reveal_path",
+    "create_team",
+    "get_team",
+    "list_teams",
+    "update_team",
+    "delete_team"
   ],
   "commands": [
     {
@@ -1977,6 +1987,255 @@
       },
       "cli": "assetiweave-cli memory candidate reject <item-id>",
       "since": "0.5.2",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.list",
+      "canonical_method": "team.list",
+      "description": "List all teams and rosters",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": "assetiweave-cli team list",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.get",
+      "canonical_method": "team.get",
+      "description": "Get team details and member roster",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team get <team-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.create",
+      "canonical_method": "team.create",
+      "description": "Create a team with fixed leader and members",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "name",
+          "members"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Team name"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team description"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "leader",
+                    "teammate"
+                  ]
+                },
+                "sort_order": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "role",
+                "agent_id"
+              ]
+            },
+            "description": "Ordered team members with roles and agent configs"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team create --name <name>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.update",
+      "canonical_method": "team.update",
+      "description": "Update team details and roster",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "name",
+          "members"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Team name"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team description"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "leader",
+                    "teammate"
+                  ]
+                },
+                "sort_order": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "role",
+                "agent_id"
+              ]
+            },
+            "description": "Updated ordered team members"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team update <team-id> --name <name>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team.delete",
+      "canonical_method": "team.delete",
+      "description": "Delete a team and its roster",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm deletion of team"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team delete <team-id> --yes",
+      "since": "0.1.0",
       "deprecated": false
     },
     {
@@ -13628,6 +13887,255 @@
           "path": {
             "type": "string",
             "description": "Local path to reveal"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "create_team",
+      "canonical_method": "team.create",
+      "description": "Create a team with fixed leader and members",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "name",
+          "members"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team identifier"
+          },
+          "name": {
+            "type": "string",
+            "description": "Team name"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team description"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "leader",
+                    "teammate"
+                  ]
+                },
+                "sort_order": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "role",
+                "agent_id"
+              ]
+            },
+            "description": "Ordered team members with roles and agent configs"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "get_team",
+      "canonical_method": "team.get",
+      "description": "Get team details and member roster",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_teams",
+      "canonical_method": "team.list",
+      "description": "List all teams and rosters",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "update_team",
+      "canonical_method": "team.update",
+      "description": "Update team details and roster",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "name",
+          "members"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Team name"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional team description"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "leader",
+                    "teammate"
+                  ]
+                },
+                "sort_order": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                },
+                "agent_id": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "role",
+                "agent_id"
+              ]
+            },
+            "description": "Updated ordered team members"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "delete_team",
+      "canonical_method": "team.delete",
+      "description": "Delete a team and its roster",
+      "risk": "high-risk-write",
+      "confirmation_required": true,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "yes": {
+            "type": "boolean",
+            "default": false,
+            "description": "Confirm deletion of team"
           }
         },
         "additionalProperties": false

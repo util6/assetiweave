@@ -1360,6 +1360,59 @@ export const manualDocuments = [
       ],
     },
   ),
+  manual(
+    "team.overview",
+    {
+      title: "Team 团队管理使用手册",
+      subtitle: "创建并管理具有固定角色与固定顺序的 Agent 团队",
+      overview: "Team 模块用于编排多 Agent 协作单元，指定唯一的 Leader 和多个 Teammates，并分配 Agent 与模型。",
+      sections: [
+        {
+          heading: "核心规则",
+          body: "Team 编排具有严格的架构与隔离规范。",
+          outcomes: [
+            "每个 Team 必须恰好拥有 1 个 Leader 与至少 1 个 Teammate。",
+            "每个成员拥有稳定持久的执行上下文标识（execution_context_key）。",
+            "Team 的所有操作与 Conversation 表完全物理隔离，零污染。",
+          ],
+          items: [
+            "点击新建 Team 录入名称与成员角色。",
+            "编辑现有 Team 可调整成员顺序，成员上下文标识在重排序后保持不变。",
+            "支持为不同成员分配相同的 Agent 和模型。",
+          ],
+          cautions: [
+            "删除 Team 会同时级联移除关联的固定成员编排。",
+          ],
+          keywords: ["Team", "Leader", "Teammate", "Roster", "多 Agent"],
+        },
+      ],
+    },
+    {
+      title: "Teams & Rosters Manual",
+      subtitle: "Create and manage multi-agent teams with fixed roles and rosters",
+      overview: "The Team domain manages multi-agent collaborative units with exactly one Leader and one or more ordered Teammates.",
+      sections: [
+        {
+          heading: "Core Rules",
+          body: "Team management follows strict domain isolation and validation rules.",
+          outcomes: [
+            "Every team must have exactly one Leader and at least one Teammate.",
+            "Each team member maintains a stable and unique execution context key.",
+            "Zero writes are performed against any Conversation tables.",
+          ],
+          items: [
+            "Click Create Team to configure members and roles.",
+            "Edit rosters while preserving persistent member execution context keys.",
+            "Assign duplicate agents or models to distinct member slots.",
+          ],
+          cautions: [
+            "Deleting a team cascades to remove all its member definitions.",
+          ],
+          keywords: ["Team", "Leader", "Teammate", "Roster", "Multi-Agent"],
+        },
+      ],
+    },
+  ),
 ];
 
 const manualByRouteKey = new Map(manualDocuments.map((document) => [document.routeKey, document]));

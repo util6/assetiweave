@@ -54,6 +54,7 @@ const headerDefaultLabels: Partial<Record<string, string[]>> = {
   profiles: ["Profiles", "目标配置"],
   conversations: ["Conversations", "对话记录"],
   memory: ["Memory", "记忆"],
+  team: ["Team", "团队与成员"],
 };
 
 const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
@@ -104,6 +105,7 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "memory.dreams": ["Dreams", "自动 Dream"],
   "memory.recall": ["Recall", "深度回忆"],
   "memory.library": ["Library", "Memory 库"],
+  "team.overview": ["Teams & Rosters", "团队与花名册"],
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {

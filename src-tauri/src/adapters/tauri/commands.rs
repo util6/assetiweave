@@ -3485,6 +3485,42 @@ pub(crate) async fn disable_agent(
     crate::adapters::tauri::agent_market::disable_agent(state, agent_id).await
 }
 
+#[tauri::command]
+pub(crate) fn create_team(
+    state: State<'_, AppState>,
+    input: crate::backend::models::CreateTeamInput,
+) -> RuntimeAppResult<crate::backend::models::TeamDetail> {
+    AppService::from_runtime(&state.runtime).create_team(input)
+}
+
+#[tauri::command]
+pub(crate) fn get_team(
+    state: State<'_, AppState>,
+    team_id: String,
+) -> RuntimeAppResult<Option<crate::backend::models::TeamDetail>> {
+    AppService::from_runtime(&state.runtime).get_team(&team_id)
+}
+
+#[tauri::command]
+pub(crate) fn list_teams(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<crate::backend::models::TeamDetail>> {
+    AppService::from_runtime(&state.runtime).list_teams()
+}
+
+#[tauri::command]
+pub(crate) fn update_team(
+    state: State<'_, AppState>,
+    input: crate::backend::models::UpdateTeamInput,
+) -> RuntimeAppResult<crate::backend::models::TeamDetail> {
+    AppService::from_runtime(&state.runtime).update_team(input)
+}
+
+#[tauri::command]
+pub(crate) fn delete_team(state: State<'_, AppState>, team_id: String) -> RuntimeAppResult<()> {
+    AppService::from_runtime(&state.runtime).delete_team(&team_id)
+}
+
 pub(crate) fn command_handler(
 ) -> impl Fn(::tauri::ipc::Invoke<::tauri::Wry>) -> bool + Send + Sync + 'static {
     ::tauri::generate_handler![
@@ -3672,7 +3708,12 @@ pub(crate) fn command_handler(
         logs_open_log_directory,
         logs_write_operation,
         copy_prompt_card_to_clipboard,
-        reveal_path
+        reveal_path,
+        create_team,
+        get_team,
+        list_teams,
+        update_team,
+        delete_team
     ]
 }
 
