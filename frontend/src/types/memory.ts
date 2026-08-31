@@ -11,6 +11,37 @@ export type MemoryTaskStatus = "running" | "completed" | "failed" | "cancelled";
 export type MemoryDreamNoteStatus = "active" | "promoted" | "archived" | "stale";
 export type MemoryRecallMode = "exact" | "full";
 export type MemoryExtractionValidationStatus = "pending" | "valid" | "invalid";
+export type RecentConversationView = "project" | "time";
+export type RecentMemoryEventCategory = "progress" | "decision" | "research" | "verification" | "blocker" | "follow_up";
+
+export interface RecentMemoryEvent {
+  id: string;
+  category: RecentMemoryEventCategory;
+  title: string;
+  summary: string;
+  occurred_at: string;
+}
+
+export interface RecentMemorySession {
+  session: {
+    title: string;
+    updated_at: string | null;
+  };
+  project_path: string | null;
+  last_activity_at: string;
+  source_agent: string;
+  question_count: number;
+  turn_count: number;
+  recent_events: RecentMemoryEvent[];
+}
+
+export interface RecentMemoryEventTarget {
+  record_kind: "session" | "web";
+  session_id: string;
+  question_id: string | null;
+  turn_id: string | null;
+  block_id: string | null;
+}
 
 export interface MemoryScope {
   app_id: string | null;

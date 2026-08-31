@@ -113,6 +113,8 @@
 | `memory.overview` | `memory.overview`<br>`memory_overview` | `assetiweave-cli memory overview` | `memory_overview` | `read` | `false` |
 | `memory.recall.preview` | `memory.recall.preview`<br>`preview_memory_recall` | `assetiweave-cli memory recall preview --query <question>` | `preview_memory_recall` | `read` | `false` |
 | `memory.recall.run` | `memory.recall.run`<br>`run_memory_recall` | `assetiweave-cli memory recall run --query <question>` | `run_memory_recall` | `write` | `false` |
+| `memory.recent.event.target` | `get_memory_recent_event_target`<br>`memory.recent.event.target` | — | `get_memory_recent_event_target` | `read` | `false` |
+| `memory.recent.list` | `list_memory_recent`<br>`memory.recent.list` | `assetiweave-cli memory recent list` | `list_memory_recent` | `read` | `false` |
 | `memory.verify` | `memory.verify`<br>`verify_memory` | `assetiweave-cli memory verify --item <item-id>` | `verify_memory` | `write` | `false` |
 | `mount_asset_mount` | `mount_asset_mount` | — | `mount_asset_mount` | `write` | `false` |
 | `overview.get` | `get_app_overview`<br>`overview.get` | `assetiweave-cli overview` | `get_app_overview` | `read` | `false` |

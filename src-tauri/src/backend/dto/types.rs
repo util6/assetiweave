@@ -125,6 +125,15 @@ pub(crate) struct MemoryContextResult {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct RecentMemoryEventTarget {
+    pub(crate) record_kind: String,
+    pub(crate) session_id: String,
+    pub(crate) question_id: Option<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) block_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct MemoryVerifyResult {
     pub(crate) source_revision: i64,
     pub(crate) unchanged_revision: bool,

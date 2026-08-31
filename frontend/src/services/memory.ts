@@ -12,6 +12,8 @@ import {
   memoryRecallPreviewSchema,
   memoryRecallRunResultSchema,
   memoryVerifyResultSchema,
+  recentMemoryEventTargetSchema,
+  recentMemorySessionSchema,
 } from "../schemas/memory";
 import type {
   MemoryCandidateAcceptParams,
@@ -34,10 +36,32 @@ import type {
   MemoryRecallPreviewParams,
   MemoryRecallRunResult,
   MemoryVerifyResult,
+  RecentMemoryEventTarget,
+  RecentMemorySession,
+  RecentConversationView,
 } from "../types/memory";
 
 const DESKTOP_REQUIRED = "Memory writes are available only in the AssetIWeave desktop application.";
 const MEMORY_TASK_UPDATED_EVENT = "memory-task-updated";
+
+export async function listMemoryRecent(
+  params: { view?: RecentConversationView; limit?: number; offset?: number } = {},
+): Promise<RecentMemorySession[]> {
+  if (!isTauriRuntime()) return [];
+  return recentMemorySessionSchema.array().parse(await invoke("list_memory_recent", {
+    params: {
+      view: params.view ?? "project",
+      limit: params.limit ?? 50,
+      offset: params.offset ?? 0,
+    },
+  }));
+}
+
+export async function getMemoryRecentEventTarget(eventId: string): Promise<RecentMemoryEventTarget | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("get_memory_recent_event_target", { eventId });
+  return value == null ? null : recentMemoryEventTargetSchema.parse(value);
+}
 
 export async function listMemoryItems(params: MemoryItemListParams = {}): Promise<MemoryItemPageResult> {
   if (!isTauriRuntime()) {

@@ -54,9 +54,9 @@ use crate::{
         MemoryDreamPreviewParams, MemoryDreamRunParams, MemoryDreamScopeParams,
         MemoryItemCreateParams, MemoryItemGetParams, MemoryItemListParams, MemoryItemUpdateParams,
         MemoryRecallPreviewParams, MemoryRecallRunParams, MemoryTaskStartParams,
-        MemoryVerifyParams, SkillAcquireParams, SkillRemoteCheckParams, SkillSearchParams,
-        SkillSearchResult, SourceRemoveParams, SourceScanParams, TenantCreateParams,
-        UpdateSkillBackupSettingsParams,
+        MemoryVerifyParams, RecentConversationSessionListParams, SkillAcquireParams,
+        SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceRemoveParams,
+        SourceScanParams, TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
     backend::card_translation::{
         prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
@@ -269,6 +269,22 @@ pub(crate) fn list_source_assets(
     kind: Option<AssetKind>,
 ) -> RuntimeAppResult<Vec<CatalogAsset>> {
     AppService::from_runtime(&state.runtime).list_source_assets(kind)
+}
+
+#[tauri::command]
+pub(crate) fn list_memory_recent(
+    state: State<'_, AppState>,
+    params: RecentConversationSessionListParams,
+) -> RuntimeAppResult<Vec<crate::backend::application::RecentConversationSession>> {
+    AppService::from_runtime(&state.runtime).list_recent_conversation_sessions(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_memory_recent_event_target(
+    state: State<'_, AppState>,
+    event_id: String,
+) -> RuntimeAppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
+    AppService::from_runtime(&state.runtime).get_recent_memory_event_target(event_id)
 }
 
 #[tauri::command]
@@ -3705,6 +3721,8 @@ pub(crate) fn command_handler(
         complete_app_close,
         list_assets,
         list_source_assets,
+        list_memory_recent,
+        get_memory_recent_event_target,
         list_memory_items,
         get_memory_item,
         create_memory_item,

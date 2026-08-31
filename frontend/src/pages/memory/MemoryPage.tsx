@@ -38,6 +38,7 @@ import {
 import { MemoryDreamWorkspace } from "../../components/memory/MemoryDreamWorkspace";
 import { MemoryOverviewWorkspace } from "../../components/memory/MemoryOverviewWorkspace";
 import { MemoryRecallWorkspace } from "../../components/memory/MemoryRecallWorkspace";
+import { MemoryRecentWorkspace } from "../../components/memory/MemoryRecentWorkspace";
 import { MemoryLibraryContentSkeleton } from "../../components/memory/MemorySkeletons";
 import { Button } from "../../components/ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -45,6 +46,7 @@ import {
   acceptMemoryCandidate,
   archiveMemoryItem,
   createMemoryItem,
+  getMemoryRecentEventTarget,
   getMemoryItem,
   listMemoryItems,
   rejectMemoryCandidate,
@@ -58,6 +60,7 @@ import type {
   MemoryItemOrigin,
   MemoryItemPageResult,
   MemoryItemStatus,
+  RecentMemoryEvent,
 } from "../../types/memory";
 
 const MEMORY_PAGE_SIZE = 50;
@@ -73,11 +76,36 @@ export function MemoryPage({
   onEvidenceOpen?: (evidence: MemoryEvidenceSnapshot) => void;
 }) {
   const { t } = useI18n();
+  if (activeSubNavId === "recent") return <MemoryWorkspacePage descriptionKey="memory.recent.description" titleKey="memory.recent.title"><MemoryRecentWorkspace onEventOpen={(event) => void openRecentEvent(event, onEvidenceOpen)} t={t} /></MemoryWorkspacePage>;
   if (activeSubNavId === "library") return <MemoryLibraryPage onEvidenceOpen={onEvidenceOpen} />;
   if (activeSubNavId === "dreams") return <MemoryWorkspacePage descriptionKey="memory.dreams.description" titleKey="memory.dreams.title"><MemoryDreamWorkspace onEvidenceOpen={onEvidenceOpen} t={t} /></MemoryWorkspacePage>;
   if (activeSubNavId === "overview") return <MemoryWorkspacePage descriptionKey="memory.overview.description" titleKey="memory.overview.title"><MemoryOverviewWorkspace onEvidenceOpen={onEvidenceOpen} t={t} /></MemoryWorkspacePage>;
   if (activeSubNavId === "recall") return <MemoryWorkspacePage descriptionKey="memory.recall.description" titleKey="memory.recall.title"><MemoryRecallWorkspace onEvidenceOpen={onEvidenceOpen} t={t} /></MemoryWorkspacePage>;
   return <IncompleteMemoryView activeSubNavId={activeSubNavId} />;
+}
+
+async function openRecentEvent(event: RecentMemoryEvent, onEvidenceOpen?: (evidence: MemoryEvidenceSnapshot) => void) {
+  if (!onEvidenceOpen) return;
+  const target = await getMemoryRecentEventTarget(event.id);
+  if (!target) return;
+  onEvidenceOpen({
+    id: event.id,
+    record_kind: target.record_kind,
+    source_id: null,
+    session_id: target.session_id,
+    question_id: target.question_id,
+    turn_id: target.turn_id,
+    part_id: null,
+    block_id: target.block_id ?? target.turn_id ?? target.session_id,
+    content_hash: "recent-memory-event",
+    excerpt: event.summary,
+    translated_excerpt: null,
+    event_time: event.occurred_at,
+    source_revision: 0,
+    source_unavailable: false,
+    created_at: event.occurred_at,
+    updated_at: event.occurred_at,
+  });
 }
 
 function MemoryWorkspacePage({
@@ -86,8 +114,8 @@ function MemoryWorkspacePage({
   titleKey,
 }: {
   children: ReactNode;
-  descriptionKey: "memory.dreams.description" | "memory.overview.description" | "memory.recall.description";
-  titleKey: "memory.dreams.title" | "memory.overview.title" | "memory.recall.title";
+  descriptionKey: "memory.dreams.description" | "memory.overview.description" | "memory.recall.description" | "memory.recent.description";
+  titleKey: "memory.dreams.title" | "memory.overview.title" | "memory.recall.title" | "memory.recent.title";
 }) {
   const { t } = useI18n();
   return (

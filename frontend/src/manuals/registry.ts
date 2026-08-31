@@ -1229,6 +1229,39 @@ export const manualDocuments = [
     },
   ),
   manual(
+    "memory.recent",
+    {
+      title: "近期记忆使用手册",
+      subtitle: "按项目或时间查看可继续的近期进展",
+      overview: "近期记忆只展示已确认且仍与当前会话源一致的进展；点击事件会回到原始会话证据，不在页面内复制第二份事实源。",
+      sections: [
+        {
+          heading: "查看方式",
+          items: [
+            "用项目视图按工作区聚合，或切换到时间视图查看最近活动顺序。",
+            "每条事件显示来源 Agent、Session 数量和事件类别，便于先判断上下文再打开证据。",
+            "如果会话源已停用、缺失或被新版本取代，旧事件会从近期列表中消失。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Recent Memory Manual",
+      subtitle: "Review resumable progress by project or time",
+      overview: "Recent Memory shows confirmed progress that still matches the current conversation source; opening an event returns to canonical session evidence rather than copying a second source of truth.",
+      sections: [
+        {
+          heading: "Views",
+          items: [
+            "Use Project view to group workspaces, or switch to Time view for the latest activity order.",
+            "Each event includes its source agent, session counts, and category so you can judge context before opening evidence.",
+            "Events disappear when their conversation source is disabled, missing, or superseded by a newer projection.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
     "memory.overview",
     {
       title: "Memory 总览使用手册",

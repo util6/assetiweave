@@ -3,7 +3,7 @@ import type { NavigationModel } from "./types";
 export const navigationModel: NavigationModel = {
   activeRailId: "catalog",
   activeHeaderTabId: "skills",
-  activeSubNavId: "overview",
+  activeSubNavId: "recent",
   railItems: [
     { id: "logs", label: "Logs", icon: "file-text", scope: "global", enabled: true, position: "secondary" },
     { id: "settings", label: "Settings", icon: "settings", scope: "settings", enabled: true, position: "secondary" },
@@ -53,10 +53,8 @@ export const navigationModel: NavigationModel = {
       { id: "web-records", label: "Web Records", routeKey: "conversations.web-records", enabled: true },
     ],
     memory: [
-      { id: "overview", label: "Today / Continue", routeKey: "memory.overview", enabled: true },
-      { id: "dreams", label: "Dreams", routeKey: "memory.dreams", enabled: true },
+      { id: "recent", label: "Recent", routeKey: "memory.recent", enabled: true },
       { id: "recall", label: "Recall", routeKey: "memory.recall", enabled: true },
-      { id: "library", label: "Library", routeKey: "memory.library", enabled: true },
     ],
   },
 };

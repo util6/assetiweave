@@ -89,10 +89,8 @@ describe("catalog services", () => {
     expect(model.headerTabs.find((tab) => tab.id === "skills")?.label).toBe("My Skills");
     expect(model.headerTabs.some((tab) => tab.id === "memory")).toBe(true);
     expect(model.subNavItems.memory.map((item) => item.routeKey)).toEqual([
-      "memory.overview",
-      "memory.dreams",
+      "memory.recent",
       "memory.recall",
-      "memory.library",
     ]);
   });
 

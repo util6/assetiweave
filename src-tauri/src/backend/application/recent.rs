@@ -34,6 +34,23 @@ pub(crate) struct RecentConversationSession {
 }
 
 impl AppService {
+    pub(crate) fn get_recent_memory_event_target(
+        &self,
+        event_id: String,
+    ) -> AppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
+        if event_id.trim().is_empty() {
+            return Err(AppError::Validation(
+                "Recent Memory event id is required".to_string(),
+            ));
+        }
+        let pool = self.db.pool().clone();
+        let tenant_id = self.tenant_id().to_string();
+        self.runtime
+            .run_sync(crate::backend::store::load_recent_memory_event_target_sqlx(
+                &pool, &tenant_id, &event_id,
+            ))
+    }
+
     pub(crate) fn list_recent_conversation_sessions(
         &self,
         params: RecentConversationSessionListParams,

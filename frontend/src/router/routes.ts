@@ -18,9 +18,12 @@ const implementedRoutes: Record<string, AppRouteId> = {
   "conversations.sessions": "conversations",
   "conversations.web-records": "web-records",
   "prompts.overview": "prompts-overview",
+  "memory.recent": "memory",
+  "memory.recall": "memory",
+  // Keep persisted/bookmarked pre-rewrite links resolvable while the visible
+  // navigation uses the new Recent and Recall entry points.
   "memory.overview": "memory",
   "memory.dreams": "memory",
-  "memory.recall": "memory",
   "memory.library": "memory",
   "team.overview": "team",
   "skills.groups": "skill-groups",

@@ -556,6 +556,16 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "memory.recent.event.target",
+        tauri_command: Some("get_memory_recent_event_target"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "memory.recent.list",
+        tauri_command: Some("list_memory_recent"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "memory.verify",
         tauri_command: Some("verify_memory"),
         note: None,

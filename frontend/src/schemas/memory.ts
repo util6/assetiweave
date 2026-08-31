@@ -280,3 +280,29 @@ export const memoryVerifyResultSchema: z.ZodType<MemoryVerifyResult> = z.object(
   unchanged_revision: z.boolean(),
   items: z.array(memoryItemDetailSchema),
 });
+
+export const recentMemoryEventSchema = z.object({
+  id: z.string().min(1),
+  category: z.enum(["progress", "decision", "research", "verification", "blocker", "follow_up"]),
+  title: z.string(),
+  summary: z.string(),
+  occurred_at: z.string().min(1),
+});
+
+export const recentMemorySessionSchema = z.object({
+  session: z.object({ title: z.string(), updated_at: z.string().nullable() }),
+  project_path: z.string().nullable(),
+  last_activity_at: z.string().min(1),
+  source_agent: z.string(),
+  question_count: z.number().int().nonnegative(),
+  turn_count: z.number().int().nonnegative(),
+  recent_events: z.array(recentMemoryEventSchema),
+});
+
+export const recentMemoryEventTargetSchema = z.object({
+  record_kind: z.enum(["session", "web"]),
+  session_id: z.string().min(1),
+  question_id: z.string().nullable(),
+  turn_id: z.string().nullable(),
+  block_id: z.string().nullable(),
+});
