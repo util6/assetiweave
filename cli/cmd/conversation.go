@@ -21,6 +21,7 @@ func newCmdConversation(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationAdapter(f))
 	cmd.AddCommand(newCmdConversationSource(f))
 	cmd.AddCommand(newCmdConversationSync(f))
+	cmd.AddCommand(newCmdConversationData(f))
 	cmd.AddCommand(newCmdConversationSearch(f))
 	cmd.AddCommand(newCmdConversationSession(f))
 	cmd.AddCommand(newCmdConversationWebRecord(f))
@@ -1232,6 +1233,93 @@ func newCmdConversationSync(f *cmdutil.Factory) *cobra.Command {
 	cmd.Flags().StringVar(&mode, "mode", "incremental", "sync mode: incremental or full")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without importing")
 	return cmd
+}
+
+func newCmdConversationData(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "data", Short: "Audit and repair normalized conversation data"}
+
+	var sourceID, recordKind string
+	audit := &cobra.Command{
+		Use:   "audit",
+		Short: "Audit conversation data and derived indexes",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return callAndPrint(cmd, f, schema.MethodConversationDataAudit, map[string]any{
+				"source_id":        optionalString(sourceID),
+				"record_kind":      optionalString(recordKind),
+				"include_resolved": false,
+			})
+		},
+	}
+	audit.Flags().StringVar(&sourceID, "source", "", "source id filter")
+	audit.Flags().StringVar(&recordKind, "record-kind", "", "record kind: session or web")
+	cmd.AddCommand(audit)
+
+	var repairSourceID, repairRecordKind string
+	var dryRun, resync, yes bool
+	repair := &cobra.Command{
+		Use:   "repair",
+		Short: "Preview or apply safe conversation data repairs",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireYesOrDryRun(yes, dryRun, "conversation data repair"); err != nil {
+				return err
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationDataRepair, map[string]any{
+				"source_id":   optionalString(repairSourceID),
+				"record_kind": optionalString(repairRecordKind),
+				"dry_run":     dryRun,
+				"resync":      resync,
+				"yes":         yes,
+			})
+		},
+	}
+	repair.Flags().StringVar(&repairSourceID, "source", "", "source id filter")
+	repair.Flags().StringVar(&repairRecordKind, "record-kind", "", "record kind: session or web")
+	repair.Flags().BoolVar(&dryRun, "dry-run", false, "preview repairs without writing")
+	repair.Flags().BoolVar(&resync, "resync", false, "resync selected sources before applying repairs")
+	repair.Flags().BoolVar(&yes, "yes", false, "confirm applying repairs")
+	cmd.AddCommand(repair)
+
+	var backupPath string
+	var rollbackDryRun, rollbackYes bool
+	rollback := &cobra.Command{
+		Use:   "rollback",
+		Short: "Preview or restore a conversation maintenance backup",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if backupPath == "" {
+				return fmt.Errorf("--backup-path is required")
+			}
+			if err := requireYesOrDryRun(rollbackYes, rollbackDryRun, "conversation data rollback"); err != nil {
+				return err
+			}
+			return callAndPrint(cmd, f, schema.MethodConversationDataRollback, map[string]any{
+				"backup_path": backupPath,
+				"dry_run":     rollbackDryRun,
+				"yes":         rollbackYes,
+			})
+		},
+	}
+	rollback.Flags().StringVar(&backupPath, "backup-path", "", "verified database backup path")
+	rollback.Flags().BoolVar(&rollbackDryRun, "dry-run", false, "preview rollback without replacing the database")
+	rollback.Flags().BoolVar(&rollbackYes, "yes", false, "confirm restoring the backup")
+	cmd.AddCommand(rollback)
+	return cmd
+}
+
+func optionalString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func requireYesOrDryRun(yes, dryRun bool, action string) error {
+	if dryRun {
+		return nil
+	}
+	return requireYes(yes, action)
 }
 
 func newCmdConversationSession(f *cmdutil.Factory) *cobra.Command {

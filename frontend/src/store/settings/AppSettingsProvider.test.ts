@@ -271,7 +271,9 @@ describe("AppSettingsProvider", () => {
     expect(settings.agentAssignments).toEqual({
       "translation.card": { agentId: "gemini", modelId: "gemini-2.5-pro" },
       "memory.extraction": { agentId: "codex", modelId: "openai/gpt-5-codex" },
-      "memory.dream": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "memory.project": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "memory.global": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "memory.recall": { agentId: "codex", modelId: "openai/gpt-5-codex" },
       "prompt.optimization": { agentId: "gemini", modelId: "gemini-2.5-pro" },
     });
     expect(settings).not.toHaveProperty("agentCapabilityAssignments");
@@ -283,24 +285,18 @@ describe("AppSettingsProvider", () => {
     const assignments = assignModelToAgentActions({
       "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
       "memory.extraction": { agentId: "opencode", modelId: null },
-      "memory.dream": { agentId: "codex", modelId: "openai/gpt-5" },
       "prompt.optimization": { agentId: "opencode", modelId: "opencode/expired" },
     }, "opencode", "opencode/hy3-free");
 
     expect(assignments["translation.card"]?.modelId).toBe("opencode/hy3-free");
     expect(assignments["memory.extraction"]?.modelId).toBe("opencode/hy3-free");
     expect(assignments["prompt.optimization"]?.modelId).toBe("opencode/hy3-free");
-    expect(assignments["memory.dream"]).toEqual({
-      agentId: "codex",
-      modelId: "openai/gpt-5",
-    });
   });
 
   it("replaces an action Agent and its model atomically", () => {
     const assignments = assignAgentToAction({
       "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
       "memory.extraction": { agentId: "opencode", modelId: null },
-      "memory.dream": { agentId: "opencode", modelId: null },
       "prompt.optimization": { agentId: "opencode", modelId: null },
     }, "translation.card", "codex", "openai/gpt-5");
 
@@ -324,22 +320,25 @@ describe("AppSettingsProvider", () => {
     });
   });
 
-  it("keeps Auto-Dream disabled by default and normalizes its gates", () => {
+  it("normalizes Memory generation, usage, and exclusion settings", () => {
     expect(normalizeStoredSettings({}).memory).toEqual({
-      autoDreamEnabled: false,
-      minHours: 12,
-      minSessions: 3,
+      generationEnabled: true,
+      usageEnabled: true,
+      excludedSessionIds: [],
+      excludedSourceIds: [],
     });
     expect(normalizeStoredSettings({
       memory: {
-        autoDreamEnabled: true,
-        minHours: 0,
-        minSessions: 999,
+        generationEnabled: false,
+        usageEnabled: false,
+        excludedSessionIds: [" session-1 ", "session-1"],
+        excludedSourceIds: ["source-1"],
       },
     }).memory).toEqual({
-      autoDreamEnabled: true,
-      minHours: 1,
-      minSessions: 50,
+      generationEnabled: false,
+      usageEnabled: false,
+      excludedSessionIds: ["session-1"],
+      excludedSourceIds: ["source-1"],
     });
   });
 

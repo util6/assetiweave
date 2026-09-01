@@ -6,6 +6,7 @@ import {
   getConversationSearchIndexStatus,
   getConversationSearchIndexTask,
   getConversationSyncTask,
+  cancelConversationSync,
   auditConversationData,
   cancelConversationDataMaintenance,
   listConversationDataMaintenanceTasks,
@@ -597,6 +598,19 @@ describe("conversation services", () => {
 
     await expect(listConversationSyncTasks()).resolves.toHaveLength(2);
     expect(invokeMock).toHaveBeenCalledWith("list_conversation_sync_tasks");
+  });
+
+  it("cancels a desktop conversation sync task", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    invokeMock.mockResolvedValueOnce({ id: "sync-1", status: "cancelling" });
+
+    await expect(cancelConversationSync("sync-1")).resolves.toMatchObject({
+      id: "sync-1",
+      status: "cancelling",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("cancel_conversation_sync", {
+      params: { task_id: "sync-1" },
+    });
   });
 
   it("starts and controls conversation data maintenance tasks", async () => {

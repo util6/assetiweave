@@ -17,3 +17,13 @@ pub(super) fn slug_path_segment(value: &str) -> String {
         slug
     }
 }
+
+pub(super) fn strip_json_fence(value: &str) -> &str {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|value| value.strip_suffix("```"))
+        .map(str::trim)
+        .unwrap_or(trimmed)
+}

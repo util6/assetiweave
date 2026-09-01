@@ -869,6 +869,39 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
 }
 
 #[test]
+fn conversation_data_maintenance_stops_before_work_when_cancelled() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-conversation-maintenance-cancelled-{}",
+        Uuid::new_v4()
+    ));
+    fs::create_dir_all(&root).expect("create cancelled maintenance test root");
+    let service =
+        AppService::open_with_db_path(root.join("app.db")).expect("open maintenance service");
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    cancellation.cancel();
+
+    let audit = service.audit_conversation_data_with_progress_and_cancellation(
+        ConversationDataAuditParams::default(),
+        Some(&cancellation),
+        &mut |_, _, _| panic!("cancelled audit must not report progress"),
+    );
+    assert!(matches!(audit, Err(AppError::Canceled(_))));
+
+    let repair = service.repair_conversation_data_with_progress_and_cancellation(
+        ConversationDataRepairParams {
+            yes: true,
+            ..ConversationDataRepairParams::default()
+        },
+        Some(&cancellation),
+        &mut |_, _, _| panic!("cancelled repair must not report progress"),
+    );
+    assert!(matches!(repair, Err(AppError::Canceled(_))));
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn conversation_data_audit_reports_affected_snapshot_rows() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-audit-dependencies-{}",
@@ -4236,7 +4269,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     assert_eq!(node.node_type, result.hits[0].card_type.as_str());
     assert_eq!(node.semantic_role.as_deref(), Some("answer"));
     assert_eq!(node.content, result.hits[0].snippet);
-    let memory_card = super::memory_recall::recall_card_projection_for_test(&detail)
+    let memory_card = super::memory_search::recall_card_projection_for_test(&detail)
         .into_iter()
         .find(|(candidate_part_id, _, _)| candidate_part_id == part_id)
         .expect("Memory evidence for the same Part");

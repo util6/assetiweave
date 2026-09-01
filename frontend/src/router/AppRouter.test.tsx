@@ -17,7 +17,7 @@ vi.mock("../hooks/catalog/useCatalogController", async () => {
       const [model, setModel] = React.useState({
         ...navigationModel,
         activeHeaderTabId: "memory",
-        activeSubNavId: "library",
+        activeSubNavId: "recent",
       });
       return {
         activeTenant: { id: "tenant-1", name: "Local", slug: "local" },
@@ -78,7 +78,7 @@ vi.mock("../app/backgroundTasks/SkillBackupProvider", () => ({
 }));
 
 vi.mock("../app/backgroundTasks/MemoryTaskProvider", () => ({
-  useMemoryTasks: () => ({ tasks: [] }),
+  useMemoryTasks: () => ({ tasks: [], publicTasks: [] }),
 }));
 
 vi.mock("../app/updates/AppUpdateDialog", () => ({ AppUpdateDialog: () => null }));
@@ -86,10 +86,10 @@ vi.mock("../components/backup/SkillBackupProgress", () => ({ SkillBackupBackgrou
 vi.mock("../components/conversations/ConversationToolbarControls", () => ({ ConversationBackgroundTaskIndicator: () => null }));
 
 vi.mock("../pages/memory/MemoryPage", () => ({
-  MemoryPage: ({ onEvidenceOpen }: { onEvidenceOpen?: (evidence: Record<string, unknown>) => void }) => (
+  MemoryPage: ({ onNavigate }: { onNavigate?: (target: Record<string, unknown>) => void }) => (
     <button
       onClick={() =>
-        onEvidenceOpen?.({
+        onNavigate?.({
           block_id: "web-block-1",
           question_id: "web-question-1",
           record_kind: "web",

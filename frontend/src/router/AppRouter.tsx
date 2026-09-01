@@ -36,7 +36,7 @@ import {
 } from "./RouteTransition";
 import type { HeaderTabItem, NavigationModel } from "./types";
 import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
-import type { MemoryEvidenceSnapshot } from "../types/memory";
+import type { MemoryNavigationTarget } from "../types/memory";
 import {
   conversationSubNavId,
   createConversationNavigationTarget,
@@ -61,7 +61,7 @@ export function AppRouter() {
   const { tasks: conversationSyncTasks } = useConversationSync();
   const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
-  const { tasks: memoryTasks } = useMemoryTasks();
+  const { publicTasks: memoryTasks } = useMemoryTasks();
   const teamTaskContext = useOptionalTeamTasks();
   const teamTasks = teamTaskContext?.tasks ?? [];
   const catalog = useCatalogController();
@@ -181,12 +181,12 @@ export function AppRouter() {
     });
   }
 
-  function handleMemoryEvidenceOpen(evidence: MemoryEvidenceSnapshot) {
+  function handleMemoryNavigation(memoryTarget: MemoryNavigationTarget) {
     const target = createConversationNavigationTarget({
-      blockId: evidence.block_id,
-      questionId: evidence.question_id ?? undefined,
-      recordKind: evidence.record_kind,
-      sessionId: evidence.session_id,
+      blockId: memoryTarget.block_id ?? memoryTarget.turn_id ?? memoryTarget.session_id,
+      questionId: memoryTarget.question_id ?? undefined,
+      recordKind: memoryTarget.record_kind,
+      sessionId: memoryTarget.session_id,
     });
     const nextSubNavId = conversationSubNavId(target.recordKind);
     startNavigationTransition("conversations", nextSubNavId);
@@ -274,7 +274,7 @@ export function AppRouter() {
                 catalog,
                 conversationNavigationTarget,
                 completeRouteTransition,
-                handleMemoryEvidenceOpen,
+                handleMemoryNavigation,
                 loadingLabel: t("common.loading"),
                 onManualOpen: openCurrentManual,
                 onOpenSettings: openSettings,
@@ -313,14 +313,14 @@ export function AppRouter() {
         {conversationSyncTasks.map((task) => (
           <ConversationBackgroundTaskIndicator key={task.id} task={task} t={t} />
         ))}
-        {memoryTasks.filter((task) => task.status === "running").map((task) => (
+        {memoryTasks.filter((task) => ["pending", "running", "cancelling"].includes(task.status)).map((task) => (
           <div
             className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
             key={task.id}
           >
             <div className="font-medium">{t("memory.task.running")}</div>
             <div className="mt-1 text-on-surface-variant">
-              {task.phase} · {task.processed_count}/{task.total_count || "?"}
+              {task.progress?.note ?? task.kind} · {task.progress?.current ?? 0}/{task.progress?.total ?? "?"}
             </div>
           </div>
         ))}
@@ -343,7 +343,7 @@ interface RouteRenderContext {
   catalog: CatalogController;
   conversationNavigationTarget: ConversationNavigationTarget | null;
   completeRouteTransition: (id?: number) => void;
-  handleMemoryEvidenceOpen: (evidence: MemoryEvidenceSnapshot) => void;
+  handleMemoryNavigation: (target: MemoryNavigationTarget) => void;
   loadingLabel: string;
   onManualOpen: () => void;
   onOpenSettings: (panel?: SettingsPanelId) => void;
@@ -451,7 +451,7 @@ const routeRenderers: Record<AppRouteId, (context: RouteRenderContext) => ReactN
   ),
   memory: (context) => (
     <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(context.activeSubNavId)} />}>
-      <MemoryPage activeSubNavId={context.activeSubNavId} onEvidenceOpen={context.handleMemoryEvidenceOpen} />
+      <MemoryPage activeSubNavId={context.activeSubNavId} onNavigate={context.handleMemoryNavigation} />
     </Suspense>
   ),
   team: () => (
@@ -506,7 +506,8 @@ function RouteSuspense({
 }
 
 function memorySkeletonLayout(activeSubNavId: string): SkeletonLayoutName {
-  return activeSubNavId === "overview" ? "cards" : "columns";
+  void activeSubNavId;
+  return "columns";
 }
 
 function errorMessage(error: unknown) {

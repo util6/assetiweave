@@ -94,6 +94,7 @@ pub(crate) enum AiExecutionPurpose {
     ModelDiscovery,
     ProjectMemory,
     GlobalMemory,
+    Recall,
     TeamLeaderChat,
     TeamDraft,
     TeamTask,
@@ -108,6 +109,24 @@ pub(crate) struct AiTeamTools {
     pub(crate) member_id: String,
     pub(crate) credential: String,
     pub(crate) database_path: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct AiRecallTools {
+    pub(crate) tenant_id: String,
+    pub(crate) recall_session_id: String,
+    pub(crate) database_path: String,
+}
+
+impl fmt::Debug for AiRecallTools {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AiRecallTools")
+            .field("tenant_id", &self.tenant_id)
+            .field("recall_session_id", &self.recall_session_id)
+            .field("database_path", &"<redacted>")
+            .finish()
+    }
 }
 
 impl fmt::Debug for AiTeamTools {
@@ -166,6 +185,7 @@ pub(crate) struct AiExecutionRequest {
     pub(crate) replay: bool,
     pub(crate) restore_only: bool,
     pub(crate) team_tools: Option<AiTeamTools>,
+    pub(crate) recall_tools: Option<AiRecallTools>,
 }
 
 impl AiExecutionRequest {
@@ -185,6 +205,14 @@ impl AiExecutionRequest {
             && (!matches!(self.session_mode, AgentSessionMode::Persistent) || self.replay)
         {
             return Err(AiExecutionError::InvalidReplayMode);
+        }
+        if matches!(self.purpose, AiExecutionPurpose::Recall) && self.recall_tools.is_none() {
+            return Err(AiExecutionError::RecallToolsUnavailable);
+        }
+        if !matches!(self.purpose, AiExecutionPurpose::Recall) && self.recall_tools.is_some() {
+            return Err(AiExecutionError::Protocol {
+                operation: "recall_tools_scope",
+            });
         }
         if !self.restore_only {
             normalize_prompt(&self.prompt)?;
@@ -225,6 +253,7 @@ impl fmt::Debug for AiExecutionRequest {
             .field("replay", &self.replay)
             .field("restore_only", &self.restore_only)
             .field("team_tools", &self.team_tools)
+            .field("recall_tools", &self.recall_tools)
             .finish()
     }
 }
@@ -353,6 +382,7 @@ mod tests {
             replay: false,
             restore_only: false,
             team_tools: None,
+            recall_tools: None,
         }
     }
 }

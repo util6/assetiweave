@@ -134,6 +134,13 @@ impl AppRuntime {
         let runtime = crate::backend::store::build_runtime()?;
         let pool = runtime.block_on(store::open_migrated_pool(&db_path))?;
         ensure_app_library_dirs()?;
+        if let Err(error) = super::archive_legacy_memory_once(&db_path) {
+            crate::backend::operation_log::log_warn(
+                "app.startup.memory_legacy_archive",
+                "legacy Memory archive was not created",
+                &[("error", error.to_string())],
+            );
+        }
         let target_catalog_dir = db_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -365,6 +372,15 @@ impl AppRuntime {
                                     crate::backend::operation_log::log_warn(
                                         "global_memory.coordinator.recovery",
                                         "Global Memory durable coordinator reconciliation failed",
+                                        &[("error", error.to_string())],
+                                    );
+                                }
+                                if let Err(error) =
+                                    service.recover_memory_recall_turns_for_tenant(&tenant.id)
+                                {
+                                    crate::backend::operation_log::log_warn(
+                                        "memory_recall.coordinator.recovery",
+                                        "Recall durable workflow reconciliation failed",
                                         &[("error", error.to_string())],
                                     );
                                 }

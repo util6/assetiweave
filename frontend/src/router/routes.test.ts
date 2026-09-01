@@ -76,7 +76,7 @@ describe("app route resolution", () => {
     ).toBe("prompts-overview");
   });
 
-  it.each(["overview", "dreams", "recall", "library"])(
+  it.each(["recent", "recall"])(
     "routes the memory %s entry to the independent memory module",
     (activeSubNavId) => {
       expect(

@@ -1,7 +1,7 @@
 //! Tauri Command 暴露层与 IPC 调用适配模块
 //!
 //! 该模块包含了所有前端通过 `invoke('plugin:assetiweave|...')` 调用的 Tauri Command 函数实现。
-//! 包含应用配置、数据源管理、资产挂载、会话同步与翻译、内存梦境 (Memory Dream) 以及 CLI 安装等 IPC 交互逻辑。
+//! 包含应用配置、数据源管理、资产挂载、会话同步与翻译、Memory 以及 CLI 安装等 IPC 交互逻辑。
 
 use crate::adapters::app_state::AppState;
 use crate::adapters::prompt_clipboard::{
@@ -12,8 +12,8 @@ use crate::adapters::tauri::background_tasks::{
     AiExecutionTaskGetParams, AiExecutionTaskSnapshot, BackgroundTaskRegistry,
     BackgroundTaskStatus, BatchMountTaskSnapshot, ConversationDataMaintenanceTaskSnapshot,
     ConversationScriptInstallTaskSnapshot, ConversationSearchIndexTaskSnapshot,
-    ConversationSyncTaskSnapshot, MemoryTaskSnapshot, RemoteSkillAcquireTaskSnapshot,
-    SkillBackupTaskSnapshot, SourceScanScope, SourceScanTaskSnapshot,
+    ConversationSyncTaskSnapshot, RemoteSkillAcquireTaskSnapshot, SkillBackupTaskSnapshot,
+    SourceScanScope, SourceScanTaskSnapshot,
 };
 #[cfg(test)]
 use crate::backend::capabilities::{
@@ -50,13 +50,13 @@ use crate::{
         ConversationSessionExportParams, ConversationSessionGetParams,
         ConversationSessionListParams, ConversationSourceDisableParams,
         ConversationSourceUpsertParams, ConversationSyncParams, ListAssetsParams,
-        MemoryCandidateAcceptParams, MemoryDreamGetParams, MemoryDreamListParams,
-        MemoryDreamPreviewParams, MemoryDreamRunParams, MemoryDreamScopeParams,
-        MemoryItemCreateParams, MemoryItemGetParams, MemoryItemListParams, MemoryItemUpdateParams,
-        MemoryRecallPreviewParams, MemoryRecallRunParams, MemoryTaskStartParams,
-        MemoryVerifyParams, RecentConversationSessionListParams, SkillAcquireParams,
-        SkillRemoteCheckParams, SkillSearchParams, SkillSearchResult, SourceRemoveParams,
-        SourceScanParams, TenantCreateParams, UpdateSkillBackupSettingsParams,
+        MemoryContextResolveParams, MemoryProjectGetParams, MemoryRecallSearchParams,
+        MemoryRecallSessionCreateParams, MemoryRecallSessionGetParams,
+        MemoryRecallTurnCancelParams, MemoryRecallTurnSendParams, MemoryScopeRebuildParams,
+        MemoryTaskGetParams, MemoryTaskListParams, MemoryTaskRetryParams,
+        RecentConversationSessionListParams, SkillAcquireParams, SkillRemoteCheckParams,
+        SkillSearchParams, SkillSearchResult, SourceRemoveParams, SourceScanParams,
+        TenantCreateParams, UpdateSkillBackupSettingsParams,
     },
     backend::card_translation::{
         prepare_opencode_agent_translation, ConversationTranslationConnectionRequest,
@@ -72,14 +72,15 @@ use crate::{
     },
     backend::dto::{
         AppOverview, AppShortcut, AssetGroupInput, AssetMountStatus, AssetMountUpdateResult,
-        CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryItemPage,
-        NavigationModel, SkillBackupSettings, SkillGroupExclusiveMountInput,
-        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
+        CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryContextResult,
+        MemoryProjectView, MemoryRebuildResult, MemoryTaskView, NavigationModel,
+        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
+        SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
-        ConversationSource, DeploymentPlan, DeploymentStrategy, MemoryItemDetail, MemoryRunKind,
-        Source, TargetProfile, TargetProfileDescriptor, Tenant,
+        ConversationSource, DeploymentPlan, DeploymentStrategy, Source, TargetProfile,
+        TargetProfileDescriptor, Tenant,
     },
     backend::operation_log::{
         asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
@@ -288,329 +289,99 @@ pub(crate) fn get_memory_recent_event_target(
 }
 
 #[tauri::command]
-pub(crate) fn list_memory_items(
+pub(crate) fn search_memory_recall(
     state: State<'_, AppState>,
-    params: MemoryItemListParams,
-) -> RuntimeAppResult<MemoryItemPage> {
-    AppService::from_runtime(&state.runtime).list_memory_items(params)
+    params: MemoryRecallSearchParams,
+) -> RuntimeAppResult<crate::backend::models::MemoryRecallSearchResult> {
+    AppService::from_runtime(&state.runtime).search_memory_recall(params)
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_item(
+pub(crate) fn resolve_memory_context(
     state: State<'_, AppState>,
-    params: MemoryItemGetParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    AppService::from_runtime(&state.runtime).get_memory_item(params)
+    params: MemoryContextResolveParams,
+) -> RuntimeAppResult<MemoryContextResult> {
+    AppService::from_runtime(&state.runtime).resolve_memory_context(params)
 }
 
 #[tauri::command]
-pub(crate) fn create_memory_item(
+pub(crate) fn get_memory_project(
     state: State<'_, AppState>,
-    params: MemoryItemCreateParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    let result = (|| AppService::from_runtime(&state.runtime).create_memory_item(params))();
-    match &result {
-        Ok(detail) => log_info(
-            "memory.item.create",
-            "创建 Memory 成功",
-            &[("item_id", detail.item.id.clone())],
-        ),
-        Err(error) => log_error("memory.item.create", "创建 Memory 失败", error, &[]),
-    }
-    result
+    params: MemoryProjectGetParams,
+) -> RuntimeAppResult<Option<MemoryProjectView>> {
+    AppService::from_runtime(&state.runtime).get_memory_project(params)
 }
 
 #[tauri::command]
-pub(crate) fn update_memory_item(
+pub(crate) fn rebuild_memory_scope(
     state: State<'_, AppState>,
-    params: MemoryItemUpdateParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    let item_id = params.item_id.clone();
-    let fields = [("item_id", item_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).update_memory_item(params))();
-    match &result {
-        Ok(_) => log_info("memory.item.update", "更新 Memory 成功", &fields),
-        Err(error) => log_error("memory.item.update", "更新 Memory 失败", error, &fields),
-    }
-    result
+    params: MemoryScopeRebuildParams,
+) -> RuntimeAppResult<MemoryRebuildResult> {
+    AppService::from_runtime(&state.runtime).rebuild_memory_scope(params)
 }
 
 #[tauri::command]
-pub(crate) fn archive_memory_item(
+pub(crate) fn list_memory_public_tasks(
     state: State<'_, AppState>,
-    params: MemoryItemGetParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    let fields = [("item_id", params.item_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).archive_memory_item(params))();
-    match &result {
-        Ok(_) => log_info("memory.item.archive", "归档 Memory 成功", &fields),
-        Err(error) => log_error("memory.item.archive", "归档 Memory 失败", error, &fields),
-    }
-    result
+    params: MemoryTaskListParams,
+) -> RuntimeAppResult<Vec<MemoryTaskView>> {
+    AppService::from_runtime(&state.runtime).list_memory_task_views(params)
 }
 
 #[tauri::command]
-pub(crate) fn accept_memory_candidate(
+pub(crate) fn get_memory_public_task(
     state: State<'_, AppState>,
-    params: MemoryCandidateAcceptParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    let fields = [("item_id", params.item_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).accept_memory_candidate(params))();
-    match &result {
-        Ok(_) => log_info("memory.candidate.accept", "接受 Memory 候选成功", &fields),
-        Err(error) => log_error(
-            "memory.candidate.accept",
-            "接受 Memory 候选失败",
-            error,
-            &fields,
-        ),
-    }
-    result
+    params: MemoryTaskGetParams,
+) -> RuntimeAppResult<Option<MemoryTaskView>> {
+    AppService::from_runtime(&state.runtime).get_memory_task_view(params)
 }
 
 #[tauri::command]
-pub(crate) fn reject_memory_candidate(
+pub(crate) fn cancel_memory_public_task(
     state: State<'_, AppState>,
-    params: MemoryItemGetParams,
-) -> RuntimeAppResult<MemoryItemDetail> {
-    let fields = [("item_id", params.item_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).reject_memory_candidate(params))();
-    match &result {
-        Ok(_) => log_info("memory.candidate.reject", "拒绝 Memory 候选成功", &fields),
-        Err(error) => log_error(
-            "memory.candidate.reject",
-            "拒绝 Memory 候选失败",
-            error,
-            &fields,
-        ),
-    }
-    result
+    params: MemoryTaskGetParams,
+) -> RuntimeAppResult<MemoryTaskView> {
+    AppService::from_runtime(&state.runtime).cancel_memory_task_view(params)
 }
 
 #[tauri::command]
-pub(crate) fn memory_dream_status(
+pub(crate) fn retry_memory_public_task(
     state: State<'_, AppState>,
-    params: MemoryDreamScopeParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryDreamPreview> {
-    AppService::from_runtime(&state.runtime).memory_dream_status(params)
+    params: MemoryTaskRetryParams,
+) -> RuntimeAppResult<MemoryTaskView> {
+    AppService::from_runtime(&state.runtime).retry_memory_task(params)
 }
 
 #[tauri::command]
-pub(crate) fn memory_overview(
+pub(crate) fn create_memory_recall_session(
     state: State<'_, AppState>,
-    params: MemoryDreamScopeParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryOverview> {
-    AppService::from_runtime(&state.runtime).memory_overview(params)
+    params: MemoryRecallSessionCreateParams,
+) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+    AppService::from_runtime(&state.runtime).create_memory_recall_session(params)
 }
 
 #[tauri::command]
-pub(crate) fn list_memory_dream_notes(
+pub(crate) fn get_memory_recall_session(
     state: State<'_, AppState>,
-    params: MemoryDreamListParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryDreamNotePage> {
-    AppService::from_runtime(&state.runtime).list_memory_dream_notes(params)
+    params: MemoryRecallSessionGetParams,
+) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+    AppService::from_runtime(&state.runtime).get_memory_recall_session(params)
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_dream_note(
+pub(crate) fn send_memory_recall_turn(
     state: State<'_, AppState>,
-    params: MemoryDreamGetParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryDreamNoteDetail> {
-    AppService::from_runtime(&state.runtime).get_memory_dream_note(params)
+    params: MemoryRecallTurnSendParams,
+) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+    AppService::from_runtime(&state.runtime).send_memory_recall_turn(params)
 }
 
 #[tauri::command]
-pub(crate) fn archive_memory_dream_note(
+pub(crate) fn cancel_memory_recall_turn(
     state: State<'_, AppState>,
-    params: MemoryDreamGetParams,
-) -> RuntimeAppResult<crate::backend::models::MemoryDreamNoteDetail> {
-    AppService::from_runtime(&state.runtime).archive_memory_dream_note(params)
-}
-
-#[tauri::command]
-pub(crate) fn promote_memory_dream_note(
-    state: State<'_, AppState>,
-    params: MemoryDreamGetParams,
-) -> RuntimeAppResult<Vec<MemoryItemDetail>> {
-    AppService::from_runtime(&state.runtime).promote_memory_dream_note(params)
-}
-
-#[tauri::command]
-pub(crate) fn preview_memory_dream(
-    state: State<'_, AppState>,
-    params: MemoryDreamPreviewParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryDreamPreview> {
-    AppService::from_runtime(&state.runtime).preview_memory_dream(params)
-}
-
-#[tauri::command]
-pub(crate) fn run_memory_dream(
-    state: State<'_, AppState>,
-    params: MemoryDreamRunParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryDreamRunResult> {
-    AppService::from_runtime(&state.runtime).run_memory_dream(params)
-}
-
-#[tauri::command]
-pub(crate) fn preview_memory_recall(
-    state: State<'_, AppState>,
-    params: MemoryRecallPreviewParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryRecallPreview> {
-    AppService::from_runtime(&state.runtime).preview_memory_recall(params)
-}
-
-#[tauri::command]
-pub(crate) fn run_memory_recall(
-    state: State<'_, AppState>,
-    params: MemoryRecallRunParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryRecallRunResult> {
-    AppService::from_runtime(&state.runtime).run_memory_recall(params)
-}
-
-#[tauri::command]
-pub(crate) fn verify_memory(
-    state: State<'_, AppState>,
-    params: MemoryVerifyParams,
-) -> RuntimeAppResult<crate::backend::dto::MemoryVerifyResult> {
-    AppService::from_runtime(&state.runtime).verify_memory(params)
-}
-
-#[tauri::command]
-pub(crate) fn start_memory_task(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    params: MemoryTaskStartParams,
-) -> RuntimeAppResult<MemoryTaskSnapshot> {
-    if params.kind != MemoryRunKind::AutoDream && params.recall.is_none() {
-        return Err(AppError::Validation(
-            "deep Recall and full organize background tasks require Recall parameters".to_string(),
-        ));
-    }
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let (snapshot, cancellation, should_start) = state
-        .background_tasks
-        .begin_memory_task_for_tenant(&tenant_id, &params)?;
-    if !should_start {
-        return Ok(snapshot);
-    }
-
-    let runtime = state.runtime.clone();
-    let background_tasks = state.background_tasks.clone();
-    let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let progress_tasks = background_tasks.clone();
-        let progress_app = app.clone();
-        let progress_task_id = task_id.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let service = AppService::from_runtime(&runtime);
-            let report = move |phase: &str,
-                               processed_count: usize,
-                               total_count: usize,
-                               run_id: Option<&str>| {
-                if let Ok(snapshot) = progress_tasks.update_memory_task(
-                    &progress_task_id,
-                    phase,
-                    processed_count,
-                    total_count,
-                    run_id.map(str::to_string),
-                ) {
-                    emit_memory_task(&progress_app, &snapshot);
-                }
-            };
-            match params.kind {
-                MemoryRunKind::AutoDream => service
-                    .run_memory_dream_with_control(
-                        MemoryDreamRunParams {
-                            scope: params.scope,
-                            trigger: params.trigger,
-                            dry_run: params.dry_run,
-                        },
-                        Some(cancellation),
-                        report,
-                    )
-                    .and_then(|value| serde_json::to_value(value).map_err(AppError::external)),
-                MemoryRunKind::DeepRecall | MemoryRunKind::FullOrganize => {
-                    let mut recall = params.recall.ok_or_else(|| {
-                        AppError::Validation("Recall task parameters are required".to_string())
-                    })?;
-                    recall.scope = params.scope;
-                    recall.mode = if params.kind == MemoryRunKind::FullOrganize {
-                        crate::backend::models::MemoryRecallMode::Full
-                    } else {
-                        crate::backend::models::MemoryRecallMode::Exact
-                    };
-                    service
-                        .run_memory_recall_with_control(
-                            MemoryRecallRunParams {
-                                preview: recall,
-                                synthesize: params.synthesize,
-                                dry_run: params.dry_run,
-                            },
-                            Some(cancellation),
-                            report,
-                        )
-                        .and_then(|value| serde_json::to_value(value).map_err(AppError::external))
-                }
-            }
-        }))
-        .unwrap_or_else(|_| Err(AppError::Process("Memory task panicked".to_string())));
-        match background_tasks.finish_memory_task(&task_id, result) {
-            Ok(snapshot) => emit_memory_task(&app, &snapshot),
-            Err(error) => log_error(
-                "memory.task",
-                "更新 Memory 后台任务状态失败",
-                &error,
-                &[("task_id", task_id)],
-            ),
-        }
-    });
-    Ok(snapshot)
-}
-
-#[tauri::command]
-pub(crate) fn get_memory_task(
-    state: State<'_, AppState>,
-    params: BackgroundTaskGetParams,
-) -> RuntimeAppResult<Option<MemoryTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    state
-        .background_tasks
-        .memory_task_snapshot_for_tenant(&tenant_id, &params.task_id)
-}
-
-#[tauri::command]
-pub(crate) fn list_memory_tasks(
-    state: State<'_, AppState>,
-) -> RuntimeAppResult<Vec<MemoryTaskSnapshot>> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    state
-        .background_tasks
-        .memory_task_snapshots_for_tenant(&tenant_id)
-}
-
-#[tauri::command]
-pub(crate) fn cancel_memory_task(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    params: BackgroundTaskGetParams,
-) -> RuntimeAppResult<MemoryTaskSnapshot> {
-    let tenant_id = state.runtime.context().tenant.id.clone();
-    let snapshot = state
-        .background_tasks
-        .cancel_memory_task_for_tenant(&tenant_id, &params.task_id)?;
-    emit_memory_task(&app, &snapshot);
-    Ok(snapshot)
-}
-
-fn emit_memory_task(app: &AppHandle, snapshot: &MemoryTaskSnapshot) {
-    if let Err(error) = app.emit("memory-task-updated", snapshot) {
-        log_error(
-            "memory.task",
-            "推送 Memory 后台任务状态失败",
-            &error.to_string(),
-            &[("task_id", snapshot.id.clone())],
-        );
-    }
+    params: MemoryRecallTurnCancelParams,
+) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
+    AppService::from_runtime(&state.runtime).cancel_memory_recall_turn(params)
 }
 
 #[tauri::command]
@@ -2211,6 +1982,7 @@ fn prepare_ai_execution_task_for_tenant(
         replay: false,
         restore_only: false,
         team_tools: None,
+        recall_tools: None,
     };
     emitter.emit(&snapshot);
     Ok((snapshot, request))
@@ -2677,81 +2449,107 @@ pub(crate) fn start_conversation_sync_background(
     }
 
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let progress_app = app.clone();
-        let progress_tasks = background_tasks.clone();
-        let progress_task_id = task_id.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::from_runtime(&runtime).sync_conversations_with_progress(
-                params,
-                |completed_source_count, total_source_count, current_source_name| {
-                    match progress_tasks.update_conversation_sync_progress(
-                        &progress_task_id,
-                        completed_source_count,
-                        total_source_count,
-                        current_source_name,
-                    ) {
-                        Ok(snapshot) => {
-                            if let Err(error) =
-                                progress_app.emit("conversation-sync-task-updated", &snapshot)
-                            {
-                                log_error(
-                                    "conversation.sync",
-                                    "推送后台同步进度失败",
-                                    &error.to_string(),
-                                    &[("task_id", progress_task_id.clone())],
-                                );
+    let task_runtime = background_tasks
+        .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
+    let task_detail = task_runtime
+        .get(&task_id)
+        .map(|task| task.detail)
+        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
+    let task_background_tasks = background_tasks.clone();
+    let task_app = app.clone();
+    let task_id_for_runtime = task_id.clone();
+    let outcome = task_runtime.start_external_with(
+        &task_id,
+        task_detail,
+        Box::new(move |context| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let progress_app = task_app.clone();
+                let progress_tasks = task_background_tasks.clone();
+                let progress_task_id = task_id_for_runtime.clone();
+                let mut on_progress =
+                    move |completed_source_count: usize,
+                          total_source_count: usize,
+                          current_source_name: Option<String>| {
+                        match progress_tasks.update_conversation_sync_progress(
+                            &progress_task_id,
+                            completed_source_count,
+                            total_source_count,
+                            current_source_name,
+                        ) {
+                            Ok(snapshot) => {
+                                if let Err(error) =
+                                    progress_app.emit("conversation-sync-task-updated", &snapshot)
+                                {
+                                    log_error(
+                                        "conversation.sync",
+                                        "推送后台同步进度失败",
+                                        &error.to_string(),
+                                        &[("task_id", progress_task_id.clone())],
+                                    );
+                                }
                             }
+                            Err(error) => log_error(
+                                "conversation.sync",
+                                "更新后台同步进度失败",
+                                &error,
+                                &[("task_id", progress_task_id.clone())],
+                            ),
                         }
-                        Err(error) => log_error(
-                            "conversation.sync",
-                            "更新后台同步进度失败",
-                            &error,
-                            &[("task_id", progress_task_id.clone())],
-                        ),
-                    }
-                },
-            )
-        }))
-        .unwrap_or_else(|_| {
-            Err(AppError::Process(
-                "conversation sync task panicked".to_string(),
-            ))
-        });
-        match &result {
-            Ok(value) => log_info(
-                "conversation.sync",
-                "后台同步对话记录成功",
-                &[("task_id", task_id.clone()), ("result", value.to_string())],
-            ),
-            Err(error) => log_error(
-                "conversation.sync",
-                "后台同步对话记录失败",
-                error,
-                &[("task_id", task_id.clone())],
-            ),
-        }
-        match background_tasks.finish_conversation_sync(&task_id, result) {
-            Ok(snapshot) => {
-                if let Err(error) = app.emit("conversation-sync-task-updated", &snapshot) {
-                    log_error(
-                        "conversation.sync",
-                        "推送后台同步任务状态失败",
-                        &error.to_string(),
-                        &[("task_id", task_id)],
-                    );
+                    };
+                let cancellation = context.cancellation();
+                if context.is_cancelled() {
+                    return Err(AppError::Canceled(
+                        "conversation sync cancelled".to_string(),
+                    ));
                 }
-            }
-            Err(error) => {
-                log_error(
+                AppService::from_runtime(&runtime)
+                    .sync_conversations_with_progress_and_cancellation(
+                        params,
+                        Some(&cancellation),
+                        &mut on_progress,
+                    )
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::Process(
+                    "conversation sync task panicked".to_string(),
+                ))
+            });
+            match &result {
+                Ok(value) => log_info(
                     "conversation.sync",
-                    "更新后台同步任务状态失败",
-                    &error,
-                    &[("task_id", task_id)],
-                );
+                    "后台同步对话记录成功",
+                    &[
+                        ("task_id", task_id_for_runtime.clone()),
+                        ("result", value.to_string()),
+                    ],
+                ),
+                Err(error) => log_error(
+                    "conversation.sync",
+                    "后台同步对话记录失败",
+                    error,
+                    &[("task_id", task_id_for_runtime.clone())],
+                ),
             }
-        }
-    });
+            match task_background_tasks.finish_conversation_sync(&task_id_for_runtime, result) {
+                Ok(snapshot) => {
+                    if let Err(error) = task_app.emit("conversation-sync-task-updated", &snapshot) {
+                        log_error(
+                            "conversation.sync",
+                            "推送后台同步任务状态失败",
+                            &error.to_string(),
+                            &[("task_id", task_id_for_runtime.clone())],
+                        );
+                    }
+                    Ok(Value::Null)
+                }
+                Err(error) => Err(error),
+            }
+        }),
+    );
+    if let Err(error) = outcome {
+        return Err(error);
+    }
 
     Ok(snapshot)
 }
@@ -2774,6 +2572,17 @@ pub(crate) fn list_conversation_sync_tasks(
     state
         .background_tasks
         .conversation_sync_snapshots_for_tenant(&tenant_id)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_conversation_sync(
+    state: State<'_, AppState>,
+    params: BackgroundTaskGetParams,
+) -> RuntimeAppResult<ConversationSyncTaskSnapshot> {
+    let tenant_id = state.runtime.context().tenant.id.clone();
+    state
+        .background_tasks
+        .cancel_conversation_sync_for_tenant(&tenant_id, &params.task_id)
 }
 
 #[tauri::command]
@@ -2839,56 +2648,86 @@ fn start_conversation_data_maintenance_background(
     }
 
     let task_id = snapshot.id.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let service = AppService::from_runtime(&runtime);
-            let progress_tasks = background_tasks.clone();
-            let progress_app = app.clone();
-            let progress_task_id = task_id.clone();
-            let mut on_progress = move |completed_stage: usize,
-                                        total_stage: usize,
-                                        note: Option<String>| {
-                if let Ok(snapshot) = progress_tasks.update_conversation_data_maintenance_progress(
-                    &progress_task_id,
-                    completed_stage,
-                    total_stage,
-                    note.clone(),
-                ) {
-                    if let Err(error) =
-                        progress_app.emit("conversation-data-maintenance-task-updated", &snapshot)
-                    {
-                        log_error(
-                            "conversation.data.maintenance",
-                            "推送对话数据维护进度失败",
-                            &error.to_string(),
-                            &[("task_id", progress_task_id.clone())],
-                        );
-                    }
+    let task_runtime = background_tasks
+        .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
+    let task_detail = task_runtime
+        .get(&task_id)
+        .map(|task| task.detail)
+        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
+    let task_background_tasks = background_tasks.clone();
+    let task_app = app.clone();
+    let task_id_for_runtime = task_id.clone();
+    let outcome = task_runtime.start_external_with(
+        &task_id,
+        task_detail,
+        Box::new(move |context| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let service = AppService::from_runtime(&runtime);
+                let progress_tasks = task_background_tasks.clone();
+                let progress_app = task_app.clone();
+                let progress_task_id = task_id_for_runtime.clone();
+                let mut on_progress =
+                    move |completed_stage: usize, total_stage: usize, note: Option<String>| {
+                        if let Ok(snapshot) = progress_tasks
+                            .update_conversation_data_maintenance_progress(
+                                &progress_task_id,
+                                completed_stage,
+                                total_stage,
+                                note.clone(),
+                            )
+                        {
+                            if let Err(error) = progress_app
+                                .emit("conversation-data-maintenance-task-updated", &snapshot)
+                            {
+                                log_error(
+                                    "conversation.data.maintenance",
+                                    "推送对话数据维护进度失败",
+                                    &error.to_string(),
+                                    &[("task_id", progress_task_id.clone())],
+                                );
+                            }
+                        }
+                    };
+                let cancellation = context.cancellation();
+                if context.is_cancelled() {
+                    return Err(AppError::Canceled(
+                        "conversation data maintenance cancelled".to_string(),
+                    ));
                 }
-            };
-            if let Some(params) = repair_params {
-                service.repair_conversation_data_with_progress(params, &mut on_progress)
-            } else {
-                service.audit_conversation_data_with_progress(audit_params, &mut on_progress)
+                if let Some(params) = repair_params {
+                    service.repair_conversation_data_with_progress_and_cancellation(
+                        params,
+                        Some(&cancellation),
+                        &mut on_progress,
+                    )
+                } else {
+                    service.audit_conversation_data_with_progress_and_cancellation(
+                        audit_params,
+                        Some(&cancellation),
+                        &mut on_progress,
+                    )
+                }
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::Process(
+                    "conversation data maintenance task panicked".to_string(),
+                ))
+            });
+            match task_background_tasks
+                .finish_conversation_data_maintenance(&task_id_for_runtime, result)
+            {
+                Ok(snapshot) => {
+                    let _ = task_app.emit("conversation-data-maintenance-task-updated", &snapshot);
+                    Ok(Value::Null)
+                }
+                Err(error) => Err(error),
             }
-        }))
-        .unwrap_or_else(|_| {
-            Err(AppError::Process(
-                "conversation data maintenance task panicked".to_string(),
-            ))
-        });
-        match background_tasks.finish_conversation_data_maintenance(&task_id, result) {
-            Ok(snapshot) => {
-                let _ = app.emit("conversation-data-maintenance-task-updated", &snapshot);
-            }
-            Err(error) => log_error(
-                "conversation.data.maintenance",
-                "更新对话数据维护任务状态失败",
-                &error,
-                &[("task_id", task_id)],
-            ),
-        }
-    });
+        }),
+    );
+    if let Err(error) = outcome {
+        return Err(error);
+    }
     Ok(snapshot)
 }
 
@@ -3723,28 +3562,18 @@ pub(crate) fn command_handler(
         list_source_assets,
         list_memory_recent,
         get_memory_recent_event_target,
-        list_memory_items,
-        get_memory_item,
-        create_memory_item,
-        update_memory_item,
-        archive_memory_item,
-        accept_memory_candidate,
-        reject_memory_candidate,
-        memory_dream_status,
-        memory_overview,
-        list_memory_dream_notes,
-        get_memory_dream_note,
-        archive_memory_dream_note,
-        promote_memory_dream_note,
-        preview_memory_dream,
-        run_memory_dream,
-        preview_memory_recall,
-        run_memory_recall,
-        verify_memory,
-        start_memory_task,
-        get_memory_task,
-        list_memory_tasks,
-        cancel_memory_task,
+        resolve_memory_context,
+        get_memory_project,
+        rebuild_memory_scope,
+        list_memory_public_tasks,
+        get_memory_public_task,
+        cancel_memory_public_task,
+        retry_memory_public_task,
+        search_memory_recall,
+        create_memory_recall_session,
+        get_memory_recall_session,
+        send_memory_recall_turn,
+        cancel_memory_recall_turn,
         get_skill_backup_settings,
         update_skill_backup_settings,
         backup_skill,
@@ -3863,6 +3692,7 @@ pub(crate) fn command_handler(
         sync_conversations,
         get_conversation_sync_task,
         list_conversation_sync_tasks,
+        cancel_conversation_sync,
         audit_conversation_data,
         repair_conversation_data,
         get_conversation_data_maintenance_task,

@@ -7,11 +7,13 @@ import { ConversationSyncProvider, useConversationSync } from "./ConversationSyn
 const subscribeConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const listConversationSyncTasksMock = vi.hoisted(() => vi.fn());
 const syncConversationsMock = vi.hoisted(() => vi.fn());
+const cancelConversationSyncMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../services/conversations", () => ({
   listConversationSyncTasks: listConversationSyncTasksMock,
   subscribeConversationSyncTasks: subscribeConversationSyncTasksMock,
   syncConversations: syncConversationsMock,
+  cancelConversationSync: cancelConversationSyncMock,
 }));
 
 describe("ConversationSyncProvider", () => {
@@ -19,6 +21,7 @@ describe("ConversationSyncProvider", () => {
     subscribeConversationSyncTasksMock.mockReset().mockResolvedValue(vi.fn());
     listConversationSyncTasksMock.mockReset().mockResolvedValue([]);
     syncConversationsMock.mockReset();
+    cancelConversationSyncMock.mockReset();
   });
 
   afterEach(() => {
@@ -70,6 +73,34 @@ describe("ConversationSyncProvider", () => {
       });
     });
     expect(screen.getByTestId("sync-status").textContent).toBe("completed");
+  });
+
+  it("cancels a running sync through the shared task runtime", async () => {
+    const runningTask = {
+      id: "sync-cancel",
+      status: "running",
+      source_id: null,
+      adapter_id: null,
+      record_kind: "session",
+      dry_run: false,
+      started_at: "2026-06-15T00:00:00Z",
+      finished_at: null,
+      result: null,
+      error: null,
+    } as const;
+    syncConversationsMock.mockResolvedValue(runningTask);
+    cancelConversationSyncMock.mockResolvedValue({ ...runningTask, status: "cancelling" });
+
+    render(
+      <ConversationSyncProvider>
+        <CancelSyncHarness />
+      </ConversationSyncProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start and cancel sync" }));
+    await act(async () => {});
+    expect(screen.getByTestId("cancel-sync-status").textContent).toBe("cancelling");
+    expect(cancelConversationSyncMock).toHaveBeenCalledWith("sync-cancel");
   });
 
   it("uses status polling as a fallback when a completion event is missed", async () => {
@@ -214,6 +245,24 @@ function FullSyncHarness() {
       <output data-testid="full-sync-status">{fullTask?.status ?? "idle"}</output>
       <output data-testid="session-sync-status">{taskFor("session")?.status ?? "idle"}</output>
       <output data-testid="web-sync-status">{taskFor("web")?.status ?? "idle"}</output>
+    </>
+  );
+}
+
+function CancelSyncHarness() {
+  const { startSync, cancelSync, task } = useConversationSync();
+
+  return (
+    <>
+      <button
+        onClick={() => {
+          void startSync({ record_kind: "session" }).then((snapshot) => void cancelSync(snapshot.id));
+        }}
+        type="button"
+      >
+        Start and cancel sync
+      </button>
+      <output data-testid="cancel-sync-status">{task?.status ?? "idle"}</output>
     </>
   );
 }

@@ -285,7 +285,7 @@ export function ConversationsPage({
   const [sessionDetail, setSessionDetail] = useState<ConversationSessionDetail | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const sessionSearchRequestIdRef = useRef(0);
-  const syncRunning = syncTask?.status === "running";
+  const syncRunning = syncTask?.status === "running" || syncTask?.status === "cancelling";
   const searchIndexRunning = searchIndexTask?.status === "running";
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const sessionDetailRequestIdRef = useRef(0);
@@ -642,7 +642,7 @@ export function ConversationsPage({
     }
 
     const sourceLabel = syncSourceLabel(syncTask.source_id);
-    if (syncTask.status === "running") {
+    if (syncTask.status === "running" || syncTask.status === "cancelling") {
       setSyncProgressDismissed(false);
       setSyncProgress({ phase: "importing", sourceLabel, taskId: syncTask.id });
       return;

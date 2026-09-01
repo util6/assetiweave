@@ -227,10 +227,9 @@ export const ConversationTurn = memo(function ConversationTurn({
         ) : (
           <ConversationContentCards
             activeBlockId={activeBlockId}
-            blocks={model.blocks}
             colors={colors}
             controller={controller}
-            nodes={model.displayNodes}
+            nodes={model.displayNodes ?? []}
             onCopyError={onCopyError}
             onCommandPartsVisible={onCommandPartsVisible}
             recordKind={recordKind}

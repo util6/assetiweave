@@ -354,7 +354,7 @@ mod tests {
             Some("我的技能")
         );
         assert!(loaded.header_tabs.iter().any(|tab| tab.id == "memory"));
-        assert_eq!(loaded.sub_nav_items["memory"].len(), 4);
+        assert_eq!(loaded.sub_nav_items["memory"].len(), 2);
         assert!(loaded.header_tabs.iter().any(|tab| tab.id == "team"));
         assert_eq!(loaded.sub_nav_items["team"].len(), 1);
 

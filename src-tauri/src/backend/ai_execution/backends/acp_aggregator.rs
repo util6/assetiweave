@@ -94,6 +94,92 @@ impl TranslationTextAggregator {
     }
 }
 
+/// Aggregates Recall output while allowing the agent to use the read-only
+/// Recall MCP server. Other executions keep their fail-closed tool policy in
+/// `TranslationTextAggregator`.
+pub(crate) struct RecallStructuredAggregator {
+    session_id: SessionId,
+    text: String,
+    byte_limit: usize,
+    chunks: usize,
+    thinking_chunks: usize,
+    ignored_session_events: usize,
+}
+
+impl RecallStructuredAggregator {
+    pub(crate) fn new(session_id: SessionId, byte_limit: usize) -> Self {
+        Self {
+            session_id,
+            text: String::new(),
+            byte_limit,
+            chunks: 0,
+            thinking_chunks: 0,
+            ignored_session_events: 0,
+        }
+    }
+
+    pub(crate) fn apply(&mut self, event: AcpRuntimeEvent) -> AggregatorAction {
+        let event_session_id = match &event {
+            AcpRuntimeEvent::AgentText { session_id, .. }
+            | AcpRuntimeEvent::AgentThought { session_id }
+            | AcpRuntimeEvent::ToolActivity { session_id }
+            | AcpRuntimeEvent::PermissionRequested { session_id }
+            | AcpRuntimeEvent::Other { session_id }
+            | AcpRuntimeEvent::TurnCompleted { session_id, .. } => session_id,
+        };
+        if event_session_id != &self.session_id {
+            self.ignored_session_events += 1;
+            return AggregatorAction::Continue;
+        }
+
+        match event {
+            AcpRuntimeEvent::AgentText { text, .. } => {
+                let Some(new_len) = self.text.len().checked_add(text.len()) else {
+                    return AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit {
+                        limit: self.byte_limit,
+                    });
+                };
+                if new_len > self.byte_limit {
+                    return AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit {
+                        limit: self.byte_limit,
+                    });
+                }
+                self.text.push_str(&text);
+                self.chunks += 1;
+                AggregatorAction::Continue
+            }
+            AcpRuntimeEvent::AgentThought { .. } => {
+                self.thinking_chunks += 1;
+                AggregatorAction::Continue
+            }
+            AcpRuntimeEvent::ToolActivity { .. } => AggregatorAction::Continue,
+            AcpRuntimeEvent::PermissionRequested { .. } => {
+                AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
+            }
+            AcpRuntimeEvent::Other { .. } => AggregatorAction::Continue,
+            AcpRuntimeEvent::TurnCompleted { stop_reason, .. } => {
+                AggregatorAction::Complete { stop_reason }
+            }
+        }
+    }
+
+    pub(crate) fn finish(self) -> Result<String, AiExecutionError> {
+        let text = self.text.trim().to_owned();
+        if text.is_empty() {
+            return Err(AiExecutionError::EmptyOutput { program: None });
+        }
+        Ok(text)
+    }
+
+    pub(crate) fn diagnostics(&self) -> (usize, usize, usize) {
+        (
+            self.chunks,
+            self.thinking_chunks,
+            self.ignored_session_events,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +356,33 @@ mod tests {
         }
 
         assert_eq!(aggregator.finish().unwrap(), "before late");
+    }
+
+    #[test]
+    fn recall_evt_01_tool_activity_is_allowed_for_read_only_mcp() {
+        let session = session();
+        let mut aggregator = RecallStructuredAggregator::new(session.clone(), 64);
+
+        assert!(matches!(
+            aggregator.apply(AcpRuntimeEvent::ToolActivity {
+                session_id: session.clone()
+            }),
+            AggregatorAction::Continue
+        ));
+        aggregator.apply(text(&session, "answer"));
+        assert_eq!(aggregator.finish().unwrap(), "answer");
+    }
+
+    #[test]
+    fn recall_evt_02_permission_is_still_denied() {
+        let session = session();
+        let mut aggregator = RecallStructuredAggregator::new(session.clone(), 64);
+
+        assert!(matches!(
+            aggregator.apply(AcpRuntimeEvent::PermissionRequested {
+                session_id: session
+            }),
+            AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
+        ));
     }
 }

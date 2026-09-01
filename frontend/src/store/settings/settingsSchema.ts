@@ -15,14 +15,18 @@ export type AgentCapabilityServiceId =
   | "cardTranslation"
   | "memory"
   | "memory.extraction"
-  | "memory.dream"
+  | "memory.project"
+  | "memory.global"
+  | "memory.recall"
   | "promptOptimization";
 
 export type AgentCapabilityAssignments = Record<AgentCapabilityServiceId, string>;
 export type AgentActionId =
   | "translation.card"
   | "memory.extraction"
-  | "memory.dream"
+  | "memory.project"
+  | "memory.global"
+  | "memory.recall"
   | "prompt.optimization";
 
 export interface AgentAssignment {
@@ -100,12 +104,6 @@ export const TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH = 80;
 export const TRANSLATION_MODEL_MAX_LENGTH = 120;
 export const TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
 export const PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH = 4000;
-export const AUTO_DREAM_MIN_HOURS_MIN = 1;
-export const AUTO_DREAM_MIN_HOURS_MAX = 168;
-export const AUTO_DREAM_MIN_SESSIONS_MIN = 1;
-export const AUTO_DREAM_MIN_SESSIONS_MAX = 50;
-export const DEFAULT_AUTO_DREAM_MIN_HOURS = 12;
-export const DEFAULT_AUTO_DREAM_MIN_SESSIONS = 3;
 export const DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE = "简体中文";
 export const DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE = [
   "You are translating a technical conversation content card.",
@@ -197,9 +195,10 @@ export type ResolvedConversationTranslationSettings = ConversationTranslationSet
 };
 
 export interface MemorySettings {
-  autoDreamEnabled: boolean;
-  minHours: number;
-  minSessions: number;
+  generationEnabled: boolean;
+  usageEnabled: boolean;
+  excludedSessionIds: string[];
+  excludedSourceIds: string[];
 }
 
 export type ConversationContentCardColorSettings = Record<string, string>;
@@ -301,8 +300,12 @@ function serviceToActionId(serviceId: AgentCapabilityServiceId): AgentActionId {
     case "memory":
     case "memory.extraction":
       return "memory.extraction";
-    case "memory.dream":
-      return "memory.dream";
+    case "memory.project":
+      return "memory.project";
+    case "memory.global":
+      return "memory.global";
+    case "memory.recall":
+      return "memory.recall";
     case "promptOptimization":
       return "prompt.optimization";
   }
@@ -319,7 +322,9 @@ export const defaultSettings: AppSettings = {
   agentAssignments: {
     "translation.card": { agentId: "opencode", modelId: null },
     "memory.extraction": { agentId: "opencode", modelId: null },
-    "memory.dream": { agentId: "opencode", modelId: null },
+    "memory.project": { agentId: "opencode", modelId: null },
+    "memory.global": { agentId: "opencode", modelId: null },
+    "memory.recall": { agentId: "opencode", modelId: null },
     "prompt.optimization": { agentId: "opencode", modelId: null },
   },
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
@@ -334,9 +339,10 @@ export const defaultSettings: AppSettings = {
   },
   density: "comfortable",
   memory: {
-    autoDreamEnabled: false,
-    minHours: DEFAULT_AUTO_DREAM_MIN_HOURS,
-    minSessions: DEFAULT_AUTO_DREAM_MIN_SESSIONS,
+    generationEnabled: true,
+    usageEnabled: true,
+    excludedSessionIds: [],
+    excludedSourceIds: [],
   },
   promptOptimization: {
     promptTemplate: DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE,
@@ -463,7 +469,9 @@ function normalizeLegacyAgentAssignments(
   const specs: Array<[AgentActionId, string, string]> = [
     ["translation.card", "cardTranslation", aiRuntime.cli],
     ["memory.extraction", "memory.extraction", legacyMemory],
-    ["memory.dream", "memory.dream", legacyMemory],
+    ["memory.project", "memory.project", legacyMemory],
+    ["memory.global", "memory.global", legacyMemory],
+    ["memory.recall", "memory.recall", legacyMemory],
     ["prompt.optimization", "promptOptimization", aiRuntime.cli],
   ];
   return Object.fromEntries(
@@ -655,23 +663,29 @@ function normalizeAiRuntimeSettings(
 function normalizeMemorySettings(value: unknown): MemorySettings {
   const stored = isRecord(value) ? value : {};
   return {
-    autoDreamEnabled:
-      typeof stored.autoDreamEnabled === "boolean"
-        ? stored.autoDreamEnabled
-        : defaultSettings.memory.autoDreamEnabled,
-    minHours: normalizeIntegerSetting(
-      stored.minHours,
-      AUTO_DREAM_MIN_HOURS_MIN,
-      AUTO_DREAM_MIN_HOURS_MAX,
-      DEFAULT_AUTO_DREAM_MIN_HOURS,
-    ),
-    minSessions: normalizeIntegerSetting(
-      stored.minSessions,
-      AUTO_DREAM_MIN_SESSIONS_MIN,
-      AUTO_DREAM_MIN_SESSIONS_MAX,
-      DEFAULT_AUTO_DREAM_MIN_SESSIONS,
-    ),
+    generationEnabled:
+      typeof stored.generationEnabled === "boolean"
+        ? stored.generationEnabled
+        : defaultSettings.memory.generationEnabled,
+    usageEnabled:
+      typeof stored.usageEnabled === "boolean"
+        ? stored.usageEnabled
+        : defaultSettings.memory.usageEnabled,
+    excludedSessionIds: normalizeStringList(stored.excludedSessionIds),
+    excludedSourceIds: normalizeStringList(stored.excludedSourceIds),
   };
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(
+    value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )].slice(0, 2_000);
 }
 
 function normalizeConversationTranslationProvider(value: unknown): ConversationTranslationProvider {

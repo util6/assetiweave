@@ -85,6 +85,10 @@ pub fn has_team_mcp_stdio_arg() -> bool {
     std::env::args().any(|argument| argument == "--team-mcp-stdio")
 }
 
+pub fn has_memory_recall_mcp_stdio_arg() -> bool {
+    std::env::args().any(|argument| argument == "--memory-recall-mcp-stdio")
+}
+
 fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), String> {
     backend::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
@@ -189,14 +193,6 @@ pub fn run() {
             log_error(
                 "app.startup.team_recovery",
                 "failed to schedule durable Team runs",
-                &error,
-                &[],
-            );
-        }
-        if let Err(error) = service.interrupt_stale_memory_runs() {
-            log_error(
-                "app.startup.memory_recovery",
-                "failed to mark interrupted Memory runs on startup",
                 &error,
                 &[],
             );
@@ -352,13 +348,16 @@ pub fn run() {
             log_error("app.startup.tauri", "error while running AssetIWeave", &error, &[]);
             panic!("error while running AssetIWeave: {error}");
         });
-    let mut team_task_events = runtime.task_runtime().subscribe();
+    let mut task_events = runtime.task_runtime().subscribe();
     let task_event_app = app.handle().clone();
     tauri::async_runtime::spawn(async move {
         loop {
-            match team_task_events.recv().await {
+            match task_events.recv().await {
                 Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::TeamRun => {
                     let _ = task_event_app.emit("team-run-task-updated", snapshot);
+                }
+                Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::Memory => {
+                    let _ = task_event_app.emit("memory-task-updated", ());
                 }
                 Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
@@ -590,6 +589,263 @@ pub fn run_team_mcp_stdio() {
         eprintln!("Team MCP bridge stopped: {error}");
         std::process::exit(1);
     }
+}
+
+/// Runs the tenant/session-scoped read-only MCP bridge for Recall Agents.
+/// The bridge intentionally exposes search and locator reads only; mutation
+/// commands are not part of this protocol surface.
+pub fn run_memory_recall_mcp_stdio() {
+    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(backend::path_utils::app_db_path);
+    let runtime = match db_path.and_then(|path| {
+        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
+    }) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+            std::process::exit(1);
+        }
+    };
+    if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
+        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+            eprintln!("failed to activate Memory Recall MCP tenant: {error}");
+            std::process::exit(1);
+        }
+    }
+    let service = backend::application::AppService::from_runtime(&runtime);
+    let session_id = std::env::var("ASSETIWEAVE_MEMORY_RECALL_SESSION_ID").unwrap_or_default();
+    if session_id.trim().is_empty() {
+        eprintln!("Memory Recall MCP session is missing");
+        std::process::exit(1);
+    }
+    if let Err(error) = run_memory_recall_mcp_loop(&service, &session_id) {
+        eprintln!("Memory Recall MCP bridge stopped: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_memory_recall_mcp_loop(
+    service: &backend::application::AppService,
+    session_id: &str,
+) -> Result<(), String> {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: serde_json::Value =
+            serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        let id = request.get("id").cloned();
+        let method = request
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if method.starts_with("notifications/") {
+            continue;
+        }
+        let result = match method {
+            "initialize" => Ok(memory_recall_mcp_initialize_result()),
+            "tools/list" => Ok(memory_recall_mcp_tools_result()),
+            "tools/call" => memory_recall_mcp_call(
+                service,
+                session_id,
+                request.get("params").unwrap_or(&serde_json::Value::Null),
+            ),
+            _ => Err("unsupported Memory Recall MCP method".to_string()),
+        };
+        let response = match (id, result) {
+            (Some(id), Ok(result)) => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result })
+            }
+            (Some(id), Err(error)) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32001, "message": error }
+            }),
+            (None, _) => continue,
+        };
+        serde_json::to_writer(&mut stdout, &response).map_err(|error| error.to_string())?;
+        stdout.write_all(b"\n").map_err(|error| error.to_string())?;
+        stdout.flush().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn memory_recall_mcp_initialize_result() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": "2025-06-18",
+        "capabilities": { "tools": { "listChanged": false } },
+        "serverInfo": { "name": "assetiweave-memory-recall", "version": env!("CARGO_PKG_VERSION") }
+    })
+}
+
+fn memory_recall_mcp_tools_result() -> serde_json::Value {
+    let object = |properties: serde_json::Value, required: &[&str]| {
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": false
+        })
+    };
+    serde_json::json!({
+        "tools": [
+            {
+                "name": "memory_recall_search",
+                "description": "Search current tenant Conversation facts with the Recall scope. This tool is read-only.",
+                "inputSchema": object(serde_json::json!({
+                    "query": { "type": "string" },
+                    "since": { "type": ["string", "null"] },
+                    "until": { "type": ["string", "null"] },
+                    "file": { "type": ["string", "null"] },
+                    "command": { "type": ["string", "null"] },
+                    "error": { "type": ["string", "null"] },
+                    "limit": { "type": ["integer", "null"] }
+                }), &["query"])
+            },
+            {
+                "name": "memory_recall_block",
+                "description": "Read one exact Conversation content locator returned by search. This tool is read-only.",
+                "inputSchema": object(serde_json::json!({
+                    "record_kind": { "type": "string", "enum": ["session", "web"] },
+                    "session_id": { "type": "string" },
+                    "question_id": { "type": "string" },
+                    "turn_id": { "type": ["string", "null"] },
+                    "part_id": { "type": ["string", "null"] },
+                    "block_id": { "type": "string" }
+                }), &["record_kind", "session_id", "question_id", "block_id"])
+            }
+        ]
+    })
+}
+
+fn memory_recall_mcp_call(
+    service: &backend::application::AppService,
+    recall_session_id: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let name = params
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let session = service
+        .get_memory_recall_session(backend::application::MemoryRecallSessionGetParams {
+            session_id: recall_session_id.to_string(),
+        })
+        .map_err(|error| error.view().message)?;
+    let string = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let value = match name {
+        "memory_recall_search" => serde_json::to_value(
+            service
+                .search_memory_recall(backend::application::MemoryRecallSearchParams {
+                    query: string("query").ok_or_else(|| "missing Recall query".to_string())?,
+                    scope: session.scope.clone(),
+                    since: string("since"),
+                    until: string("until"),
+                    file: string("file"),
+                    command: string("command"),
+                    error: string("error"),
+                    limit: arguments
+                        .get("limit")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|value| value as usize),
+                    offset: Some(0),
+                })
+                .map_err(|error| error.view().message)?,
+        )
+        .map_err(|error| error.to_string())?,
+        "memory_recall_block" => {
+            let record_kind: backend::models::MemoryRecordKind =
+                serde_json::from_value(serde_json::json!(
+                    string("record_kind").ok_or_else(|| "missing record_kind".to_string())?
+                ))
+                .map_err(|error| error.to_string())?;
+            let question_id =
+                string("question_id").ok_or_else(|| "missing question_id".to_string())?;
+            let block_id = string("block_id").ok_or_else(|| "missing block_id".to_string())?;
+            let record_kind = match record_kind {
+                backend::models::MemoryRecordKind::Session => {
+                    backend::dto::ConversationRecordKind::Session
+                }
+                backend::models::MemoryRecordKind::Web => backend::dto::ConversationRecordKind::Web,
+            };
+            let reference = backend::models::MemoryRecallContentReference {
+                record_kind: match record_kind {
+                    backend::dto::ConversationRecordKind::Session => {
+                        backend::models::MemoryRecordKind::Session
+                    }
+                    backend::dto::ConversationRecordKind::Web => {
+                        backend::models::MemoryRecordKind::Web
+                    }
+                },
+                session_id: string("session_id").unwrap_or_default(),
+                question_id: question_id.clone(),
+                turn_id: string("turn_id"),
+                part_id: string("part_id"),
+                block_id: block_id.clone(),
+            };
+            if !service
+                .recall_content_reference_exists_for_scope(
+                    service.tenant_id(),
+                    &session.scope,
+                    &reference,
+                )
+                .map_err(|error| error.view().message)?
+            {
+                return Err("Recall locator is not readable in this session scope".to_string());
+            }
+            let locators = service
+                .memory_recall_run_sync(backend::store::list_conversation_block_locators_sqlx(
+                    service.memory_recall_pool(),
+                    service.tenant_id(),
+                    record_kind,
+                    &question_id,
+                ))
+                .map_err(|error| error.view().message)?;
+            let Some(locator) = locators.into_iter().find(|locator| {
+                locator.session_id == string("session_id").unwrap_or_default()
+                    && locator.block_id == block_id
+                    && string("turn_id")
+                        .as_deref()
+                        .is_none_or(|id| locator.turn_id == id)
+                    && string("part_id")
+                        .as_deref()
+                        .is_none_or(|id| locator.part_id.as_deref() == Some(id))
+            }) else {
+                return Err("Recall locator is not readable in this tenant".to_string());
+            };
+            serde_json::to_value(
+                service
+                    .memory_recall_run_sync(backend::store::load_conversation_block_detail_sqlx(
+                        service.memory_recall_pool(),
+                        service.tenant_id(),
+                        record_kind,
+                        &locator.block_id,
+                    ))
+                    .map_err(|error| error.view().message)?,
+            )
+            .map_err(|error| error.to_string())?
+        }
+        _ => return Err(format!("unsupported Memory Recall MCP tool: {name}")),
+    };
+    Ok(serde_json::json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&value).map_err(|error| error.to_string())? }]
+    }))
 }
 
 fn run_team_mcp_loop(

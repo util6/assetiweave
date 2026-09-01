@@ -162,7 +162,18 @@ impl InMemoryConversationIndex {
         &self,
         documents: &[ConversationSearchDocument],
     ) -> AppResult<()> {
-        replace_documents(&self.index, &self.fields, documents)
+        replace_documents_with_checkpoint(&self.index, &self.fields, documents, &mut || Ok(()))
+    }
+
+    pub(super) fn replace_documents_with_checkpoint<F>(
+        &self,
+        documents: &[ConversationSearchDocument],
+        checkpoint: &mut F,
+    ) -> AppResult<()>
+    where
+        F: FnMut() -> AppResult<()>,
+    {
+        replace_documents_with_checkpoint(&self.index, &self.fields, documents, checkpoint)
     }
 
     pub(super) fn search_cards(
@@ -192,7 +203,18 @@ impl DiskConversationIndex {
         &self,
         documents: &[ConversationSearchDocument],
     ) -> AppResult<()> {
-        replace_documents(&self.index, &self.fields, documents)
+        replace_documents_with_checkpoint(&self.index, &self.fields, documents, &mut || Ok(()))
+    }
+
+    pub(super) fn replace_documents_with_checkpoint<F>(
+        &self,
+        documents: &[ConversationSearchDocument],
+        checkpoint: &mut F,
+    ) -> AppResult<()>
+    where
+        F: FnMut() -> AppResult<()>,
+    {
+        replace_documents_with_checkpoint(&self.index, &self.fields, documents, checkpoint)
     }
 
     pub(super) fn open(path: &Path) -> AppResult<Self> {
@@ -210,14 +232,20 @@ impl DiskConversationIndex {
     }
 }
 
-fn replace_documents(
+fn replace_documents_with_checkpoint<F>(
     index: &Index,
     fields: &ConversationSearchSchema,
     documents: &[ConversationSearchDocument],
-) -> AppResult<()> {
+    checkpoint: &mut F,
+) -> AppResult<()>
+where
+    F: FnMut() -> AppResult<()>,
+{
     let mut writer = index.writer(50_000_000).map_err(AppError::external)?;
+    checkpoint()?;
     writer.delete_all_documents().map_err(AppError::external)?;
     for item in documents {
+        checkpoint()?;
         let mut document = doc!(
                 fields.document_kind => item.document_kind.as_str(),
                 fields.document_id => item.document_id.as_str(),
@@ -243,6 +271,7 @@ fn replace_documents(
         }
         writer.add_document(document).map_err(AppError::external)?;
     }
+    checkpoint()?;
     writer.commit().map_err(AppError::external)?;
     Ok(())
 }

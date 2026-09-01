@@ -8,6 +8,7 @@ import {
 import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
 import {
   listConversationSyncTasks,
+  cancelConversationSync,
   subscribeConversationSyncTasks,
   syncConversations,
   type ConversationSyncTaskSnapshot,
@@ -23,6 +24,7 @@ interface ConversationSyncContextValue {
     mode?: ConversationSyncMode;
     dry_run?: boolean;
   }) => Promise<ConversationSyncTaskSnapshot>;
+  cancelSync: (taskId: string) => Promise<ConversationSyncTaskSnapshot>;
   task: ConversationSyncTaskSnapshot | null;
   taskFor: (recordKind: ConversationRecordKind) => ConversationSyncTaskSnapshot | null;
   tasks: ConversationSyncTaskSnapshot[];
@@ -44,7 +46,9 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
   const adapter = useMemo<BackgroundTaskRuntimeAdapter<ConversationSyncTaskMap, ConversationSyncRuntimeEvent>>(
     () => ({
       initialState: EMPTY_TASKS,
-      isRunning: (state) => Object.values(state).some((task) => task?.status === "running"),
+      isRunning: (state) => Object.values(state).some(
+        (task) => task?.status === "running" || task?.status === "cancelling",
+      ),
       merge: (current, incoming) => {
         if (isConversationSyncRuntimeEvent(incoming)) {
           if (incoming.snapshots) {
@@ -97,6 +101,11 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
     ),
     [taskMap],
   );
+  const cancelSync = useCallback(async (taskId: string) => {
+    const snapshot = await cancelConversationSync(taskId);
+    merge({ snapshot });
+    return snapshot;
+  }, [merge]);
   const tasks = useMemo(
     () => Object.values(taskMap).filter((task): task is ConversationSyncTaskSnapshot => Boolean(task)),
     [taskMap],
@@ -105,11 +114,12 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
   const value = useMemo<ConversationSyncContextValue>(
     () => ({
       startSync,
+      cancelSync,
       task,
       taskFor,
       tasks,
     }),
-    [startSync, task, taskFor, tasks],
+    [cancelSync, startSync, task, taskFor, tasks],
   );
 
   return (

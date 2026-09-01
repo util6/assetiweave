@@ -15,9 +15,7 @@ use uuid::Uuid;
 mod consumers;
 mod dispatcher;
 
-pub(crate) use consumers::{
-    MemoryEvidenceStaleConsumer, SearchIndexAdvanceConsumer, SessionMemoryConsumer,
-};
+pub(crate) use consumers::{SearchIndexAdvanceConsumer, SessionMemoryConsumer};
 pub(crate) use dispatcher::{EventDispatcher, EventDispatcherHandle};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

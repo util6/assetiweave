@@ -199,7 +199,7 @@ describe("GlobalSettingsDialog", () => {
     expect(screen.queryByText("settings.conversation.translationModel")).toBeNull();
     expect(screen.queryByText("settings.conversation.translationConnection")).toBeNull();
     expect(screen.queryByText("settings.ai.executionBoundary")).toBeNull();
-    expect(screen.getByText("settings.ai.autoDream")).toBeTruthy();
+    expect(screen.getByText("settings.memory.extraction")).toBeTruthy();
   });
 
   it("assigns a service Agent from the brief capability picker", async () => {
@@ -215,7 +215,7 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
     expect(screen.getByRole("heading", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
     expect(screen.getByText("settings.agentCapabilities.selectedLabel")).toBeTruthy();
     expect(screen.getAllByText("settings.agentCapabilities.usingDefaultModel").length).toBeGreaterThan(0);
@@ -243,7 +243,7 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
 
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("list", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
@@ -267,7 +267,7 @@ describe("GlobalSettingsDialog", () => {
     expect(navigation.className).toContain("overflow-y-auto");
     expect(navigation.className).toContain("min-h-0");
 
-    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
     const dialogList = screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" });
     expect(dialogList.className).not.toContain("overflow-y-auto");
     expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
@@ -341,7 +341,7 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: /settings\.agentCapabilities\.openAgentSettings Codex CLI/ })[0]);
 
     expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
@@ -364,7 +364,7 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /OpenCode/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: new RegExp(agentId === "codex" ? "Codex CLI" : "Claude Code") })[0]);
 
     expect(updateSettingMock).toHaveBeenCalledWith("agentAssignments", {

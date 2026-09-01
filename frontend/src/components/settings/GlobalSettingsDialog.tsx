@@ -92,10 +92,6 @@ import type { ThemeId } from "../../theme/schema";
 import { isHexColor } from "../../theme/colorValidation";
 import { themeOptions } from "../../theme/themes";
 import {
-  AUTO_DREAM_MIN_HOURS_MAX,
-  AUTO_DREAM_MIN_HOURS_MIN,
-  AUTO_DREAM_MIN_SESSIONS_MAX,
-  AUTO_DREAM_MIN_SESSIONS_MIN,
   COLUMN_MIN_WIDTH_MAX,
   COLUMN_MIN_WIDTH_MIN,
   COLUMN_MIN_WIDTH_STEP,
@@ -634,18 +630,22 @@ export function GlobalSettingsDialog({
   }
 
   const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
-  const runningConversationSync = conversationSyncTasks.some((task) => task.status === "running");
+  const runningConversationSync = conversationSyncTasks.some(
+    (task) => task.status === "running" || task.status === "cancelling",
+  );
   const fullConversationSyncTask = conversationSyncTasks
     .filter((task) => task.mode === "full" && task.record_kind == null)
     .sort((left, right) => right.started_at.localeCompare(left.started_at))[0] ?? null;
   const fullConversationSyncStatus = fullConversationSyncTask?.status === "running"
+    || fullConversationSyncTask?.status === "cancelling"
     ? t("settings.conversation.fullSyncRunning")
     : fullConversationSyncTask?.status === "completed"
       ? t("settings.conversation.fullSyncCompleted")
       : fullConversationSyncTask?.status === "failed"
         ? fullConversationSyncTask.error?.message || t("settings.conversation.fullSyncFailed")
         : t("settings.conversation.fullSyncIdle");
-  const fullSyncRunning = fullConversationSyncTask?.status === "running";
+  const fullSyncRunning = fullConversationSyncTask?.status === "running"
+    || fullConversationSyncTask?.status === "cancelling";
   const fullSyncAnimating = fullSyncStarting || fullSyncRunning;
   const fullSyncButtonPercent = fullSyncRunning
     && fullConversationSyncTask.progress
@@ -831,60 +831,38 @@ export function GlobalSettingsDialog({
 
             {activePanel === "general.memory" && (
               <SettingsGroup>
-                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
-                  <AgentCapabilitySetting
-                    agentId={resolveAgentCapability(settings, "memory").agentId}
-                    appShortcuts={appShortcuts}
-                    description={t("settings.agentCapabilities.memoryDescription")}
-                    model={resolveAgentCapability(settings, "memory").model}
-                    onOpen={() => openAgentCapabilityDialog("memory")}
+                <MemoryAgentAssignmentRow actionId="memory.extraction" appShortcuts={appShortcuts} label={t("settings.memory.extraction")} onOpen={() => openAgentCapabilityDialog("memory.extraction")} settings={settings} t={t} />
+                <MemoryAgentAssignmentRow actionId="memory.project" appShortcuts={appShortcuts} label={t("settings.memory.project")} onOpen={() => openAgentCapabilityDialog("memory.project")} settings={settings} t={t} />
+                <MemoryAgentAssignmentRow actionId="memory.global" appShortcuts={appShortcuts} label={t("settings.memory.global")} onOpen={() => openAgentCapabilityDialog("memory.global")} settings={settings} t={t} />
+                <MemoryAgentAssignmentRow actionId="memory.recall" appShortcuts={appShortcuts} label={t("settings.memory.recall")} onOpen={() => openAgentCapabilityDialog("memory.recall")} settings={settings} t={t} />
+                <SettingRow icon={<Cpu size={18} />} label={t("settings.memory.generationEnabled")}>
+                  <SwitchControl
+                    checked={settings.memory.generationEnabled}
+                    label={t("settings.memory.generationEnabled")}
+                    onChange={(checked) => updateSetting("memory", { ...settings.memory, generationEnabled: checked })}
                   />
                 </SettingRow>
-                <SettingRow icon={<Cpu size={18} />} label={t("settings.ai.autoDream")}>
-                  <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
-                    <p className="text-body-sm text-on-surface-variant">{t("settings.ai.autoDreamHint")}</p>
-                    <SwitchControl
-                      checked={settings.memory.autoDreamEnabled}
-                      label={t("settings.ai.autoDream")}
-                      onChange={(checked) =>
-                        updateSetting("memory", {
-                          ...settings.memory,
-                          autoDreamEnabled: checked,
-                        })
-                      }
-                    />
-                  </div>
-                </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.ai.autoDreamMinHours")}>
-                  <RangeSettingControl
-                    label={t("settings.ai.autoDreamMinHours")}
-                    max={AUTO_DREAM_MIN_HOURS_MAX}
-                    min={AUTO_DREAM_MIN_HOURS_MIN}
-                    onChange={(value) =>
-                      updateSetting("memory", {
-                        ...settings.memory,
-                        minHours: value,
-                      })
-                    }
-                    step={1}
-                    unit={t("settings.unit.hours")}
-                    value={settings.memory.minHours}
+                <SettingRow icon={<Gauge size={18} />} label={t("settings.memory.usageEnabled")}>
+                  <SwitchControl
+                    checked={settings.memory.usageEnabled}
+                    label={t("settings.memory.usageEnabled")}
+                    onChange={(checked) => updateSetting("memory", { ...settings.memory, usageEnabled: checked })}
                   />
                 </SettingRow>
-                <SettingRow icon={<ListTree size={18} />} label={t("settings.ai.autoDreamMinSessions")}>
-                  <RangeSettingControl
-                    label={t("settings.ai.autoDreamMinSessions")}
-                    max={AUTO_DREAM_MIN_SESSIONS_MAX}
-                    min={AUTO_DREAM_MIN_SESSIONS_MIN}
-                    onChange={(value) =>
-                      updateSetting("memory", {
-                        ...settings.memory,
-                        minSessions: value,
-                      })
-                    }
-                    step={1}
-                    unit={t("settings.unit.sessions")}
-                    value={settings.memory.minSessions}
+                <SettingRow icon={<ListTree size={18} />} label={t("settings.memory.excludedSessionIds")}>
+                  <MemoryExclusionInput
+                    ariaLabel={t("settings.memory.excludedSessionIds")}
+                    onChange={(value) => updateSetting("memory", { ...settings.memory, excludedSessionIds: value })}
+                    placeholder={t("settings.memory.excludedPlaceholder")}
+                    value={settings.memory.excludedSessionIds}
+                  />
+                </SettingRow>
+                <SettingRow icon={<ListTree size={18} />} label={t("settings.memory.excludedSourceIds")}>
+                  <MemoryExclusionInput
+                    ariaLabel={t("settings.memory.excludedSourceIds")}
+                    onChange={(value) => updateSetting("memory", { ...settings.memory, excludedSourceIds: value })}
+                    placeholder={t("settings.memory.excludedPlaceholder")}
+                    value={settings.memory.excludedSourceIds}
                   />
                 </SettingRow>
               </SettingsGroup>
@@ -1525,8 +1503,12 @@ function agentActionIdForService(serviceId: AgentCapabilityServiceId) {
     case "memory":
     case "memory.extraction":
       return "memory.extraction" as const;
-    case "memory.dream":
-      return "memory.dream" as const;
+    case "memory.project":
+      return "memory.project" as const;
+    case "memory.global":
+      return "memory.global" as const;
+    case "memory.recall":
+      return "memory.recall" as const;
     case "promptOptimization":
       return "prompt.optimization" as const;
   }
@@ -1950,6 +1932,64 @@ function SettingRow({ children, icon, label }: { children: ReactNode; icon: Reac
       <div className="shrink-0">{children}</div>
     </div>
   );
+}
+
+function MemoryAgentAssignmentRow({
+  actionId,
+  appShortcuts,
+  label,
+  onOpen,
+  settings,
+  t,
+}: {
+  actionId: "memory.extraction" | "memory.project" | "memory.global" | "memory.recall";
+  appShortcuts: AppShortcut[];
+  label: string;
+  onOpen: () => void;
+  settings: Parameters<typeof resolveAgentCapability>[0];
+  t: Translator;
+}) {
+  const assignment = resolveAgentCapability(settings, actionId);
+  return (
+    <SettingRow icon={<Bot size={18} />} label={label}>
+      <AgentCapabilitySetting
+        agentId={assignment.agentId}
+        appShortcuts={appShortcuts}
+        description={t("settings.memory.assignmentHint")}
+        model={assignment.model}
+        onOpen={onOpen}
+      />
+    </SettingRow>
+  );
+}
+
+function MemoryExclusionInput({
+  ariaLabel,
+  onChange,
+  placeholder,
+  value,
+}: {
+  ariaLabel: string;
+  onChange: (value: string[]) => void;
+  placeholder: string;
+  value: string[];
+}) {
+  const [draft, setDraft] = useState(value.join(", "));
+  useEffect(() => setDraft(value.join(", ")), [value]);
+  return (
+    <Input
+      aria-label={ariaLabel}
+      className="h-9 w-[min(38rem,52vw)] min-w-56"
+      onBlur={() => onChange(parseMemoryExclusions(draft))}
+      onChange={(event) => setDraft(event.target.value)}
+      placeholder={placeholder}
+      value={draft}
+    />
+  );
+}
+
+function parseMemoryExclusions(value: string): string[] {
+  return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))].slice(0, 2_000);
 }
 
 function SettingsPathRow({

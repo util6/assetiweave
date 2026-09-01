@@ -31,7 +31,7 @@ export function ConversationBackgroundTaskIndicator({
   task: ConversationSyncTaskSnapshot | null;
   t: Translator;
 }) {
-  if (task?.status !== "running") {
+  if (task?.status !== "running" && task?.status !== "cancelling") {
     return null;
   }
 

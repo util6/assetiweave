@@ -25,7 +25,9 @@ use crate::backend::{
     operation_log::{log_info, log_warn},
 };
 
-use super::acp_aggregator::{AggregatorAction, TranslationTextAggregator};
+use super::acp_aggregator::{
+    AggregatorAction, RecallStructuredAggregator, TranslationTextAggregator,
+};
 
 const PROTOCOL_EVENT_CAPACITY: usize = 128;
 const PROVIDER_SESSION_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -322,6 +324,7 @@ fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest 
         replay: false,
         restore_only: false,
         team_tools: None,
+        recall_tools: None,
     }
 }
 
@@ -476,7 +479,8 @@ async fn run_execution(
         .protocol
         .as_ref()
         .expect("protocol stored before session");
-    let mcp_servers = team_mcp_servers(request.team_tools.as_ref())?;
+    let mut mcp_servers = team_mcp_servers(request.team_tools.as_ref())?;
+    mcp_servers.extend(recall_mcp_servers(request.recall_tools.as_ref())?);
     let session = if let Some(bound_session) = guard.bound_session.clone() {
         let session_id = SessionId::new(bound_session);
         if request.replay {
@@ -637,6 +641,32 @@ fn team_mcp_servers(
     )])
 }
 
+fn recall_mcp_servers(
+    recall_tools: Option<&crate::backend::ai_execution::AiRecallTools>,
+) -> Result<Vec<McpServer>, AiExecutionError> {
+    let Some(recall_tools) = recall_tools else {
+        return Ok(Vec::new());
+    };
+    let executable = std::env::current_exe().map_err(|_| AiExecutionError::Protocol {
+        operation: "recall_mcp_executable",
+    })?;
+    Ok(vec![McpServer::Stdio(
+        McpServerStdio::new("assetiweave-memory-recall", executable)
+            .args(vec!["--memory-recall-mcp-stdio".to_string()])
+            .env(vec![
+                EnvVariable::new("ASSETIWEAVE_DB_PATH", recall_tools.database_path.clone()),
+                EnvVariable::new(
+                    "ASSETIWEAVE_MEMORY_RECALL_TENANT_ID",
+                    recall_tools.tenant_id.clone(),
+                ),
+                EnvVariable::new(
+                    "ASSETIWEAVE_MEMORY_RECALL_SESSION_ID",
+                    recall_tools.recall_session_id.clone(),
+                ),
+            ]),
+    )])
+}
+
 async fn collect_replay_text(
     events: &mut tokio::sync::mpsc::Receiver<
         crate::backend::agents::protocol::acp::AcpRuntimeEvent,
@@ -678,8 +708,17 @@ async fn run_prompt_and_aggregate(
         mut events,
         mut disconnects,
     } = channels;
-    let mut aggregator =
-        TranslationTextAggregator::new(session_id.clone(), request.limits.text_bytes);
+    let mut aggregator = if matches!(request.purpose, AiExecutionPurpose::Recall) {
+        PromptAggregator::Recall(RecallStructuredAggregator::new(
+            session_id.clone(),
+            request.limits.text_bytes,
+        ))
+    } else {
+        PromptAggregator::Translation(TranslationTextAggregator::new(
+            session_id.clone(),
+            request.limits.text_bytes,
+        ))
+    };
     let mut prompt =
         Box::pin(protocol.prompt(session_id.clone(), request.prompt.trim().to_owned()));
     let mut process_exit = Box::pin(process.wait_for_exit());
@@ -759,6 +798,37 @@ async fn run_prompt_and_aggregate(
                     return Err(AiExecutionError::Protocol { operation: "disconnect" });
                 }
             }
+        }
+    }
+}
+
+enum PromptAggregator {
+    Translation(TranslationTextAggregator),
+    Recall(RecallStructuredAggregator),
+}
+
+impl PromptAggregator {
+    fn apply(
+        &mut self,
+        event: crate::backend::agents::protocol::acp::AcpRuntimeEvent,
+    ) -> AggregatorAction {
+        match self {
+            Self::Translation(aggregator) => aggregator.apply(event),
+            Self::Recall(aggregator) => aggregator.apply(event),
+        }
+    }
+
+    fn finish(self) -> Result<String, AiExecutionError> {
+        match self {
+            Self::Translation(aggregator) => aggregator.finish(),
+            Self::Recall(aggregator) => aggregator.finish(),
+        }
+    }
+
+    fn diagnostics(&self) -> (usize, usize, usize) {
+        match self {
+            Self::Translation(aggregator) => aggregator.diagnostics(),
+            Self::Recall(aggregator) => aggregator.diagnostics(),
         }
     }
 }
@@ -1220,6 +1290,7 @@ mod tests {
             replay: false,
             restore_only: false,
             team_tools: None,
+            recall_tools: None,
         }
     }
 

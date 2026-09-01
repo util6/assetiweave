@@ -53,9 +53,9 @@
 | `conversation.card.translation.opencode-status` | `check_opencode_translation_availability` | — | `check_opencode_translation_availability` | `read` | `false` |
 | `conversation.card.translation.run` | `conversation.card.translation.run`<br>`translate_conversation_card` | — | `translate_conversation_card` | `write` | `false` |
 | `conversation.command_projection.project` | `conversation.command_projection.project`<br>`project_conversation_command_parts` | — | `project_conversation_command_parts` | `read` | `false` |
-| `conversation.data.audit` | `audit_conversation_data`<br>`conversation.data.audit` | — | `audit_conversation_data` | `read` | `false` |
-| `conversation.data.repair` | `conversation.data.repair`<br>`repair_conversation_data` | — | `repair_conversation_data` | `high-risk-write` | `true` |
-| `conversation.data.rollback` | `conversation.data.rollback`<br>`rollback_conversation_data` | — | `rollback_conversation_data` | `high-risk-write` | `true` |
+| `conversation.data.audit` | `audit_conversation_data`<br>`conversation.data.audit` | `assetiweave-cli conversation data audit` | `audit_conversation_data` | `read` | `false` |
+| `conversation.data.repair` | `conversation.data.repair`<br>`repair_conversation_data` | `assetiweave-cli conversation data repair` | `repair_conversation_data` | `high-risk-write` | `true` |
+| `conversation.data.rollback` | `conversation.data.rollback`<br>`rollback_conversation_data` | `assetiweave-cli conversation data rollback` | `rollback_conversation_data` | `high-risk-write` | `true` |
 | `conversation.part.translation.update` | `conversation.part.translation.update`<br>`update_conversation_part_translation` | `assetiweave-cli conversation part translation update <part-id> --text <text>` | `update_conversation_part_translation` | `write` | `false` |
 | `conversation.question.get` | `conversation.question.get`<br>`get_conversation_question` | `assetiweave-cli conversation question get <question-id>` | `get_conversation_question` | `read` | `false` |
 | `conversation.question.list` | `conversation.question.list`<br>`list_conversation_questions` | `assetiweave-cli conversation question list <session-id>` | `list_conversation_questions` | `read` | `false` |
@@ -96,26 +96,20 @@
 | `logs_get_snapshot` | `logs_get_snapshot` | — | `logs_get_snapshot` | `read` | `false` |
 | `logs_open_log_directory` | `logs_open_log_directory` | — | `logs_open_log_directory` | `read` | `false` |
 | `logs_write_operation` | `logs_write_operation` | — | `logs_write_operation` | `write` | `false` |
-| `memory.candidate.accept` | `accept_memory_candidate`<br>`memory.candidate.accept` | `assetiweave-cli memory candidate accept <item-id>` | `accept_memory_candidate` | `write` | `false` |
-| `memory.candidate.reject` | `memory.candidate.reject`<br>`reject_memory_candidate` | `assetiweave-cli memory candidate reject <item-id>` | `reject_memory_candidate` | `write` | `false` |
-| `memory.dream.archive` | `archive_memory_dream_note`<br>`memory.dream.archive` | `assetiweave-cli memory dream archive <note-id>` | `archive_memory_dream_note` | `write` | `false` |
-| `memory.dream.get` | `get_memory_dream_note`<br>`memory.dream.get` | `assetiweave-cli memory dream get <note-id>` | `get_memory_dream_note` | `read` | `false` |
-| `memory.dream.list` | `list_memory_dream_notes`<br>`memory.dream.list` | `assetiweave-cli memory dream list` | `list_memory_dream_notes` | `read` | `false` |
-| `memory.dream.preview` | `memory.dream.preview`<br>`preview_memory_dream` | `assetiweave-cli memory dream preview` | `preview_memory_dream` | `read` | `false` |
-| `memory.dream.promote` | `memory.dream.promote`<br>`promote_memory_dream_note` | `assetiweave-cli memory dream promote <note-id>` | `promote_memory_dream_note` | `write` | `false` |
-| `memory.dream.run` | `memory.dream.run`<br>`run_memory_dream` | `assetiweave-cli memory dream run` | `run_memory_dream` | `write` | `false` |
-| `memory.dream.status` | `memory.dream.status`<br>`memory_dream_status` | `assetiweave-cli memory dream status` | `memory_dream_status` | `read` | `false` |
-| `memory.item.archive` | `archive_memory_item`<br>`memory.item.archive` | `assetiweave-cli memory item archive <item-id>` | `archive_memory_item` | `write` | `false` |
-| `memory.item.create` | `create_memory_item`<br>`memory.item.create` | `assetiweave-cli memory item create` | `create_memory_item` | `write` | `false` |
-| `memory.item.get` | `get_memory_item`<br>`memory.item.get` | `assetiweave-cli memory item get <item-id>` | `get_memory_item` | `read` | `false` |
-| `memory.item.list` | `list_memory_items`<br>`memory.item.list` | `assetiweave-cli memory item list` | `list_memory_items` | `read` | `false` |
-| `memory.item.update` | `memory.item.update`<br>`update_memory_item` | `assetiweave-cli memory item update <item-id>` | `update_memory_item` | `write` | `false` |
-| `memory.overview` | `memory.overview`<br>`memory_overview` | `assetiweave-cli memory overview` | `memory_overview` | `read` | `false` |
-| `memory.recall.preview` | `memory.recall.preview`<br>`preview_memory_recall` | `assetiweave-cli memory recall preview --query <question>` | `preview_memory_recall` | `read` | `false` |
-| `memory.recall.run` | `memory.recall.run`<br>`run_memory_recall` | `assetiweave-cli memory recall run --query <question>` | `run_memory_recall` | `write` | `false` |
+| `memory.context.resolve` | `memory.context.resolve`<br>`resolve_memory_context` | `assetiweave-cli memory context resolve` | `resolve_memory_context` | `read` | `false` |
+| `memory.project.get` | `get_memory_project`<br>`memory.project.get` | `assetiweave-cli memory project get <project-path>` | `get_memory_project` | `read` | `false` |
+| `memory.rebuild` | `memory.rebuild`<br>`rebuild_memory_scope` | `assetiweave-cli memory rebuild` | `rebuild_memory_scope` | `write` | `false` |
+| `memory.recall.search` | `memory.recall.search`<br>`search_memory_recall` | `assetiweave-cli memory recall search --query <query>` | `search_memory_recall` | `read` | `false` |
+| `memory.recall.session.create` | `create_memory_recall_session`<br>`memory.recall.session.create` | `assetiweave-cli memory recall session create` | `create_memory_recall_session` | `write` | `false` |
+| `memory.recall.session.get` | `get_memory_recall_session`<br>`memory.recall.session.get` | `assetiweave-cli memory recall session get <session-id>` | `get_memory_recall_session` | `read` | `false` |
+| `memory.recall.turn.cancel` | `cancel_memory_recall_turn`<br>`memory.recall.turn.cancel` | `assetiweave-cli memory recall turn cancel <turn-id>` | `cancel_memory_recall_turn` | `write` | `false` |
+| `memory.recall.turn.send` | `memory.recall.turn.send`<br>`send_memory_recall_turn` | `assetiweave-cli memory recall turn send <session-id> --query <query>` | `send_memory_recall_turn` | `write` | `false` |
 | `memory.recent.event.target` | `get_memory_recent_event_target`<br>`memory.recent.event.target` | — | `get_memory_recent_event_target` | `read` | `false` |
 | `memory.recent.list` | `list_memory_recent`<br>`memory.recent.list` | `assetiweave-cli memory recent list` | `list_memory_recent` | `read` | `false` |
-| `memory.verify` | `memory.verify`<br>`verify_memory` | `assetiweave-cli memory verify --item <item-id>` | `verify_memory` | `write` | `false` |
+| `memory.task.cancel` | `cancel_memory_public_task`<br>`memory.task.cancel` | `assetiweave-cli memory task cancel <task-id>` | `cancel_memory_public_task` | `write` | `false` |
+| `memory.task.get` | `get_memory_public_task`<br>`memory.task.get` | `assetiweave-cli memory task get <task-id>` | `get_memory_public_task` | `read` | `false` |
+| `memory.task.list` | `list_memory_public_tasks`<br>`memory.task.list` | `assetiweave-cli memory task list` | `list_memory_public_tasks` | `read` | `false` |
+| `memory.task.retry` | `memory.task.retry`<br>`retry_memory_public_task` | `assetiweave-cli memory task retry <task-id>` | `retry_memory_public_task` | `write` | `false` |
 | `mount_asset_mount` | `mount_asset_mount` | — | `mount_asset_mount` | `write` | `false` |
 | `overview.get` | `get_app_overview`<br>`overview.get` | `assetiweave-cli overview` | `get_app_overview` | `read` | `false` |
 | `preview_skill_group_exclusive_mount` | `preview_skill_group_exclusive_mount` | — | `preview_skill_group_exclusive_mount` | `read` | `false` |

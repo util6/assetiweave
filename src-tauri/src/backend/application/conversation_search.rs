@@ -14,6 +14,18 @@ impl AppService {
         )
     }
 
+    pub(crate) fn rebuild_conversation_search_index_with_cancellation(
+        &self,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> AppResult<ConversationSearchIndexRebuildReport> {
+        crate::backend::search::conversation::rebuild_conversation_search_index_with_cancellation(
+            &self.db,
+            &self.db_path,
+            self.tenant_id(),
+            cancellation,
+        )
+    }
+
     pub(crate) fn get_conversation_search_index_status(
         &self,
     ) -> AppResult<ConversationSearchIndexStatus> {

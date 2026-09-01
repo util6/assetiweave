@@ -231,10 +231,8 @@ pub(crate) fn default_navigation_model() -> NavigationModel {
             (
                 "memory".to_string(),
                 vec![
-                    sub_nav("overview", "今日 / 继续工作", "memory.overview"),
-                    sub_nav("dreams", "自动 Dream", "memory.dreams"),
+                    sub_nav("recent", "近期", "memory.recent"),
                     sub_nav("recall", "深度回忆", "memory.recall"),
-                    sub_nav("library", "Memory 库", "memory.library"),
                 ],
             ),
         ]),
@@ -319,12 +317,7 @@ mod tests {
                 .iter()
                 .map(|item| item.route_key.as_str())
                 .collect::<Vec<_>>(),
-            vec![
-                "memory.overview",
-                "memory.dreams",
-                "memory.recall",
-                "memory.library",
-            ]
+            vec!["memory.recent", "memory.recall"]
         );
     }
 

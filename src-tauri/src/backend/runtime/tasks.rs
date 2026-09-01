@@ -1,5 +1,6 @@
 use super::{AppError, AppErrorView, AppResult};
 use chrono::Utc;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -57,7 +58,7 @@ impl TaskState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct TaskProgress {
     pub(crate) current: u64,
     pub(crate) total: Option<u64>,
@@ -639,6 +640,17 @@ impl TaskRuntime {
         self.publish(&snapshot);
         self.release_active_slot();
         Ok(snapshot)
+    }
+
+    pub(crate) fn remove_terminal(&self, task_id: &str) -> Option<TaskSnapshot> {
+        let mut tasks = self.tasks.lock().ok()?;
+        let should_remove = tasks
+            .get(task_id)
+            .is_some_and(|entry| entry.snapshot.state.is_terminal());
+        if !should_remove {
+            return None;
+        }
+        tasks.remove(task_id).map(|entry| entry.snapshot)
     }
 
     #[cfg(test)]

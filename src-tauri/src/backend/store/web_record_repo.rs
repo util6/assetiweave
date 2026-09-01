@@ -107,15 +107,6 @@ pub(crate) async fn import_web_record_sessions_sqlx(
                 &now,
             )
             .await?;
-            super::memory_repo::reconcile_memory_evidence_for_session_tx(
-                &mut tx,
-                tenant_id,
-                crate::backend::models::MemoryEvidenceRecordKind::Web,
-                &session.id,
-                &[],
-                &[],
-            )
-            .await?;
             insert_conversation_sync_delta_sqlx_tx(
                 &mut tx,
                 tenant_id,
@@ -615,13 +606,6 @@ async fn delete_web_record_session_sqlx_tx(
     tenant_id: &str,
     session_id: &str,
 ) -> AppResult<()> {
-    super::memory_repo::mark_memory_evidence_source_unavailable_for_session_tx(
-        tx,
-        tenant_id,
-        crate::backend::models::MemoryEvidenceRecordKind::Web,
-        session_id,
-    )
-    .await?;
     sqlx::query("DELETE FROM conversation_question_fts WHERE tenant_id = ?1 AND session_id = ?2")
         .bind(tenant_id)
         .bind(session_id)

@@ -16,6 +16,7 @@ pub(crate) enum AiExecutionError {
     InvalidReplayMode,
     ResumeUnavailable,
     TeamToolsUnavailable,
+    RecallToolsUnavailable,
     AgentNotFound {
         agent_id: AgentId,
     },
@@ -91,6 +92,11 @@ impl AiExecutionError {
             Self::TeamToolsUnavailable => (
                 "team_tools_unavailable",
                 "The selected AI agent has not declared the Team tool capability.",
+                false,
+            ),
+            Self::RecallToolsUnavailable => (
+                "recall_tools_unavailable",
+                "Recall execution requires an ACP agent with the read-only Recall tool capability.",
                 false,
             ),
             Self::AgentNotFound { .. } => (
@@ -213,6 +219,7 @@ impl fmt::Display for AiExecutionError {
             Self::InvalidReplayMode => formatter.write_str("history replay requires a persistent session"),
             Self::ResumeUnavailable => formatter.write_str("the saved AI execution session is unavailable"),
             Self::TeamToolsUnavailable => formatter.write_str("the selected AI agent has no Team tool capability"),
+            Self::RecallToolsUnavailable => formatter.write_str("Recall execution requires an ACP agent with read-only Recall tools"),
             Self::AgentNotFound { agent_id } => {
                 write!(formatter, "AI agent '{agent_id}' is not registered")
             }

@@ -135,7 +135,12 @@ export interface ImportConversationSourceResult {
 export type ImportConversationSourceProgress = "validating" | "source" | "sync";
 export type StartConversationSync = typeof syncConversations;
 
-export type ConversationSyncTaskStatus = "running" | "completed" | "failed";
+export type ConversationSyncTaskStatus =
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
 const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT = "conversation-search-index-task-updated";
@@ -1132,6 +1137,13 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
     }
     return null;
   }
+}
+
+export async function cancelConversationSync(taskId: string) {
+  return invoke<ConversationSyncTaskSnapshot>(
+    "cancel_conversation_sync",
+    { params: { task_id: taskId } },
+  );
 }
 
 export async function auditConversationData(

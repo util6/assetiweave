@@ -22,7 +22,7 @@ func TestCommonCommandAliasesResolveToCanonicalCommands(t *testing.T) {
 		{args: []string{"sk", "acq"}, want: "assetiweave-cli skill acquire"},
 		{args: []string{"c", "ses", "g"}, want: "assetiweave-cli conversation session get"},
 		{args: []string{"c", "ad", "up"}, want: "assetiweave-cli conversation adapter upgrade"},
-		{args: []string{"m", "rec", "pv"}, want: "assetiweave-cli memory recall preview"},
+		{args: []string{"m", "rec", "s"}, want: "assetiweave-cli memory recall search"},
 		{args: []string{"hv", "tpl", "ls"}, want: "assetiweave-cli harvester template list"},
 	}
 

@@ -49,96 +49,6 @@ pub(crate) struct IdParams {
     pub(crate) id: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-pub(crate) struct MemoryItemListParams {
-    #[serde(default)]
-    pub(crate) kinds: Vec<MemoryItemKind>,
-    #[serde(default)]
-    pub(crate) statuses: Vec<MemoryItemStatus>,
-    #[serde(default)]
-    pub(crate) origins: Vec<MemoryItemOrigin>,
-    #[serde(default)]
-    pub(crate) scope: Option<MemoryScope>,
-    #[serde(default, alias = "staleOnly")]
-    pub(crate) stale_only: bool,
-    pub(crate) limit: Option<usize>,
-    pub(crate) offset: Option<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryItemGetParams {
-    #[serde(alias = "itemId")]
-    pub(crate) item_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryItemCreateParams {
-    pub(crate) kind: MemoryItemKind,
-    pub(crate) title: String,
-    #[serde(alias = "contentMarkdown")]
-    pub(crate) content_markdown: String,
-    #[serde(default)]
-    pub(crate) scope: MemoryScope,
-    pub(crate) confidence: Option<f64>,
-    #[serde(default, alias = "evidenceIds")]
-    pub(crate) evidence_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryItemUpdateParams {
-    #[serde(alias = "itemId")]
-    pub(crate) item_id: String,
-    pub(crate) kind: Option<MemoryItemKind>,
-    pub(crate) title: Option<String>,
-    #[serde(alias = "contentMarkdown")]
-    pub(crate) content_markdown: Option<String>,
-    pub(crate) scope: Option<MemoryScope>,
-    pub(crate) confidence: Option<f64>,
-    #[serde(alias = "evidenceIds")]
-    pub(crate) evidence_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryCandidateAcceptParams {
-    #[serde(alias = "itemId")]
-    pub(crate) item_id: String,
-    pub(crate) kind: Option<MemoryItemKind>,
-    pub(crate) title: Option<String>,
-    #[serde(alias = "contentMarkdown")]
-    pub(crate) content_markdown: Option<String>,
-    pub(crate) scope: Option<MemoryScope>,
-    pub(crate) confidence: Option<f64>,
-    #[serde(alias = "evidenceIds")]
-    pub(crate) evidence_ids: Option<Vec<String>>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-pub(crate) struct MemoryDreamScopeParams {
-    #[serde(default)]
-    pub(crate) scope: MemoryScope,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryRecallPreviewParams {
-    #[serde(default)]
-    pub(crate) mode: crate::backend::models::MemoryRecallMode,
-    #[serde(default)]
-    pub(crate) scope: MemoryScope,
-    pub(crate) query: Option<String>,
-    pub(crate) since: Option<String>,
-    pub(crate) until: Option<String>,
-    #[serde(default, alias = "includeUnavailable")]
-    pub(crate) include_unavailable: bool,
-    pub(crate) limit: Option<usize>,
-    pub(crate) offset: Option<usize>,
-    #[serde(alias = "fileHint")]
-    pub(crate) file: Option<String>,
-    #[serde(alias = "commandHint")]
-    pub(crate) command: Option<String>,
-    #[serde(alias = "errorHint")]
-    pub(crate) error: Option<String>,
-}
-
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct MemoryRecallSearchParams {
     pub(crate) query: String,
@@ -156,20 +66,29 @@ pub(crate) struct MemoryRecallSearchParams {
     pub(crate) offset: Option<usize>,
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryRecallRunParams {
-    #[serde(flatten)]
-    pub(crate) preview: MemoryRecallPreviewParams,
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallSessionCreateParams {
     #[serde(default)]
-    pub(crate) synthesize: bool,
-    #[serde(default, alias = "dryRun")]
-    pub(crate) dry_run: bool,
+    pub(crate) scope: MemoryScope,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryVerifyParams {
-    #[serde(default, alias = "itemIds")]
-    pub(crate) item_ids: Vec<String>,
+pub(crate) struct MemoryRecallTurnSendParams {
+    #[serde(alias = "sessionId")]
+    pub(crate) session_id: String,
+    pub(crate) query: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallTurnCancelParams {
+    #[serde(alias = "turnId")]
+    pub(crate) turn_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryRecallSessionGetParams {
+    #[serde(alias = "sessionId")]
+    pub(crate) session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -181,59 +100,40 @@ pub(crate) struct MemoryContextResolveParams {
     pub(crate) token_budget: Option<usize>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-pub(crate) struct MemoryDreamPreviewParams {
-    #[serde(default)]
-    pub(crate) scope: MemoryScope,
-    #[serde(default)]
-    pub(crate) trigger: MemoryDreamTrigger,
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryProjectGetParams {
+    #[serde(alias = "projectPath")]
+    pub(crate) project_path: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-pub(crate) struct MemoryDreamRunParams {
+pub(crate) struct MemoryScopeRebuildParams {
     #[serde(default)]
     pub(crate) scope: MemoryScope,
-    #[serde(default)]
-    pub(crate) trigger: MemoryDreamTrigger,
-    #[serde(default, alias = "dryRun")]
-    pub(crate) dry_run: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub(crate) struct MemoryTaskListParams {
+    #[serde(default, alias = "activeOnly")]
+    pub(crate) active_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryTaskStartParams {
-    pub(crate) kind: MemoryRunKind,
-    #[serde(default)]
-    pub(crate) scope: MemoryScope,
-    #[serde(default)]
-    pub(crate) trigger: MemoryDreamTrigger,
-    #[serde(default, alias = "dryRun")]
-    pub(crate) dry_run: bool,
-    #[serde(default)]
-    pub(crate) recall: Option<MemoryRecallPreviewParams>,
-    #[serde(default)]
-    pub(crate) synthesize: bool,
+pub(crate) struct MemoryTaskGetParams {
+    #[serde(alias = "taskId")]
+    pub(crate) task_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub(crate) struct MemoryTaskRetryParams {
+    #[serde(alias = "taskId")]
+    pub(crate) task_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct BackgroundTaskGetParams {
     #[serde(alias = "taskId")]
     pub(crate) task_id: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-pub(crate) struct MemoryDreamListParams {
-    #[serde(default)]
-    pub(crate) statuses: Vec<MemoryDreamNoteStatus>,
-    #[serde(default)]
-    pub(crate) scope: Option<MemoryScope>,
-    pub(crate) limit: Option<usize>,
-    pub(crate) offset: Option<usize>,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-pub(crate) struct MemoryDreamGetParams {
-    #[serde(alias = "noteId")]
-    pub(crate) note_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

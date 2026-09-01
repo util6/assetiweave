@@ -1,48 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  memoryDreamPreviewSchema,
-  memoryDreamNoteDetailSchema,
-  memoryDreamNotePageSchema,
-  memoryDreamRunResultSchema,
-  memoryItemDetailSchema,
-  memoryItemPageSchema,
-  memoryTaskSnapshotSchema,
-  memoryOverviewSchema,
-  memoryRecallPreviewSchema,
-  memoryRecallRunResultSchema,
-  memoryVerifyResultSchema,
+  memoryRecallSearchResultSchema,
+  memoryRecallSessionSchema,
+  memoryContextResultSchema,
+  memoryProjectViewSchema,
+  memoryRebuildResultSchema,
+  memoryTaskViewSchema,
   recentMemoryEventTargetSchema,
   recentMemorySessionSchema,
 } from "../schemas/memory";
 import type {
-  MemoryCandidateAcceptParams,
-  MemoryDreamPreview,
-  MemoryDreamNoteDetail,
-  MemoryDreamNotePage,
-  MemoryDreamNoteStatus,
-  MemoryDreamRunResult,
-  MemoryDreamTrigger,
-  MemoryItemCreateParams,
-  MemoryItemDetail,
-  MemoryItemListParams,
-  MemoryItemPageResult,
-  MemoryItemUpdateParams,
   MemoryScope,
-  MemoryTaskSnapshot,
-  MemoryTaskStartParams,
-  MemoryOverview,
-  MemoryRecallPreview,
-  MemoryRecallPreviewParams,
-  MemoryRecallRunResult,
-  MemoryVerifyResult,
+  MemoryRecallSearchResult,
+  MemoryRecallSession,
+  MemoryContextResult,
+  MemoryProjectView,
+  MemoryRebuildResult,
+  MemoryTaskView,
   RecentMemoryEventTarget,
   RecentMemorySession,
   RecentConversationView,
 } from "../types/memory";
 
 const DESKTOP_REQUIRED = "Memory writes are available only in the AssetIWeave desktop application.";
-const MEMORY_TASK_UPDATED_EVENT = "memory-task-updated";
+
+export function subscribeMemoryTasks(listener: () => void) {
+  if (!isTauriRuntime()) return Promise.resolve(() => undefined);
+  return listen<void>("memory-task-updated", () => listener());
+}
 
 export async function listMemoryRecent(
   params: { view?: RecentConversationView; limit?: number; offset?: number } = {},
@@ -57,191 +43,106 @@ export async function listMemoryRecent(
   }));
 }
 
+export async function resolveMemoryContext(params: {
+  project_path?: string | null;
+  query?: string | null;
+  token_budget?: number;
+} = {}): Promise<MemoryContextResult | null> {
+  if (!isTauriRuntime()) return null;
+  return memoryContextResultSchema.parse(await invoke("resolve_memory_context", {
+    params: {
+      project_path: params.project_path ?? null,
+      query: params.query ?? null,
+      token_budget: params.token_budget ?? 2000,
+    },
+  }));
+}
+
+export async function getMemoryProject(projectPath: string): Promise<MemoryProjectView | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("get_memory_project", { params: { project_path: projectPath } });
+  return value == null ? null : memoryProjectViewSchema.parse(value);
+}
+
+export async function rebuildMemoryScope(scope: MemoryScope = emptyMemoryScope()): Promise<MemoryRebuildResult> {
+  requireDesktop();
+  return memoryRebuildResultSchema.parse(await invoke("rebuild_memory_scope", { params: { scope } }));
+}
+
+export async function listMemoryPublicTasks(activeOnly = false): Promise<MemoryTaskView[]> {
+  if (!isTauriRuntime()) return [];
+  return memoryTaskViewSchema.array().parse(await invoke("list_memory_public_tasks", {
+    params: { active_only: activeOnly },
+  }));
+}
+
+export async function getMemoryPublicTask(taskId: string): Promise<MemoryTaskView | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("get_memory_public_task", { params: { task_id: taskId } });
+  return value == null ? null : memoryTaskViewSchema.parse(value);
+}
+
+export async function cancelMemoryPublicTask(taskId: string): Promise<MemoryTaskView> {
+  requireDesktop();
+  return memoryTaskViewSchema.parse(await invoke("cancel_memory_public_task", {
+    params: { task_id: taskId },
+  }));
+}
+
+export async function retryMemoryPublicTask(taskId: string): Promise<MemoryTaskView> {
+  requireDesktop();
+  return memoryTaskViewSchema.parse(await invoke("retry_memory_public_task", {
+    params: { task_id: taskId },
+  }));
+}
+
 export async function getMemoryRecentEventTarget(eventId: string): Promise<RecentMemoryEventTarget | null> {
   if (!isTauriRuntime()) return null;
   const value = await invoke("get_memory_recent_event_target", { eventId });
   return value == null ? null : recentMemoryEventTargetSchema.parse(value);
 }
 
-export async function listMemoryItems(params: MemoryItemListParams = {}): Promise<MemoryItemPageResult> {
-  if (!isTauriRuntime()) {
-    return {
-      availability: "browser_preview",
-      total_count: 0,
-      items: [],
-      limit: params.limit ?? 50,
-      offset: params.offset ?? 0,
-    };
-  }
-  const page = memoryItemPageSchema.parse(await invoke("list_memory_items", { params }));
-  return { ...page, availability: "tauri" };
-}
-
-export async function getMemoryItem(itemId: string): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(
-    await invoke("get_memory_item", { params: { item_id: itemId } }),
-  );
-}
-
-export async function createMemoryItem(params: MemoryItemCreateParams): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(await invoke("create_memory_item", { params }));
-}
-
-export async function updateMemoryItem(params: MemoryItemUpdateParams): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(await invoke("update_memory_item", { params }));
-}
-
-export async function archiveMemoryItem(itemId: string): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(
-    await invoke("archive_memory_item", { params: { item_id: itemId } }),
-  );
-}
-
-export async function acceptMemoryCandidate(params: MemoryCandidateAcceptParams): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(await invoke("accept_memory_candidate", { params }));
-}
-
-export async function rejectMemoryCandidate(itemId: string): Promise<MemoryItemDetail> {
-  requireDesktop();
-  return memoryItemDetailSchema.parse(
-    await invoke("reject_memory_candidate", { params: { item_id: itemId } }),
-  );
-}
-
-export async function getMemoryDreamStatus(scope?: MemoryScope): Promise<MemoryDreamPreview | null> {
-  if (!isTauriRuntime()) return null;
-  return memoryDreamPreviewSchema.parse(
-    await invoke("memory_dream_status", { params: { scope: scope ?? emptyMemoryScope() } }),
-  );
-}
-
-export async function getMemoryOverview(scope?: MemoryScope): Promise<MemoryOverview | null> {
-  if (!isTauriRuntime()) return null;
-  return memoryOverviewSchema.parse(
-    await invoke("memory_overview", { params: { scope: scope ?? emptyMemoryScope() } }),
-  );
-}
-
-export async function listMemoryDreamNotes(params: {
-  statuses?: MemoryDreamNoteStatus[];
-  scope?: MemoryScope | null;
+export async function searchMemoryRecall(params: {
+  query: string;
+  scope?: MemoryScope;
+  since?: string | null;
+  until?: string | null;
+  file?: string | null;
+  command?: string | null;
+  error?: string | null;
   limit?: number;
   offset?: number;
-} = {}): Promise<MemoryDreamNotePage | null> {
+}): Promise<MemoryRecallSearchResult | null> {
   if (!isTauriRuntime()) return null;
-  return memoryDreamNotePageSchema.parse(await invoke("list_memory_dream_notes", { params }));
-}
-
-export async function getMemoryDreamNote(noteId: string): Promise<MemoryDreamNoteDetail> {
-  requireDesktop();
-  return memoryDreamNoteDetailSchema.parse(
-    await invoke("get_memory_dream_note", { params: { note_id: noteId } }),
-  );
-}
-
-export async function archiveMemoryDreamNote(noteId: string): Promise<MemoryDreamNoteDetail> {
-  requireDesktop();
-  return memoryDreamNoteDetailSchema.parse(
-    await invoke("archive_memory_dream_note", { params: { note_id: noteId } }),
-  );
-}
-
-export async function promoteMemoryDreamNote(noteId: string): Promise<MemoryItemDetail[]> {
-  requireDesktop();
-  return memoryItemDetailSchema.array().parse(
-    await invoke("promote_memory_dream_note", { params: { note_id: noteId } }),
-  );
-}
-
-export async function previewMemoryDream(params: {
-  scope?: MemoryScope;
-  trigger?: MemoryDreamTrigger;
-} = {}): Promise<MemoryDreamPreview> {
-  requireDesktop();
-  return memoryDreamPreviewSchema.parse(await invoke("preview_memory_dream", {
-    params: {
-      scope: params.scope ?? emptyMemoryScope(),
-      trigger: params.trigger ?? "manual",
-    },
+  return memoryRecallSearchResultSchema.parse(await invoke("search_memory_recall", {
+    params: { ...params, scope: params.scope ?? emptyMemoryScope() },
   }));
 }
 
-export async function runMemoryDream(params: {
-  scope?: MemoryScope;
-  trigger?: MemoryDreamTrigger;
-  dry_run?: boolean;
-} = {}): Promise<MemoryDreamRunResult> {
+export async function createMemoryRecallSession(scope: MemoryScope = emptyMemoryScope()): Promise<MemoryRecallSession> {
   requireDesktop();
-  return memoryDreamRunResultSchema.parse(await invoke("run_memory_dream", {
-    params: {
-      scope: params.scope ?? emptyMemoryScope(),
-      trigger: params.trigger ?? "manual",
-      dry_run: params.dry_run ?? false,
-    },
+  return memoryRecallSessionSchema.parse(await invoke("create_memory_recall_session", { params: { scope } }));
+}
+
+export async function getMemoryRecallSession(sessionId: string): Promise<MemoryRecallSession> {
+  requireDesktop();
+  return memoryRecallSessionSchema.parse(await invoke("get_memory_recall_session", {
+    params: { session_id: sessionId },
   }));
 }
 
-export async function startMemoryTask(params: MemoryTaskStartParams): Promise<MemoryTaskSnapshot> {
+export async function sendMemoryRecallTurn(sessionId: string, query: string): Promise<MemoryRecallSession> {
   requireDesktop();
-  return memoryTaskSnapshotSchema.parse(await invoke("start_memory_task", {
-    params: {
-      ...params,
-      scope: params.scope ?? emptyMemoryScope(),
-      trigger: params.trigger ?? "manual",
-      dry_run: params.dry_run ?? false,
-    },
+  return memoryRecallSessionSchema.parse(await invoke("send_memory_recall_turn", {
+    params: { session_id: sessionId, query },
   }));
 }
 
-export async function getMemoryTask(taskId: string): Promise<MemoryTaskSnapshot | null> {
-  if (!isTauriRuntime()) return null;
-  const value = await invoke("get_memory_task", { params: { task_id: taskId } });
-  return value == null ? null : memoryTaskSnapshotSchema.parse(value);
-}
-
-export async function listMemoryTasks(): Promise<MemoryTaskSnapshot[]> {
-  if (!isTauriRuntime()) return [];
-  return memoryTaskSnapshotSchema.array().parse(await invoke("list_memory_tasks"));
-}
-
-export async function cancelMemoryTask(taskId: string): Promise<MemoryTaskSnapshot> {
+export async function cancelMemoryRecallTurn(turnId: string): Promise<MemoryRecallSession> {
   requireDesktop();
-  return memoryTaskSnapshotSchema.parse(
-    await invoke("cancel_memory_task", { params: { task_id: taskId } }),
-  );
-}
-
-export function subscribeMemoryTasks(listener: (snapshot: MemoryTaskSnapshot) => void) {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(() => undefined);
-  }
-  return listen<MemoryTaskSnapshot>(MEMORY_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
-}
-
-export async function previewMemoryRecall(params: MemoryRecallPreviewParams): Promise<MemoryRecallPreview | null> {
-  if (!isTauriRuntime()) return null;
-  return memoryRecallPreviewSchema.parse(await invoke("preview_memory_recall", { params: {
-    ...params, scope: params.scope ?? emptyMemoryScope(),
-  } }));
-}
-
-export async function runMemoryRecall(params: MemoryRecallPreviewParams & { synthesize?: boolean; dry_run?: boolean }): Promise<MemoryRecallRunResult> {
-  requireDesktop();
-  return memoryRecallRunResultSchema.parse(await invoke("run_memory_recall", { params: {
-    ...params, scope: params.scope ?? emptyMemoryScope(), synthesize: params.synthesize ?? false, dry_run: params.dry_run ?? false,
-  } }));
-}
-
-export async function verifyMemoryItems(itemIds: string[]): Promise<MemoryVerifyResult> {
-  requireDesktop();
-  return memoryVerifyResultSchema.parse(await invoke("verify_memory", { params: { item_ids: itemIds } }));
+  return memoryRecallSessionSchema.parse(await invoke("cancel_memory_recall_turn", {
+    params: { turn_id: turnId },
+  }));
 }
 
 export function emptyMemoryScope(): MemoryScope {

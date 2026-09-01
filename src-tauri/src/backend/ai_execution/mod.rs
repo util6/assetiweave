@@ -11,7 +11,7 @@ pub(crate) use executor::AgentExecutionRuntime;
 pub(crate) use types::{
     AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits,
     AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
-    AiExecutionResult, AiExecutionSessionDeleteMethod, AiTeamTools,
+    AiExecutionResult, AiExecutionSessionDeleteMethod, AiRecallTools, AiTeamTools,
 };
 
 use crate::backend::agents::types::{

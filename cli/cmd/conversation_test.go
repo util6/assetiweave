@@ -243,6 +243,77 @@ func TestConversationSyncBuildsRecordKindParams(t *testing.T) {
 	}
 }
 
+func TestConversationDataAuditBuildsScopeParams(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client,
+		"conversation", "data", "audit",
+		"--source", "codex-live",
+		"--record-kind", "session",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if client.method != "conversation.data.audit" {
+		t.Fatalf("method = %q, want conversation.data.audit", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["source_id"] != "codex-live" || params["record_kind"] != "session" || params["include_resolved"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationDataRepairRequiresConfirmationUnlessDryRun(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "conversation", "data", "repair")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("error = %v, want confirmation error", err)
+	}
+	if client.method != "" {
+		t.Fatalf("method = %q, want no Engine call", client.method)
+	}
+
+	err = executeSkillGroupTestCommand(t, client,
+		"conversation", "data", "repair",
+		"--source", "codex-live",
+		"--dry-run",
+		"--resync",
+	)
+	if err != nil {
+		t.Fatalf("dry-run Execute() error = %v", err)
+	}
+	if client.method != "conversation.data.repair" {
+		t.Fatalf("method = %q, want conversation.data.repair", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["source_id"] != "codex-live" || params["dry_run"] != true || params["resync"] != true || params["yes"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
+func TestConversationDataRollbackRequiresBackupAndConfirmation(t *testing.T) {
+	client := &recordingClient{}
+	err := executeSkillGroupTestCommand(t, client, "conversation", "data", "rollback")
+	if err == nil || !strings.Contains(err.Error(), "--backup-path") {
+		t.Fatalf("error = %v, want backup path error", err)
+	}
+
+	err = executeSkillGroupTestCommand(t, client,
+		"conversation", "data", "rollback",
+		"--backup-path", "/tmp/conversation.sqlite",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("dry-run Execute() error = %v", err)
+	}
+	if client.method != "conversation.data.rollback" {
+		t.Fatalf("method = %q, want conversation.data.rollback", client.method)
+	}
+	params := recordedSkillGroupParams(t, client)
+	if params["backup_path"] != "/tmp/conversation.sqlite" || params["dry_run"] != true || params["yes"] != false {
+		t.Fatalf("params = %#v", params)
+	}
+}
+
 func TestConversationIncrementalSearchBuildsRecentRunParams(t *testing.T) {
 	client := &recordingClient{}
 	err := executeSkillGroupTestCommand(t, client,

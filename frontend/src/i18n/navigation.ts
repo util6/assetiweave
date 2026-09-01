@@ -77,10 +77,8 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "profiles.plans": "nav.sub.profiles.plans",
   "conversations.sessions": "nav.sub.conversations.sessions",
   "conversations.web-records": "nav.sub.conversations.webRecords",
-  "memory.overview": "nav.sub.memory.overview",
-  "memory.dreams": "nav.sub.memory.dreams",
+  "memory.recent": "nav.sub.memory.recent",
   "memory.recall": "nav.sub.memory.recall",
-  "memory.library": "nav.sub.memory.library",
   "team.overview": "nav.sub.team.overview",
 };
 
@@ -103,10 +101,8 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "profiles.plans": ["Deployment Plans", "部署计划"],
   "conversations.sessions": ["Sessions", "Session 浏览"],
   "conversations.web-records": ["Web Records", "网页记录浏览"],
-  "memory.overview": ["Today / Continue", "今日 / 继续工作"],
-  "memory.dreams": ["Dreams", "自动 Dream"],
+  "memory.recent": ["Recent", "近期"],
   "memory.recall": ["Recall", "深度回忆"],
-  "memory.library": ["Library", "Memory 库"],
   "team.overview": ["Teams & Rosters", "团队与花名册"],
 };
 

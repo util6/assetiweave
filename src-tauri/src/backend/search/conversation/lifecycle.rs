@@ -21,7 +21,16 @@ pub(crate) fn rebuild_conversation_search_index(
     db_path: &Path,
     tenant_id: &str,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
-    rebuild_conversation_search_index_inner(database, db_path, tenant_id, None)
+    rebuild_conversation_search_index_with_cancellation(database, db_path, tenant_id, None)
+}
+
+pub(crate) fn rebuild_conversation_search_index_with_cancellation(
+    database: &Database,
+    db_path: &Path,
+    tenant_id: &str,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<ConversationSearchIndexRebuildReport> {
+    rebuild_conversation_search_index_inner(database, db_path, tenant_id, None, cancellation)
 }
 
 pub(crate) fn rebuild_conversation_search_index_with_offset(
@@ -36,6 +45,7 @@ pub(crate) fn rebuild_conversation_search_index_with_offset(
         db_path,
         tenant_id,
         Some((consumer_id, last_seq)),
+        None,
     )
 }
 
@@ -44,7 +54,9 @@ fn rebuild_conversation_search_index_inner(
     db_path: &Path,
     tenant_id: &str,
     consumer_offset: Option<(&str, i64)>,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
+    ensure_rebuild_not_cancelled(cancellation)?;
     let started = Instant::now();
     let pool = database.pool().clone();
     let tenant_id_owned = tenant_id.to_string();
@@ -72,6 +84,7 @@ fn rebuild_conversation_search_index_inner(
         .await
     })?;
 
+    let mut staged_paths = Vec::new();
     let result: AppResult<ConversationSearchIndexRebuildReport> = (|| {
         let pool = database.pool().clone();
         let tenant_for_load = tenant_id.to_string();
@@ -103,6 +116,7 @@ fn rebuild_conversation_search_index_inner(
                 )
             })
             .collect::<Vec<_>>();
+        ensure_rebuild_not_cancelled(cancellation)?;
 
         let root = conversation_search_index_root(db_path, tenant_id);
         fs::create_dir_all(&root)?;
@@ -110,12 +124,17 @@ fn rebuild_conversation_search_index_inner(
         let generation = format!("generation-{}", Uuid::new_v4());
         let temporary_path = root.join(format!("{generation}.tmp"));
         let generation_path = root.join(&generation);
+        staged_paths.push(temporary_path.clone());
+        staged_paths.push(generation_path.clone());
         let index = DiskConversationIndex::create(&temporary_path)?;
         set_private_directory_permissions(&temporary_path)?;
-        index.replace_documents(&documents)?;
+        index.replace_documents_with_checkpoint(&documents, &mut || {
+            ensure_rebuild_not_cancelled(cancellation)
+        })?;
         drop(index);
+        ensure_rebuild_not_cancelled(cancellation)?;
         fs::rename(&temporary_path, &generation_path)?;
-        let size_bytes = directory_size(&generation_path)?;
+        let size_bytes = directory_size(&generation_path, cancellation)?;
         let document_count = i64::try_from(documents.len()).map_err(|_| {
             AppError::External("conversation search document count overflow".to_string())
         })?;
@@ -150,10 +169,14 @@ fn rebuild_conversation_search_index_inner(
             duration_ms: started.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         };
         cleanup_old_generations(&root, &report.generation);
+        staged_paths.clear();
         Ok(report)
     })();
 
     if let Err(error) = &result {
+        for path in staged_paths {
+            let _ = fs::remove_dir_all(path);
+        }
         let pool = database.pool().clone();
         let tenant = tenant_id.to_string();
         let owner = owner.clone();
@@ -271,9 +294,24 @@ fn set_private_directory_permissions(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
-fn directory_size(path: &Path) -> AppResult<i64> {
+fn ensure_rebuild_not_cancelled(
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Err(AppError::Canceled(
+            "conversation search index rebuild cancelled".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn directory_size(
+    path: &Path,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<i64> {
     let mut size = 0_u64;
     for entry in walkdir::WalkDir::new(path) {
+        ensure_rebuild_not_cancelled(cancellation)?;
         let entry = entry.map_err(|error| AppError::External(error.to_string()))?;
         if entry.file_type().is_file() {
             size = size.saturating_add(

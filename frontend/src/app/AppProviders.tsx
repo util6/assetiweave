@@ -22,7 +22,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
             <ConversationDataMaintenanceProvider>
               <AiExecutionTaskProvider>
                 <AgentLifecycleTaskProvider>
-                  <MemoryTaskProvider automaticDreamEnabled={false}>
+                  <MemoryTaskProvider>
                     <SearchIndexProvider>
                       <SkillBackupProvider>
                         <CatalogTaskProvider>

@@ -1,15 +1,17 @@
 /* @vitest-environment jsdom */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  ConversationContentCards,
+  ConversationContentCards as ProductionConversationContentCards,
   buildConversationContentBlocks,
+  buildConversationDisplayNodesFromBlocks,
   buildConversationDisplayNodesFromNodes,
   conversationCardColor,
   type ConversationTranslationTaskController,
+  type ConversationContentBlock,
   type ConversationContentBlockSeed,
 } from "./ConversationContentCards";
 import type { Translator } from "../../i18n/I18nProvider";
@@ -26,6 +28,23 @@ import type {
 
 const revealPath = vi.hoisted(() => vi.fn());
 vi.mock("../../services/catalog", () => ({ revealPath }));
+
+type TestConversationContentCardsProps = Omit<
+  ComponentProps<typeof ProductionConversationContentCards>,
+  "nodes"
+> & {
+  blocks?: ConversationContentBlock[];
+  nodes?: ComponentProps<typeof ProductionConversationContentCards>["nodes"];
+};
+
+function ConversationContentCards({ blocks = [], nodes, ...props }: TestConversationContentCardsProps) {
+  return (
+    <ProductionConversationContentCards
+      {...props}
+      nodes={nodes ?? buildConversationDisplayNodesFromBlocks(blocks)}
+    />
+  );
+}
 
 describe("ConversationContentCards", () => {
   afterEach(() => {

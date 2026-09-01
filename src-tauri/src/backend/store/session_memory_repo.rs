@@ -7,6 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 pub(crate) const SESSION_MEMORY_CONTRACT_VERSION: &str = "session-memory.v1";
 pub(crate) const SESSION_MEMORY_PROMPT_VERSION: &str = "session-memory-prompt.v1";
@@ -89,6 +90,10 @@ pub(crate) async fn enqueue_session_memory_jobs_sqlx(
     changed_session_ids: Option<&[String]>,
     now: &str,
 ) -> AppResult<usize> {
+    let policy = load_memory_generation_policy_sqlx(pool).await?;
+    if !policy.enabled || policy.excluded_source_ids.contains(source_id) {
+        return Ok(0);
+    }
     let session_ids = match changed_session_ids {
         Some(ids) => ids.to_vec(),
         None => sqlx::query_scalar::<_, String>(
@@ -100,7 +105,11 @@ pub(crate) async fn enqueue_session_memory_jobs_sqlx(
         .await
         .map_err(AppError::Db)?,
     };
-    let candidates = load_session_candidates_sqlx(pool, tenant_id, source_id, &session_ids).await?;
+    let candidates = load_session_candidates_sqlx(pool, tenant_id, source_id, &session_ids)
+        .await?
+        .into_iter()
+        .filter(|candidate| !policy.excluded_session_ids.contains(&candidate.id))
+        .collect::<Vec<_>>();
     let mut inserted = 0usize;
     for candidate in candidates {
         inserted += insert_job_sqlx(
@@ -122,6 +131,10 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     tenant_id: &str,
     now: &str,
 ) -> AppResult<usize> {
+    let policy = load_memory_generation_policy_sqlx(pool).await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
     let source_revision = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT source_revision FROM conversation_search_index_state WHERE tenant_id = ?1",
     )
@@ -141,6 +154,11 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     let mut inserted = 0usize;
     for row in sources {
         let candidate = candidate_from_row(&row)?;
+        if policy.excluded_session_ids.contains(&candidate.id)
+            || policy.excluded_source_ids.contains(&candidate.source_id)
+        {
+            continue;
+        }
         inserted += insert_job_sqlx(
             pool,
             tenant_id,
@@ -153,6 +171,46 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
         .await?;
     }
     Ok(inserted)
+}
+
+struct MemoryGenerationPolicy {
+    enabled: bool,
+    excluded_session_ids: HashSet<String>,
+    excluded_source_ids: HashSet<String>,
+}
+
+async fn load_memory_generation_policy_sqlx(
+    pool: &SqlitePool,
+) -> AppResult<MemoryGenerationPolicy> {
+    let settings = super::settings_repo::load_app_settings_sqlx(pool)
+        .await?
+        .map(|(_, value)| value)
+        .unwrap_or_default();
+    let memory = settings
+        .get("memory")
+        .and_then(serde_json::Value::as_object);
+    let enabled = memory
+        .and_then(|memory| memory.get("generationEnabled"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    let values = |key: &str| {
+        memory
+            .and_then(|memory| memory.get(key))
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default()
+    };
+    Ok(MemoryGenerationPolicy {
+        enabled,
+        excluded_session_ids: values("excludedSessionIds"),
+        excluded_source_ids: values("excludedSourceIds"),
+    })
 }
 
 async fn load_session_candidates_sqlx(
@@ -466,6 +524,23 @@ pub(crate) async fn cancel_session_memory_job_sqlx(
         "UPDATE session_memory_jobs SET status = 'canceled', last_error = 'canceled', finished_at = ?1, updated_at = ?1, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?2 AND id = ?3 AND status IN ('queued', 'running', 'failed')",
     )
     .bind(now)
+    .bind(tenant_id)
+    .bind(job_id)
+    .execute(pool)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub(crate) async fn retry_session_memory_job_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    job_id: &str,
+) -> AppResult<bool> {
+    let result = sqlx::query(
+        "UPDATE session_memory_jobs SET status = 'queued', last_error = NULL, retry_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status IN ('failed', 'canceled')",
+    )
+    .bind(Utc::now().to_rfc3339())
     .bind(tenant_id)
     .bind(job_id)
     .execute(pool)
@@ -1035,7 +1110,10 @@ mod tests {
                 "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
             ).fetch_one(database.pool()))
             .expect("read invalidated projection");
-        assert_eq!(projection_state, ("invalid".to_string(), "fingerprint-old".to_string()));
+        assert_eq!(
+            projection_state,
+            ("invalid".to_string(), "fingerprint-old".to_string())
+        );
         let old_job_status: String = database
             .run_sync(sqlx::query_scalar(
                 "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",

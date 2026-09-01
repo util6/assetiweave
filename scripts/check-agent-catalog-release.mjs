@@ -20,7 +20,7 @@ const release = args.has("--release");
 const network = args.has("--network");
 const e2e = args.has("--e2e");
 const MAX_NETWORK_BYTES = 256 * 1024 * 1024;
-const NETWORK_TIMEOUT_MS = 30_000;
+const NETWORK_TIMEOUT_MS = 120_000;
 
 function parseVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(String(value));

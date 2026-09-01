@@ -4,153 +4,102 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryTaskProvider, useMemoryTasks } from "./MemoryTaskProvider";
 
-const listeners = vi.hoisted(() => new Map<string, (snapshot: unknown) => void>());
-const subscribeMemoryTasksMock = vi.hoisted(() => vi.fn());
-const subscribeConversationSyncTasksMock = vi.hoisted(() => vi.fn());
-const listTasksMock = vi.hoisted(() => vi.fn());
-const statusMock = vi.hoisted(() => vi.fn());
-const startMock = vi.hoisted(() => vi.fn());
+const listMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../../services/conversations", () => ({
-  subscribeConversationSyncTasks: subscribeConversationSyncTasksMock,
-}));
+const retryMock = vi.hoisted(() => vi.fn());
+const subscribeMock = vi.hoisted(() => vi.fn());
 vi.mock("../../services/memory", () => ({
-  cancelMemoryTask: cancelMock,
-  getMemoryDreamStatus: statusMock,
-  listMemoryTasks: listTasksMock,
-  startMemoryTask: startMock,
-  subscribeMemoryTasks: subscribeMemoryTasksMock,
+  listMemoryPublicTasks: listMock,
+  cancelMemoryPublicTask: cancelMock,
+  retryMemoryPublicTask: retryMock,
+  subscribeMemoryTasks: subscribeMock,
 }));
 
 describe("MemoryTaskProvider", () => {
   beforeEach(() => {
-    listeners.clear();
-    subscribeMemoryTasksMock.mockReset().mockImplementation(async (listener: (snapshot: unknown) => void) => {
-      listeners.set("memory-task-updated", listener);
-      return vi.fn();
-    });
-    subscribeConversationSyncTasksMock.mockReset().mockImplementation(async (listener: (snapshot: unknown) => void) => {
-      listeners.set("conversation-sync-task-updated", listener);
-      return vi.fn();
-    });
-    listTasksMock.mockReset().mockResolvedValue([]);
-    statusMock.mockReset().mockResolvedValue(null);
-    startMock.mockReset();
+    vi.useFakeTimers();
+    listMock.mockReset().mockResolvedValue([]);
     cancelMock.mockReset();
+    retryMock.mockReset();
+    subscribeMock.mockReset().mockResolvedValue(vi.fn());
   });
-
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-    vi.clearAllMocks();
   });
 
-  it("does not inspect or schedule automatic Dream work when automatic Dream is disabled", async () => {
-    vi.useFakeTimers();
-
-    render(<MemoryTaskProvider automaticDreamEnabled={false}><Harness /></MemoryTaskProvider>);
-    await act(async () => {});
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
-    });
-
-    expect(statusMock).not.toHaveBeenCalled();
-    expect(subscribeConversationSyncTasksMock).not.toHaveBeenCalled();
-    expect(startMock).not.toHaveBeenCalled();
-  });
-
-  it("recovers a completed task through polling while unrelated controls stay enabled", async () => {
-    vi.useFakeTimers();
+  it("polls the public TaskRuntime without disabling unrelated controls", async () => {
     const running = task("running");
-    listTasksMock
-      .mockResolvedValueOnce([running])
-      .mockResolvedValueOnce([{ ...running, status: "completed", phase: "completed", finished_at: "2026-07-23T00:00:05Z" }]);
-
+    listMock.mockResolvedValueOnce([running]).mockResolvedValueOnce([task("succeeded")]);
     render(<MemoryTaskProvider><Harness /></MemoryTaskProvider>);
     await act(async () => {});
     expect(screen.getByTestId("status").textContent).toBe("running");
     expect((screen.getByRole("button", { name: "Other" }) as HTMLButtonElement).disabled).toBe(false);
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByTestId("status").textContent).toBe("completed");
+    expect(screen.getByTestId("status").textContent).toBe("succeeded");
+    expect(listMock).toHaveBeenCalledTimes(2);
   });
 
-  it("checks gates after a completed sync and deduplicates the automatic start", async () => {
-    vi.useFakeTimers();
-    const preview = {
-      ready: true,
-      scope: { app_id: null, source_id: null, project_path: null, session_id: null },
-      scope_fingerprint: "scope-1",
-      source_revision_end: 3,
-      cursor_end: { session_sort_key: "cursor", question_offset: 1 },
-    };
-    statusMock.mockResolvedValue(preview);
-    startMock.mockResolvedValue(task("running"));
-
-    render(<MemoryTaskProvider automaticDreamEnabled={true}><Harness /></MemoryTaskProvider>);
-    await act(async () => {});
-    await act(async () => {
-      listeners.get("conversation-sync-task-updated")?.({ status: "completed" });
+  it("refreshes immediately when the desktop task event arrives", async () => {
+    const running = task("running");
+    const completed = task("succeeded");
+    let notify: (() => void) | undefined;
+    subscribeMock.mockImplementation((listener: () => void) => {
+      notify = listener;
+      return Promise.resolve(vi.fn());
     });
-    await act(async () => {
-      listeners.get("conversation-sync-task-updated")?.({ status: "completed" });
-    });
+    listMock.mockResolvedValueOnce([running]).mockResolvedValueOnce([completed]);
 
-    expect(startMock).toHaveBeenCalledTimes(1);
-    expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "auto_dream",
-      trigger: "automatic",
-    }));
-  });
-
-  it("starts deep Recall as a background task with the complete local scope", async () => {
-    startMock.mockResolvedValue({ ...task("running"), kind: "deep_recall", phase: "phase1" });
     render(<MemoryTaskProvider><Harness /></MemoryTaskProvider>);
     await act(async () => {});
+    expect(screen.getByTestId("status").textContent).toBe("running");
 
-    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
+    await act(async () => {
+      notify?.();
+    });
+    expect(screen.getByTestId("status").textContent).toBe("succeeded");
+  });
+
+  it("exposes cancellation and retry through public task methods", async () => {
+    const failed = task("failed");
+    listMock.mockResolvedValue([failed]);
+    cancelMock.mockResolvedValue({ ...failed, status: "cancelling" });
+    retryMock.mockResolvedValue({ ...failed, status: "pending" });
+    render(<MemoryTaskProvider><ActionHarness /></MemoryTaskProvider>);
     await act(async () => {});
-
-    expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
-      kind: "deep_recall",
-      synthesize: true,
-      recall: expect.objectContaining({ mode: "exact", query: "why" }),
-    }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await act(async () => {});
+    expect(cancelMock).toHaveBeenCalledWith(failed.id);
+    expect(retryMock).toHaveBeenCalledWith(failed.id);
   });
 });
 
 function Harness() {
-  const { task, startDream, startRecall } = useMemoryTasks();
-  return (
-    <>
-      <button onClick={() => void startDream()} type="button">Start</button>
-      <button onClick={() => void startRecall({ mode: "exact", query: "why", synthesize: true })} type="button">Recall</button>
-      <button type="button">Other</button>
-      <output data-testid="status">{task?.status ?? "idle"}</output>
-    </>
-  );
+  const { task } = useMemoryTasks();
+  return <><button type="button">Other</button><output data-testid="status">{task?.status ?? "idle"}</output></>;
 }
 
-function task(status: "running" | "completed") {
+function ActionHarness() {
+  const { cancelTask, retryTask, task } = useMemoryTasks();
+  return <>
+    <button onClick={() => void cancelTask(task?.id ?? "")} type="button">Cancel</button>
+    <button onClick={() => void retryTask(task?.id ?? "")} type="button">Retry</button>
+  </>;
+}
+
+function task(status: "running" | "succeeded" | "failed" | "cancelling" | "pending") {
   return {
     id: "memory-task-1",
     status,
-    kind: "auto_dream",
-    scope: { app_id: null, source_id: null, project_path: null, session_id: null },
-    scope_fingerprint: "scope-1",
-    trigger: "manual",
-    dry_run: false,
-    phase: status === "running" ? "dreaming" : "completed",
-    processed_count: status === "running" ? 1 : 3,
-    total_count: 3,
-    run_id: "run-1",
-    cancel_requested: false,
-    started_at: "2026-07-23T00:00:00Z",
-    finished_at: status === "completed" ? "2026-07-23T00:00:05Z" : null,
+    kind: "memory",
+    progress: { current: status === "running" ? 1 : 3, total: 3, note: null },
+    started_at: "2026-09-01T00:00:00Z",
+    finished_at: status === "succeeded" || status === "failed" ? "2026-09-01T00:00:05Z" : null,
     result: null,
     error: null,
+    detail: { domain: "project_memory", job_id: "job-1" },
   } as const;
 }

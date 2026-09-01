@@ -1,6 +1,6 @@
 //! Tauri 后台异步长任务管理与状态推送模块
 //!
-//! 支持包含会话同步、内存整理 (Memory Run)、扫描索引、备份导入导出以及脚本安装卸载在内的异步后台任务注册、取消控制、状态快照与事件广播。
+//! 支持会话同步、扫描索引、备份导入导出以及脚本安装卸载在内的异步后台任务注册、取消控制、状态快照与事件广播。
 
 use crate::backend::{
     agent_market::types::{
@@ -15,14 +15,13 @@ use crate::backend::{
     application::{
         AgentMarketRefreshResult, ConversationAdapterPackageInstallParams,
         ConversationAdapterPackageUninstallParams, ConversationScriptInstallParams,
-        ConversationSyncMode, ConversationSyncParams, MemoryTaskStartParams, SkillAcquireParams,
+        ConversationSyncMode, ConversationSyncParams, SkillAcquireParams,
     },
     dto::CatalogAsset,
     extension_kernel::{
         LifecycleOp, LifecycleRequestKey, LifecycleReservationOutcome, LifecycleTaskCoordinator,
         PackageIdentity, PackageKind, ResourceKey,
     },
-    models::{MemoryDreamTrigger, MemoryRunKind, MemoryScope},
     runtime::tasks::{
         ExternalRegistrationOutcome, TaskFn, TaskKind, TaskRuntime, TaskSnapshot, TaskSpec,
         TaskState,
@@ -322,26 +321,6 @@ pub(crate) struct SkillBackupTaskSnapshot {
     #[serde(default)]
     pub(crate) assets: Vec<CatalogAsset>,
     pub(crate) errors: Vec<SkillBackupTaskError>,
-    pub(crate) error: Option<AppErrorView>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(crate) struct MemoryTaskSnapshot {
-    pub(crate) id: String,
-    pub(crate) status: BackgroundTaskStatus,
-    pub(crate) kind: MemoryRunKind,
-    pub(crate) scope: MemoryScope,
-    pub(crate) scope_fingerprint: String,
-    pub(crate) trigger: MemoryDreamTrigger,
-    pub(crate) dry_run: bool,
-    pub(crate) phase: String,
-    pub(crate) processed_count: usize,
-    pub(crate) total_count: usize,
-    pub(crate) run_id: Option<String>,
-    pub(crate) cancel_requested: bool,
-    pub(crate) started_at: String,
-    pub(crate) finished_at: Option<String>,
-    pub(crate) result: Option<Value>,
     pub(crate) error: Option<AppErrorView>,
 }
 
@@ -1462,6 +1441,15 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
+    pub(crate) fn cancel_conversation_sync_for_tenant(
+        &self,
+        tenant_id: &str,
+        task_id: &str,
+    ) -> AppResult<ConversationSyncTaskSnapshot> {
+        self.cancel_external_task_for_tenant(tenant_id, task_id)?;
+        self.projection_for_tenant(tenant_id, task_id)
+    }
+
     pub(crate) fn begin_conversation_data_maintenance_for_tenant(
         &self,
         tenant_id: &str,
@@ -1871,169 +1859,6 @@ impl BackgroundTaskRegistry {
     }
 
     #[cfg(test)]
-    pub(crate) fn begin_memory_task(
-        &self,
-        params: &MemoryTaskStartParams,
-    ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
-        self.begin_memory_task_for_tenant("default", params)
-    }
-
-    pub(crate) fn begin_memory_task_for_tenant(
-        &self,
-        tenant_id: &str,
-        params: &MemoryTaskStartParams,
-    ) -> AppResult<(MemoryTaskSnapshot, AiExecutionCancellation, bool)> {
-        let scope_fingerprint = params
-            .scope
-            .fingerprint()
-            .map_err(crate::backend::runtime::AppError::external)?;
-        let id = Uuid::new_v4().to_string();
-        let snapshot = MemoryTaskSnapshot {
-            id: id.clone(),
-            status: BackgroundTaskStatus::Running,
-            kind: params.kind,
-            scope: params.scope.clone(),
-            scope_fingerprint: scope_fingerprint.clone(),
-            trigger: params.trigger,
-            dry_run: params.dry_run,
-            phase: "queued".to_string(),
-            processed_count: 0,
-            total_count: 0,
-            run_id: None,
-            cancel_requested: false,
-            started_at: Utc::now().to_rfc3339(),
-            finished_at: None,
-            result: None,
-            error: None,
-        };
-        let registration = self.register_projection_for_tenant(
-            Some(tenant_id),
-            TaskKind::Memory,
-            &id,
-            Some(format!(
-                "memory:{tenant_id}:{:?}:{scope_fingerprint}",
-                params.kind
-            )),
-            vec![format!("memory-scope:{tenant_id}:{scope_fingerprint}")],
-            &snapshot,
-        )?;
-        match registration {
-            ExternalRegistrationOutcome::Conflict(runtime) => {
-                let existing: MemoryTaskSnapshot = self.decode(&runtime)?;
-                Err(crate::backend::runtime::AppError::Conflict(format!(
-                    "Memory scope is already running task {} ({:?})",
-                    runtime.task_id, existing.kind
-                )))
-            }
-            ExternalRegistrationOutcome::Started(runtime) => {
-                let cancellation = AiExecutionCancellation::from_token(
-                    self.task_runtime.cancellation_token(&runtime.task_id)?,
-                );
-                Ok((self.projection_from_runtime(&runtime)?, cancellation, true))
-            }
-            ExternalRegistrationOutcome::Existing(runtime) => {
-                let cancellation = AiExecutionCancellation::from_token(
-                    self.task_runtime.cancellation_token(&runtime.task_id)?,
-                );
-                Ok((self.projection_from_runtime(&runtime)?, cancellation, false))
-            }
-        }
-    }
-
-    pub(crate) fn update_memory_task(
-        &self,
-        task_id: &str,
-        phase: &str,
-        processed_count: usize,
-        total_count: usize,
-        run_id: Option<String>,
-    ) -> AppResult<MemoryTaskSnapshot> {
-        let runtime = self.external_task_snapshot(task_id)?;
-        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
-        if runtime.state == TaskState::Running {
-            snapshot.phase = phase.to_string();
-            snapshot.processed_count = processed_count.min(total_count);
-            snapshot.total_count = total_count;
-            if run_id.is_some() {
-                snapshot.run_id = run_id;
-            }
-        }
-        self.write_projection(task_id, &snapshot)?;
-        self.projection(task_id)
-    }
-
-    pub(crate) fn finish_memory_task(
-        &self,
-        task_id: &str,
-        result: AppResult<Value>,
-    ) -> AppResult<MemoryTaskSnapshot> {
-        let runtime = self.finish_external_task(task_id, result)?;
-        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
-        snapshot.result = runtime.result.clone();
-        self.write_projection(task_id, &snapshot)?;
-        self.projection(task_id)
-    }
-
-    pub(crate) fn cancel_memory_task(&self, task_id: &str) -> AppResult<MemoryTaskSnapshot> {
-        self.cancel_external_task(task_id)?;
-        let runtime = self.external_task_snapshot(task_id)?;
-        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
-        snapshot.cancel_requested = true;
-        self.write_projection(task_id, &snapshot)?;
-        self.projection(task_id)
-    }
-
-    pub(crate) fn cancel_memory_task_for_tenant(
-        &self,
-        tenant_id: &str,
-        task_id: &str,
-    ) -> AppResult<MemoryTaskSnapshot> {
-        self.cancel_external_task_for_tenant(tenant_id, task_id)?;
-        let runtime = self.external_task_snapshot_for_tenant(tenant_id, task_id)?;
-        let mut snapshot: MemoryTaskSnapshot = self.decode(&runtime)?;
-        snapshot.cancel_requested = true;
-        self.write_projection(task_id, &snapshot)?;
-        self.projection_for_tenant(tenant_id, task_id)
-    }
-
-    pub(crate) fn memory_task_snapshot(
-        &self,
-        task_id: &str,
-    ) -> AppResult<Option<MemoryTaskSnapshot>> {
-        match self.task_runtime.get(task_id) {
-            Some(runtime) => self.projection_from_runtime(&runtime).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    pub(crate) fn memory_task_snapshot_for_tenant(
-        &self,
-        tenant_id: &str,
-        task_id: &str,
-    ) -> AppResult<Option<MemoryTaskSnapshot>> {
-        match self.task_runtime.get_for_tenant(tenant_id, task_id) {
-            Some(runtime) => self.projection_from_runtime(&runtime).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    pub(crate) fn memory_task_snapshots(&self) -> AppResult<Vec<MemoryTaskSnapshot>> {
-        let mut snapshots = self.list_projections::<MemoryTaskSnapshot>(TaskKind::Memory)?;
-        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
-        Ok(snapshots)
-    }
-
-    pub(crate) fn memory_task_snapshots_for_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> AppResult<Vec<MemoryTaskSnapshot>> {
-        let mut snapshots =
-            self.list_projections_for_tenant::<MemoryTaskSnapshot>(tenant_id, TaskKind::Memory)?;
-        snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
-        Ok(snapshots)
-    }
-
-    #[cfg(test)]
     pub(crate) fn begin_ai_execution(
         &self,
         purpose: AiExecutionPurpose,
@@ -2342,7 +2167,6 @@ impl_basic_projection!(ConversationDataMaintenanceTaskSnapshot);
 impl_basic_projection!(ConversationSearchIndexTaskSnapshot);
 impl_basic_projection!(ConversationScriptInstallTaskSnapshot);
 impl_basic_projection!(BatchMountTaskSnapshot);
-impl_basic_projection!(MemoryTaskSnapshot);
 
 impl BackgroundTaskProjection for RemoteSkillAcquireTaskSnapshot {
     fn project_with_runtime(mut self, runtime: &TaskSnapshot) -> Self {
@@ -3263,54 +3087,6 @@ mod tests {
     }
 
     #[test]
-    fn memory_task_deduplicates_scope_reports_progress_and_cancels() {
-        let registry = BackgroundTaskRegistry::default();
-        let params = MemoryTaskStartParams {
-            kind: MemoryRunKind::AutoDream,
-            scope: MemoryScope {
-                project_path: Some("~/project".to_string()),
-                ..MemoryScope::default()
-            },
-            trigger: MemoryDreamTrigger::Manual,
-            dry_run: false,
-            recall: None,
-            synthesize: false,
-        };
-        let (first, cancellation, should_start) = registry
-            .begin_memory_task(&params)
-            .expect("begin Memory task");
-        let (duplicate, _, should_start_duplicate) = registry
-            .begin_memory_task(&params)
-            .expect("deduplicate Memory task");
-
-        assert!(should_start);
-        assert!(!should_start_duplicate);
-        assert_eq!(first.id, duplicate.id);
-        let progress = registry
-            .update_memory_task(&first.id, "dreaming", 1, 3, Some("run-1".to_string()))
-            .expect("update Memory task");
-        assert_eq!(progress.processed_count, 1);
-        assert_eq!(progress.total_count, 3);
-        assert_eq!(progress.run_id.as_deref(), Some("run-1"));
-
-        let cancelling = registry
-            .cancel_memory_task(&first.id)
-            .expect("cancel Memory task");
-        assert!(cancelling.cancel_requested);
-        assert!(cancellation.is_cancelled());
-        let cancelled = registry
-            .finish_memory_task(
-                &first.id,
-                Err(crate::backend::runtime::AppError::Canceled(
-                    "cancelled".to_string(),
-                )),
-            )
-            .expect("finish cancelled Memory task");
-        assert_eq!(cancelled.status, BackgroundTaskStatus::Cancelled);
-        assert!(!registry.has_running_tasks());
-    }
-
-    #[test]
     fn task_01_02_begin_and_phase_update_preserve_safe_snapshot_state() {
         let registry = BackgroundTaskRegistry::default();
         let (queued, cancellation) = registry
@@ -3886,31 +3662,13 @@ mod tests {
         let (ai_task, _) = registry
             .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
             .unwrap();
-        let memory_params = MemoryTaskStartParams {
-            kind: MemoryRunKind::AutoDream,
-            scope: MemoryScope::default(),
-            trigger: MemoryDreamTrigger::Manual,
-            dry_run: false,
-            recall: None,
-            synthesize: false,
-        };
-        let (memory_task, _, _) = registry.begin_memory_task(&memory_params).unwrap();
         let runtime = registry.task_runtime().expect("shared task runtime");
 
         runtime
             .update_detail(&ai_task.id, serde_json::json!("malformed-ai-projection"))
             .unwrap();
-        runtime
-            .update_detail(
-                &memory_task.id,
-                serde_json::json!("malformed-memory-projection"),
-            )
-            .unwrap();
-
         let ai_error = registry.ai_execution_snapshot(&ai_task.id).unwrap_err();
-        let memory_error = registry.memory_task_snapshot(&memory_task.id).unwrap_err();
         assert!(ai_error.to_string().contains("could not be decoded"));
-        assert!(memory_error.to_string().contains("could not be decoded"));
     }
 
     #[test]
@@ -3943,18 +3701,6 @@ mod tests {
         let (backup, _) = registry
             .begin_skill_backup(vec!["orphan-skill".to_string()])
             .unwrap();
-        let memory_params = MemoryTaskStartParams {
-            kind: MemoryRunKind::AutoDream,
-            scope: MemoryScope {
-                project_path: Some("~/orphan".to_string()),
-                ..MemoryScope::default()
-            },
-            trigger: MemoryDreamTrigger::Manual,
-            dry_run: true,
-            recall: None,
-            synthesize: false,
-        };
-        let (memory, _, _) = registry.begin_memory_task(&memory_params).unwrap();
         let (ai, _) = registry
             .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
             .unwrap();
@@ -3967,7 +3713,6 @@ mod tests {
             sync.id.as_str(),
             script.id.as_str(),
             backup.id.as_str(),
-            memory.id.as_str(),
             ai.id.as_str(),
         ] {
             assert!(runtime.remove(task_id).is_some(), "remove {task_id}");
@@ -3988,7 +3733,6 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(registry.skill_backup_snapshot().unwrap().is_none());
-        assert!(registry.memory_task_snapshots().unwrap().is_empty());
         assert!(registry.ai_execution_snapshots().unwrap().is_empty());
     }
 

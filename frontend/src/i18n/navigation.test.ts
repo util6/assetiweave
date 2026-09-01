@@ -13,10 +13,8 @@ describe("memory navigation labels", () => {
   });
 
   it.each([
-    ["overview", "Today / Continue", "memory.overview", "nav.sub.memory.overview"],
-    ["dreams", "Dreams", "memory.dreams", "nav.sub.memory.dreams"],
+    ["recent", "Recent", "memory.recent", "nav.sub.memory.recent"],
     ["recall", "Recall", "memory.recall", "nav.sub.memory.recall"],
-    ["library", "Library", "memory.library", "nav.sub.memory.library"],
   ])("uses a stable localized label for Memory %s", (id, label, routeKey, expected) => {
     expect(subNavLabel({ id, label, routeKey, enabled: true }, t, "zh")).toBe(expected);
   });

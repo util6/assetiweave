@@ -15,8 +15,6 @@ const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
 pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
-const DEFAULT_AUTO_DREAM_MIN_HOURS: i64 = 12;
-const DEFAULT_AUTO_DREAM_MIN_SESSIONS: i64 = 3;
 const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP: bool = true;
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +101,48 @@ pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
     Ok(conversation_full_sync_on_startup_enabled_from_value(
         &read_app_settings_value_for_database(db)?,
     ))
+}
+
+pub(crate) fn memory_generation_enabled_for_database(db: &Database) -> AppResult<bool> {
+    Ok(read_app_settings_value_for_database(db)?
+        .get("memory")
+        .and_then(Value::as_object)
+        .and_then(|memory| memory.get("generationEnabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true))
+}
+
+pub(crate) fn memory_usage_enabled_for_database(db: &Database) -> AppResult<bool> {
+    Ok(read_app_settings_value_for_database(db)?
+        .get("memory")
+        .and_then(Value::as_object)
+        .and_then(|memory| memory.get("usageEnabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true))
+}
+
+pub(crate) fn memory_session_excluded_for_database(
+    db: &Database,
+    session_id: &str,
+) -> AppResult<bool> {
+    Ok(read_app_settings_value_for_database(db)?
+        .get("memory")
+        .and_then(Value::as_object)
+        .and_then(|memory| memory.get("excludedSessionIds"))
+        .and_then(Value::as_array)
+        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(session_id))))
+}
+
+pub(crate) fn memory_source_excluded_for_database(
+    db: &Database,
+    source_id: &str,
+) -> AppResult<bool> {
+    Ok(read_app_settings_value_for_database(db)?
+        .get("memory")
+        .and_then(Value::as_object)
+        .and_then(|memory| memory.get("excludedSourceIds"))
+        .and_then(Value::as_array)
+        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(source_id))))
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -268,7 +308,6 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "memory.extraction",
         "memory.project",
         "memory.global",
-        "memory.dream",
         "promptOptimization",
     ];
     let unknown_capabilities = agent_capabilities
@@ -297,7 +336,7 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         "memory.extraction",
         "memory.project",
         "memory.global",
-        "memory.dream",
+        "memory.recall",
     ] {
         let agent_id =
             normalize_agent_capability_agent_id(agent_capabilities.get(service_id), &memory_agent);
@@ -326,24 +365,24 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let auto_dream_enabled = memory
-        .get("autoDreamEnabled")
+    let generation_enabled = memory
+        .get("generationEnabled")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let min_hours =
-        normalize_integer_setting(memory.get("minHours"), 1, 168, DEFAULT_AUTO_DREAM_MIN_HOURS);
-    let min_sessions = normalize_integer_setting(
-        memory.get("minSessions"),
-        1,
-        50,
-        DEFAULT_AUTO_DREAM_MIN_SESSIONS,
-    );
-    memory.insert(
-        "autoDreamEnabled".to_string(),
-        Value::Bool(auto_dream_enabled),
-    );
-    memory.insert("minHours".to_string(), json!(min_hours));
-    memory.insert("minSessions".to_string(), json!(min_sessions));
+        .unwrap_or(true);
+    let usage_enabled = memory
+        .get("usageEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    memory.insert("generationEnabled".to_string(), json!(generation_enabled));
+    memory.insert("usageEnabled".to_string(), json!(usage_enabled));
+    for key in ["excludedSessionIds", "excludedSourceIds"] {
+        let values = memory
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        memory.insert(key.to_string(), Value::Array(values));
+    }
     root.insert("memory".to_string(), Value::Object(memory));
 }
 
@@ -363,7 +402,7 @@ fn normalize_canonical_agent_assignments(
         ("memory.extraction", "memory.extraction"),
         ("memory.project", "memory.project"),
         ("memory.global", "memory.global"),
-        ("memory.dream", "memory.dream"),
+        ("memory.recall", "memory.recall"),
         ("prompt.optimization", "promptOptimization"),
     ];
     let mut assignments = serde_json::Map::new();
@@ -373,7 +412,10 @@ fn normalize_canonical_agent_assignments(
             .and_then(Value::as_object);
         if has_canonical_assignments
             && existing_assignment.is_none()
-            && !matches!(action_id, "memory.project" | "memory.global")
+            && !matches!(
+                action_id,
+                "memory.project" | "memory.global" | "memory.recall"
+            )
         {
             continue;
         }
@@ -469,13 +511,6 @@ fn normalize_agent_capability_agent_id(value: Option<&Value>, fallback: &str) ->
     } else {
         normalized
     }
-}
-
-fn normalize_integer_setting(value: Option<&Value>, min: i64, max: i64, fallback: i64) -> i64 {
-    value
-        .and_then(Value::as_i64)
-        .map(|value| value.clamp(min, max))
-        .unwrap_or(fallback)
 }
 
 fn normalize_json_path_setting(value: &mut Value, path: &[&str]) -> AppResult<()> {
@@ -652,9 +687,8 @@ mod tests {
         assert_eq!(settings["aiRuntime"]["model"], "gemini-2.5-pro");
         assert!(settings["conversationTranslation"].get("cli").is_none());
         assert!(settings["conversationTranslation"].get("model").is_none());
-        assert_eq!(settings["memory"]["autoDreamEnabled"], false);
-        assert_eq!(settings["memory"]["minHours"], 12);
-        assert_eq!(settings["memory"]["minSessions"], 3);
+        assert_eq!(settings["memory"]["generationEnabled"], true);
+        assert_eq!(settings["memory"]["usageEnabled"], true);
     }
 
     #[test]
@@ -679,10 +713,9 @@ mod tests {
             settings["agentCapabilityAssignments"]["memory.extraction"],
             "codex"
         );
-        assert_eq!(
-            settings["agentCapabilityAssignments"]["memory.dream"],
-            "codex"
-        );
+        assert!(settings["agentCapabilityAssignments"]
+            .get("memory.dream")
+            .is_none());
         assert_eq!(settings["settingsSchemaVersion"], 3);
         assert_eq!(
             settings["agentAssignments"]["translation.card"]["agentId"],

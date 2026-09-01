@@ -119,6 +119,7 @@ impl AppService {
             replay,
             restore_only: false,
             team_tools: None,
+            recall_tools: None,
         };
         let result =
             execute_agent_blocking(self.agent_runtime.clone(), request).map_err(ai_error)?;
@@ -283,6 +284,7 @@ impl AppService {
                 replay: false,
                 restore_only: false,
                 team_tools: None,
+                recall_tools: None,
             },
         )
         .map_err(ai_error)?;
@@ -403,6 +405,7 @@ impl AppService {
                         replay: true,
                         restore_only: false,
                         team_tools: None,
+                        recall_tools: None,
                     },
                 )
                 .map_err(ai_error)
@@ -471,6 +474,7 @@ impl AppService {
                         replay: false,
                         restore_only: true,
                         team_tools: None,
+                        recall_tools: None,
                     },
                 )
                 .is_ok();
@@ -659,6 +663,7 @@ impl AppService {
                 binding: None,
                 replay: false,
                 restore_only: false,
+                recall_tools: None,
                 team_tools: tool_credential.map(|credential| AiTeamTools {
                     tenant_id: self.tenant_id().to_string(),
                     team_id: task.team_id.clone(),
@@ -758,6 +763,7 @@ impl AppService {
                 replay: false,
                 restore_only: false,
                 team_tools: None,
+        recall_tools: None,
             },
         )
         .map_err(ai_error)?;

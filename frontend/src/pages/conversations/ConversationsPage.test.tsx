@@ -1,12 +1,14 @@
 /* @vitest-environment jsdom */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { Profiler, useState } from "react";
+import { Profiler, useState, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ConversationContentCards,
+  ConversationContentCards as ProductionConversationContentCards,
   buildConversationContentBlocks,
+  buildConversationDisplayNodesFromBlocks,
+  type ConversationContentBlock,
   type ConversationContentVisibility,
 } from "../../components/conversations/ConversationContentCards";
 import {
@@ -53,6 +55,23 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+type TestConversationContentCardsProps = Omit<
+  ComponentProps<typeof ProductionConversationContentCards>,
+  "nodes"
+> & {
+  blocks?: ConversationContentBlock[];
+  nodes?: ComponentProps<typeof ProductionConversationContentCards>["nodes"];
+};
+
+function ConversationContentCards({ blocks = [], nodes, ...props }: TestConversationContentCardsProps) {
+  return (
+    <ProductionConversationContentCards
+      {...props}
+      nodes={nodes ?? buildConversationDisplayNodesFromBlocks(blocks)}
+    />
+  );
+}
 
 describe("MarkdownContent", () => {
   it("renders markdown headings, lists, inline code, strong text, and code fences", () => {

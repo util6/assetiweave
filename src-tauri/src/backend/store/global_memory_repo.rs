@@ -477,6 +477,23 @@ pub(crate) async fn load_global_memory_sqlx(
     row.as_ref().map(map_global).transpose()
 }
 
+pub(crate) async fn retry_global_memory_job_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    job_id: &str,
+) -> AppResult<bool> {
+    let result = sqlx::query(
+        "UPDATE global_memory_jobs SET status = 'queued', last_error = NULL, retry_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status = 'failed'",
+    )
+    .bind(Utc::now().to_rfc3339())
+    .bind(tenant_id)
+    .bind(job_id)
+    .execute(pool)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(result.rows_affected() == 1)
+}
+
 pub(crate) async fn load_global_memory_latest_version_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

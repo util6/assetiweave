@@ -93,6 +93,9 @@ impl AppService {
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
+        if !app_settings::memory_generation_enabled_for_database(&self.db)? {
+            return Ok(0);
+        }
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
         self.runtime
@@ -423,6 +426,7 @@ impl AppService {
                 replay: false,
                 restore_only: false,
                 team_tools: None,
+                recall_tools: None,
             },
         )
         .map_err(|error| {
@@ -440,12 +444,11 @@ impl AppService {
             ));
         }
         let raw = crate::backend::memory_redaction::redact_memory_text(&result.text).text;
-        let output: GlobalMemoryAgentOutput = serde_json::from_str(
-            crate::backend::application::memory_extraction::strip_json_fence(&raw),
-        )
-        .map_err(|error| {
-            AppError::Validation(format!("invalid Global Memory Agent output: {error}"))
-        })?;
+        let output: GlobalMemoryAgentOutput =
+            serde_json::from_str(crate::backend::application::utils::strip_json_fence(&raw))
+                .map_err(|error| {
+                    AppError::Validation(format!("invalid Global Memory Agent output: {error}"))
+                })?;
         Ok(GlobalMemoryAgentOutputWithRaw {
             summary_markdown: clean_global_markdown(&output.summary_markdown)?,
             memory_markdown: clean_global_markdown(&output.memory_markdown)?,
@@ -464,7 +467,7 @@ impl AppService {
         let query = params.query.unwrap_or_default();
         let tenant_id_for_load = tenant_id.clone();
         let project_path_for_load = project_path.clone();
-        let (global_version, project, project_version, project_sources, sessions) =
+        let (global_version, _project, project_version, project_sources, sessions) =
             self.runtime.run_sync(async move {
                 let global_version =
                     store::load_global_memory_latest_version_sqlx(&pool, &tenant_id_for_load)
@@ -525,10 +528,28 @@ impl AppService {
             &project_sources,
             &sessions,
         );
+        if app_settings::memory_usage_enabled_for_database(&self.db)? {
+            let used_at = Utc::now().to_rfc3339();
+            for reference in &compiled.references {
+                self.runtime
+                    .run_sync(store::record_memory_usage_event_sqlx(
+                        &self.db.pool(),
+                        &tenant_id,
+                        &reference.kind,
+                        &reference.id,
+                        "context",
+                        &compiled.revision,
+                        &used_at,
+                    ))?;
+            }
+        }
         Ok(compiled)
     }
 
-    fn resolve_context_project_path(&self, raw_path: Option<&str>) -> AppResult<Option<String>> {
+    pub(crate) fn resolve_context_project_path(
+        &self,
+        raw_path: Option<&str>,
+    ) -> AppResult<Option<String>> {
         let Some(raw_path) = raw_path.filter(|path| !path.trim().is_empty()) else {
             return Ok(None);
         };

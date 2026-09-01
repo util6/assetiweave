@@ -1,6 +1,6 @@
 use super::{
-    ConsumerCx, DomainEventConsumer, InitialPosition, MemoryEvidenceStaleConsumer,
-    SearchIndexAdvanceConsumer, SequencedEvent, SessionMemoryConsumer,
+    ConsumerCx, DomainEventConsumer, InitialPosition, SearchIndexAdvanceConsumer, SequencedEvent,
+    SessionMemoryConsumer,
 };
 use crate::backend::{runtime::AppError, store::Database};
 use sqlx::Row;
@@ -164,7 +164,6 @@ impl EventDispatcher {
             db_path,
             vec![
                 Arc::new(SearchIndexAdvanceConsumer),
-                Arc::new(MemoryEvidenceStaleConsumer),
                 Arc::new(SessionMemoryConsumer),
             ],
         )

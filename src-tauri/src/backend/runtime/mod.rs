@@ -6,6 +6,7 @@
 
 mod app_runtime;
 mod error;
+mod memory_legacy_archive;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]
@@ -13,10 +14,11 @@ pub(crate) use app_runtime::{
     current_process_runtime, install_process_runtime, AppRuntime, RequestContextSnapshot,
     RuntimeRole, ShutdownReport, ShutdownState,
 };
-#[allow(unused_imports)]
 pub(crate) use error::{
     sanitize_details, sanitize_public_message, AppError, AppErrorView, AppResult, WireError,
 };
+#[allow(unused_imports)]
+pub(crate) use memory_legacy_archive::archive_legacy_memory_once;
 
 #[cfg(test)]
 mod tests;

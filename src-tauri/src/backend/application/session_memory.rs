@@ -205,6 +205,22 @@ impl AppService {
                 &pool, tenant_id, job_id,
             ))?
             .ok_or_else(|| AppError::NotFound("Session Memory job not found".to_string()))?;
+        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)?
+            || crate::backend::app_settings::memory_session_excluded_for_database(
+                &self.db,
+                &job.session_id,
+            )?
+            || crate::backend::app_settings::memory_source_excluded_for_database(
+                &self.db,
+                &job.source_id,
+            )?
+        {
+            self.runtime
+                .run_sync(store::cancel_session_memory_job_sqlx(
+                    &pool, tenant_id, job_id, &now_text,
+                ))?;
+            return Ok(None);
+        }
         if matches!(
             job.status,
             SessionMemoryJobStatus::Succeeded
@@ -369,6 +385,9 @@ impl AppService {
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
+        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+            return Ok(0);
+        }
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
         self.runtime
@@ -501,6 +520,7 @@ impl AppService {
             replay: false,
             restore_only: false,
             team_tools: None,
+            recall_tools: None,
         };
         let result =
             execute_agent_blocking(self.agent_runtime.clone(), request).map_err(|error| {

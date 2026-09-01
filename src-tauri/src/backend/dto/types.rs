@@ -1,108 +1,15 @@
 use crate::backend::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationPartRole,
     ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationTurn,
-    DeploymentStrategy, GlobalMemoryVersion, MemoryDreamCursor, MemoryDreamDeltaSession,
-    MemoryDreamGateResult, MemoryDreamNote, MemoryDreamNoteDetail, MemoryDreamState,
-    MemoryDreamTrigger, MemoryExtraction, MemoryItem, MemoryRecallCandidate, MemoryRecallClaim,
-    MemoryRecallConflict, MemoryRecallEvidence, MemoryRecallMode, MemoryRecallQuestion, MemoryScope,
-    ProfileSafety, ProjectMemorySource, ProjectMemoryVersion, RuleSet, SourceKind, SourceOrigin,
+    DeploymentStrategy, GlobalMemoryVersion, MemoryScope, ProfileSafety, ProjectMemory,
+    ProjectMemorySource, ProjectMemoryVersion, RuleSet, SourceKind, SourceOrigin,
     SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryItemPage {
-    pub(crate) total_count: usize,
-    pub(crate) items: Vec<MemoryItem>,
-    pub(crate) limit: usize,
-    pub(crate) offset: usize,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryDreamPreview {
-    pub(crate) scope: MemoryScope,
-    pub(crate) scope_fingerprint: String,
-    pub(crate) trigger: MemoryDreamTrigger,
-    pub(crate) ready: bool,
-    pub(crate) gates: Vec<MemoryDreamGateResult>,
-    pub(crate) state: Option<MemoryDreamState>,
-    pub(crate) source_revision_start: i64,
-    pub(crate) source_revision_end: i64,
-    pub(crate) cursor_start: Option<MemoryDreamCursor>,
-    pub(crate) cursor_end: Option<MemoryDreamCursor>,
-    pub(crate) stable_before: String,
-    pub(crate) sessions: Vec<MemoryDreamDeltaSession>,
-    pub(crate) session_count: usize,
-    pub(crate) question_count: usize,
-    pub(crate) input_char_count: usize,
-    pub(crate) max_sessions: usize,
-    pub(crate) max_questions: usize,
-    pub(crate) max_input_chars: usize,
-    pub(crate) has_more: bool,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryDreamRunResult {
-    pub(crate) dry_run: bool,
-    pub(crate) run_id: Option<String>,
-    pub(crate) note_id: Option<String>,
-    pub(crate) markdown: Option<String>,
-    pub(crate) preview: MemoryDreamPreview,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryDreamNotePage {
-    pub(crate) total_count: usize,
-    pub(crate) items: Vec<MemoryDreamNote>,
-    pub(crate) limit: usize,
-    pub(crate) offset: usize,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryOverview {
-    pub(crate) follow_ups: Vec<MemoryItem>,
-    pub(crate) recent_items: Vec<MemoryItem>,
-    pub(crate) candidate_count: usize,
-    pub(crate) latest_dream: Option<MemoryDreamNoteDetail>,
-    pub(crate) stale_count: usize,
-    pub(crate) dream_status: MemoryDreamPreview,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryRecallPreview {
-    pub(crate) mode: MemoryRecallMode,
-    pub(crate) scope: MemoryScope,
-    pub(crate) query: Option<String>,
-    pub(crate) backend: String,
-    pub(crate) source_revision: i64,
-    pub(crate) total_question_count: usize,
-    pub(crate) selected_question_count: usize,
-    pub(crate) skipped_question_count: usize,
-    pub(crate) evidence_count: usize,
-    pub(crate) input_char_count: usize,
-    pub(crate) truncated: bool,
-    pub(crate) include_unavailable: bool,
-    pub(crate) questions: Vec<MemoryRecallQuestion>,
-    pub(crate) evidence: Vec<MemoryRecallEvidence>,
-    pub(crate) formal_matches: Vec<MemoryItem>,
-    pub(crate) dream_matches: Vec<MemoryDreamNote>,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryRecallRunResult {
-    pub(crate) run_id: Option<String>,
-    pub(crate) preview: MemoryRecallPreview,
-    pub(crate) synthesized: bool,
-    pub(crate) answer_markdown: Option<String>,
-    pub(crate) claims: Vec<MemoryRecallClaim>,
-    pub(crate) memory_candidates: Vec<MemoryRecallCandidate>,
-    pub(crate) conflicts: Vec<MemoryRecallConflict>,
-    pub(crate) insufficient_evidence: bool,
-    pub(crate) extractions: Vec<MemoryExtraction>,
-}
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct MemoryContextReference {
@@ -125,19 +32,39 @@ pub(crate) struct MemoryContextResult {
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryProjectView {
+    pub(crate) project: ProjectMemory,
+    pub(crate) version: Option<ProjectMemoryVersion>,
+    pub(crate) sources: Vec<ProjectMemorySource>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryRebuildResult {
+    pub(crate) scope: MemoryScope,
+    pub(crate) queued: bool,
+    pub(crate) scheduled_tasks: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(crate) struct MemoryTaskView {
+    pub(crate) id: String,
+    pub(crate) status: String,
+    pub(crate) kind: String,
+    pub(crate) progress: Option<crate::backend::runtime::tasks::TaskProgress>,
+    pub(crate) started_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) result: Option<Value>,
+    pub(crate) error: Option<crate::backend::runtime::AppErrorView>,
+    pub(crate) detail: Value,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(crate) struct RecentMemoryEventTarget {
     pub(crate) record_kind: String,
     pub(crate) session_id: String,
     pub(crate) question_id: Option<String>,
     pub(crate) turn_id: Option<String>,
     pub(crate) block_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryVerifyResult {
-    pub(crate) source_revision: i64,
-    pub(crate) unchanged_revision: bool,
-    pub(crate) items: Vec<crate::backend::models::MemoryItemDetail>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]

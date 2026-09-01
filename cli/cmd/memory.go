@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/util6/assetiweave/internal/cmdutil"
-	"github.com/util6/assetiweave/internal/output"
 	"github.com/util6/assetiweave/internal/schema"
 )
 
@@ -17,252 +15,138 @@ type memoryScopeFlags struct {
 }
 
 func newCmdMemory(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "memory", Short: "Manage progressive Memory, Dreams, and evidence-backed Recall"}
-	cmd.AddCommand(newCmdMemoryOverview(f), newCmdMemoryDream(f), newCmdMemoryRecall(f), newCmdMemoryItem(f), newCmdMemoryCandidate(f), newCmdMemoryVerify(f))
+	cmd := &cobra.Command{Use: "memory", Short: "Manage progressive Memory and persistent Recall"}
+	cmd.AddCommand(newCmdMemoryRecent(f), newCmdMemoryContext(f), newCmdMemoryProject(f), newCmdMemoryRebuild(f), newCmdMemoryTasks(f), newCmdMemoryRecall(f))
 	return cmd
 }
 
-func newCmdMemoryOverview(f *cmdutil.Factory) *cobra.Command {
+func newCmdMemoryRecent(f *cmdutil.Factory) *cobra.Command {
+	var view string
+	var limit, offset int
+	parent := &cobra.Command{Use: "recent", Short: "Inspect recent conversation work"}
+	cmd := &cobra.Command{Use: "list", Short: "List recent conversation work", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return callAndPrint(cmd, f, schema.MethodMemoryRecentList, map[string]any{"view": view, "limit": limit, "offset": offset})
+	}}
+	cmd.Flags().StringVar(&view, "view", "project", "ordering: project or time")
+	cmd.Flags().IntVar(&limit, "limit", 50, "maximum sessions")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
+	parent.AddCommand(cmd)
+	return parent
+}
+
+func newCmdMemoryContext(f *cmdutil.Factory) *cobra.Command {
 	var scope memoryScopeFlags
-	cmd := &cobra.Command{Use: "overview", Short: "Show the deterministic local Memory overview", RunE: func(cmd *cobra.Command, _ []string) error {
+	var query string
+	var budget int
+	parent := &cobra.Command{Use: "context", Short: "Resolve compiled Memory context"}
+	cmd := &cobra.Command{Use: "resolve", Short: "Resolve the compiled Memory context", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		resolved, err := scope.params()
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryOverview, map[string]any{"scope": resolved})
+		params := map[string]any{"project_path": resolved["project_path"], "query": nil, "token_budget": budget}
+		if query != "" {
+			params["query"] = query
+		}
+		return callAndPrint(cmd, f, schema.MethodMemoryContextResolve, params)
 	}}
 	addMemoryScopeFlags(cmd, &scope)
-	return cmd
+	cmd.Flags().StringVar(&query, "query", "", "optional relevance query")
+	cmd.Flags().IntVar(&budget, "token-budget", 2000, "maximum context tokens")
+	parent.AddCommand(cmd)
+	return parent
 }
 
-func newCmdMemoryDream(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "dream", Short: "Inspect and run bounded incremental Dreams"}
-	for _, spec := range []struct{ use, short, method string }{
-		{"status", "Explain Auto-Dream gates", schema.MethodMemoryDreamStatus},
-		{"preview", "Preview the stable Dream delta without AI or writes", schema.MethodMemoryDreamPreview},
-	} {
-		var scope memoryScopeFlags
-		method := spec.method
-		child := &cobra.Command{Use: spec.use, Short: spec.short, RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := scope.params()
-			if err != nil {
-				return err
-			}
-			params := map[string]any{"scope": resolved}
-			if method == schema.MethodMemoryDreamPreview {
-				params["trigger"] = "manual"
-			}
-			return callAndPrint(cmd, f, method, params)
-		}}
-		addMemoryScopeFlags(child, &scope)
-		cmd.AddCommand(child)
-	}
-	var runScope memoryScopeFlags
-	var dryRun bool
-	run := &cobra.Command{Use: "run", Short: "Run a Dream using the configured external AI runtime", RunE: func(cmd *cobra.Command, _ []string) error {
-		resolved, err := runScope.params()
-		if err != nil {
-			return err
-		}
-		return callAndPrint(cmd, f, schema.MethodMemoryDreamRun, map[string]any{"scope": resolved, "trigger": "manual", "dry_run": dryRun})
-	}}
-	addMemoryScopeFlags(run, &runScope)
-	run.Flags().BoolVar(&dryRun, "dry-run", false, "preview without AI or writes")
-	cmd.AddCommand(run)
-	cmd.AddCommand(memoryIDCommand(f, "get <note-id>", "Get a Dream Note with evidence", schema.MethodMemoryDreamGet, "note_id"))
-	cmd.AddCommand(memoryIDCommand(f, "archive <note-id>", "Archive a Dream Note", schema.MethodMemoryDreamArchive, "note_id"))
-	cmd.AddCommand(memoryIDCommand(f, "promote <note-id>", "Copy Dream bullets into review candidates", schema.MethodMemoryDreamPromote, "note_id"))
-	var statuses []string
+func newCmdMemoryProject(f *cmdutil.Factory) *cobra.Command {
+	parent := &cobra.Command{Use: "project", Short: "Inspect project Memory"}
+	parent.AddCommand(&cobra.Command{Use: "get <project-path>", Short: "Get the project Memory projection", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		return callAndPrint(cmd, f, schema.MethodMemoryProjectGet, map[string]any{"project_path": args[0]})
+	}})
+	return parent
+}
+
+func newCmdMemoryRebuild(f *cmdutil.Factory) *cobra.Command {
 	var scope memoryScopeFlags
-	var limit, offset int
-	list := &cobra.Command{Use: "list", Short: "List Dream Notes", RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "rebuild", Short: "Queue a Memory rebuild", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		resolved, err := scope.params()
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryDreamList, map[string]any{"statuses": nonNilStrings(statuses), "scope": resolved, "limit": limit, "offset": offset})
+		return callAndPrint(cmd, f, schema.MethodMemoryRebuild, map[string]any{"scope": resolved})
 	}}
-	addMemoryScopeFlags(list, &scope)
-	list.Flags().StringSliceVar(&statuses, "status", nil, "Dream status filter")
-	list.Flags().IntVar(&limit, "limit", 50, "maximum notes")
-	list.Flags().IntVar(&offset, "offset", 0, "pagination offset")
+	addMemoryRebuildScopeFlags(cmd, &scope)
+	return cmd
+}
+
+func newCmdMemoryTasks(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "task", Short: "Inspect and control Memory background tasks"}
+	var activeOnly bool
+	list := &cobra.Command{Use: "list", Short: "List Memory tasks", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return callAndPrint(cmd, f, schema.MethodMemoryTaskList, map[string]any{"active_only": activeOnly})
+	}}
+	list.Flags().BoolVar(&activeOnly, "active-only", false, "only active tasks")
 	cmd.AddCommand(list)
+	cmd.AddCommand(memoryIDCommand(f, "get <task-id>", "Get a Memory task", schema.MethodMemoryTaskGet, "task_id"))
+	cmd.AddCommand(memoryIDCommand(f, "cancel <task-id>", "Cancel a Memory task", schema.MethodMemoryTaskCancel, "task_id"))
+	cmd.AddCommand(memoryIDCommand(f, "retry <task-id>", "Retry a failed Memory task", schema.MethodMemoryTaskRetry, "task_id"))
 	return cmd
 }
 
 func newCmdMemoryRecall(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "recall", Short: "Build local evidence bundles or run two-phase synthesis"}
-	cmd.AddCommand(newCmdMemoryRecallAction(f, "preview", schema.MethodMemoryRecallPreview, false))
-	cmd.AddCommand(newCmdMemoryRecallAction(f, "run", schema.MethodMemoryRecallRun, true))
+	cmd := &cobra.Command{Use: "recall", Short: "Search and continue persistent Recall sessions"}
+	cmd.AddCommand(newCmdMemoryRecallSearch(f), newCmdMemoryRecallSession(f), newCmdMemoryRecallTurn(f))
 	return cmd
 }
 
-func newCmdMemoryRecallAction(f *cmdutil.Factory, use, method string, run bool) *cobra.Command {
+func newCmdMemoryRecallSearch(f *cmdutil.Factory) *cobra.Command {
 	var scope memoryScopeFlags
-	var query, since, until, format string
-	var full, ai, includeUnavailable, dryRun bool
+	var query string
 	var limit, offset int
-	cmd := &cobra.Command{Use: use, Short: "Preview or execute evidence-backed Recall", RunE: func(cmd *cobra.Command, _ []string) error {
+	cmd := &cobra.Command{Use: "search", Short: "Search Memory source content", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if query == "" {
+			return fmt.Errorf("--query is required")
+		}
 		resolved, err := scope.params()
 		if err != nil {
 			return err
 		}
-		mode := "exact"
-		if full {
-			mode = "full"
-		}
-		if mode == "exact" && query == "" {
-			return fmt.Errorf("--query is required for exact Recall")
-		}
-		params := map[string]any{"mode": mode, "scope": resolved, "query": nil, "since": nil, "until": nil, "include_unavailable": includeUnavailable, "limit": limit, "offset": offset}
-		if query != "" {
-			params["query"] = query
-		}
-		if since != "" {
-			params["since"] = since
-		}
-		if until != "" {
-			params["until"] = until
-		}
-		if run {
-			params["synthesize"] = ai
-			params["dry_run"] = dryRun
-		}
-		result, err := callEngine(cmd, f, method, params)
-		if err != nil {
-			return err
-		}
-		if format == "json" {
-			if result.Meta == nil {
-				output.WriteSuccess(f.IOStreams.Out, result.Data)
-			} else {
-				output.WriteSuccessWithMeta(f.IOStreams.Out, result.Data, result.Meta)
-			}
-			return nil
-		}
-		if format != "compact-json" {
-			return fmt.Errorf("unsupported Memory Recall format %q: use json or compact-json", format)
-		}
-		var value map[string]any
-		if err := json.Unmarshal(result.Data, &value); err != nil {
-			return fmt.Errorf("decode Memory Recall result: %w", err)
-		}
-		compactMemoryRecall(value)
-		if result.Meta == nil {
-			output.WriteSuccess(f.IOStreams.Out, value)
-		} else {
-			output.WriteSuccessWithMeta(f.IOStreams.Out, value, result.Meta)
-		}
-		return nil
+		return callAndPrint(cmd, f, schema.MethodMemoryRecallSearch, map[string]any{"query": query, "scope": resolved, "limit": limit, "offset": offset})
 	}}
 	addMemoryScopeFlags(cmd, &scope)
-	cmd.Flags().StringVar(&query, "query", "", "question for exact Recall")
-	cmd.Flags().BoolVar(&full, "full", false, "organize every eligible Question in the explicit scope")
-	cmd.Flags().BoolVar(&ai, "ai", false, "use the configured external AI runtime for two-phase synthesis")
-	cmd.Flags().BoolVar(&includeUnavailable, "include-unavailable", false, "include bounded retained or missing records")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview without writes or AI")
-	cmd.Flags().StringVar(&since, "since", "", "inclusive start timestamp")
-	cmd.Flags().StringVar(&until, "until", "", "inclusive end timestamp")
-	cmd.Flags().IntVar(&limit, "limit", 50, "maximum Questions in this page")
-	cmd.Flags().IntVar(&offset, "offset", 0, "Question pagination offset")
-	cmd.Flags().StringVar(&format, "format", "json", "output format: json or compact-json")
+	cmd.Flags().StringVar(&query, "query", "", "search query")
+	cmd.Flags().IntVar(&limit, "limit", 24, "maximum hits")
+	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
 	return cmd
 }
 
-func newCmdMemoryItem(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "item", Short: "Manage formal Memory and candidates"}
-	cmd.AddCommand(memoryIDCommand(f, "get <item-id>", "Get a Memory item", schema.MethodMemoryItemGet, "item_id"))
-	cmd.AddCommand(memoryIDCommand(f, "archive <item-id>", "Archive a Memory item", schema.MethodMemoryItemArchive, "item_id"))
-	var kinds, statuses, origins []string
-	var stale bool
+func newCmdMemoryRecallSession(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "session", Short: "Manage persistent Recall sessions"}
 	var scope memoryScopeFlags
-	var limit, offset int
-	list := &cobra.Command{Use: "list", Short: "List Memory items", RunE: func(cmd *cobra.Command, _ []string) error {
+	create := &cobra.Command{Use: "create", Short: "Create a Recall session", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		resolved, err := scope.params()
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryItemList, map[string]any{"kinds": nonNilStrings(kinds), "statuses": nonNilStrings(statuses), "origins": nonNilStrings(origins), "scope": resolved, "stale_only": stale, "limit": limit, "offset": offset})
+		return callAndPrint(cmd, f, schema.MethodMemoryRecallSessionCreate, map[string]any{"scope": resolved})
 	}}
-	addMemoryScopeFlags(list, &scope)
-	list.Flags().StringSliceVar(&kinds, "kind", nil, "Memory kind filter")
-	list.Flags().StringSliceVar(&statuses, "status", nil, "Memory status filter")
-	list.Flags().StringSliceVar(&origins, "origin", nil, "Memory origin filter")
-	list.Flags().BoolVar(&stale, "stale", false, "only stale items")
-	list.Flags().IntVar(&limit, "limit", 50, "maximum items")
-	list.Flags().IntVar(&offset, "offset", 0, "pagination offset")
-	cmd.AddCommand(list)
-	cmd.AddCommand(newCmdMemoryItemWrite(f, "create", schema.MethodMemoryItemCreate, false), newCmdMemoryItemWrite(f, "update <item-id>", schema.MethodMemoryItemUpdate, true))
+	addMemoryScopeFlags(create, &scope)
+	cmd.AddCommand(create)
+	cmd.AddCommand(memoryIDCommand(f, "get <session-id>", "Get a Recall session", schema.MethodMemoryRecallSessionGet, "session_id"))
 	return cmd
 }
 
-func newCmdMemoryItemWrite(f *cmdutil.Factory, use, method string, update bool) *cobra.Command {
-	var kind, title, content string
-	var confidence float64
-	var scope memoryScopeFlags
-	var evidence []string
-	cmd := &cobra.Command{Use: use, Short: "Create or update a Memory item", Args: func(cmd *cobra.Command, args []string) error {
-		if update {
-			return cobra.ExactArgs(1)(cmd, args)
+func newCmdMemoryRecallTurn(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "turn", Short: "Send or cancel persistent Recall turns"}
+	var query string
+	send := &cobra.Command{Use: "send <session-id>", Short: "Queue a Recall turn", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if query == "" {
+			return fmt.Errorf("--query is required")
 		}
-		return cobra.NoArgs(cmd, args)
-	}, RunE: func(cmd *cobra.Command, args []string) error {
-		resolved, err := scope.params()
-		if err != nil {
-			return err
-		}
-		params := map[string]any{}
-		if !update || cmd.Flags().Changed("kind") {
-			params["kind"] = kind
-		}
-		if !update || cmd.Flags().Changed("title") {
-			params["title"] = title
-		}
-		if !update || cmd.Flags().Changed("content") {
-			params["content_markdown"] = content
-		}
-		if !update || cmd.Flags().Changed("confidence") {
-			params["confidence"] = confidence
-		}
-		if !update || cmd.Flags().Changed("evidence") {
-			params["evidence_ids"] = evidence
-		}
-		if !update || scopeHasValue(scope) {
-			params["scope"] = resolved
-		}
-		if update {
-			params["item_id"] = args[0]
-		}
-		return callAndPrint(cmd, f, method, params)
+		return callAndPrint(cmd, f, schema.MethodMemoryRecallTurnSend, map[string]any{"session_id": args[0], "query": query})
 	}}
-	addMemoryScopeFlags(cmd, &scope)
-	cmd.Flags().StringVar(&kind, "kind", "context", "Memory kind")
-	cmd.Flags().StringVar(&title, "title", "", "Memory title")
-	cmd.Flags().StringVar(&content, "content", "", "Memory Markdown content")
-	cmd.Flags().Float64Var(&confidence, "confidence", 1, "confidence from 0 to 1")
-	cmd.Flags().StringSliceVar(&evidence, "evidence", nil, "evidence snapshot id; repeat or comma-separate")
-	if !update {
-		_ = cmd.MarkFlagRequired("title")
-		_ = cmd.MarkFlagRequired("content")
-	}
-	return cmd
-}
-
-func newCmdMemoryCandidate(f *cmdutil.Factory) *cobra.Command {
-	cmd := &cobra.Command{Use: "candidate", Short: "Review Memory candidates"}
-	cmd.AddCommand(memoryIDCommand(f, "accept <item-id>", "Accept a candidate", schema.MethodMemoryCandidateAccept, "item_id"), memoryIDCommand(f, "reject <item-id>", "Reject a candidate", schema.MethodMemoryCandidateReject, "item_id"))
-	return cmd
-}
-
-func newCmdMemoryVerify(f *cmdutil.Factory) *cobra.Command {
-	var ids []string
-	cmd := &cobra.Command{Use: "verify", Short: "Verify selected Memory evidence freshness", RunE: func(cmd *cobra.Command, _ []string) error {
-		if len(ids) == 0 {
-			return fmt.Errorf("at least one --item is required")
-		}
-		return callAndPrint(cmd, f, schema.MethodMemoryVerify, map[string]any{"item_ids": ids})
-	}}
-	cmd.Flags().StringSliceVar(&ids, "item", nil, "Memory item id; repeat or comma-separate")
+	send.Flags().StringVar(&query, "query", "", "Recall question")
+	cmd.AddCommand(send)
+	cmd.AddCommand(memoryIDCommand(f, "cancel <turn-id>", "Cancel a Recall turn", schema.MethodMemoryRecallTurnCancel, "turn_id"))
 	return cmd
 }
 
@@ -277,6 +161,11 @@ func addMemoryScopeFlags(cmd *cobra.Command, scope *memoryScopeFlags) {
 	cmd.Flags().StringVar(&scope.sourceID, "source", "", "source scope")
 	cmd.Flags().StringVar(&scope.projectPath, "project", "", "project path scope")
 	cmd.Flags().StringVar(&scope.sessionID, "session", "", "session scope")
+	cmd.Flags().BoolVar(&scope.currentProject, "current-project", false, "use the current working directory as project scope")
+}
+
+func addMemoryRebuildScopeFlags(cmd *cobra.Command, scope *memoryScopeFlags) {
+	cmd.Flags().StringVar(&scope.projectPath, "project", "", "project path scope")
 	cmd.Flags().BoolVar(&scope.currentProject, "current-project", false, "use the current working directory as project scope")
 }
 
@@ -303,33 +192,4 @@ func (scope memoryScopeFlags) params() (map[string]any, error) {
 		value["session_id"] = scope.sessionID
 	}
 	return value, nil
-}
-
-func scopeHasValue(scope memoryScopeFlags) bool {
-	return scope.appID != "" || scope.sourceID != "" || scope.projectPath != "" || scope.sessionID != "" || scope.currentProject
-}
-
-func nonNilStrings(values []string) []string {
-	if values == nil {
-		return []string{}
-	}
-	return values
-}
-
-func compactMemoryRecall(value map[string]any) {
-	preview, _ := value["preview"].(map[string]any)
-	if preview == nil {
-		preview = value
-	}
-	delete(preview, "formal_matches")
-	delete(preview, "dream_matches")
-	if evidence, ok := preview["evidence"].([]any); ok {
-		for _, raw := range evidence {
-			if item, ok := raw.(map[string]any); ok {
-				if snapshot, ok := item["snapshot"].(map[string]any); ok {
-					delete(snapshot, "translated_excerpt")
-				}
-			}
-		}
-	}
 }

@@ -278,7 +278,9 @@ impl AppService {
             })?;
             let purpose = match action_id.as_str() {
                 "translation.card" => "card_translation",
-                "memory.extraction" | "memory.dream" => "memory",
+                "memory.extraction" | "memory.project" | "memory.global" | "memory.recall" => {
+                    "memory"
+                }
                 "prompt.optimization" => "prompt_optimization",
                 other => {
                     return Err(AppError::Validation(format!(

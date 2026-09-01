@@ -47,7 +47,6 @@ impl DomainEventConsumer for TestConsumer {
 fn built_in_consumers_declare_their_initial_position() {
     let consumers: Vec<Arc<dyn DomainEventConsumer>> = vec![
         Arc::new(super::SearchIndexAdvanceConsumer),
-        Arc::new(super::MemoryEvidenceStaleConsumer),
         Arc::new(super::SessionMemoryConsumer),
     ];
     assert_eq!(
@@ -56,10 +55,6 @@ fn built_in_consumers_declare_their_initial_position() {
     );
     assert_eq!(
         consumers[1].initial_position(),
-        InitialPosition::GenesisZero
-    );
-    assert_eq!(
-        consumers[2].initial_position(),
         InitialPosition::BackfillThenCutoff
     );
 }
@@ -246,7 +241,7 @@ fn resident_dispatcher_initializes_offsets_for_all_tenants() {
         .await
         .expect("count consumer offsets")
     });
-    assert_eq!(count, 3);
+    assert_eq!(count, 2);
     drop(database);
     let _ = std::fs::remove_file(&path);
 }

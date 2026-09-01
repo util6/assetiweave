@@ -172,6 +172,12 @@ export function buildConversationDisplayNodesFromNodes(
   return displayNodes;
 }
 
+export function buildConversationDisplayNodesFromBlocks(
+  blocks: ConversationContentBlock[],
+): ConversationDisplayNode[] {
+  return blocks.map((block) => ({ type: "card", turnId: "", block }));
+}
+
 function conversationContentBlockSeedToBlock(card: ConversationContentBlockSeed): ConversationContentBlock {
   return {
     id: card.node_id,
@@ -214,7 +220,6 @@ function conversationContentNodeToBlock(node: ConversationContentNode): Conversa
 
 export function ConversationContentCards({
   activeBlockId,
-  blocks,
   colors = DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   controller,
   onCopyError,
@@ -232,13 +237,12 @@ export function ConversationContentCards({
   visibility,
 }: {
   activeBlockId?: string | null;
-  blocks: ConversationContentBlock[];
   colors?: ConversationContentCardColorSettings;
   controller?: ConversationContentController;
   onCopyError?: (message: string) => void;
   onCommandPartsVisible?: (partIds: string[]) => void;
   onTranslationError?: (message: string) => void;
-  nodes?: ConversationDisplayNode[];
+  nodes: ConversationDisplayNode[];
   recordKind?: ConversationRecordKind;
   resultPreviewLineLimit?: number;
   t: Translator;
@@ -249,8 +253,7 @@ export function ConversationContentCards({
   translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
-  const displayNodes: ConversationDisplayNode[] = nodes
-    ?? blocks.map((block) => ({ type: "card", turnId: "", block }));
+  const displayNodes = nodes;
   const visibleNodes = displayNodes.flatMap((node): ConversationDisplayNode[] => {
     if (node.type === "card") {
       return (visibility[node.block.type] ?? true) && shouldDisplayContentBlock(node.block)

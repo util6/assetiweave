@@ -29,6 +29,18 @@ impl AppService {
     where
         F: FnMut(usize, usize, Option<String>),
     {
+        self.audit_conversation_data_with_progress_and_cancellation(params, None, &mut on_progress)
+    }
+
+    pub(crate) fn audit_conversation_data_with_progress_and_cancellation<F>(
+        &self,
+        params: ConversationDataAuditParams,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        on_progress: &mut F,
+    ) -> AppResult<Value>
+    where
+        F: FnMut(usize, usize, Option<String>),
+    {
         validate_conversation_maintenance_scope(
             params.record_kind.as_deref(),
             params.source_id.as_deref(),
@@ -45,7 +57,8 @@ impl AppService {
                 record_kind.as_deref(),
                 source_id.as_deref(),
                 include_resolved,
-                &mut on_progress,
+                cancellation,
+                on_progress,
             )
             .await
         })
@@ -66,18 +79,35 @@ impl AppService {
     where
         F: FnMut(usize, usize, Option<String>),
     {
+        self.repair_conversation_data_with_progress_and_cancellation(params, None, &mut on_progress)
+    }
+
+    pub(crate) fn repair_conversation_data_with_progress_and_cancellation<F>(
+        &self,
+        params: ConversationDataRepairParams,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        on_progress: &mut F,
+    ) -> AppResult<Value>
+    where
+        F: FnMut(usize, usize, Option<String>),
+    {
         validate_conversation_maintenance_scope(
             params.record_kind.as_deref(),
             params.source_id.as_deref(),
         )?;
-        let audit = self.audit_conversation_data_with_progress(
+        ensure_maintenance_not_cancelled(cancellation)?;
+        let audit = self.audit_conversation_data_with_progress_and_cancellation(
             ConversationDataAuditParams {
                 source_id: params.source_id.clone(),
                 record_kind: params.record_kind.clone(),
                 include_resolved: false,
             },
-            |current, total, note| on_progress(current.min(2), total.max(AUDIT_STAGE_COUNT), note),
+            cancellation,
+            &mut |current, total, note| {
+                on_progress(current.min(2), total.max(AUDIT_STAGE_COUNT), note)
+            },
         )?;
+        ensure_maintenance_not_cancelled(cancellation)?;
         if params.dry_run {
             return Ok(json!({
                 "schema_version": AUDIT_SCHEMA_VERSION,
@@ -96,15 +126,18 @@ impl AppService {
         }
 
         on_progress(2, AUDIT_STAGE_COUNT, Some("backup".to_string()));
+        ensure_maintenance_not_cancelled(cancellation)?;
         let backup = create_conversation_repair_backup(self)?;
+        ensure_maintenance_not_cancelled(cancellation)?;
 
         let mut resync = Value::Null;
         if params.resync {
             on_progress(3, AUDIT_STAGE_COUNT, Some("resync".to_string()));
+            ensure_maintenance_not_cancelled(cancellation)?;
             let source_id = params.source_id.clone();
             let record_kind = params.record_kind.clone();
             resync = self
-                .sync_conversations_with_progress(
+                .sync_conversations_with_progress_and_cancellation(
                     ConversationSyncParams {
                         source_id,
                         adapter_id: None,
@@ -112,7 +145,8 @@ impl AppService {
                         mode: ConversationSyncMode::Full,
                         dry_run: false,
                     },
-                    |completed, total, note| {
+                    cancellation,
+                    &mut |completed: usize, total: usize, note: Option<String>| {
                         let stage = if total == 0 {
                             4
                         } else {
@@ -122,9 +156,11 @@ impl AppService {
                     },
                 )
                 .map(|value| json!(value))?;
+            ensure_maintenance_not_cancelled(cancellation)?;
         }
 
         on_progress(5, AUDIT_STAGE_COUNT, Some("apply".to_string()));
+        ensure_maintenance_not_cancelled(cancellation)?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let repair_record_kind = params.record_kind.clone();
@@ -135,23 +171,30 @@ impl AppService {
                 &tenant_id,
                 repair_record_kind.as_deref(),
                 repair_source_id.as_deref(),
+                cancellation,
             )
             .await
         })?;
 
         on_progress(6, AUDIT_STAGE_COUNT, Some("reindex".to_string()));
+        ensure_maintenance_not_cancelled(cancellation)?;
         let index = self
-            .rebuild_conversation_search_index()
+            .rebuild_conversation_search_index_with_cancellation(cancellation)
             .map(|report| json!(report))?;
 
         on_progress(8, AUDIT_STAGE_COUNT, Some("verify".to_string()));
+        ensure_maintenance_not_cancelled(cancellation)?;
         let verification_source_id = params.source_id.clone();
         let verification_record_kind = params.record_kind.clone();
-        let verification = self.audit_conversation_data(ConversationDataAuditParams {
-            source_id: verification_source_id.clone(),
-            record_kind: verification_record_kind.clone(),
-            include_resolved: false,
-        })?;
+        let verification = self.audit_conversation_data_with_progress_and_cancellation(
+            ConversationDataAuditParams {
+                source_id: verification_source_id.clone(),
+                record_kind: verification_record_kind.clone(),
+                include_resolved: false,
+            },
+            cancellation,
+            &mut |_, _, _| {},
+        )?;
         let active_fingerprints = verification["issues"]
             .as_array()
             .into_iter()
@@ -176,9 +219,11 @@ impl AppService {
                 verification_record_kind.as_deref(),
                 resolution_source_id.as_deref(),
                 &active_fingerprints,
+                cancellation,
             )
             .await
         })?;
+        ensure_maintenance_not_cancelled(cancellation)?;
         let backup_path = backup
             .targets
             .first()
@@ -287,6 +332,7 @@ async fn audit_conversation_data_sqlx<F>(
     record_kind: Option<&str>,
     source_id: Option<&str>,
     include_resolved: bool,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
     on_progress: &mut F,
 ) -> AppResult<Value>
 where
@@ -301,6 +347,7 @@ where
     let mut issues = Vec::new();
     let mut progress_index = 0;
     for (family_kind, table_prefix) in families {
+        ensure_maintenance_not_cancelled(cancellation)?;
         let sessions = format!("{table_prefix}_sessions");
         let questions = format!("{table_prefix}_questions");
         let question_turns = format!("{table_prefix}_question_turns");
@@ -372,6 +419,7 @@ where
             ),
         ];
         for (category, query, severity, auto_repairable, detail) in checks {
+            ensure_maintenance_not_cancelled(cancellation)?;
             on_progress(
                 progress_index,
                 family_check_count + 2,
@@ -404,6 +452,7 @@ where
         family_check_count + 2,
         Some("question_snapshot_dependencies".to_string()),
     );
+    ensure_maintenance_not_cancelled(cancellation)?;
     let snapshot_count = if record_kind.is_none() && source_id.is_none() {
         let snapshot_query = if include_resolved {
             "SELECT COALESCE(SUM(affected_count), 0) FROM conversation_data_audit_issues WHERE tenant_id = ?1 AND category = 'question_snapshot_dependencies'"
@@ -434,6 +483,7 @@ where
         family_check_count + 2,
         Some("search_index_mismatch".to_string()),
     );
+    ensure_maintenance_not_cancelled(cancellation)?;
     let search_count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM tenants t LEFT JOIN conversation_search_index_state s ON s.tenant_id = t.id WHERE t.id = ?1 AND (s.tenant_id IS NULL OR s.health != 'ready' OR s.indexed_revision IS NULL OR s.indexed_revision != s.source_revision)",
     )
@@ -476,6 +526,17 @@ where
             "details": issue.details,
         })).collect::<Vec<_>>(),
     }))
+}
+
+fn ensure_maintenance_not_cancelled(
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Err(AppError::Canceled(
+            "conversation data maintenance cancelled".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn persist_audit_issue_sqlx(
@@ -525,6 +586,7 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
     record_kind: Option<&str>,
     source_id: Option<&str>,
     active_fingerprints: &HashSet<String>,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<u64> {
     const SAFE_CATEGORIES: [&str; 5] = [
         "orphan_parts",
@@ -542,6 +604,7 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
     let mut resolved = 0;
     for category in SAFE_CATEGORIES {
         for prefix in &prefixes {
+            ensure_maintenance_not_cancelled(cancellation)?;
             let fingerprint = conversation_audit_fingerprint(
                 prefix,
                 category,
@@ -566,6 +629,7 @@ async fn resolve_safe_conversation_audit_issues_sqlx(
             .rows_affected();
         }
     }
+    ensure_maintenance_not_cancelled(cancellation)?;
     Ok(resolved)
 }
 
@@ -593,6 +657,7 @@ async fn apply_safe_conversation_repairs_sqlx(
     tenant_id: &str,
     record_kind: Option<&str>,
     source_id: Option<&str>,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<Value> {
     let families = match record_kind {
         Some("session") => vec![("conversation", "conversation")],
@@ -606,13 +671,16 @@ async fn apply_safe_conversation_repairs_sqlx(
     let mut deleted_memberships = 0u64;
     let mut deleted_questions = 0u64;
     let mut deleted_turns = 0u64;
+    ensure_maintenance_not_cancelled(cancellation)?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     for (prefix, _) in families {
+        ensure_maintenance_not_cancelled(cancellation)?;
         let sessions = format!("{prefix}_sessions");
         let questions = format!("{prefix}_questions");
         let question_turns = format!("{prefix}_question_turns");
         let turns = format!("{prefix}_turns");
         let parts = format!("{prefix}_parts");
+        ensure_maintenance_not_cancelled(cancellation)?;
         deleted_parts += sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM {parts} WHERE tenant_id = ?1 AND NOT EXISTS (SELECT 1 FROM {turns} t WHERE t.tenant_id = {parts}.tenant_id AND t.id = {parts}.turn_id) AND ?2 IS NULL"
         )))
@@ -622,6 +690,7 @@ async fn apply_safe_conversation_repairs_sqlx(
         .await
         .map_err(AppError::external)?
         .rows_affected();
+        ensure_maintenance_not_cancelled(cancellation)?;
         deleted_memberships += sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM {question_turns} WHERE tenant_id = ?1 AND (NOT EXISTS (SELECT 1 FROM {questions} q WHERE q.tenant_id = {question_turns}.tenant_id AND q.id = {question_turns}.question_id) OR NOT EXISTS (SELECT 1 FROM {turns} t WHERE t.tenant_id = {question_turns}.tenant_id AND t.id = {question_turns}.turn_id)) AND (?2 IS NULL OR EXISTS (SELECT 1 FROM {questions} q JOIN {sessions} s ON s.tenant_id = q.tenant_id AND s.id = q.session_id WHERE q.tenant_id = {question_turns}.tenant_id AND q.id = {question_turns}.question_id AND s.source_id = ?2))"
         )))
@@ -631,6 +700,7 @@ async fn apply_safe_conversation_repairs_sqlx(
         .await
         .map_err(AppError::external)?
         .rows_affected();
+        ensure_maintenance_not_cancelled(cancellation)?;
         deleted_questions += sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM {questions} WHERE tenant_id = ?1 AND NOT EXISTS (SELECT 1 FROM {sessions} s WHERE s.tenant_id = {questions}.tenant_id AND s.id = {questions}.session_id) AND ?2 IS NULL"
         )))
@@ -640,6 +710,7 @@ async fn apply_safe_conversation_repairs_sqlx(
         .await
         .map_err(AppError::external)?
         .rows_affected();
+        ensure_maintenance_not_cancelled(cancellation)?;
         deleted_turns += sqlx::query(AssertSqlSafe(format!(
             "DELETE FROM {turns} WHERE tenant_id = ?1 AND NOT EXISTS (SELECT 1 FROM {sessions} s WHERE s.tenant_id = {turns}.tenant_id AND s.id = {turns}.session_id) AND ?2 IS NULL"
         )))
@@ -650,8 +721,10 @@ async fn apply_safe_conversation_repairs_sqlx(
         .map_err(AppError::external)?
         .rows_affected();
     }
+    ensure_maintenance_not_cancelled(cancellation)?;
     crate::backend::store::bump_conversation_search_source_revision_sqlx_tx(&mut tx, tenant_id)
         .await?;
+    ensure_maintenance_not_cancelled(cancellation)?;
     tx.commit().await.map_err(AppError::external)?;
     Ok(json!({
         "deleted_parts": deleted_parts,

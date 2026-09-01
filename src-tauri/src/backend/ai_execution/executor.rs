@@ -337,6 +337,11 @@ impl AgentExecutor {
             if request.replay && !definition.declared_capabilities.history_replay {
                 return Err(AiExecutionError::ResumeUnavailable);
             }
+            if matches!(request.purpose, AiExecutionPurpose::Recall)
+                && !matches!(definition.protocol, AgentProtocol::Acp)
+            {
+                return Err(AiExecutionError::RecallToolsUnavailable);
+            }
             if request.team_tools.is_some() && !definition.declared_capabilities.team_tools {
                 return Err(AiExecutionError::TeamToolsUnavailable);
             }
@@ -1083,6 +1088,7 @@ mod tests {
             replay: false,
             restore_only: false,
             team_tools: None,
+            recall_tools: None,
         }
     }
 }

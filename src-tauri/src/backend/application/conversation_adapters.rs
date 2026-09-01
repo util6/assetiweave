@@ -409,6 +409,19 @@ impl AppService {
     where
         F: FnMut(usize, usize, Option<String>),
     {
+        self.sync_conversations_with_progress_and_cancellation(params, None, &mut on_progress)
+    }
+
+    pub(crate) fn sync_conversations_with_progress_and_cancellation<F>(
+        &self,
+        params: ConversationSyncParams,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        on_progress: &mut F,
+    ) -> AppResult<Value>
+    where
+        F: FnMut(usize, usize, Option<String>),
+    {
+        ensure_conversation_sync_not_cancelled(cancellation)?;
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
         let settings =
             crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
@@ -442,6 +455,7 @@ impl AppService {
         let mut results = Vec::new();
         let mut errors = Vec::new();
         for source in sources {
+            ensure_conversation_sync_not_cancelled(cancellation)?;
             on_progress(
                 completed_source_count,
                 total_source_count,
@@ -537,6 +551,7 @@ impl AppService {
                         .map_err(conversation_external_error)
                     }
                 });
+            ensure_conversation_sync_not_cancelled(cancellation)?;
             let sync_result = match read_result {
                 Ok(read) if web_record_source => {
                     let pool = self.db.pool().clone();
@@ -645,6 +660,7 @@ impl AppService {
             };
             completed_source_count += 1;
             on_progress(completed_source_count, total_source_count, None);
+            ensure_conversation_sync_not_cancelled(cancellation)?;
             if let Some(error) = source_error {
                 return Err(error);
             }
@@ -700,6 +716,17 @@ impl AppService {
             "legacy_cards_upgraded": legacy_cards_upgraded
         }))
     }
+}
+
+fn ensure_conversation_sync_not_cancelled(
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Err(AppError::Canceled(
+            "conversation sync cancelled".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 async fn persist_successful_conversation_observation(
