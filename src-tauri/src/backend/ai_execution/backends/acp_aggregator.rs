@@ -33,8 +33,9 @@ impl TranslationTextAggregator {
     pub(crate) fn apply(&mut self, event: AcpRuntimeEvent) -> AggregatorAction {
         let event_session_id = match &event {
             AcpRuntimeEvent::AgentText { session_id, .. }
-            | AcpRuntimeEvent::AgentThought { session_id }
-            | AcpRuntimeEvent::ToolActivity { session_id }
+            | AcpRuntimeEvent::AgentThought { session_id, .. }
+            | AcpRuntimeEvent::ToolCall { session_id, .. }
+            | AcpRuntimeEvent::ToolCallUpdate { session_id, .. }
             | AcpRuntimeEvent::PermissionRequested { session_id }
             | AcpRuntimeEvent::Other { session_id }
             | AcpRuntimeEvent::TurnCompleted { session_id, .. } => session_id,
@@ -64,7 +65,7 @@ impl TranslationTextAggregator {
                 self.thinking_chunks += 1;
                 AggregatorAction::Continue
             }
-            AcpRuntimeEvent::ToolActivity { .. } => {
+            AcpRuntimeEvent::ToolCall { .. } | AcpRuntimeEvent::ToolCallUpdate { .. } => {
                 AggregatorAction::CancelAndFail(AiExecutionError::ToolUseDenied)
             }
             AcpRuntimeEvent::PermissionRequested { .. } => {
@@ -121,8 +122,9 @@ impl RecallStructuredAggregator {
     pub(crate) fn apply(&mut self, event: AcpRuntimeEvent) -> AggregatorAction {
         let event_session_id = match &event {
             AcpRuntimeEvent::AgentText { session_id, .. }
-            | AcpRuntimeEvent::AgentThought { session_id }
-            | AcpRuntimeEvent::ToolActivity { session_id }
+            | AcpRuntimeEvent::AgentThought { session_id, .. }
+            | AcpRuntimeEvent::ToolCall { session_id, .. }
+            | AcpRuntimeEvent::ToolCallUpdate { session_id, .. }
             | AcpRuntimeEvent::PermissionRequested { session_id }
             | AcpRuntimeEvent::Other { session_id }
             | AcpRuntimeEvent::TurnCompleted { session_id, .. } => session_id,
@@ -152,7 +154,9 @@ impl RecallStructuredAggregator {
                 self.thinking_chunks += 1;
                 AggregatorAction::Continue
             }
-            AcpRuntimeEvent::ToolActivity { .. } => AggregatorAction::Continue,
+            AcpRuntimeEvent::ToolCall { .. } | AcpRuntimeEvent::ToolCallUpdate { .. } => {
+                AggregatorAction::Continue
+            }
             AcpRuntimeEvent::PermissionRequested { .. } => {
                 AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
             }
@@ -242,6 +246,7 @@ mod tests {
         let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
         aggregator.apply(AcpRuntimeEvent::AgentThought {
             session_id: session.clone(),
+            text: Some("provider thought".to_string()),
         });
         aggregator.apply(text(&session, "visible"));
 
@@ -279,8 +284,11 @@ mod tests {
         let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
 
         assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::ToolActivity {
-                session_id: session
+            aggregator.apply(AcpRuntimeEvent::ToolCall {
+                session_id: session.clone(),
+                tool_call_id: "tool".to_string(),
+                title: "tool".to_string(),
+                status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
             }),
             AggregatorAction::CancelAndFail(AiExecutionError::ToolUseDenied)
         ));
@@ -364,8 +372,11 @@ mod tests {
         let mut aggregator = RecallStructuredAggregator::new(session.clone(), 64);
 
         assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::ToolActivity {
-                session_id: session.clone()
+            aggregator.apply(AcpRuntimeEvent::ToolCall {
+                session_id: session.clone(),
+                tool_call_id: "tool".to_string(),
+                title: "tool".to_string(),
+                status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
             }),
             AggregatorAction::Continue
         ));

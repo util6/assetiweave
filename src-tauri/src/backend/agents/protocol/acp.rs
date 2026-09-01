@@ -19,7 +19,7 @@ use agent_client_protocol::{
             RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
             ResumeSessionRequest, ResumeSessionResponse, SessionId, SessionNotification,
             SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
-            StopReason, TextContent,
+            StopReason, TextContent, ToolCall, ToolCallStatus, ToolCallUpdate,
         },
         ProtocolVersion,
     },
@@ -380,9 +380,19 @@ pub(crate) enum AcpRuntimeEvent {
     },
     AgentThought {
         session_id: SessionId,
+        text: Option<String>,
     },
-    ToolActivity {
+    ToolCall {
         session_id: SessionId,
+        tool_call_id: String,
+        title: String,
+        status: AcpToolStatus,
+    },
+    ToolCallUpdate {
+        session_id: SessionId,
+        tool_call_id: String,
+        title: Option<String>,
+        status: Option<AcpToolStatus>,
     },
     PermissionRequested {
         session_id: SessionId,
@@ -394,6 +404,26 @@ pub(crate) enum AcpRuntimeEvent {
         session_id: SessionId,
         stop_reason: StopReason,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AcpToolStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+}
+
+impl From<ToolCallStatus> for AcpToolStatus {
+    fn from(status: ToolCallStatus) -> Self {
+        match status {
+            ToolCallStatus::Pending => Self::Pending,
+            ToolCallStatus::InProgress => Self::InProgress,
+            ToolCallStatus::Completed => Self::Completed,
+            ToolCallStatus::Failed => Self::Failed,
+            _ => Self::Pending,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -595,10 +625,37 @@ fn normalize_session_notification(notification: SessionNotification) -> AcpRunti
             },
             _ => AcpRuntimeEvent::Other { session_id },
         },
-        SessionUpdate::AgentThoughtChunk(_) => AcpRuntimeEvent::AgentThought { session_id },
-        SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_) => {
-            AcpRuntimeEvent::ToolActivity { session_id }
-        }
+        SessionUpdate::AgentThoughtChunk(chunk) => match chunk.content {
+            ContentBlock::Text(text) => AcpRuntimeEvent::AgentThought {
+                session_id,
+                text: Some(text.text),
+            },
+            _ => AcpRuntimeEvent::AgentThought {
+                session_id,
+                text: None,
+            },
+        },
+        SessionUpdate::ToolCall(ToolCall {
+            tool_call_id,
+            title,
+            status,
+            ..
+        }) => AcpRuntimeEvent::ToolCall {
+            session_id,
+            tool_call_id: tool_call_id.to_string(),
+            title,
+            status: status.into(),
+        },
+        SessionUpdate::ToolCallUpdate(ToolCallUpdate {
+            tool_call_id,
+            fields,
+            ..
+        }) => AcpRuntimeEvent::ToolCallUpdate {
+            session_id,
+            tool_call_id: tool_call_id.to_string(),
+            title: fields.title,
+            status: fields.status.map(Into::into),
+        },
         _ => AcpRuntimeEvent::Other { session_id },
     }
 }
@@ -1100,8 +1157,11 @@ mod tests {
 
         assert_eq!(
             event,
-            AcpRuntimeEvent::ToolActivity {
-                session_id: SessionId::new("session")
+            AcpRuntimeEvent::ToolCall {
+                session_id: SessionId::new("session"),
+                tool_call_id: "tool".to_string(),
+                title: "read".to_string(),
+                status: AcpToolStatus::Pending,
             }
         );
         assert!(!format!("{event:?}").contains(secret));

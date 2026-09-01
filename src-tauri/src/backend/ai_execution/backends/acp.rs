@@ -13,13 +13,17 @@ use uuid::Uuid;
 use crate::backend::{
     agents::{
         process::{ManagedAgentProcess, ManagedAgentProcessError},
-        protocol::acp::{AcpConnectConfig, AcpError, AcpProtocol, AcpProtocolChannels},
+        protocol::acp::{
+            AcpConnectConfig, AcpError, AcpProtocol, AcpProtocolChannels, AcpRuntimeEvent,
+            AcpToolStatus,
+        },
         types::{AgentDefinition, AgentModelOption, AgentProtocol, SESSION_ID_PLACEHOLDER},
     },
     ai_execution::{
         AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError,
         AiExecutionLimits, AiExecutionPhase, AiExecutionPurpose, AiExecutionRequest,
-        AiExecutionResult, AiExecutionSessionDeleteMethod,
+        AiExecutionResult, AiExecutionSessionDeleteMethod, SessionEvent, SessionEventDelivery,
+        SessionEventIdentity, SessionEventKind, SessionProcessingState, SessionToolState,
     },
     host_process::{run_host_command, HostCommandSpec, HostInput},
     operation_log::{log_info, log_warn},
@@ -31,6 +35,10 @@ use super::acp_aggregator::{
 
 const PROTOCOL_EVENT_CAPACITY: usize = 128;
 const PROVIDER_SESSION_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const ACP_TEXT_ITEM_ID: &str = "assistant-text";
+const ACP_THINKING_ITEM_ID: &str = "assistant-thinking";
+const ACP_PROCESSING_ITEM_ID: &str = "processing";
+const ACP_TERMINAL_ITEM_ID: &str = "terminal";
 
 #[derive(Clone, Debug)]
 pub(crate) struct AcpExecutionBackend {
@@ -534,8 +542,13 @@ async fn run_execution(
 
     if request.replay {
         request.report_phase(AiExecutionPhase::Prompting);
-        let replay_text =
-            collect_replay_text(&mut channels.events, &session, request.limits.text_bytes).await;
+        let replay_text = collect_replay_text(
+            &mut channels.events,
+            &session,
+            request,
+            request.limits.text_bytes,
+        )
+        .await;
         return Ok(AiExecutionResult {
             text: replay_text.clone(),
             agent_id: definition.id.clone(),
@@ -672,8 +685,11 @@ async fn collect_replay_text(
         crate::backend::agents::protocol::acp::AcpRuntimeEvent,
     >,
     session_id: &SessionId,
+    request: &AiExecutionRequest,
     max_bytes: usize,
 ) -> String {
+    let mut bridge = AcpSessionEventBridge::new(request, session_id);
+    bridge.emit_processing(SessionProcessingState::Started);
     let deadline = tokio::time::sleep(std::time::Duration::from_millis(250));
     tokio::pin!(deadline);
     let mut text = String::new();
@@ -682,6 +698,7 @@ async fn collect_replay_text(
             _ = &mut deadline => break,
             event = events.recv() => {
                 let Some(event) = event else { break; };
+                bridge.emit(&event);
                 match event {
                     crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentText { session_id: event_session, text: chunk } if &event_session == session_id => {
                         if text.len().saturating_add(chunk.len()) > max_bytes { break; }
@@ -694,6 +711,195 @@ async fn collect_replay_text(
         }
     }
     text
+}
+
+struct AcpSessionEventBridge<'a> {
+    request: &'a AiExecutionRequest,
+    provider_session_id: SessionId,
+    session_id: String,
+    member_id: String,
+    delivery: SessionEventDelivery,
+    sequence: u64,
+}
+
+impl<'a> AcpSessionEventBridge<'a> {
+    fn new(request: &'a AiExecutionRequest, provider_session_id: &SessionId) -> Self {
+        let stable_context = request
+            .execution_context_key
+            .clone()
+            .unwrap_or_else(|| format!("execution:{}", request.execution_id));
+        Self {
+            request,
+            provider_session_id: provider_session_id.clone(),
+            session_id: stable_context.clone(),
+            member_id: stable_context,
+            delivery: if request.replay {
+                SessionEventDelivery::Replay
+            } else {
+                SessionEventDelivery::Live
+            },
+            sequence: 0,
+        }
+    }
+
+    fn emit(&mut self, event: &AcpRuntimeEvent) {
+        let event_session_id = match event {
+            AcpRuntimeEvent::AgentText { session_id, .. }
+            | AcpRuntimeEvent::AgentThought { session_id, .. }
+            | AcpRuntimeEvent::ToolCall { session_id, .. }
+            | AcpRuntimeEvent::ToolCallUpdate { session_id, .. }
+            | AcpRuntimeEvent::PermissionRequested { session_id }
+            | AcpRuntimeEvent::Other { session_id }
+            | AcpRuntimeEvent::TurnCompleted { session_id, .. } => session_id,
+        };
+        if event_session_id != &self.provider_session_id {
+            return;
+        }
+
+        match event {
+            AcpRuntimeEvent::AgentText { text, .. } => {
+                self.emit_kind(
+                    ACP_TEXT_ITEM_ID,
+                    SessionEventKind::AssistantTextDelta { text: text.clone() },
+                );
+            }
+            AcpRuntimeEvent::AgentThought { text, .. } => {
+                if let Some(text) = text.as_ref().filter(|text| !text.is_empty()) {
+                    self.emit_kind(
+                        ACP_THINKING_ITEM_ID,
+                        SessionEventKind::ThinkingDelta { text: text.clone() },
+                    );
+                } else {
+                    self.emit_processing(SessionProcessingState::Active);
+                }
+            }
+            AcpRuntimeEvent::ToolCall {
+                tool_call_id,
+                title,
+                status,
+                ..
+            } => {
+                let item_id = tool_item_id(tool_call_id);
+                self.emit_kind(
+                    &item_id,
+                    SessionEventKind::ToolStart {
+                        name: (!title.trim().is_empty()).then(|| title.clone()),
+                    },
+                );
+                self.emit_tool_status(&item_id, *status);
+            }
+            AcpRuntimeEvent::ToolCallUpdate {
+                tool_call_id,
+                title,
+                status,
+                ..
+            } => {
+                let item_id = tool_item_id(tool_call_id);
+                if let Some(title) = title.as_ref() {
+                    self.emit_kind(
+                        &item_id,
+                        SessionEventKind::ToolStart {
+                            name: (!title.trim().is_empty()).then(|| title.clone()),
+                        },
+                    );
+                }
+                self.emit_tool_status(&item_id, status.unwrap_or(AcpToolStatus::InProgress));
+            }
+            AcpRuntimeEvent::PermissionRequested { .. } => {
+                self.emit_kind(
+                    "permission",
+                    SessionEventKind::Notice {
+                        code: "permission_requested".to_string(),
+                        detail: None,
+                    },
+                );
+            }
+            AcpRuntimeEvent::TurnCompleted { stop_reason, .. } => {
+                self.emit_processing(SessionProcessingState::Completed);
+                if matches!(
+                    stop_reason,
+                    agent_client_protocol::schema::v1::StopReason::Cancelled
+                ) {
+                    self.emit_kind("cancel", SessionEventKind::Cancel);
+                } else if matches!(
+                    stop_reason,
+                    agent_client_protocol::schema::v1::StopReason::EndTurn
+                        | agent_client_protocol::schema::v1::StopReason::MaxTokens
+                        | agent_client_protocol::schema::v1::StopReason::MaxTurnRequests
+                ) {
+                    self.emit_kind(
+                        ACP_TERMINAL_ITEM_ID,
+                        SessionEventKind::TerminalResult { text: None },
+                    );
+                } else {
+                    self.emit_kind(
+                        "error",
+                        SessionEventKind::Error {
+                            code: "provider_turn_stopped".to_string(),
+                            retryable: false,
+                        },
+                    );
+                }
+            }
+            AcpRuntimeEvent::Other { .. } => {}
+        }
+    }
+
+    fn emit_processing(&mut self, state: SessionProcessingState) {
+        self.emit_kind(
+            ACP_PROCESSING_ITEM_ID,
+            SessionEventKind::Processing { state },
+        );
+    }
+
+    fn emit_tool_status(&mut self, item_id: &str, status: AcpToolStatus) {
+        match status {
+            AcpToolStatus::Pending => {}
+            AcpToolStatus::InProgress => self.emit_kind(
+                item_id,
+                SessionEventKind::ToolUpdate {
+                    state: SessionToolState::Running,
+                    detail: None,
+                },
+            ),
+            AcpToolStatus::Completed => self.emit_kind(
+                item_id,
+                SessionEventKind::ToolResult {
+                    success: true,
+                    detail: None,
+                },
+            ),
+            AcpToolStatus::Failed => self.emit_kind(
+                item_id,
+                SessionEventKind::ToolResult {
+                    success: false,
+                    detail: None,
+                },
+            ),
+        }
+    }
+
+    fn emit_kind(&mut self, item_id: &str, kind: SessionEventKind) {
+        self.sequence = self.sequence.saturating_add(1);
+        let event_id = format!("acp:{}:{}", self.request.execution_id, self.sequence);
+        self.request.report_session_event(SessionEvent {
+            identity: SessionEventIdentity {
+                session_id: self.session_id.clone(),
+                member_id: self.member_id.clone(),
+                execution_id: self.request.execution_id.clone(),
+                turn_id: self.request.execution_id.clone(),
+                item_id: item_id.to_string(),
+                event_id,
+            },
+            sequence: self.sequence,
+            delivery: self.delivery,
+            kind,
+        });
+    }
+}
+
+fn tool_item_id(tool_call_id: &str) -> String {
+    format!("tool:{tool_call_id}")
 }
 
 async fn run_prompt_and_aggregate(
@@ -719,6 +925,8 @@ async fn run_prompt_and_aggregate(
             request.limits.text_bytes,
         ))
     };
+    let mut bridge = AcpSessionEventBridge::new(request, &session_id);
+    bridge.emit_processing(SessionProcessingState::Started);
     let mut prompt =
         Box::pin(protocol.prompt(session_id.clone(), request.prompt.trim().to_owned()));
     let mut process_exit = Box::pin(process.wait_for_exit());
@@ -735,9 +943,11 @@ async fn run_prompt_and_aggregate(
                 let Some(event) = event else {
                     return Err(AiExecutionError::Protocol { operation: "event_stream" });
                 };
+                bridge.emit(&event);
                 match aggregator.apply(event) {
                     AggregatorAction::Continue => {}
                     AggregatorAction::CancelAndFail(error) => {
+                        bridge.emit_kind("cancel", SessionEventKind::Cancel);
                         let _ = protocol
                             .cancel_and_wait(session_id.clone(), request.limits.cancel_grace)
                             .await;
@@ -783,6 +993,7 @@ async fn run_prompt_and_aggregate(
                 }
             }
             _ = &mut cancellation => {
+                bridge.emit_kind("cancel", SessionEventKind::Cancel);
                 let _ = protocol
                     .cancel_and_wait(session_id.clone(), request.limits.cancel_grace)
                     .await;
@@ -1192,10 +1403,14 @@ mod tests {
     use crate::backend::{
         agents::types::{AgentEnvEntry, AgentId, DeclaredAgentCapabilities},
         ai_execution::{
-            AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose,
+            AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionProgressSink,
+            AiExecutionPurpose, SessionEvent,
         },
     };
-    use std::time::Duration;
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     #[test]
     fn provider_routing_failure_is_reported_as_an_actionable_model_error() {
@@ -1303,6 +1518,231 @@ mod tests {
 
     fn records(path: &Path) -> String {
         fs::read_to_string(path).unwrap_or_default()
+    }
+
+    #[derive(Default)]
+    struct CaptureSessionEvents {
+        events: Mutex<Vec<SessionEvent>>,
+    }
+
+    impl AiExecutionProgressSink for CaptureSessionEvents {
+        fn set_phase(&self, _phase: AiExecutionPhase) {}
+
+        fn emit_session_event(&self, event: SessionEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn t03_fake_acp_events_reach_the_typed_session_sink() {
+        let (root, record) = test_paths("session-events");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+        let capture = Arc::new(CaptureSessionEvents::default());
+        let mut execution_request = request(None);
+        execution_request.purpose = AiExecutionPurpose::Recall;
+        execution_request.recall_tools = Some(crate::backend::ai_execution::AiRecallTools {
+            tenant_id: "tenant-fixture".to_string(),
+            recall_session_id: "recall-fixture".to_string(),
+            database_path: root.join("fixture.db").to_string_lossy().into_owned(),
+        });
+        execution_request.execution_context_key = Some("member-fixture".to_string());
+        execution_request.progress = Some(capture.clone());
+
+        backend
+            .execute(&definition("session_events", &record), execution_request)
+            .await
+            .expect("ACP event fixture execution");
+
+        let events = capture.events.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::AssistantTextDelta { ref text }
+                if text == "visible "
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::AssistantTextDelta { ref text }
+                if text == "answer"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ThinkingDelta { ref text }
+                if text == "provider thought"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::Processing {
+                state: SessionProcessingState::Active
+            }
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ThinkingDelta { ref text }
+                if text.contains("thought-metadata")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ToolStart { ref name }
+                if name.as_deref() == Some("read fixture")
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ToolResult { success: true, .. }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ToolUpdate {
+                state: crate::backend::ai_execution::SessionToolState::Running,
+                ..
+            }
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::TerminalResult { .. }
+        )));
+        let event_shapes = events
+            .iter()
+            .map(|event| match &event.kind {
+                crate::backend::ai_execution::SessionEventKind::Processing { state } => match state
+                {
+                    SessionProcessingState::Started => "processing_started",
+                    SessionProcessingState::Active => "processing_active",
+                    SessionProcessingState::Completed => "processing_completed",
+                },
+                crate::backend::ai_execution::SessionEventKind::AssistantTextDelta { .. } => "text",
+                crate::backend::ai_execution::SessionEventKind::ThinkingDelta { .. } => "thinking",
+                crate::backend::ai_execution::SessionEventKind::ToolStart { .. } => "tool_start",
+                crate::backend::ai_execution::SessionEventKind::ToolUpdate { .. } => "tool_update",
+                crate::backend::ai_execution::SessionEventKind::ToolResult { .. } => "tool_result",
+                crate::backend::ai_execution::SessionEventKind::TerminalResult { .. } => "terminal",
+                _ => "other",
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            event_shapes,
+            vec![
+                "processing_started",
+                "text",
+                "text",
+                "thinking",
+                "processing_active",
+                "tool_start",
+                "tool_update",
+                "tool_result",
+                "processing_completed",
+                "terminal",
+            ]
+        );
+        let execution_id = events[0].identity.execution_id.clone();
+        assert!(events
+            .iter()
+            .all(|event| event.identity.execution_id == execution_id));
+        assert!(events
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence));
+        assert!(events.iter().all(|event| {
+            event.identity.session_id == "member-fixture"
+                && event.identity.member_id == "member-fixture"
+                && event.identity.execution_id != ""
+                && event.identity.turn_id != ""
+                && event.identity.item_id != ""
+                && event.identity.event_id != ""
+                && matches!(
+                    event.delivery,
+                    crate::backend::ai_execution::SessionEventDelivery::Live
+                )
+        }));
+        assert!(events
+            .iter()
+            .all(|event| event.identity.session_id != "fixture-session"));
+        let projection = crate::backend::ai_execution::SessionEventProjection::default();
+        for event in events.iter().cloned() {
+            assert_eq!(
+                projection.apply(event),
+                crate::backend::ai_execution::SessionEventApplyResult::Applied
+            );
+        }
+        let snapshot = projection.snapshot();
+        assert_eq!(
+            snapshot
+                .items
+                .iter()
+                .find(|item| item.kind
+                    == crate::backend::ai_execution::SessionItemKind::AssistantText)
+                .and_then(|item| item.text.as_deref()),
+            Some("visible answer")
+        );
+        assert!(snapshot.items.iter().any(|item| {
+            item.kind == crate::backend::ai_execution::SessionItemKind::Tool
+                && item.state == crate::backend::ai_execution::SessionItemState::Succeeded
+        }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn t03_replay_events_are_marked_replay_and_do_not_prompt_again() {
+        let (root, record) = test_paths("session-events-replay");
+        let backend = AcpExecutionBackend::new(root.join("workspaces"));
+        let context_key = "member-replay-fixture";
+        let recall_tools = || crate::backend::ai_execution::AiRecallTools {
+            tenant_id: "tenant-fixture".to_string(),
+            recall_session_id: "recall-fixture".to_string(),
+            database_path: root.join("fixture.db").to_string_lossy().into_owned(),
+        };
+
+        let live_capture = Arc::new(CaptureSessionEvents::default());
+        let mut live_request = request(None);
+        live_request.purpose = AiExecutionPurpose::Recall;
+        live_request.session_mode = AgentSessionMode::Persistent;
+        live_request.execution_context_key = Some(context_key.to_string());
+        live_request.recall_tools = Some(recall_tools());
+        live_request.progress = Some(live_capture);
+        let binding = backend
+            .execute(&definition("session_events", &record), live_request)
+            .await
+            .expect("live persistent ACP execution")
+            .persistent_binding
+            .expect("persistent binding");
+
+        let replay_capture = Arc::new(CaptureSessionEvents::default());
+        let mut replay_request = request(None);
+        replay_request.purpose = AiExecutionPurpose::Recall;
+        replay_request.session_mode = AgentSessionMode::Persistent;
+        replay_request.execution_context_key = Some(context_key.to_string());
+        replay_request.recall_tools = Some(recall_tools());
+        replay_request.binding = Some(binding);
+        replay_request.replay = true;
+        replay_request.progress = Some(replay_capture.clone());
+        let replay = backend
+            .execute(&definition("session_events", &record), replay_request)
+            .await
+            .expect("provider history replay");
+
+        assert_eq!(
+            replay.replay_text.as_deref(),
+            Some("replayed:fixture-history")
+        );
+        let events = replay_capture.events.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ThinkingDelta { ref text }
+                if text == "replayed provider thought"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            crate::backend::ai_execution::SessionEventKind::ToolResult { success: true, .. }
+        )));
+        assert!(events.iter().all(|event| {
+            matches!(
+                event.delivery,
+                crate::backend::ai_execution::SessionEventDelivery::Replay
+            ) && event.identity.session_id == context_key
+                && event.identity.member_id == context_key
+        }));
+        let record_contents = records(&record);
+        assert_eq!(record_contents.matches("\"event\":\"prompt\"").count(), 1);
+        assert_eq!(record_contents.matches("\"event\":\"load\"").count(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -134,6 +134,24 @@ function handleLoadSession(message) {
     fail(message.id);
     return;
   }
+  if (mode === "session_events") {
+    update({
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "replayed provider thought" },
+    }, message.params?.sessionId ?? sessionId);
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "replayed-tool",
+      title: "replayed read",
+      kind: "read",
+      status: "pending",
+    }, message.params?.sessionId ?? sessionId);
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "replayed-tool",
+      status: "completed",
+    }, message.params?.sessionId ?? sessionId);
+  }
   text("replayed:", message.params?.sessionId ?? sessionId);
   text("fixture-history", message.params?.sessionId ?? sessionId);
   respond(message.id, {});
@@ -183,6 +201,36 @@ function handlePrompt(message) {
     case "late_chunk":
       text("before ");
       text("late");
+      finishPrompt(id);
+      return;
+    case "session_events":
+      text("visible ");
+      text("answer");
+      update({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "provider thought" },
+      });
+      update({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "resource_link", name: "metadata", uri: "fixture://thought-metadata" },
+      });
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "fixture-tool",
+        title: "read fixture",
+        kind: "read",
+        status: "pending",
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fixture-tool",
+        status: "in_progress",
+      });
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "fixture-tool",
+        status: "completed",
+      });
       finishPrompt(id);
       return;
     case "permission":
