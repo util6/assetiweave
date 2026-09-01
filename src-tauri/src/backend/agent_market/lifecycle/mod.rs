@@ -373,9 +373,9 @@ mod tests {
             .is_none());
 
         let failed_refresh = recovered_manager
-            .refresh_installed_acp_health()
+            .refresh_installed_agent_health()
             .await
-            .expect("startup ACP health refresh");
+            .expect("startup Agent health refresh");
         assert_eq!(failed_refresh.checked, 1);
         assert_eq!(failed_refresh.available, 0);
         assert_eq!(failed_refresh.unavailable, 1);
@@ -396,9 +396,9 @@ mod tests {
         )
         .expect("restore usable ACP fixture");
         let recovered_refresh = recovered_manager
-            .refresh_installed_acp_health()
+            .refresh_installed_agent_health()
             .await
-            .expect("repeat ACP health refresh after recovery");
+            .expect("repeat Agent health refresh after recovery");
         assert_eq!(recovered_refresh.available, 1);
         let blocking_refresh = recovered_manager
             .clone()

@@ -235,6 +235,106 @@ describe("AgentSettingsPanel", () => {
     expect(within(row as HTMLElement).getByTitle("The ACP Agent did not return a model list.")).toBeTruthy();
   });
 
+  it("refreshes installed native Agents instead of leaving stale health in checking", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([createMarketItem("antigravity", true, "native", true)]);
+    agentRuntime.checkAgentConnection.mockResolvedValue({
+      agent_id: "antigravity",
+      available: true,
+      installed: true,
+      connected: true,
+      version: "agy 1.1.16",
+      connection_method: "native",
+      error_code: null,
+      error: null,
+      installation_status: "ready",
+      runtime_status: "ready",
+      protocol_status: "ready",
+      execution_ready: true,
+      health_stale: false,
+    });
+
+    renderPanel({ view: "settings" });
+
+    const row = (await screen.findByRole("heading", { name: "Antigravity" })).closest("article");
+    await waitFor(() => expect(agentRuntime.checkAgentConnection).toHaveBeenCalledWith("antigravity", "connection"));
+    await waitFor(() => expect(within(row as HTMLElement).getByText("可用")).toBeTruthy());
+  });
+
+  it("syncs the Agent status when model discovery succeeds", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([createMarketItem("antigravity", true, "native", true)]);
+    agentRuntime.checkAgentConnection.mockResolvedValue({
+      agent_id: "antigravity",
+      available: false,
+      installed: true,
+      connected: false,
+      version: null,
+      connection_method: "native",
+      error_code: "native_connection_failed",
+      error: "The native Agent is unavailable.",
+      installation_status: "broken",
+      runtime_status: "runtime_missing",
+      protocol_status: "failed",
+      execution_ready: false,
+      health_stale: false,
+    });
+    agentRuntime.listAgentModels.mockResolvedValue({
+      agent_id: "antigravity",
+      available: true,
+      models: [{ id: "fixture-model", label: "Fixture Model", description: null }],
+      current_model_id: "fixture-model",
+      error_code: null,
+      error: null,
+    });
+
+    renderPanel({ view: "settings" });
+
+    const row = (await screen.findByRole("heading", { name: "Antigravity" })).closest("article") as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("不可用")).toBeTruthy());
+    fireEvent.click(within(row).getByRole("button", { name: "模型 Antigravity" }));
+
+    expect(await screen.findByRole("heading", { name: "选择模型 · Antigravity" })).toBeTruthy();
+    await waitFor(() => expect(agentRuntime.listAgentModels).toHaveBeenCalledWith("antigravity"));
+    await waitFor(() => expect(within(row).getByText("可用")).toBeTruthy());
+  });
+
+  it("keeps a native Agent available when only model discovery fails", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([createMarketItem("antigravity", true, "native", true)]);
+    agentRuntime.checkAgentConnection.mockResolvedValue({
+      agent_id: "antigravity",
+      available: true,
+      installed: true,
+      connected: true,
+      version: "agy 1.1.16",
+      connection_method: "native",
+      error_code: null,
+      error: null,
+      installation_status: "ready",
+      runtime_status: "ready",
+      protocol_status: "ready",
+      execution_ready: true,
+      health_stale: false,
+    });
+    agentRuntime.listAgentModels.mockResolvedValue({
+      agent_id: "antigravity",
+      available: false,
+      models: [],
+      current_model_id: null,
+      error_code: "model_discovery_failed",
+      error: "The native Agent did not return a model list.",
+    });
+
+    renderPanel({ view: "settings" });
+
+    const row = (await screen.findByRole("heading", { name: "Antigravity" })).closest("article") as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("可用")).toBeTruthy());
+    fireEvent.click(within(row).getByRole("button", { name: "模型 Antigravity" }));
+    await waitFor(() => expect(agentRuntime.listAgentModels).toHaveBeenCalledWith("antigravity"));
+    expect(within(row).getByText("可用")).toBeTruthy();
+  });
+
   it("lists catalog versions without compatibility gating", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     const item = createMarketItem("opencode", false);
@@ -345,14 +445,25 @@ function renderPanel({
   );
 }
 
-function createMarketItem(id: string, installed: boolean) {
-  const displayName = id === "opencode" ? "OpenCode" : id === "gemini" ? "Gemini CLI" : "Codex CLI";
+function createMarketItem(
+  id: string,
+  installed: boolean,
+  protocol: "acp" | "native" = "acp",
+  healthStale = false,
+) {
+  const displayName = id === "opencode"
+    ? "OpenCode"
+    : id === "gemini"
+      ? "Gemini CLI"
+      : id === "antigravity"
+        ? "Antigravity"
+        : "Codex CLI";
   return {
     id,
     catalogVersion: "fixture-catalog",
     displayName,
     description: "Fixture Agent",
-    protocol: "acp",
+    protocol,
     version: "1.0.0",
     capabilities: {
       purposes: ["text"],
@@ -381,7 +492,7 @@ function createMarketItem(id: string, installed: boolean) {
       agentId: id,
       displayName,
       version: "1.0.0",
-      protocol: "acp",
+      protocol,
       distributionId: "fixture-binary",
       distributionType: "binary",
       ownership: "managed",
@@ -393,7 +504,7 @@ function createMarketItem(id: string, installed: boolean) {
       protocolStatus: "ready",
       connected: false,
       executionReady: true,
-      healthStale: false,
+      healthStale,
       selectedModelId: null,
       modelStatus: null,
       updateAvailable: false,

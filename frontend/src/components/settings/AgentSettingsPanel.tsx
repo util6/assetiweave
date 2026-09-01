@@ -118,24 +118,13 @@ export function AgentSettingsPanel({
             item.id,
             marketConnectionState(item),
           ])));
-          const installedAcpAgents = items.filter((item) =>
-            item.protocol === "acp" && item.installed?.enabled);
-          if (installedAcpAgents.length === 0) return;
-          setConnectionStates((current) => ({
-            ...current,
-            ...Object.fromEntries(installedAcpAgents.map((item) => [item.id, "checking"])),
-          }));
-          await Promise.all(installedAcpAgents.map(async (item) => {
-            try {
-              const result = await checkAgentConnection(item.id, "connection");
-              if (disposed) return;
-              applyConnectionResult(item.id, result, "connection", t, setConnectionStates, setConnectionMessages);
-            } catch (error) {
-              if (disposed) return;
-              setConnectionStates((current) => ({ ...current, [item.id]: "failed" }));
-              setConnectionMessages((current) => ({ ...current, [item.id]: errorMessage(error) }));
-            }
-          }));
+          await checkInstalledMarketAgents(
+            items,
+            t,
+            setConnectionStates,
+            setConnectionMessages,
+            () => disposed,
+          );
         })
         .catch(() => undefined);
       return () => {
@@ -241,6 +230,7 @@ export function AgentSettingsPanel({
       item.id,
       marketConnectionState(item),
     ])));
+    await checkInstalledMarketAgents(items, t, setConnectionStates, setConnectionMessages);
   }
 
   async function refreshMarketCatalog() {
@@ -408,6 +398,18 @@ export function AgentSettingsPanel({
         if (modelRequestId.current !== requestId) return;
         setModelResult(result);
         setModelError(result.error || "");
+        setConnectionStates((current) => {
+          if (result.available) {
+            return { ...current, [agent.id]: "available" };
+          }
+          if (agent.protocol.toLowerCase() === "acp") {
+            return { ...current, [agent.id]: "failed" };
+          }
+          return current;
+        });
+        if (!result.available && result.error) {
+          setConnectionMessages((current) => ({ ...current, [agent.id]: result.error || "" }));
+        }
       })
       .catch((error: unknown) => {
         if (modelRequestId.current !== requestId) return;
@@ -676,9 +678,35 @@ export function AgentSettingsPanel({
   );
 }
 
+async function checkInstalledMarketAgents(
+  items: agentRuntime.AgentMarketItem[],
+  t: Translator,
+  setConnectionStates: Dispatch<SetStateAction<Record<AgentId, AgentConnectionState>>>,
+  setConnectionMessages: Dispatch<SetStateAction<Record<string, string>>>,
+  isDisposed: () => boolean = () => false,
+) {
+  const installedAgents = items.filter((item) => item.installed?.enabled);
+  if (installedAgents.length === 0 || isDisposed()) return;
+  setConnectionStates((current) => ({
+    ...current,
+    ...Object.fromEntries(installedAgents.map((item) => [item.id, "checking"])),
+  }));
+  await Promise.all(installedAgents.map(async (item) => {
+    try {
+      const result = await checkAgentConnection(item.id, "connection");
+      if (isDisposed()) return;
+      applyConnectionResult(item.id, result, "connection", t, setConnectionStates, setConnectionMessages);
+    } catch (error) {
+      if (isDisposed()) return;
+      setConnectionStates((current) => ({ ...current, [item.id]: "failed" }));
+      setConnectionMessages((current) => ({ ...current, [item.id]: errorMessage(error) }));
+    }
+  }));
+}
+
 function marketConnectionState(item: agentRuntime.AgentMarketItem): AgentConnectionState {
   if (!item.installed) return "not-installed";
-  if (item.installed.healthStale) return "checking";
+  if (item.installed.healthStale) return "not-tested";
   return item.installed.executionReady ? "available" : "failed";
 }
 

@@ -195,7 +195,7 @@ impl AppRuntime {
             {
                 crate::backend::operation_log::log_warn(
                     "app.startup.agent_health_prepare",
-                    "ACP startup health refresh could not be prepared",
+                    "Agent startup health refresh could not be prepared",
                     &[("error", error)],
                 );
             }
@@ -463,11 +463,11 @@ impl AppRuntime {
             Box::new(move |context| {
                 if context.is_cancelled() {
                     return Err(AppError::Canceled(
-                        "ACP startup health refresh was cancelled".to_string(),
+                        "Agent startup health refresh was cancelled".to_string(),
                     ));
                 }
                 let summary = runtime_manager
-                    .refresh_installed_acp_health_blocking()
+                    .refresh_installed_agent_health_blocking()
                     .map_err(AppError::External)?;
                 Ok(serde_json::json!({
                     "checked": summary.checked,
@@ -479,7 +479,7 @@ impl AppRuntime {
         if let Err(error) = spawn {
             crate::backend::operation_log::log_warn(
                 "app.startup.agent_health_refresh",
-                "ACP startup health refresh could not be started",
+                "Agent startup health refresh could not be started",
                 &[("error", error.to_string())],
             );
         }

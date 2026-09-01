@@ -100,8 +100,8 @@ impl AgentInstallationRepository {
         Ok(())
     }
 
-    pub(crate) async fn mark_acp_health_unchecked(&self, updated_at: &str) -> Result<u64, String> {
-        let result = sqlx::query("UPDATE app_agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE enabled = 1 AND protocol = 'acp' AND installation_status IN ('ready', 'broken')")
+    pub(crate) async fn mark_health_unchecked(&self, updated_at: &str) -> Result<u64, String> {
+        let result = sqlx::query("UPDATE app_agent_installations SET protocol_status = 'unchecked', protocol_error_code = NULL, protocol_error_message = NULL, protocol_checked_at = NULL, model_status = 'unchecked', model_error_code = NULL, model_checked_at = NULL, updated_at = ?1 WHERE enabled = 1 AND installation_status IN ('ready', 'broken')")
             .bind(updated_at)
             .execute(&self.pool)
             .await

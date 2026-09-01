@@ -12,8 +12,8 @@ use crate::backend::{
     agents::{
         registry::{AgentRegistry, AgentRegistryHandle},
         types::{
-            AgentCommandDefinition, AgentDefinition, AgentEnvEntry, AgentId, AgentModelsResult,
-            AgentProtocol, DeclaredAgentCapabilities,
+            AgentCommandDefinition, AgentConnectionResult, AgentDefinition, AgentEnvEntry, AgentId,
+            AgentModelsResult, AgentProtocol, DeclaredAgentCapabilities,
         },
     },
     ai_execution::{
@@ -252,13 +252,13 @@ impl AgentRuntimeManager {
     pub(crate) async fn prepare_startup_health_refresh(&self) -> Result<u64, String> {
         let changed = self
             .repository
-            .mark_acp_health_unchecked(&chrono::Utc::now().to_rfc3339())
+            .mark_health_unchecked(&chrono::Utc::now().to_rfc3339())
             .await?;
         self.reload().await?;
         Ok(changed)
     }
 
-    pub(crate) async fn refresh_installed_acp_health(
+    pub(crate) async fn refresh_installed_agent_health(
         &self,
     ) -> Result<AgentHealthRefreshSummary, String> {
         let agent_ids = self
@@ -266,22 +266,29 @@ impl AgentRuntimeManager {
             .list()
             .await?
             .into_iter()
-            .filter(|installation| {
-                installation.enabled && installation.protocol == AgentMarketProtocol::Acp
-            })
-            .map(|installation| installation.agent_id)
+            .filter(|installation| installation.enabled)
+            .map(|installation| (installation.agent_id, installation.protocol))
             .collect::<Vec<_>>();
         let mut summary = AgentHealthRefreshSummary::default();
-        for agent_id in agent_ids {
-            let result = match self.probe_acp_health(&agent_id).await {
-                Ok(result) => result,
-                Err(error) => {
-                    self.reload().await?;
-                    return Err(error);
-                }
+        for (agent_id, protocol) in agent_ids {
+            let available = match protocol {
+                AgentMarketProtocol::Acp => match self.probe_acp_health(&agent_id).await {
+                    Ok(result) => result.available,
+                    Err(error) => {
+                        self.reload().await?;
+                        return Err(error);
+                    }
+                },
+                AgentMarketProtocol::Native => match self.probe_native_health(&agent_id).await {
+                    Ok(result) => result.available,
+                    Err(error) => {
+                        self.reload().await?;
+                        return Err(error);
+                    }
+                },
             };
             summary.checked += 1;
-            if result.available {
+            if available {
                 summary.available += 1;
             } else {
                 summary.unavailable += 1;
@@ -291,14 +298,215 @@ impl AgentRuntimeManager {
         Ok(summary)
     }
 
-    pub(crate) fn refresh_installed_acp_health_blocking(
+    pub(crate) fn refresh_installed_agent_health_blocking(
         self: Arc<Self>,
     ) -> Result<AgentHealthRefreshSummary, String> {
         run_process_capable_runtime(
-            "aiw-acp-startup-health",
-            "The ACP startup health refresh did not complete.",
-            async move { self.refresh_installed_acp_health().await },
+            "aiw-agent-startup-health",
+            "The Agent startup health refresh did not complete.",
+            async move { self.refresh_installed_agent_health().await },
         )
+    }
+
+    pub(crate) fn refresh_native_health_blocking(
+        self: Arc<Self>,
+        agent_id: String,
+    ) -> Result<AgentConnectionResult, String> {
+        run_process_capable_runtime(
+            "aiw-native-health",
+            "The native Agent health refresh did not complete.",
+            async move { self.refresh_native_health(&agent_id).await },
+        )
+    }
+
+    pub(crate) async fn refresh_native_health(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentConnectionResult, String> {
+        let result = self.probe_native_health(agent_id).await?;
+        self.reload().await?;
+        Ok(result)
+    }
+
+    pub(crate) fn refresh_native_models_blocking(
+        self: Arc<Self>,
+        agent_id: String,
+    ) -> Result<AgentModelsResult, String> {
+        run_process_capable_runtime(
+            "aiw-native-models",
+            "The native Agent model discovery did not complete.",
+            async move { self.refresh_native_models(&agent_id).await },
+        )
+    }
+
+    pub(crate) async fn refresh_native_models(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentModelsResult, String> {
+        let health = self.refresh_native_health(agent_id).await?;
+        if !health.available {
+            return Ok(unavailable_models(
+                agent_id,
+                health
+                    .error_code
+                    .as_deref()
+                    .unwrap_or("native_connection_failed"),
+                health
+                    .error
+                    .as_deref()
+                    .unwrap_or("The native Agent is unavailable."),
+            ));
+        }
+
+        let mutation_gate = self.mutation_gate(agent_id);
+        let _mutation_lease = mutation_gate.write().await;
+        let mut installation = self
+            .repository
+            .get(agent_id)
+            .await?
+            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let definition = definition_from_installation(&installation)?;
+        let discovery = NativeExecutionBackend::new(self.workspace_root.clone())
+            .discover_models(&definition)
+            .await;
+        let result = match discovery {
+            Ok((models, current_model_id)) => {
+                installation.model_status = Some("ready".to_string());
+                installation.model_error_code = None;
+                installation.protocol_status = super::types::ProtocolStatus::Ready;
+                installation.protocol_error_code = None;
+                installation.protocol_error_message = None;
+                AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: current_model_id
+                        .or_else(|| models.first().map(|model| model.id.clone())),
+                    models,
+                    error_code: None,
+                    error: None,
+                }
+            }
+            Err(error) => {
+                let message = error.to_view().message;
+                installation.model_status = Some("failed".to_string());
+                installation.model_error_code = Some("model_discovery_failed".to_string());
+                unavailable_models(agent_id, "model_discovery_failed", &message)
+            }
+        };
+        installation.model_checked_at = Some(now.clone());
+        installation.protocol_checked_at = Some(now.clone());
+        installation.updated_at = now;
+        self.repository.update_health(&installation).await?;
+        self.reload().await?;
+        Ok(result)
+    }
+
+    async fn probe_native_health(&self, agent_id: &str) -> Result<AgentConnectionResult, String> {
+        let mutation_gate = self.mutation_gate(agent_id);
+        let _mutation_lease = mutation_gate.write().await;
+        let mut installation = self
+            .repository
+            .get(agent_id)
+            .await?
+            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        if installation.protocol != AgentMarketProtocol::Native {
+            return Err("The installed Agent does not use the native runtime.".to_string());
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        if !installation.enabled {
+            return Ok(unavailable_native_connection(
+                agent_id,
+                "agent_disabled",
+                "The native Agent is disabled.",
+            ));
+        }
+        if !installation.resolved_program.is_file() {
+            let runtime_status = if installation.ownership == Ownership::Managed {
+                RuntimeStatus::EntryMissing
+            } else {
+                RuntimeStatus::RuntimeMissing
+            };
+            mark_native_health_failed(
+                &mut installation,
+                &now,
+                runtime_status,
+                "agent_entry_missing",
+                "The resolved Agent entry is missing.",
+            );
+            self.repository.update_health(&installation).await?;
+            return Ok(unavailable_native_connection(
+                agent_id,
+                "agent_entry_missing",
+                "The resolved Agent entry is missing.",
+            ));
+        }
+
+        let definition = match definition_from_installation(&installation) {
+            Ok(definition) => definition,
+            Err(error) => {
+                mark_native_health_failed(
+                    &mut installation,
+                    &now,
+                    RuntimeStatus::Failed,
+                    "definition_invalid",
+                    &error,
+                );
+                self.repository.update_health(&installation).await?;
+                return Ok(unavailable_native_connection(
+                    agent_id,
+                    "definition_invalid",
+                    "The persisted native Agent definition is invalid.",
+                ));
+            }
+        };
+        installation.installation_status = InstallationStatus::Ready;
+        installation.runtime_status = RuntimeStatus::Ready;
+        installation.runtime_error_code = None;
+        installation.runtime_error_message = None;
+        installation.runtime_checked_at = Some(now.clone());
+        let result = match NativeExecutionBackend::new(self.workspace_root.clone())
+            .check_connection(&definition)
+            .await
+        {
+            Ok(()) => {
+                installation.protocol_status = super::types::ProtocolStatus::Ready;
+                installation.protocol_error_code = None;
+                installation.protocol_error_message = None;
+                installation.model_status = Some("ready".to_string());
+                installation.model_error_code = None;
+                AgentConnectionResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    installed: true,
+                    connected: true,
+                    version: Some(installation.agent_version.clone()),
+                    connection_method: Some("native".to_string()),
+                    error_code: None,
+                    error: None,
+                    installation_status: None,
+                    runtime_status: None,
+                    protocol_status: None,
+                    execution_ready: false,
+                    health_stale: false,
+                }
+            }
+            Err(error) => {
+                let message = error.to_view().message;
+                installation.protocol_status = super::types::ProtocolStatus::Failed;
+                installation.protocol_error_code = Some("native_connection_failed".to_string());
+                installation.protocol_error_message = Some(message.clone());
+                installation.model_status = Some("failed".to_string());
+                installation.model_error_code = Some("native_connection_failed".to_string());
+                unavailable_native_connection(agent_id, "native_connection_failed", &message)
+            }
+        };
+        installation.protocol_checked_at = Some(now.clone());
+        installation.model_checked_at = Some(now.clone());
+        installation.updated_at = now;
+        self.repository.update_health(&installation).await?;
+        Ok(result)
     }
 
     pub(crate) async fn refresh_acp_health(
@@ -478,6 +686,50 @@ fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsR
         error_code: Some(code.to_string()),
         error: Some(message.to_string()),
     }
+}
+
+fn unavailable_native_connection(
+    agent_id: &str,
+    code: &str,
+    message: &str,
+) -> AgentConnectionResult {
+    AgentConnectionResult {
+        agent_id: agent_id.to_string(),
+        available: false,
+        installed: true,
+        connected: false,
+        version: None,
+        connection_method: Some("native".to_string()),
+        error_code: Some(code.to_string()),
+        error: Some(message.to_string()),
+        installation_status: None,
+        runtime_status: None,
+        protocol_status: None,
+        execution_ready: false,
+        health_stale: false,
+    }
+}
+
+fn mark_native_health_failed(
+    installation: &mut AgentInstallation,
+    checked_at: &str,
+    runtime_status: RuntimeStatus,
+    error_code: &str,
+    message: &str,
+) {
+    installation.installation_status = InstallationStatus::Broken;
+    installation.runtime_status = runtime_status;
+    installation.runtime_error_code = Some(error_code.to_string());
+    installation.runtime_error_message = Some(message.to_string());
+    installation.runtime_checked_at = Some(checked_at.to_string());
+    installation.protocol_status = ProtocolStatus::Failed;
+    installation.protocol_error_code = Some(error_code.to_string());
+    installation.protocol_error_message = Some(message.to_string());
+    installation.protocol_checked_at = Some(checked_at.to_string());
+    installation.model_status = Some("failed".to_string());
+    installation.model_error_code = Some(error_code.to_string());
+    installation.model_checked_at = Some(checked_at.to_string());
+    installation.updated_at = checked_at.to_string();
 }
 
 fn model_discovery_error_message(error: &AiExecutionError) -> String {
