@@ -103,15 +103,18 @@ export function TeamPage() {
     return activeCatalog;
   }, [catalog, market]);
 
-  const agentCanFillRole = (agentId: string, role: TeamRole) => {
+  const agentCanFillTeam = (agentId: string) => {
     const marketItem = market.find((item) => item.id === agentId);
     if (!marketItem) return market.length === 0;
-    return Boolean(marketItem.capabilities.resume)
-      && (role === "teammate" || Boolean(marketItem.capabilities.historyReplay));
+    const capabilities = marketItem.installed?.capabilities ?? marketItem.capabilities;
+    return Boolean(
+      capabilities.resume
+      && capabilities.historyReplay
+      && capabilities.liveEvents,
+    );
   };
 
-  const selectableAgents = (role: TeamRole) =>
-    installedAgents.filter((agent) => agentCanFillRole(agent.id, role));
+  const selectableAgents = () => installedAgents.filter((agent) => agentCanFillTeam(agent.id));
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
 
@@ -237,8 +240,8 @@ export function TeamPage() {
   };
 
   const openCreate = () => {
-    const first = selectableAgents("leader")[0];
-    const second = selectableAgents("teammate")[0] ?? first;
+    const first = selectableAgents()[0];
+    const second = selectableAgents()[0] ?? first;
     setFormName("");
     setFormDescription("");
     setFormMembers([
@@ -686,7 +689,7 @@ export function TeamPage() {
         <form className="grid gap-4" id="team-editor-form" onSubmit={(event) => void save(event)}>
           <label className="grid gap-1.5 text-body-sm font-semibold">{t("team.dialog.name")}<Input autoFocus disabled={busy} onChange={(event) => setFormName(event.target.value)} placeholder={t("team.dialog.namePlaceholder")} value={formName} /></label>
           <label className="grid gap-1.5 text-body-sm font-semibold">{t("team.dialog.description")}<Input disabled={busy} onChange={(event) => setFormDescription(event.target.value)} placeholder={t("team.dialog.descriptionPlaceholder")} value={formDescription} /></label>
-          <div className="grid gap-2"><div className="flex items-center justify-between gap-3"><span className="text-body-sm font-semibold">{t("team.dialog.members")}</span><Button disabled={busy} onClick={() => setFormMembers((current) => [...current, { role: "teammate", agent_id: selectableAgents("teammate")[0]?.id ?? "", model: null }])} size="sm" type="button" variant="link"><Plus size={14} />{t("team.action.addMember")}</Button></div><div className="grid max-h-72 gap-2 overflow-y-auto pr-1">{formMembers.map((member, index) => { const memberModels = models[member.agent_id] ?? []; const roleAgents = selectableAgents(member.role); return <div className="grid gap-2 rounded-xl border border-theme-card-border/65 bg-theme-card/40 p-3" key={member.id ?? `new-${index}`}><div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2"><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.agent")}<select aria-label={`${t("team.dialog.agent")} ${index + 1}`} className={selectClassName} disabled={busy || roleAgents.length === 0} onChange={(event) => updateMember(index, { agent_id: event.target.value, model: null })} value={roleAgents.some((agent) => agent.id === member.agent_id) ? member.agent_id : ""}><option value="">{roleAgents.length ? t("team.dialog.selectAgent") : t("team.dialog.noAgents")}</option>{roleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.display_name} ({agent.id})</option>)}</select></label><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.model")}<select aria-label={`${t("team.dialog.model")} ${index + 1}`} className={selectClassName} disabled={busy || !member.agent_id} onChange={(event) => updateMember(index, { model: event.target.value || null })} value={member.model ?? ""}><option value="">{memberModels.length ? t("team.dialog.selectModel") : t("team.dialog.noModels")}</option>{memberModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.members")}<select aria-label={`Role ${index + 1}`} className={selectClassName} disabled={busy} onChange={(event) => updateMember(index, { role: event.target.value as TeamRole, agent_id: selectableAgents(event.target.value as TeamRole)[0]?.id ?? "", model: null })} value={member.role}><option value="leader">{t("team.detail.leader")}</option><option value="teammate">{t("team.detail.teammate")}</option></select></label><div className="flex gap-1"><Button aria-label={t("team.action.moveUp")} disabled={busy || index === 0} onClick={() => moveMember(index, -1)} size="icon-sm" type="button" variant="ghost"><ArrowUp size={14} /></Button><Button aria-label={t("team.action.moveDown")} disabled={busy || index === formMembers.length - 1} onClick={() => moveMember(index, 1)} size="icon-sm" type="button" variant="ghost"><ArrowDown size={14} /></Button><Button aria-label={t("team.action.removeMember")} disabled={busy || formMembers.length <= 2} onClick={() => setFormMembers((current) => current.filter((_, memberIndex) => memberIndex !== index))} size="icon-sm" type="button" variant="ghost"><Trash2 size={14} /></Button></div></div></div>; })}</div></div>
+          <div className="grid gap-2"><div className="flex items-center justify-between gap-3"><span className="text-body-sm font-semibold">{t("team.dialog.members")}</span><Button disabled={busy} onClick={() => setFormMembers((current) => [...current, { role: "teammate", agent_id: selectableAgents()[0]?.id ?? "", model: null }])} size="sm" type="button" variant="link"><Plus size={14} />{t("team.action.addMember")}</Button></div><div className="grid max-h-72 gap-2 overflow-y-auto pr-1">{formMembers.map((member, index) => { const memberModels = models[member.agent_id] ?? []; const roleAgents = selectableAgents(); return <div className="grid gap-2 rounded-xl border border-theme-card-border/65 bg-theme-card/40 p-3" key={member.id ?? `new-${index}`}><div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2"><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.agent")}<select aria-label={`${t("team.dialog.agent")} ${index + 1}`} className={selectClassName} disabled={busy || roleAgents.length === 0} onChange={(event) => updateMember(index, { agent_id: event.target.value, model: null })} value={roleAgents.some((agent) => agent.id === member.agent_id) ? member.agent_id : ""}><option value="">{roleAgents.length ? t("team.dialog.selectAgent") : t("team.dialog.noAgents")}</option>{roleAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.display_name} ({agent.id})</option>)}</select></label><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.model")}<select aria-label={`${t("team.dialog.model")} ${index + 1}`} className={selectClassName} disabled={busy || !member.agent_id} onChange={(event) => updateMember(index, { model: event.target.value || null })} value={member.model ?? ""}><option value="">{memberModels.length ? t("team.dialog.selectModel") : t("team.dialog.noModels")}</option>{memberModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select></label><label className="grid gap-1 text-caption text-on-surface-variant">{t("team.dialog.members")}<select aria-label={`Role ${index + 1}`} className={selectClassName} disabled={busy} onChange={(event) => updateMember(index, { role: event.target.value as TeamRole, agent_id: selectableAgents()[0]?.id ?? "", model: null })} value={member.role}><option value="leader">{t("team.detail.leader")}</option><option value="teammate">{t("team.detail.teammate")}</option></select></label><div className="flex gap-1"><Button aria-label={t("team.action.moveUp")} disabled={busy || index === 0} onClick={() => moveMember(index, -1)} size="icon-sm" type="button" variant="ghost"><ArrowUp size={14} /></Button><Button aria-label={t("team.action.moveDown")} disabled={busy || index === formMembers.length - 1} onClick={() => moveMember(index, 1)} size="icon-sm" type="button" variant="ghost"><ArrowDown size={14} /></Button><Button aria-label={t("team.action.removeMember")} disabled={busy || formMembers.length <= 2} onClick={() => setFormMembers((current) => current.filter((_, memberIndex) => memberIndex !== index))} size="icon-sm" type="button" variant="ghost"><Trash2 size={14} /></Button></div></div></div>; })}</div></div>
           {formError && <p className="rounded-xl border border-status-remove/35 bg-status-remove/10 p-3 text-body-sm text-status-remove">{formError}</p>}
         </form>
       </DialogFrame>}

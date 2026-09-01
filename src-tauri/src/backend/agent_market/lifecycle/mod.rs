@@ -281,6 +281,14 @@ mod tests {
             ProtocolStatus::Ready
         );
         assert_eq!(installed.installation.catalog_item_version, "1.0.0");
+        assert_eq!(
+            installed.installation.definition_json["capabilities"]["liveEvents"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            installed.installation.definition_json["capabilities"]["richHistoryReplay"],
+            serde_json::json!(true)
+        );
         let first_install_dir = installed
             .installation
             .install_dir
@@ -343,10 +351,16 @@ mod tests {
             warnings.is_empty(),
             "unexpected recovery warnings: {warnings:?}"
         );
-        assert!(recovered_manager
+        let recovered_definition = recovered_manager
             .registry()
             .get(&AgentId::parse(AGENT_ID).expect("agent id"))
-            .is_some());
+            .expect("reloaded Agent definition");
+        assert!(recovered_definition.declared_capabilities.live_events);
+        assert!(
+            recovered_definition
+                .declared_capabilities
+                .rich_history_replay
+        );
 
         let active_program = second_install_dir.join("bin/agent");
         std::fs::write(
@@ -489,6 +503,11 @@ mod tests {
                     purposes: vec!["text_prompt".to_string()],
                     text_prompt: true,
                     model_discovery: false,
+                    resume: true,
+                    history_replay: true,
+                    live_events: true,
+                    rich_history_replay: true,
+                    team_tools: true,
                     ..CatalogCapabilities::default()
                 },
                 verification: Verification {

@@ -49,8 +49,8 @@ describe("TeamPage", () => {
     updateTeamMock.mockResolvedValue(fixture);
     deleteTeamMock.mockResolvedValue(undefined);
     listAgentCatalogMock.mockResolvedValue([
-      { id: "agent-a", display_name: "Agent A", command: "agent-a", args: [], availability_command: "agent-a", protocol: "acp" },
-      { id: "agent-b", display_name: "Agent B", command: "agent-b", args: [], availability_command: "agent-b", protocol: "native" },
+      { id: "agent-a", display_name: "Agent A", command: "agent-a", args: [], availability_command: "agent-a", protocol: "acp", capabilities: { text_prompt: true, resume: true, history_replay: true, live_events: true, rich_history_replay: false, team_tools: true, resume_args: null } },
+      { id: "agent-b", display_name: "Agent B", command: "agent-b", args: [], availability_command: "agent-b", protocol: "native", capabilities: { text_prompt: true, resume: true, history_replay: true, live_events: true, rich_history_replay: false, team_tools: true, resume_args: null } },
     ]);
     listAgentMarketMock.mockResolvedValue([]);
     listAgentModelsMock.mockImplementation(async (agentId: string) => ({ agent_id: agentId, available: true, models: [{ id: agentId === "agent-a" ? "model-a" : "model-b", label: agentId === "agent-a" ? "Model A" : "Model B", description: null }], current_model_id: agentId === "agent-a" ? "model-a" : "model-b", error_code: null, error: null }));
@@ -84,6 +84,20 @@ describe("TeamPage", () => {
     fireEvent.change(screen.getByLabelText("Team name"), { target: { value: "New crew" } });
     fireEvent.click(screen.getByRole("button", { name: "Save team" }));
     await waitFor(() => expect(createTeamMock).toHaveBeenCalledWith(expect.objectContaining({ name: "New crew" })));
+  });
+
+  it("filters members by the shared Resume, Replay, and Live Events facts", async () => {
+    listAgentMarketMock.mockResolvedValue([
+      { id: "agent-a", installed: { enabled: true, executionReady: true }, capabilities: { resume: true, historyReplay: true, liveEvents: true } },
+      { id: "agent-b", installed: { enabled: true, executionReady: true }, capabilities: { resume: true, historyReplay: true, liveEvents: false } },
+    ]);
+
+    renderPage();
+    await waitFor(() => expect(screen.getAllByText("Refactor crew").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+
+    expect(screen.getAllByRole("option", { name: /Agent A/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("option", { name: /Agent B/ })).toBeNull();
   });
 
   it("uses the shared confirm dialog for deletion", async () => {

@@ -8,10 +8,7 @@ use std::{
 use crate::backend::{
     agents::{
         registry::AgentRegistry,
-        types::{
-            AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol,
-            DeclaredAgentCapabilities,
-        },
+        types::{AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol},
     },
     ai_execution::{check_agent_connection_blocking, executor::AgentExecutor},
 };
@@ -465,11 +462,9 @@ fn definition_for(
             .iter()
             .map(|(name, value)| crate::backend::agents::types::AgentEnvEntry::new(name, value))
             .collect(),
-        declared_capabilities: if matches!(protocol, AgentProtocol::Acp) {
-            DeclaredAgentCapabilities::acp_text()
-        } else {
-            DeclaredAgentCapabilities::default()
-        },
+        declared_capabilities: item
+            .capabilities
+            .to_declared_agent_capabilities(&item.protocol),
         availability_probe: Some(AgentCommandDefinition::with_command(
             runtime.resolved_program.to_string_lossy().to_string(),
             ["--version"],

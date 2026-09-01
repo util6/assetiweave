@@ -897,26 +897,16 @@ fn declared_capabilities_from_catalog(
     capabilities: Option<&CatalogCapabilities>,
     protocol: AgentProtocol,
 ) -> DeclaredAgentCapabilities {
-    match protocol {
-        AgentProtocol::Acp => capabilities
-            .map(|value| DeclaredAgentCapabilities {
-                text_prompt: value.text_prompt,
-                resume: value.resume,
-                history_replay: value.history_replay,
-                team_tools: value.team_tools,
-                resume_args: None,
-            })
-            .unwrap_or_else(DeclaredAgentCapabilities::acp_text),
-        AgentProtocol::Native => capabilities
-            .map(|value| DeclaredAgentCapabilities {
-                text_prompt: value.text_prompt,
-                resume: value.resume,
-                history_replay: value.history_replay,
-                team_tools: value.team_tools,
-                resume_args: value.resume_args.clone(),
-            })
-            .unwrap_or_default(),
-    }
+    let market_protocol = match protocol {
+        AgentProtocol::Acp => AgentMarketProtocol::Acp,
+        AgentProtocol::Native => AgentMarketProtocol::Native,
+    };
+    capabilities
+        .map(|value| value.to_declared_agent_capabilities(&market_protocol))
+        .unwrap_or_else(|| {
+            CatalogCapabilities::fallback_for_protocol(&market_protocol)
+                .to_declared_agent_capabilities(&market_protocol)
+        })
 }
 
 #[cfg(test)]
@@ -983,6 +973,14 @@ mod tests {
             &program_path,
             &["acp".to_string()],
         );
+        resolved_definition["capabilities"] = serde_json::json!({
+            "textPrompt": true,
+            "resume": true,
+            "historyReplay": true,
+            "liveEvents": true,
+            "richHistoryReplay": true,
+            "teamTools": true,
+        });
         resolved_definition["sessionCleanupArgs"] =
             serde_json::json!(["session", "delete", "{session_id}"]);
         resolved_definition["sessionCleanupNotFoundMarkers"] =
@@ -1022,6 +1020,10 @@ mod tests {
         };
         let definition = definition_from_installation(&installation).unwrap();
         assert_eq!(definition.command, program_path.to_string_lossy());
+        assert!(definition.declared_capabilities.resume);
+        assert!(definition.declared_capabilities.history_replay);
+        assert!(definition.declared_capabilities.live_events);
+        assert!(definition.declared_capabilities.rich_history_replay);
         assert_eq!(
             definition
                 .session_cleanup

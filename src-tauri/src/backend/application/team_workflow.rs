@@ -1276,6 +1276,15 @@ mod tests {
                     args: Vec::new(),
                     availability_command: "fixture".to_string(),
                     protocol: "acp".to_string(),
+                    capabilities: DeclaredAgentCapabilities {
+                        text_prompt: true,
+                        resume: true,
+                        history_replay: true,
+                        live_events: true,
+                        rich_history_replay: false,
+                        team_tools: true,
+                        resume_args: None,
+                    },
                 })
                 .collect()
         }
@@ -1285,6 +1294,8 @@ mod tests {
                 text_prompt: true,
                 resume: true,
                 history_replay: true,
+                live_events: true,
+                rich_history_replay: false,
                 team_tools: true,
                 resume_args: None,
             })

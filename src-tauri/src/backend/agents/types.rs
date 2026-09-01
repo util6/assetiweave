@@ -121,11 +121,16 @@ impl AgentCommandDefinition {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct DeclaredAgentCapabilities {
     pub(crate) text_prompt: bool,
     pub(crate) resume: bool,
     pub(crate) history_replay: bool,
+    /// The Agent can publish live Session Events for the current turn.
+    pub(crate) live_events: bool,
+    /// The Agent can replay thought/tool history with provider fidelity.
+    pub(crate) rich_history_replay: bool,
     pub(crate) team_tools: bool,
     pub(crate) resume_args: Option<Vec<String>>,
 }
@@ -136,6 +141,8 @@ impl DeclaredAgentCapabilities {
             text_prompt: true,
             resume: true,
             history_replay: true,
+            live_events: true,
+            rich_history_replay: false,
             team_tools: false,
             resume_args: None,
         }
@@ -146,9 +153,22 @@ impl DeclaredAgentCapabilities {
             text_prompt: true,
             resume: true,
             history_replay: false,
+            live_events: false,
+            rich_history_replay: false,
             team_tools: false,
             resume_args: Some(resume_args),
         }
+    }
+
+    pub(crate) fn missing_team_capabilities(&self) -> Vec<&'static str> {
+        [
+            ("resume", self.resume),
+            ("history_replay", self.history_replay),
+            ("live_events", self.live_events),
+        ]
+        .into_iter()
+        .filter_map(|(name, available)| (!available).then_some(name))
+        .collect()
     }
 }
 
@@ -179,6 +199,7 @@ pub(crate) struct AgentCatalogEntry {
     pub(crate) args: Vec<String>,
     pub(crate) availability_command: String,
     pub(crate) protocol: String,
+    pub(crate) capabilities: DeclaredAgentCapabilities,
 }
 
 impl AgentCatalogEntry {
@@ -195,6 +216,7 @@ impl AgentCatalogEntry {
             args: definition.args.clone(),
             availability_command: availability_command.to_string(),
             protocol: definition.protocol.as_str().to_string(),
+            capabilities: definition.declared_capabilities.clone(),
         }
     }
 }
@@ -534,6 +556,21 @@ mod tests {
         definition.validate().expect("valid definition");
         assert_eq!(definition.protocol, AgentProtocol::Acp);
         assert!(definition.declared_capabilities.text_prompt);
+    }
+
+    #[test]
+    fn team_capability_gap_is_reported_in_stable_order() {
+        let capabilities = DeclaredAgentCapabilities {
+            resume: false,
+            history_replay: true,
+            live_events: false,
+            ..DeclaredAgentCapabilities::default()
+        };
+
+        assert_eq!(
+            capabilities.missing_team_capabilities(),
+            vec!["resume", "live_events"]
+        );
     }
 
     fn definition_with_command(command: &str) -> AgentDefinition {

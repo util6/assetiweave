@@ -779,6 +779,7 @@ fn installation_view(installation: &AgentInstallation) -> AgentInstallationView 
         distribution_id: installation.distribution_id.clone(),
         distribution_type: installation.distribution_type.clone(),
         ownership: installation.ownership.clone(),
+        capabilities: installation.catalog_capabilities(),
         display_install_path: installation.install_dir.as_ref().map(|path| {
             crate::backend::path_utils::display_path_or_original(&path.to_string_lossy())
         }),

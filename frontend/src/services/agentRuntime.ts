@@ -14,6 +14,15 @@ export interface AgentRuntimeCatalogEntry {
   args: string[];
   availability_command: string;
   protocol: "acp" | "native";
+  capabilities: {
+    text_prompt: boolean;
+    resume: boolean;
+    history_replay: boolean;
+    live_events: boolean;
+    rich_history_replay: boolean;
+    team_tools: boolean;
+    resume_args: string[] | null;
+  };
 }
 
 export interface AgentConnectionResult {
@@ -72,6 +81,17 @@ export interface AgentInstallationView {
   distributionId: string;
   distributionType: AgentDistributionType;
   ownership: AgentOwnership;
+  capabilities: {
+    purposes: string[];
+    textPrompt: boolean;
+    modelDiscovery: boolean;
+    resume: boolean;
+    historyReplay: boolean;
+    liveEvents: boolean;
+    richHistoryReplay: boolean;
+    teamTools: boolean;
+    resumeArgs: string[] | null;
+  };
   displayInstallPath: string | null;
   enabled: boolean;
   installed: boolean;
@@ -114,6 +134,8 @@ export interface AgentMarketItem {
     modelDiscovery: boolean;
     resume?: boolean;
     historyReplay?: boolean;
+    liveEvents?: boolean;
+    richHistoryReplay?: boolean;
     teamTools?: boolean;
     resumeArgs?: string[] | null;
   };

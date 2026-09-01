@@ -124,12 +124,50 @@ pub(crate) struct CatalogCapabilities {
     /// The Agent can return prior session content without creating a live turn.
     #[serde(default)]
     pub(crate) history_replay: bool,
+    /// The Agent can publish live Session Events for the current turn.
+    #[serde(default)]
+    pub(crate) live_events: bool,
+    /// The Agent can replay thought/tool history with provider fidelity.
+    #[serde(default)]
+    pub(crate) rich_history_replay: bool,
     /// The Agent can receive the restricted Team tool surface.
     #[serde(default)]
     pub(crate) team_tools: bool,
     /// Native resume arguments. `{session_id}` is replaced without shell parsing.
     #[serde(default)]
     pub(crate) resume_args: Option<Vec<String>>,
+}
+
+impl CatalogCapabilities {
+    pub(crate) fn fallback_for_protocol(protocol: &AgentMarketProtocol) -> Self {
+        match protocol {
+            AgentMarketProtocol::Acp => Self {
+                text_prompt: true,
+                resume: true,
+                history_replay: true,
+                live_events: true,
+                ..Self::default()
+            },
+            AgentMarketProtocol::Native => Self::default(),
+        }
+    }
+
+    pub(crate) fn to_declared_agent_capabilities(
+        &self,
+        protocol: &AgentMarketProtocol,
+    ) -> crate::backend::agents::types::DeclaredAgentCapabilities {
+        crate::backend::agents::types::DeclaredAgentCapabilities {
+            text_prompt: self.text_prompt,
+            resume: self.resume,
+            history_replay: self.history_replay,
+            live_events: self.live_events,
+            rich_history_replay: self.rich_history_replay,
+            team_tools: self.team_tools,
+            resume_args: matches!(protocol, AgentMarketProtocol::Native)
+                .then(|| self.resume_args.clone())
+                .flatten(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
@@ -622,6 +660,14 @@ pub(crate) struct AgentInstallation {
 }
 
 impl AgentInstallation {
+    pub(crate) fn catalog_capabilities(&self) -> CatalogCapabilities {
+        self.definition_json
+            .get("capabilities")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_else(|| CatalogCapabilities::fallback_for_protocol(&self.protocol))
+    }
+
     pub(crate) fn package_identity(
         &self,
     ) -> Result<crate::backend::extension_kernel::PackageIdentity, String> {
@@ -910,6 +956,7 @@ pub(crate) struct AgentInstallationView {
     pub(crate) distribution_id: String,
     pub(crate) distribution_type: DistributionType,
     pub(crate) ownership: Ownership,
+    pub(crate) capabilities: CatalogCapabilities,
     pub(crate) display_install_path: Option<String>,
     pub(crate) enabled: bool,
     pub(crate) installed: bool,
@@ -1187,6 +1234,31 @@ mod tests {
     }
 
     #[test]
+    fn catalog_capabilities_project_to_runtime_without_losing_richness() {
+        let capabilities = CatalogCapabilities {
+            text_prompt: true,
+            resume: true,
+            history_replay: true,
+            live_events: true,
+            rich_history_replay: true,
+            team_tools: true,
+            resume_args: Some(vec![
+                "--conversation".to_string(),
+                "{session_id}".to_string(),
+            ]),
+            ..CatalogCapabilities::default()
+        };
+
+        let declared = capabilities.to_declared_agent_capabilities(&AgentMarketProtocol::Native);
+
+        assert!(declared.resume);
+        assert!(declared.history_replay);
+        assert!(declared.live_events);
+        assert!(declared.rich_history_replay);
+        assert_eq!(declared.resume_args, capabilities.resume_args);
+    }
+
+    #[test]
     fn verification_status_uses_the_shared_trust_gate_without_collapsing_domain_states() {
         use crate::backend::extension_kernel::TrustGate;
 
@@ -1286,7 +1358,15 @@ mod tests {
             args: vec!["acp".to_string()],
             definition_json: serde_json::json!({
                 "env": [{ "name": "TOKEN", "value": "fixture" }],
-                "modelDiscoveryArgs": ["--models"]
+                "modelDiscoveryArgs": ["--models"],
+                "capabilities": {
+                    "textPrompt": true,
+                    "resume": true,
+                    "historyReplay": true,
+                    "liveEvents": true,
+                    "richHistoryReplay": true,
+                    "teamTools": true
+                }
             }),
             integrity_json: Some(serde_json::json!({ "sha256": "fixture" })),
             source_registry: "fixture".to_string(),
@@ -1317,6 +1397,7 @@ mod tests {
         assert_eq!(manifest.invocation.version_req, None);
         assert_eq!(manifest.invocation.env[0].key, "TOKEN");
         assert_eq!(manifest.availability_probe.args, vec!["--version"]);
+        assert!(installation.catalog_capabilities().rich_history_replay);
         assert_eq!(
             manifest
                 .model_discovery_probe

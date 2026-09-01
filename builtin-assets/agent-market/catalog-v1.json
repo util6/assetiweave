@@ -28,7 +28,9 @@
         "modelDiscovery": true,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "tested",
@@ -90,7 +92,9 @@
         "modelDiscovery": false,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "experimental",
@@ -129,7 +133,9 @@
           "memory"
         ],
         "textPrompt": true,
-        "modelDiscovery": false
+        "modelDiscovery": false,
+        "liveEvents": false,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "tested",
@@ -177,7 +183,9 @@
         "modelDiscovery": false,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "tested",
@@ -222,7 +230,9 @@
         "modelDiscovery": false,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "tested",
@@ -269,7 +279,9 @@
         "modelDiscovery": false,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "experimental",
@@ -313,7 +325,9 @@
         "modelDiscovery": false,
         "resume": true,
         "historyReplay": true,
-        "teamTools": true
+        "teamTools": true,
+        "liveEvents": true,
+        "richHistoryReplay": false
       },
       "verification": {
         "status": "experimental",
