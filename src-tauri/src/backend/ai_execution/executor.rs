@@ -567,6 +567,12 @@ impl AiExecutionProgressSink for ObservedProgressSink {
         }
     }
 
+    fn emit_session_event(&self, event: super::session_events::SessionEvent) {
+        if let Some(downstream) = self.downstream.as_ref() {
+            downstream.emit_session_event(event);
+        }
+    }
+
     fn failure_phase(&self) -> Option<AiExecutionPhase> {
         self.downstream
             .as_ref()

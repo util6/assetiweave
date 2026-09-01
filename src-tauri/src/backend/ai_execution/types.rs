@@ -6,11 +6,14 @@ use serde::{Deserialize, Serialize};
 use crate::backend::agents::types::{AgentId, AgentProtocol};
 
 use super::{
-    bindings::PersistentExecutionBinding, normalize_model, normalize_prompt, AiExecutionError,
+    bindings::PersistentExecutionBinding, normalize_model, normalize_prompt,
+    session_events::SessionEvent, AiExecutionError,
 };
 
 pub(crate) trait AiExecutionProgressSink: Send + Sync {
     fn set_phase(&self, phase: AiExecutionPhase);
+
+    fn emit_session_event(&self, _event: SessionEvent) {}
 
     fn failure_phase(&self) -> Option<AiExecutionPhase> {
         None
@@ -232,6 +235,12 @@ impl AiExecutionRequest {
             progress.set_cleanup_report(report);
         }
     }
+
+    pub(crate) fn report_session_event(&self, event: SessionEvent) {
+        if let Some(progress) = self.progress.as_ref() {
+            progress.emit_session_event(event);
+        }
+    }
 }
 
 impl fmt::Debug for AiExecutionRequest {
@@ -309,6 +318,7 @@ pub(crate) enum AiExecutionPhase {
 mod tests {
     use super::*;
     use crate::backend::agents::types::AgentId;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn default_limits_match_the_phase_one_contract() {
@@ -363,6 +373,45 @@ mod tests {
         assert!(!debug.contains("SECRET_RESULT"));
         assert!(!debug.contains("SECRET_MODEL"));
         assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn request_forwards_session_events_through_the_existing_progress_sink() {
+        let sink = Arc::new(CaptureProgressSink::default());
+        let mut request = request("prompt", None);
+        request.progress = Some(sink.clone());
+        request.report_session_event(SessionEvent {
+            identity: crate::backend::ai_execution::SessionEventIdentity {
+                session_id: "session".to_string(),
+                member_id: "member".to_string(),
+                execution_id: "execution".to_string(),
+                turn_id: "turn".to_string(),
+                item_id: "item".to_string(),
+                event_id: "event".to_string(),
+            },
+            sequence: 1,
+            delivery: crate::backend::ai_execution::SessionEventDelivery::Live,
+            kind: crate::backend::ai_execution::SessionEventKind::Processing {
+                state: crate::backend::ai_execution::SessionProcessingState::Active,
+            },
+        });
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].identity.item_id, "item");
+    }
+
+    #[derive(Default)]
+    struct CaptureProgressSink {
+        events: Mutex<Vec<SessionEvent>>,
+    }
+
+    impl AiExecutionProgressSink for CaptureProgressSink {
+        fn set_phase(&self, _phase: AiExecutionPhase) {}
+
+        fn emit_session_event(&self, event: SessionEvent) {
+            self.events.lock().unwrap().push(event);
+        }
     }
 
     fn request(prompt: &str, model: Option<&str>) -> AiExecutionRequest {

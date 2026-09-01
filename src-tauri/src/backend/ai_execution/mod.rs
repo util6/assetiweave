@@ -3,11 +3,19 @@ pub(crate) mod bindings;
 pub(crate) mod composition;
 mod error;
 pub(crate) mod executor;
+pub(crate) mod session_events;
 mod types;
 
 pub(crate) use bindings::{PersistentBindingStore, PersistentExecutionBinding};
 pub(crate) use error::{AiExecutionError, AiExecutionErrorView};
 pub(crate) use executor::AgentExecutionRuntime;
+#[allow(unused_imports)]
+pub(crate) use session_events::{
+    SessionEvent, SessionEventApplyResult, SessionEventDelivery, SessionEventIdentity,
+    SessionEventKind, SessionEventProjection, SessionEventProjectionLimits, SessionEventSink,
+    SessionItemIdentity, SessionItemKind, SessionItemSnapshot, SessionItemState,
+    SessionProcessingState, SessionSnapshot, SessionTaskStatus, SessionToolState,
+};
 pub(crate) use types::{
     AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits,
     AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
