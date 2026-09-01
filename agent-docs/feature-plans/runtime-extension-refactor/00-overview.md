@@ -1,8 +1,8 @@
 # SPEC-00:运行时与扩展体系重构总纲(Runtime & Extension Refactor Overview)
 
-- 状态:Draft v3(2026-08-18:吸收首轮审计 15+1 项、v2 复审 8+5 项修订;各分册 P1 关闭并复审通过后方可标记 Approved)
+- 状态:Implemented;各分册 P1 已由当前代码、生产 consumer 和自动化验收收口，历史 Draft 记录保留
 - 适用范围:`src-tauri/src/` Rust 后端、`adapters/`(Tauri + Engine)、`cli/` 契约、`builtin-assets/`
-- 基线版本:`main@190bb0e`。**文档中的行号与计数均采集自该基线,执行时 MUST 以符号名搜索定位,不得盲信行号。**
+- 基线版本:`main@bc5c14e`。**文档中的行号与计数均采集自历史基线,执行时 MUST 以符号名搜索定位,不得盲信行号。**
 - 本文档集读者:后续执行编码的模型与工程师。执行前必须先读完本篇。
 
 ---

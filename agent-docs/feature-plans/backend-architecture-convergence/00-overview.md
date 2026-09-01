@@ -1,8 +1,8 @@
 # SPEC-BA-00：后端架构收口总纲
 
-- 状态：Proposed v1
+- 状态：Implemented；当前代码与自动化验收已完成，历史基线记录保留
 - 日期：2026-08-20
-- 代码基线：`main@5ecfabd1dfa2255c6007fec151bba88e257987a4`
+- 代码基线：`main@bc5c14e`
 - 适用范围：`src-tauri/src/`、`frontend/src/services/`、Agent 设置界面、`cli/` 契约、`builtin-assets/`、CI 与发布脚本
 - 目标读者：后续直接执行代码修改的工程师和代码模型
 - 上位约束：仓库根目录 `AGENTS.md`、已淘汰的全局需求总册（待办以 GitHub Issues 为准）、已淘汰的全局设计总册（以代码、测试与 ADR 为准）

@@ -4,7 +4,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | Proposed，统一 Skeleton 架构完成后实施 |
+| 状态 | Implemented；Conversations 首个落点已接入并通过自动化验收 |
 | 版本 | v1.0 |
 | 日期 | 2026-08-16 |
 | 适用范围 | `frontend/src/`，首个落地点为 Conversations 预览 |

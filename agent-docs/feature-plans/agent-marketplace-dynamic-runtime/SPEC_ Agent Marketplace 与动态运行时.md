@@ -4,10 +4,10 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | Proposed，待人工评审后实施 |
+| 状态 | Implemented；代码与自动化验收已冻结，历史人工评审记录保留 |
 | 规格版本 | 1.0.0 |
 | 日期 | 2026-08-16 |
-| 代码基线 | AssetIWeave `01ccbdf` |
+| 代码基线 | AssetIWeave `bc5c14e` |
 | 前置规格 | `SPEC_ ACP Agent Execution Runtime.md` 及其分册 |
 | 产品名称 | Agent Market（不是仅限 ACP 的插件市场） |
 | 首批协议 | ACP、Native |

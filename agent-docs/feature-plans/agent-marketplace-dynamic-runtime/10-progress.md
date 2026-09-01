@@ -2,11 +2,11 @@
 
 | 字段 | 值 |
 |---|---|
-| 更新时间 | 2026-08-16 |
-| SPEC 状态 | Proposed，文档编写完成，待人工评审 |
-| 实施状态 | 未开始 |
-| 当前任务 | T00 人工评审并冻结 SPEC |
-| 代码基线 | `01ccbdf` |
+| 更新时间 | 2026-09-01 |
+| SPEC 状态 | Implemented；代码与自动化验收已冻结，历史人工评审记录保留 |
+| 实施状态 | 已完成 |
+| 当前任务 | T33 终验收与发布证据已完成 |
+| 代码基线 | `bc5c14e` |
 
 ## 1. 本轮完成内容
 
@@ -130,9 +130,9 @@ agent-docs/feature-plans/skeleton-rendering-flicker/
 - [ ] 同意资源上限和 10 分钟 lifecycle timeout。
 - [ ] 同意 T00–T33（含 T15A）的阶段与文件边界。
 
-## 9. 下一步
+## 9. 历史下一步记录
 
-下一步唯一任务：**T00 人工评审并冻结 SPEC**。
+本节保留 2026-08-16 规划时的下一步记录；当前实施状态见文末校正区。
 
 T00 完成前不应启动产品代码实施。评审有修改时先同步主索引、01/02 及受影响契约，再更新实施任务，避免代码模型面对冲突规范。
 
@@ -163,3 +163,11 @@ T00 完成前不应启动产品代码实施。评审有修改时先同步主索�
 - Acceptance: bundled catalog 可在未安装九个 Agent 时展示；安装记录按 tenant 持久化；动态 Registry 只加载 enabled + ready + execution-ready；System/Binary/Npx/Uvx 走统一生命周期；managed uninstall 删除 app-owned 文件，System uninstall 只解除绑定；运行中 Agent 的更新/卸载受 mutation gate 阻止；Tauri/Engine/CLI contract 已同步；前端 Market/Installed、安装/更新/重装/卸载预览和后台任务状态已接入。
 - Deviations: 安装 protocol conformance 尚未把生命周期取消令牌深入 ACP/Native probe；legacy assignment migration 当前在 AppService open 中同步执行；catalog remote fetch 尚未提供完整可注入 fetcher/clock/filesystem seam 与 304 远端 fixture；Tauri lifecycle task 查询/取消接口保留为 desktop-only，CLI 使用已确认的一次性 Engine lifecycle 方法；T00 人工评审、真实平台 Binary/Npx/Uvx 联机 smoke 和最终人工 UI review 仍待完成。
 - Next: 完成代码 review/平台 smoke；确认工作区保护清单后提交中文 commit。
+
+### 2026-09-01 · 当前实施状态校正
+
+- Status: **Implemented**。
+- Commit: `bc5c14e feat: 完成 Memory 重写与跨层验收`；Agent Market 代码与本计划要求的跨层能力已在当前主干可用。
+- Evidence: `node scripts/check-agent-catalog-release.mjs --static`、`--release --network`、`--release --e2e` 均通过；真实 ACP binary smoke 为 `opencode/binary-darwin-aarch64 1.18.19`。
+- Acceptance: Catalog、installation-aware runtime、System/Binary/Npx/Uvx 分发、生命周期任务、跨租户隔离、Engine/CLI/Frontend surface 和 release evidence 已覆盖。
+- Note: 原“Proposed/T00 Pending”内容属于历史施工基线，不再表示当前代码状态；未把人工视觉 smoke 伪写成自动化证据。

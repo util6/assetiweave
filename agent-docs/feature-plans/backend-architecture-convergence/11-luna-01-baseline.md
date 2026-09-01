@@ -18,7 +18,7 @@ actual:   Agent catalog release check passed: 7 items, catalog 2026.08.21.1
 这证明测试绑定展示 revision 常量，而不是验证 Catalog 当前自身的 revision 规则。
 测试现已从 bundled Catalog 读取 item 数量和 `catalogVersion`，后续 revision 更新无需修改断言常量。
 
-## 2. Phase 22 状态校正
+## 2. Phase 22 历史状态校正（2026-08-21）
 
 | Task | Status | Evidence | Reason |
 |---|---|---|---|
@@ -45,7 +45,24 @@ actual:   Agent catalog release check passed: 7 items, catalog 2026.08.21.1
 
 在前三个 P1 工作包完成并审计签署前，不得将 Phase 22 恢复为整体完成，也不得开始 Settings、Batch Mount 或 TargetCatalog 的并行大范围施工。
 
-## 4. 本包验收
+## 4. 2026-09-01 当前实现复核
+
+本节覆盖上表之后已合入主干的实现与验证，不改写当日审计快照。当前 Phase 22 相关目标
+已通过生产 consumer、回归测试和跨层质量门闭合：
+
+| 范围 | 当前证据 | 结果 |
+|---|---|---|
+| TaskRuntime 与长任务 | `src-tauri/src/adapters/tauri/background_tasks.rs`、全量 Rust tests | PASS |
+| HostProcess/Extension Kernel | ACP/Native runtime、错误边界、清理和取消测试 | PASS |
+| TargetCatalog | 动态 provider、非法刷新保留旧 snapshot、seed/detect/plan/mount 测试 | PASS |
+| Agent lifecycle | install/update/failure recovery/cancel lifecycle E2E | PASS |
+| Release evidence | static、network release、real ACP binary E2E | PASS |
+| Interface/contract | `pnpm check:boundaries`、`pnpm test:boundaries`、`pnpm check:surface-matrix` | PASS |
+
+当前汇总提交为 `bc5c14e`。因此本文开头的“完成”结论以本节和
+`agent-docs/feature-plans/IMPLEMENTATION-STATUS.md` 为准；第 2 节仅作为历史审计基线。
+
+## 5. 本包验收
 
 ```bash
 node --test scripts/check-agent-catalog-release.test.mjs

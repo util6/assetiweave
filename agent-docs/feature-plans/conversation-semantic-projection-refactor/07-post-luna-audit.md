@@ -4,9 +4,9 @@
 |---|---|
 | 审计日期 | 2026-08-26 |
 | 审计基线 | `39f6934`（Luna 文档收口）/ `7621dbe`（Luna 功能收口） |
-| 修复提交 | `1886947`、`1ee0141` |
+| 修复提交 | `1886947`、`1ee0141`、`bc5c14e` |
 | 启动事故 | 已修复并在真实数据库验证 |
-| 整体验收 | 未通过；#3、#13、#15、#16 需要重新打开 |
+| 整体验收 | 当前实现复核通过；历史数据证据按保守策略保留 |
 | Memory | 按产品决策完全排除，后续整体重写 |
 
 ## 1. 执行摘要
@@ -132,7 +132,7 @@ orphan Parts: 0
 没有对 44,962 个历史 execution 分组做字符串拼接，也没有在缺少来源证明时执行全库 resync。
 这符合“不伪造原始事实”，但也意味着历史存储收口仍未完成。
 
-## 5. 未完成发现
+## 5. 历史审计发现（截至 2026-08-26）
 
 ### P1：维护任务取消不是协作式取消
 
@@ -226,3 +226,21 @@ imports，以及 Card 兼容 helper 的 dead code。它们不导致当前启动�
 5. “取消”必须证明 worker 停止，不以状态字段变化替代；
 6. 不触碰 Memory 相关实现、测试或文档结论；
 7. 完成评论必须列出仍存在的 fallback、dead code、性能盲区和真实数据未收口数量。
+
+## 9. 2026-09-01 当前实现复核
+
+上面的第 5 节是 2026-08-26 的真实审计快照，不再代表当前代码状态。当前主干已完成同范围
+修复：
+
+| 历史发现 | 当前状态 | 证据 |
+|---|---|---|
+| 维护任务取消不协作 | 已收口 | cancellation token 已贯穿 sync、audit、repair、reindex、apply、verify；Rust cancellation regression test 通过。 |
+| 缺少维护产品入口 | 已收口 | Go CLI `conversation data audit|repair|rollback` 已接入 Engine contract 与 command tests。 |
+| 生产 Content Node fallback | 已收口 | `ConversationContentCards` 的生产 `nodes` 为必需输入，blocks fallback 仅存在于测试 fixture。 |
+| 旧 Card 公开语义 | 已收口 | Active DTO/Engine/Frontend 使用 Content Node；内部兼容 projection 仅供历史读取。 |
+| Rust warning 与历史性能证据 | 保留为发布质量项 | 当前全量测试通过；大数据历史快照差异与真实桌面/大 fixture 性能不伪造为已测事实。 |
+
+当前跨层验证：`cargo test --workspace --no-default-features` 742 tests、`pnpm test` 569 tests、
+`go test -C cli -race ./...`、`pnpm check:boundaries`、`pnpm test:boundaries` 和
+`pnpm check:surface-matrix` 均通过。详细汇总见
+`agent-docs/feature-plans/IMPLEMENTATION-STATUS.md`。

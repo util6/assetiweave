@@ -4,7 +4,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | Proposed，待评审后进入 Implementing |
+| 状态 | Implemented；当前代码与自动化验收已完成 |
 | 版本 | v1.0 |
 | 日期 | 2026-08-16 |
 | 适用范围 | `frontend/src/` |

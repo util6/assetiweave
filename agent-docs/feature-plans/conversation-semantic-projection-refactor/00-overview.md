@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 |---|---|
-| 状态 | Post-Luna audit：部分完成，#3/#13/#15/#16 待重新收口 |
+| 状态 | Implemented；历史 Post-Luna blocker 已在当前主干复核收口 |
 | 日期 | 2026-08-25 |
 | 父 Issue | [#3](https://github.com/util6/assetiweave/issues/3) |
 | 执行模型 | Luna |
