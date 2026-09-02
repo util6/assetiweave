@@ -112,6 +112,55 @@ describe("TeamSessionProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(cancelTurnMock).toHaveBeenCalledWith("team-1", "leader", "execution-leader"));
   });
+
+  it("prioritizes the active member and bounds inactive replay work", async () => {
+    const started: string[] = [];
+    const resolvers = new Map<string, (snapshot: TeamMemberStreamSnapshot) => void>();
+    startReplayMock.mockImplementation((_teamId: string, memberId: string) => {
+      started.push(memberId);
+      return new Promise<TeamMemberStreamSnapshot>((resolve) => {
+        resolvers.set(memberId, resolve);
+      });
+    });
+
+    const view = render(
+      <TeamSessionProvider autoRestore teamId="team-1" memberIds={["teammate", "leader", "teammate-2"]} activeMemberId="leader">
+        <Harness />
+      </TeamSessionProvider>,
+    );
+    await act(async () => {});
+    expect(started).toEqual(["leader", "teammate"]);
+
+    view.rerender(
+      <TeamSessionProvider autoRestore teamId="team-1" memberIds={["teammate", "leader", "teammate-2"]} activeMemberId="teammate-2">
+        <Harness />
+      </TeamSessionProvider>,
+    );
+    await act(async () => {});
+    expect(started).toEqual(["leader", "teammate"]);
+
+    await act(async () => {
+      resolvers.get("leader")?.(streamSnapshot("leader", "replay-leader", "Succeeded", [], 1, true));
+    });
+    await waitFor(() => expect(started).toEqual(["leader", "teammate", "teammate-2"]));
+  });
+
+  it("keeps one failed replay unavailable while another member becomes ready", async () => {
+    startReplayMock.mockImplementation((_teamId: string, memberId: string) => (
+      memberId === "leader"
+        ? Promise.reject(new Error("anchor_missing"))
+        : Promise.resolve(streamSnapshot(memberId, "replay-teammate", "Succeeded", [item("history", "history")], 1, true))
+    ));
+
+    render(
+      <TeamSessionProvider autoRestore teamId="team-1" memberIds={["leader", "teammate"]} activeMemberId="leader">
+        <Harness />
+      </TeamSessionProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("restore").textContent).toBe("unavailable"));
+    expect(screen.getByTestId("teammate-restore").textContent).toBe("ready");
+  });
 });
 
 function Harness() {
@@ -123,6 +172,7 @@ function Harness() {
       <output data-testid="leader">{leader?.stream.items[0]?.text ?? "empty"}:{leader?.task?.state ?? "none"}</output>
       <output data-testid="teammate">{teammate?.stream.items[0]?.text ?? "empty"}:{teammate?.task?.state ?? "none"}</output>
       <output data-testid="restore">{leader?.restore_state ?? "not-started"}</output>
+      <output data-testid="teammate-restore">{teammate?.restore_state ?? "not-started"}</output>
       <output data-testid="leader-unread">{leader?.unread ? "true" : "false"}</output>
       <button onClick={() => void session.startTurn("leader", "hello")} type="button">Start</button>
       <button onClick={() => void session.startReplay("leader")} type="button">Replay</button>

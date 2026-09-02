@@ -2,7 +2,9 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   type ReactNode,
 } from "react";
 import {
@@ -22,6 +24,7 @@ import type {
 import {
   applyTeamMemberStreamSnapshot,
   createTeamSessionStoreState,
+  markTeamMemberSessionUnavailable,
   markTeamMemberSessionSeen,
   mergeTeamSessionState,
   selectTeamMemberSession,
@@ -32,6 +35,14 @@ import {
   useBackgroundTaskRuntime,
   type BackgroundTaskRuntimeAdapter,
 } from "./BackgroundTaskRuntime";
+
+const MAX_REPLAY_CONCURRENCY = 2;
+
+interface ReplaySchedulerState {
+  teamId: string | null;
+  scheduled: Set<string>;
+  running: Set<string>;
+}
 
 interface TeamSessionContextValue {
   scopeTeamId: string | null;
@@ -59,10 +70,16 @@ export interface TeamSessionView {
 const TeamSessionContext = createContext<TeamSessionContextValue | null>(null);
 
 export function TeamSessionProvider({
+  activeMemberId = null,
+  autoRestore = false,
   children,
+  memberIds = [],
   teamId = null,
 }: {
+  activeMemberId?: string | null;
+  autoRestore?: boolean;
   children: ReactNode;
+  memberIds?: string[];
   teamId?: string | null;
 }) {
   const adapter = useMemo<BackgroundTaskRuntimeAdapter<TeamSessionStoreState, TeamMemberStreamSnapshot>>(
@@ -98,9 +115,65 @@ export function TeamSessionProvider({
 
   const startReplay = useCallback(async (currentTeamId: string, memberId: string) => {
     const snapshot = await startTeamMemberReplay(currentTeamId, memberId);
+    if (!snapshot) throw new Error("Team member replay did not return a snapshot.");
     merge(snapshot);
     return snapshot;
   }, [merge]);
+
+  const replaySchedulerRef = useRef<ReplaySchedulerState>({
+    teamId: null,
+    scheduled: new Set(),
+    running: new Set(),
+  });
+
+  useEffect(() => {
+    const scheduler = replaySchedulerRef.current;
+    if (scheduler.teamId !== teamId) {
+      scheduler.teamId = teamId;
+      scheduler.scheduled.clear();
+      scheduler.running.clear();
+    }
+    if (!autoRestore || !teamId) return;
+
+    for (const memberId of scheduler.running) {
+      const projection = state.members[memberId];
+      if (projection && projection.restore_state !== "restoring") {
+        scheduler.running.delete(memberId);
+      }
+    }
+
+    const orderedMemberIds = [...new Set([
+      activeMemberId,
+      ...memberIds,
+    ].filter((memberId): memberId is string => Boolean(memberId?.trim())))];
+    for (const memberId of orderedMemberIds) {
+      if (scheduler.running.size >= MAX_REPLAY_CONCURRENCY) break;
+      if (scheduler.scheduled.has(memberId)) continue;
+      const projection = state.members[memberId];
+      if (projection && ["ready", "partial", "unavailable"].includes(projection.restore_state)) {
+        scheduler.scheduled.add(memberId);
+        continue;
+      }
+      scheduler.scheduled.add(memberId);
+      scheduler.running.add(memberId);
+      void startReplay(teamId, memberId)
+        .then((snapshot) => {
+          if (scheduler.teamId === teamId && !isActiveTask(snapshot.task)) {
+            scheduler.running.delete(memberId);
+          }
+        })
+        .catch(() => {
+          if (scheduler.teamId !== teamId) return;
+          scheduler.running.delete(memberId);
+          update((current) => markTeamMemberSessionUnavailable(
+            current,
+            teamId,
+            memberId,
+            "team_member_restore_unavailable",
+          ));
+        });
+    }
+  }, [activeMemberId, autoRestore, memberIds, startReplay, state, teamId, update]);
 
   const cancelTurn = useCallback(async (currentTeamId: string, memberId: string, executionId: string) => {
     const snapshot = await cancelTeamMemberTurn(currentTeamId, memberId, executionId);
@@ -209,13 +282,17 @@ function snapshotFromTask(task: TeamMemberTaskSnapshot): TeamMemberStreamSnapsho
 function isTeamSessionStoreState(
   incoming: TeamSessionStoreState | TeamMemberStreamSnapshot,
 ): incoming is TeamSessionStoreState {
-  return "members" in incoming;
+  return Boolean(incoming) && typeof incoming === "object" && "members" in incoming;
 }
 
 function isTeamSessionRunning(state: TeamSessionStoreState): boolean {
   return Object.values(state.members).some((member) => Object.values(member.executions).some(
     (execution) => ["Pending", "Running", "Cancelling"].includes(execution.task.state),
   ));
+}
+
+function isActiveTask(task: TeamMemberTaskSnapshot): boolean {
+  return task.state === "Pending" || task.state === "Running" || task.state === "Cancelling";
 }
 
 function requireTeamId<T>(

@@ -314,6 +314,23 @@ describe("TeamPage", () => {
     expect(screen.queryByTestId("team-task-card-task-a")).toBeNull();
   });
 
+  it("renders Team facts before member history restoration resolves", async () => {
+    let releaseHistory: ((tasks: TeamMemberTaskSnapshot[]) => void) | null = null;
+    listTeamMemberTasksMock.mockImplementation(() => new Promise((resolve) => {
+      releaseHistory = resolve;
+    }));
+    getLatestTeamRunMock.mockResolvedValue(teamRun("executing", 4, [
+      teamTask("task-a", "Fact-backed task", "Visible before history", 0, "teammate", "queued"),
+    ]));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-plan-card")).toBeTruthy());
+    expect(screen.getByTestId("team-member-leader-status").textContent).toContain("Not started");
+
+    const resolveHistory = releaseHistory as ((tasks: TeamMemberTaskSnapshot[]) => void) | null;
+    resolveHistory?.([]);
+  });
+
   it("marks a rejected message failed only in the active member timeline", async () => {
     const leader = memberStream("leader", "execution-leader", "Running", "Leader is still working");
     listTeamMemberTasksMock.mockResolvedValue([leader.task]);

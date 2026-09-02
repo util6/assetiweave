@@ -64,6 +64,40 @@ export function markTeamMemberSessionSeen(
   };
 }
 
+export function markTeamMemberSessionUnavailable(
+  current: TeamSessionStoreState,
+  teamId: string,
+  memberId: string,
+  errorCode: string,
+): TeamSessionStoreState {
+  const previous = current.members[memberId];
+  if (previous && previous.team_id !== teamId) return current;
+  const member: TeamMemberSessionProjection = previous ?? {
+    team_id: teamId,
+    member_id: memberId,
+    execution_id: null,
+    sequence: 0,
+    replay: false,
+    stream: EMPTY_SESSION,
+    task: null,
+    unread: false,
+    restore_state: "unavailable",
+    restore_error_code: errorCode,
+    executions: {},
+  };
+  return {
+    ...current,
+    members: {
+      ...current.members,
+      [memberId]: {
+        ...member,
+        restore_state: "unavailable",
+        restore_error_code: errorCode,
+      },
+    },
+  };
+}
+
 export function mergeTeamSessionState(
   current: TeamSessionStoreState,
   incoming: TeamSessionStoreState,

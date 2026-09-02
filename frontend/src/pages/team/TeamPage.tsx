@@ -18,6 +18,7 @@ import { Input } from "../../components/ui/input";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useOptionalTeamTasks } from "../../app/backgroundTasks/TeamTaskProvider";
 import { TeamSessionProvider } from "../../app/backgroundTasks/TeamSessionProvider";
+import { isTauriRuntime } from "../../services/appUpdater";
 import {
   listAgentCatalog,
   listAgentMarket,
@@ -81,6 +82,7 @@ export function TeamPage() {
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [restoreResult, setRestoreResult] = useState<TeamRestoreSnapshot | null>(null);
   const [restoreTaskId, setRestoreTaskId] = useState<string | null>(null);
+  const [activeMemberId, setActiveMemberId] = useState<string | null>(null);
   const teamTasks = useOptionalTeamTasks();
 
   const installedAgents = useMemo(() => {
@@ -110,6 +112,19 @@ export function TeamPage() {
   const selectableAgents = () => installedAgents.filter((agent) => agentCanFillTeam(agent.id));
 
   const selectedTeam = teams.find((team) => team.id === selectedTeamId) ?? null;
+  const selectedMemberIds = useMemo(
+    () => selectedTeam?.members.map((member) => member.id) ?? [],
+    [selectedTeam],
+  );
+
+  useEffect(() => {
+    const leader = selectedTeam?.members.find((member) => member.role === "leader") ?? selectedTeam?.members[0];
+    setActiveMemberId((current) => (
+      current && selectedTeam?.members.some((member) => member.id === current)
+        ? current
+        : leader?.id ?? null
+    ));
+  }, [selectedTeam, selectedTeamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -455,7 +470,12 @@ export function TeamPage() {
   };
 
   return (
-    <TeamSessionProvider teamId={selectedTeamId}>
+    <TeamSessionProvider
+      activeMemberId={activeMemberId}
+      autoRestore={isTauriRuntime()}
+      memberIds={selectedMemberIds}
+      teamId={selectedTeamId}
+    >
       <section className="flex min-h-0 flex-1 flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
         actions={
@@ -510,8 +530,10 @@ export function TeamPage() {
           {selectedTeam ? (
             <TeamWorkspaceShell
               key={selectedTeam.id}
-              onDelete={() => setDeleting(selectedTeam)}
-              onEdit={() => openEdit(selectedTeam)}
+            onDelete={() => setDeleting(selectedTeam)}
+            onEdit={() => openEdit(selectedTeam)}
+            activeMemberId={activeMemberId}
+            onActiveMemberChange={setActiveMemberId}
               onCancel={() => void cancelTeamExecution()}
               onConfirm={() => void startTeamExecution()}
               onMoveTask={moveRunTask}
