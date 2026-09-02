@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type BackgroundTaskUnsubscribe = () => void;
 
@@ -16,21 +16,31 @@ export function useBackgroundTaskRuntime<TState, TEvent>(
   adapter: BackgroundTaskRuntimeAdapter<TState, TEvent>,
 ) {
   const [state, setState] = useState(adapter.initialState);
+  const adapterRef = useRef(adapter);
+  adapterRef.current = adapter;
 
   const merge = useCallback((incoming: TState | TEvent) => {
+    if (adapterRef.current !== adapter) return;
     setState((current) => adapter.merge(current, incoming));
   }, [adapter]);
 
   const refresh = useCallback(async () => {
     const incoming = await adapter.refresh();
-    setState((current) => adapter.merge(current, incoming));
+    if (adapterRef.current === adapter) {
+      setState((current) => adapter.merge(current, incoming));
+    }
     return incoming;
   }, [adapter]);
+
+  const update = useCallback((updater: (current: TState) => TState) => {
+    setState(updater);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     let cleanupSubscription: BackgroundTaskUnsubscribe | undefined;
     let reconnectTimer: number | undefined;
+    setState(adapter.initialState);
     void refresh().catch(() => undefined);
 
     function connect() {
@@ -83,5 +93,5 @@ export function useBackgroundTaskRuntime<TState, TEvent>(
     return () => window.clearInterval(intervalId);
   }, [adapter, refresh, state]);
 
-  return { merge, refresh, state };
+  return { merge, refresh, update, state };
 }

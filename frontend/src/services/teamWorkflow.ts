@@ -3,6 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   teamLeaderChatResultSchema,
   teamRunSnapshotSchema,
+  teamMemberStreamSnapshotSchema,
+  teamMemberTaskSnapshotSchema,
   teamRuntimeTaskSnapshotSchema,
 } from "../schemas/teamWorkflow";
 import { isTauriRuntime } from "./appUpdater";
@@ -11,12 +13,16 @@ import type {
   TeamDraftInput,
   TeamLeaderChatInput,
   TeamLeaderChatResult,
+  TeamMemberStreamSnapshot,
+  TeamMemberTaskSnapshot,
+  TeamMemberTurnInput,
   TeamReviewInput,
   TeamRunSnapshot,
   TeamRuntimeTaskSnapshot,
 } from "../types/team";
 
 const DESKTOP_REQUIRED = "Team workflows require the desktop application runtime.";
+export const TEAM_MEMBER_SESSION_UPDATED_EVENT = "team-member-session://updated";
 
 function requireDesktop() {
   if (!isTauriRuntime()) throw new Error(DESKTOP_REQUIRED);
@@ -73,6 +79,65 @@ export async function getTeamRunTask(taskId: string): Promise<TeamRuntimeTaskSna
 export async function listTeamRunTasks(): Promise<TeamRuntimeTaskSnapshot[]> {
   if (!isTauriRuntime()) return [];
   return teamRuntimeTaskSnapshotSchema.array().parse(await invoke("list_team_run_tasks"));
+}
+
+export async function startTeamMemberTurn(input: TeamMemberTurnInput): Promise<TeamMemberStreamSnapshot> {
+  requireDesktop();
+  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_turn_start", { input }));
+}
+
+export async function startTeamMemberReplay(teamId: string, memberId: string): Promise<TeamMemberStreamSnapshot> {
+  requireDesktop();
+  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_replay_start", {
+    teamId: teamId.trim(),
+    memberId: memberId.trim(),
+  }));
+}
+
+export async function getTeamMemberStreamSnapshot(
+  teamId: string,
+  memberId: string,
+  executionId: string,
+): Promise<TeamMemberStreamSnapshot | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("team_member_stream_snapshot", {
+    teamId: teamId.trim(),
+    memberId: memberId.trim(),
+    executionId: executionId.trim(),
+  });
+  return value == null ? null : teamMemberStreamSnapshotSchema.parse(value);
+}
+
+export async function getTeamMemberTask(taskId: string): Promise<TeamMemberTaskSnapshot | null> {
+  if (!isTauriRuntime()) return null;
+  const value = await invoke("team_member_task_get", { taskId: taskId.trim() });
+  return value == null ? null : teamMemberTaskSnapshotSchema.parse(value);
+}
+
+export async function listTeamMemberTasks(): Promise<TeamMemberTaskSnapshot[]> {
+  if (!isTauriRuntime()) return [];
+  return teamMemberTaskSnapshotSchema.array().parse(await invoke("team_member_tasks_list"));
+}
+
+export async function cancelTeamMemberTurn(
+  teamId: string,
+  memberId: string,
+  executionId: string,
+): Promise<TeamMemberStreamSnapshot> {
+  requireDesktop();
+  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_turn_cancel", {
+    teamId: teamId.trim(),
+    memberId: memberId.trim(),
+    executionId: executionId.trim(),
+  }));
+}
+
+export function subscribeTeamMemberSessions(listener: (snapshot: TeamMemberStreamSnapshot) => void) {
+  if (!isTauriRuntime()) return Promise.resolve(() => undefined);
+  return listen<unknown>(TEAM_MEMBER_SESSION_UPDATED_EVENT, (event) => {
+    const parsed = teamMemberStreamSnapshotSchema.safeParse(event.payload);
+    if (parsed.success) listener(parsed.data);
+  });
 }
 
 export function subscribeTeamRunTasks(

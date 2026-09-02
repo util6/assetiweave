@@ -21,6 +21,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useOptionalTeamTasks } from "../../app/backgroundTasks/TeamTaskProvider";
+import { TeamSessionProvider } from "../../app/backgroundTasks/TeamSessionProvider";
 import {
   listAgentCatalog,
   listAgentMarket,
@@ -476,7 +477,8 @@ export function TeamPage() {
   };
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]">
+    <TeamSessionProvider teamId={selectedTeamId}>
+      <section className="flex min-h-0 flex-1 flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
         actions={
           <Button disabled={loading || installedAgents.length === 0} onClick={openCreate} size="sm" type="button">
@@ -694,7 +696,8 @@ export function TeamPage() {
         </form>
       </DialogFrame>}
       <ConfirmDialog busy={busy} confirmLabel={t("team.action.delete")} message={deleting ? t("team.confirm.deleteMessage", { name: deleting.name }) : ""} onClose={() => setDeleting(null)} onConfirm={() => void confirmDelete()} open={Boolean(deleting)} title={t("team.confirm.deleteTitle")} tone="danger" />
-    </section>
+      </section>
+    </TeamSessionProvider>
   );
 }
 

@@ -162,3 +162,182 @@ export interface TeamRuntimeTaskSnapshot {
   detail: unknown;
   result: unknown;
 }
+
+export type SessionEventDelivery = "live" | "replay";
+export type SessionProcessingState = "started" | "active" | "completed";
+export type SessionToolState = "running" | "succeeded" | "failed" | "cancelled";
+export type SessionTaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface SessionEventIdentity {
+  session_id: string;
+  member_id: string;
+  execution_id: string;
+  turn_id: string;
+  item_id: string;
+  event_id: string;
+}
+
+export interface SessionItemIdentity {
+  session_id: string;
+  member_id: string;
+  execution_id: string;
+  turn_id: string;
+  item_id: string;
+}
+
+export type SessionEventKind =
+  | { type: "user_message_acknowledged"; accepted: boolean }
+  | { type: "assistant_text_delta"; text: string }
+  | { type: "assistant_text_snapshot"; text: string }
+  | { type: "processing"; state: SessionProcessingState }
+  | { type: "thinking_delta"; text: string }
+  | { type: "thinking_snapshot"; text: string }
+  | { type: "tool_start"; name: string | null }
+  | { type: "tool_update"; state: SessionToolState; detail: string | null }
+  | { type: "tool_result"; success: boolean; detail: string | null }
+  | { type: "task_projection"; task_id: string }
+  | { type: "task_status"; status: SessionTaskStatus }
+  | { type: "task_result"; success: boolean; detail: string | null }
+  | { type: "notice"; code: string; detail: string | null }
+  | { type: "terminal_result"; text: string | null }
+  | { type: "cancel" }
+  | { type: "error"; code: string; retryable: boolean };
+
+export interface SessionEvent {
+  identity: SessionEventIdentity;
+  sequence: number;
+  delivery: SessionEventDelivery;
+  kind: SessionEventKind;
+}
+
+export type SessionItemKind =
+  | "user_message"
+  | "assistant_text"
+  | "processing"
+  | "thinking"
+  | "tool"
+  | "task"
+  | "notice"
+  | "final_result"
+  | "cancelled"
+  | "error";
+
+export type SessionItemState =
+  | "pending"
+  | "streaming"
+  | "completed"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface SessionItemSnapshot {
+  identity: SessionItemIdentity;
+  kind: SessionItemKind;
+  sequence: number;
+  delivery: SessionEventDelivery;
+  state: SessionItemState;
+  text: string | null;
+  status: SessionTaskStatus | null;
+  code: string | null;
+}
+
+export interface SessionSnapshot {
+  revision: number;
+  event_count: number;
+  items: SessionItemSnapshot[];
+}
+
+export interface TeamMemberTurnInput {
+  team_id: string;
+  member_id: string;
+  message: string;
+  replay: boolean;
+}
+
+export type TeamMemberTaskPhase =
+  | "queued"
+  | "resolving"
+  | "spawning"
+  | "initializing"
+  | "creating_session"
+  | "configuring"
+  | "prompting"
+  | "cancelling"
+  | "closing"
+  | "cleaning_up"
+  | string;
+
+export interface TeamMemberTaskCleanup {
+  process_reaped: boolean;
+  workspace_removed: boolean;
+  failure_count: number;
+  session_closed: boolean | null;
+  session_deleted: boolean | null;
+  session_delete_method: "acp" | "provider_fallback" | null;
+}
+
+export interface TeamMemberTaskDetail {
+  workflow: "team_member_turn";
+  tenant_id: string;
+  team_id: string;
+  member_id: string;
+  execution_id: string;
+  replay: boolean;
+  phase: TeamMemberTaskPhase;
+  cleanup?: TeamMemberTaskCleanup;
+}
+
+export interface TeamMemberTaskResult {
+  workflow: "team_member_turn";
+  team_id: string;
+  member_id: string;
+  execution_id: string;
+  replay: boolean;
+  terminal: true;
+}
+
+export interface TeamMemberTaskSnapshot extends Omit<TeamRuntimeTaskSnapshot, "detail" | "result"> {
+  detail: TeamMemberTaskDetail;
+  result: TeamMemberTaskResult | null;
+}
+
+export interface TeamMemberStreamSnapshot {
+  team_id: string;
+  member_id: string;
+  execution_id: string;
+  sequence: number;
+  replay: boolean;
+  task: TeamMemberTaskSnapshot;
+  stream: SessionSnapshot;
+}
+
+export type TeamMemberRestoreState = "not-started" | "restoring" | "ready" | "partial" | "unavailable";
+
+export interface TeamMemberExecutionProjection {
+  team_id: string;
+  member_id: string;
+  execution_id: string;
+  sequence: number;
+  replay: boolean;
+  task: TeamMemberTaskSnapshot;
+  stream: SessionSnapshot;
+}
+
+export interface TeamMemberSessionProjection {
+  team_id: string;
+  member_id: string;
+  execution_id: string | null;
+  sequence: number;
+  replay: boolean;
+  stream: SessionSnapshot;
+  task: TeamMemberTaskSnapshot | null;
+  unread: boolean;
+  restore_state: TeamMemberRestoreState;
+  restore_error_code: string | null;
+  executions: Record<string, TeamMemberExecutionProjection>;
+}
+
+export interface TeamSessionStoreState {
+  team_id: string | null;
+  members: Record<string, TeamMemberSessionProjection>;
+}
