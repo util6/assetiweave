@@ -175,6 +175,19 @@ describe("TeamPage", () => {
     expect(screen.getByTestId("team-member-leader-status").textContent).toContain("Working");
   });
 
+  it("collapses secondary navigation without hiding the active recipient or composer", async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+
+    const toggle = screen.getByRole("button", { name: "Collapse list" });
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.getByRole("navigation", { name: "Teams" }).className).toContain("max-[860px]:hidden");
+    expect(screen.getByTestId("team-active-recipient")).toBeTruthy();
+    expect(screen.getByTestId("team-composer")).toBeTruthy();
+  });
+
   it("sends to the active teammate and shows one optimistic user item before backend acceptance", async () => {
     let resolveStart: ((snapshot: TeamMemberStreamSnapshot) => void) | null = null;
     startTeamMemberTurnMock.mockImplementation(() => new Promise<TeamMemberStreamSnapshot>((resolve) => {

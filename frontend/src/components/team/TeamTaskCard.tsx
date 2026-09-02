@@ -18,8 +18,9 @@ export function TeamTaskCard({ owner, task }: TeamTaskCardProps) {
   return (
     <li
       aria-label={t("team.workflow.taskProjectionLabel", { title: task.title })}
-      className="rounded-xl border border-theme-card-border/65 bg-theme-card/55 px-3.5 py-3"
+      className="rounded-xl border border-theme-card-border/65 bg-theme-card/55 px-3.5 py-3 outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55"
       data-testid={`team-task-card-${task.id}`}
+      data-team-task-anchor={teamTaskAnchor(task.id)}
       id={teamTaskAnchor(task.id)}
       tabIndex={-1}
     >

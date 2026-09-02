@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowDown,
   Bot,
   CheckCircle2,
   CircleAlert,
@@ -15,7 +16,7 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { TeamPlanCard } from "./TeamPlanCard";
@@ -32,11 +33,14 @@ import type {
   TeamMemberSessionProjection,
   TeamRestoreSnapshot,
   TeamRunSnapshot,
+  TeamTask,
   TeamRuntimeTaskSnapshot,
 } from "../../types/team";
 
 export interface TeamWorkspaceShellProps {
   team: TeamDetail;
+  activeMemberId: string | null;
+  onActiveMemberChange: (memberId: string) => void;
   onOpenDetails: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -65,9 +69,11 @@ interface OptimisticUserMessage {
 }
 
 export function TeamWorkspaceShell({
+  activeMemberId: selectedMemberId,
   onDelete,
   onEdit,
   onOpenDetails,
+  onActiveMemberChange,
   onCancel,
   onConfirm,
   onMoveTask,
@@ -89,21 +95,17 @@ export function TeamWorkspaceShell({
     [team.members],
   );
   const leader = members.find((member) => member.role === "leader") ?? members[0] ?? null;
-  const [activeMemberId, setActiveMemberId] = useState<string | null>(leader?.id ?? null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<OptimisticUserMessage[]>([]);
   const [composerMode, setComposerMode] = useState<"normal" | "task">("normal");
   const [pendingTaskNavigation, setPendingTaskNavigation] = useState<string | null>(null);
+  const [showNewActivity, setShowNewActivity] = useState(false);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const timelineFollowingRef = useRef(true);
+  const previousTimelineKeyRef = useRef<string | null>(null);
+  const memberButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
-  useEffect(() => {
-    setActiveMemberId((current) => (
-      current && members.some((member) => member.id === current)
-        ? current
-        : leader?.id ?? members[0]?.id ?? null
-    ));
-  }, [leader?.id, members, team.id]);
-
-  const activeMember = members.find((member) => member.id === activeMemberId) ?? leader;
+  const activeMember = members.find((member) => member.id === selectedMemberId) ?? leader;
   const activeSession = activeMember ? session.getMember(activeMember.id) : null;
   const activeStatus = getMemberStatus(activeSession, t);
   const activeDraft = activeMember ? drafts[activeMember.id] ?? "" : "";
@@ -127,6 +129,54 @@ export function TeamWorkspaceShell({
       .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
   }, [activeMember, runSnapshot, team.id]);
   const taskModeBusy = workflowBusy || ["drafting", "awaiting_review", "executing"].includes(activeRun?.run.state ?? "");
+  const activeTimelineItems = useMemo(
+    () => composeTimelineItems(activeSession?.stream.items ?? [], activeMessages, activeSession?.execution_id),
+    [activeMessages, activeSession?.execution_id, activeSession?.stream.items],
+  );
+  const timelineKey = useMemo(
+    () => createTimelineKey(activeTimelineItems, activeProjectedTasks, activeRun, activeSession?.restore_state),
+    [activeProjectedTasks, activeRun, activeSession?.restore_state, activeTimelineItems],
+  );
+
+  const scrollTimelineToLatest = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const timeline = timelineRef.current;
+    if (!timeline) return;
+    const top = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
+    if (typeof timeline.scrollTo === "function") {
+      timeline.scrollTo({ behavior, top });
+    } else {
+      timeline.scrollTop = top;
+    }
+    timelineFollowingRef.current = true;
+    setShowNewActivity(false);
+  }, []);
+
+  const onTimelineScroll = () => {
+    const timeline = timelineRef.current;
+    if (!timeline) return;
+    const following = isNearTimelineBottom(timeline);
+    timelineFollowingRef.current = following;
+    if (following) setShowNewActivity(false);
+  };
+
+  useLayoutEffect(() => {
+    previousTimelineKeyRef.current = null;
+    timelineFollowingRef.current = true;
+    setShowNewActivity(false);
+    scrollTimelineToLatest("auto");
+  }, [activeMember?.id, scrollTimelineToLatest]);
+
+  useLayoutEffect(() => {
+    if (previousTimelineKeyRef.current === timelineKey) return;
+    previousTimelineKeyRef.current = timelineKey;
+    const timeline = timelineRef.current;
+    if (!timeline) return;
+    if (timelineFollowingRef.current || isNearTimelineBottom(timeline)) {
+      scrollTimelineToLatest("auto");
+    } else {
+      setShowNewActivity(true);
+    }
+  }, [scrollTimelineToLatest, timelineKey]);
 
   useEffect(() => {
     if (!isLeader && composerMode === "task") setComposerMode("normal");
@@ -145,7 +195,7 @@ export function TeamWorkspaceShell({
     const owner = members.find((member) => member.id === ownerMemberId && member.role === "teammate");
     if (!owner) return;
     setPendingTaskNavigation(taskId);
-    setActiveMemberId(owner.id);
+    onActiveMemberChange(owner.id);
     session.markSeen(owner.id);
   };
 
@@ -257,12 +307,27 @@ export function TeamWorkspaceShell({
                   aria-selected={selected}
                   className={`group flex min-w-44 shrink-0 items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55 ${selected ? "border-theme-nav-active-border bg-theme-nav-active/20" : "border-theme-card-border/65 bg-theme-card/40 hover:border-theme-nav-active-border/55 hover:bg-theme-control-hover/60"}`}
                   data-testid={`team-member-${member.id}`}
+                  id={`team-member-tab-${member.id}`}
                   key={member.id}
                   onClick={() => {
-                    setActiveMemberId(member.id);
+                    setPendingTaskNavigation(null);
+                    onActiveMemberChange(member.id);
                     session.markSeen(member.id);
                   }}
+                  onKeyDown={(event) => {
+                    const nextIndex = memberNavigationIndex(event.key, members.length, members.indexOf(member));
+                    if (nextIndex === null) return;
+                    event.preventDefault();
+                    const nextMember = members[nextIndex];
+                    onActiveMemberChange(nextMember.id);
+                    session.markSeen(nextMember.id);
+                    memberButtonRefs.current[nextMember.id]?.focus();
+                  }}
+                  ref={(element) => {
+                    memberButtonRefs.current[member.id] = element;
+                  }}
                   role="tab"
+                  tabIndex={selected ? 0 : -1}
                   type="button"
                 >
                   <span className={`grid size-9 shrink-0 place-items-center rounded-full border text-caption font-bold ${selected ? "border-primary/50 bg-theme-nav-active text-theme-nav-active-fg" : "border-theme-control-border bg-theme-control text-on-surface-variant"}`}>
@@ -287,7 +352,7 @@ export function TeamWorkspaceShell({
         </section>
 
         <section className="flex min-h-0 flex-1 flex-col bg-theme-panel/25" aria-label={t("team.chat.sessionArea")}>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-theme-card-border/45 px-4 py-2.5 sm:px-5">
+          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-theme-card-border/45 bg-theme-card-header/85 px-4 py-2.5 backdrop-blur sm:px-5">
             <div className="min-w-0">
               <p className="text-label-caps uppercase text-on-surface-variant">{t("team.chat.activeSession")}</p>
               <h3 className="truncate text-title-sm font-bold text-on-surface" data-testid="team-active-recipient">
@@ -302,15 +367,45 @@ export function TeamWorkspaceShell({
 
           <div
             aria-label={activeMember ? t("team.chat.timelineLabel", { name: roleLabel(activeMember, t) }) : t("team.chat.sessionArea")}
-            className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
+            className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
             data-testid="team-timeline"
             id="team-session-timeline"
+            onScroll={onTimelineScroll}
+            ref={timelineRef}
             role="log"
             tabIndex={0}
           >
-            {activeSession?.stream.items.length || activeMessages.length || activeProjectedTasks.length || activeRun ? (
+            {showNewActivity ? (
+              <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center">
+                <Button
+                  className="pointer-events-auto shadow-[var(--theme-shadow-panel)]"
+                  data-testid="team-new-activity"
+                  onClick={() => scrollTimelineToLatest()}
+                  size="sm"
+                  type="button"
+                  variant="secondary"
+                >
+                  <ArrowDown size={14} />
+                  {t("team.chat.newActivity")}
+                </Button>
+              </div>
+            ) : null}
+            {activeSession?.restore_state && activeSession.restore_state !== "ready" && activeSession.restore_state !== "not-started" ? (
+              <div
+                aria-live="polite"
+                className={`mb-3 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-caption ${activeStatus.className === "text-status-remove" ? "border-status-remove/35 bg-status-remove/10 text-status-remove" : "border-theme-nav-active-border/40 bg-theme-nav-active/10 text-on-surface-variant"}`}
+                data-state={activeSession.restore_state}
+                data-testid="team-restore-status"
+                role="status"
+              >
+                {activeStatus.icon}
+                <span className="font-semibold">{activeStatus.label}</span>
+                {activeSession.restore_error_code ? <code>{activeSession.restore_error_code}</code> : null}
+              </div>
+            ) : null}
+            {activeTimelineItems.length || activeProjectedTasks.length || activeRun ? (
               <ol className="mx-auto grid w-full max-w-3xl gap-3">
-                {composeTimelineItems(activeSession?.stream.items ?? [], activeMessages, activeSession?.execution_id).map((item) => (
+                {activeTimelineItems.map((item) => (
                   <SessionItem item={item} key={`${item.identity.execution_id}:${item.identity.item_id}`} />
                 ))}
                 {activeProjectedTasks.map((task) => (
@@ -392,6 +487,12 @@ export function TeamWorkspaceShell({
                 aria-label={t("team.chat.composerInput")}
                 className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
                 disabled={!activeMember || activeMemberBusy || activeMemberSending || (composerMode === "task" && taskModeBusy)}
+                onKeyDown={(event) => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                    event.preventDefault();
+                    void submitComposer();
+                  }
+                }}
                 placeholder={composerMode === "task" ? t("team.chat.taskPlaceholder") : activeMember ? t("team.chat.composerPlaceholder", { name: roleLabel(activeMember, t) }) : t("team.chat.composerPlaceholderFallback")}
                 rows={2}
                 value={activeDraft}
@@ -454,6 +555,40 @@ function composeTimelineItems(
   ));
 }
 
+export function isNearTimelineBottom(element: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">, threshold = 64): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
+function createTimelineKey(
+  items: SessionItemSnapshot[],
+  projectedTasks: TeamTask[],
+  run: TeamRunSnapshot | null,
+  restoreState: TeamMemberRestoreState | undefined,
+): string {
+  return JSON.stringify({
+    items: items.map((item) => [sessionItemKey(item), item.sequence, item.state, item.text, item.code]),
+    projectedTasks: projectedTasks.map((task) => [task.id, task.state, task.result, task.error_code]),
+    run: run ? [run.run.id, run.run.revision, run.run.state, ...run.tasks.map((task) => [task.id, task.state, task.result, task.error_code])] : null,
+    restoreState,
+  });
+}
+
+function memberNavigationIndex(key: string, length: number, currentIndex: number): number | null {
+  if (length === 0) return null;
+  if (![
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "End",
+    "Home",
+  ].includes(key)) return null;
+  if (key === "Home") return 0;
+  if (key === "End") return length - 1;
+  const direction = key === "ArrowLeft" || key === "ArrowUp" ? -1 : 1;
+  return (currentIndex + direction + length) % length;
+}
+
 function optimisticUserItem(
   message: OptimisticUserMessage,
   executionId: string | null,
@@ -504,6 +639,8 @@ function errorCode(error: unknown): string {
 function SessionItem({ item }: { item: SessionItemSnapshot }) {
   const { t } = useI18n();
   const isUser = item.kind === "user_message";
+  const isCollapsible = item.kind === "tool" || item.kind === "thinking";
+  const [detailsOpen, setDetailsOpen] = useState(item.kind === "tool" && ["streaming", "failed"].includes(item.state));
   const label = itemLabel(item.kind, t);
   const icon = itemIcon(item.kind);
   const detail = item.text || itemStatus(item, t);
@@ -511,9 +648,13 @@ function SessionItem({ item }: { item: SessionItemSnapshot }) {
     ? "border-status-remove/35 bg-status-remove/10"
     : isUser
       ? "border-theme-nav-active-border/35 bg-theme-nav-active/10"
+      : item.kind === "final_result"
+        ? "border-status-create/35 bg-status-create/10"
+        : item.kind === "cancelled"
+          ? "border-status-conflict/35 bg-status-conflict/10"
       : "border-theme-card-border/65 bg-theme-card/55";
   return (
-    <li className={`rounded-xl border px-3.5 py-3 ${tone}`}>
+    <li className={`rounded-xl border px-3.5 py-3 ${tone}`} data-testid={`team-session-item-${item.identity.item_id}`}>
       <div className="flex items-start gap-3">
         <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border/70 bg-theme-control/70 text-primary">{icon}</span>
         <div className="min-w-0 flex-1">
@@ -522,8 +663,26 @@ function SessionItem({ item }: { item: SessionItemSnapshot }) {
             <span className="text-caption text-outline">{item.delivery === "replay" ? t("team.chat.replay") : t("team.chat.live")}</span>
             <span className="ml-auto text-caption text-outline">{item.state}</span>
           </div>
-          <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-on-surface">{detail}</p>
-          {item.code && item.text ? <p className="mt-1 text-caption text-status-remove">{item.code}</p> : null}
+          {isCollapsible ? (
+            <details
+              className="group mt-1 rounded-lg border border-theme-control-border/45 bg-theme-control/25 px-2.5 py-1.5"
+              data-testid={`team-session-item-details-${item.identity.item_id}`}
+              onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+              open={detailsOpen}
+            >
+              <summary className="cursor-pointer list-none rounded-md text-body-sm text-on-surface outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 [&::-webkit-details-marker]:hidden">
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-label-caps uppercase text-on-surface-variant">{label}</span>
+                  <span className="truncate">{detail}</span>
+                </span>
+              </summary>
+              <p className="mt-2 whitespace-pre-wrap break-words text-body-sm text-on-surface">{detail}</p>
+              {item.code ? <p className="mt-1 break-words text-caption text-status-remove">{item.code}</p> : null}
+            </details>
+          ) : (
+            <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-on-surface">{detail}</p>
+          )}
+          {!isCollapsible && item.code && item.text ? <p className="mt-1 break-words text-caption text-status-remove">{item.code}</p> : null}
         </div>
       </div>
     </li>

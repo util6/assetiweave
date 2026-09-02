@@ -1,6 +1,8 @@
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
+  ChevronUp,
   Plus,
   Shield,
   Trash2,
@@ -83,6 +85,7 @@ export function TeamPage() {
   const [restoreResult, setRestoreResult] = useState<TeamRestoreSnapshot | null>(null);
   const [restoreTaskId, setRestoreTaskId] = useState<string | null>(null);
   const [activeMemberId, setActiveMemberId] = useState<string | null>(null);
+  const [teamListOpen, setTeamListOpen] = useState(true);
   const teamTasks = useOptionalTeamTasks();
 
   const installedAgents = useMemo(() => {
@@ -116,6 +119,10 @@ export function TeamPage() {
     () => selectedTeam?.members.map((member) => member.id) ?? [],
     [selectedTeam],
   );
+  const effectiveActiveMemberId = activeMemberId
+    ?? selectedTeam?.members.find((member) => member.role === "leader")?.id
+    ?? selectedMemberIds[0]
+    ?? null;
 
   useEffect(() => {
     const leader = selectedTeam?.members.find((member) => member.role === "leader") ?? selectedTeam?.members[0];
@@ -471,7 +478,7 @@ export function TeamPage() {
 
   return (
     <TeamSessionProvider
-      activeMemberId={activeMemberId}
+      activeMemberId={effectiveActiveMemberId}
       autoRestore={isTauriRuntime()}
       memberIds={selectedMemberIds}
       teamId={selectedTeamId}
@@ -493,8 +500,23 @@ export function TeamPage() {
       {loading ? (
         <EmptyState className="min-h-0 flex-1" description={t("team.list.loading")} icon={<Users size={22} />} title={t("team.list.title")} />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] gap-3 overflow-hidden max-[860px]:grid-cols-1 max-[860px]:overflow-y-auto">
-          <nav aria-label={t("team.list.title")} className="min-h-0 overflow-y-auto">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] grid-rows-1 gap-3 overflow-hidden max-[860px]:grid-cols-1 max-[860px]:grid-rows-[auto_minmax(0,1fr)]">
+          <div className="min-h-0 min-w-0">
+            <div className="mb-2 hidden items-center justify-between gap-2 rounded-xl border border-theme-card-border/65 bg-theme-card/45 px-3 py-2 max-[860px]:flex">
+              <span className="text-label-caps uppercase text-on-surface-variant">{t("team.list.title")}</span>
+              <Button
+                aria-controls="team-roster-navigation"
+                aria-expanded={teamListOpen}
+                onClick={() => setTeamListOpen((open) => !open)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                {teamListOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {teamListOpen ? t("team.chat.collapseNavigation") : t("team.chat.expandNavigation")}
+              </Button>
+            </div>
+          <nav aria-label={t("team.list.title")} className={`min-h-0 overflow-y-auto max-[860px]:max-h-52 ${teamListOpen ? "" : "max-[860px]:hidden"}`} id="team-roster-navigation">
             <Panel className="min-h-full" padding="sm" variant="muted">
               <div className="flex items-center justify-between px-2 pb-2 text-label-caps uppercase text-on-surface-variant">
                 <span>{t("team.list.title")}</span>
@@ -512,7 +534,10 @@ export function TeamPage() {
                         aria-pressed={selected}
                         className={`w-full rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 ${selected ? "border-theme-nav-active-border bg-theme-nav-active/20" : "border-theme-card-border/60 bg-theme-card/40 hover:border-theme-nav-active-border/55 hover:bg-theme-control-hover/50"}`}
                         key={team.id}
-                        onClick={() => setSelectedTeamId(team.id)}
+                        onClick={() => {
+                          setSelectedTeamId(team.id);
+                          setTeamListOpen(false);
+                        }}
                         type="button"
                       >
                         <div className="flex items-start justify-between gap-2">
@@ -527,13 +552,14 @@ export function TeamPage() {
               )}
             </Panel>
           </nav>
+          </div>
           {selectedTeam ? (
             <TeamWorkspaceShell
               key={selectedTeam.id}
-            onDelete={() => setDeleting(selectedTeam)}
-            onEdit={() => openEdit(selectedTeam)}
-            activeMemberId={activeMemberId}
-            onActiveMemberChange={setActiveMemberId}
+              onDelete={() => setDeleting(selectedTeam)}
+              onEdit={() => openEdit(selectedTeam)}
+              activeMemberId={effectiveActiveMemberId}
+              onActiveMemberChange={setActiveMemberId}
               onCancel={() => void cancelTeamExecution()}
               onConfirm={() => void startTeamExecution()}
               onMoveTask={moveRunTask}
