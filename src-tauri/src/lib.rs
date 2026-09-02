@@ -350,11 +350,21 @@ pub fn run() {
         });
     let mut task_events = runtime.task_runtime().subscribe();
     let task_event_app = app.handle().clone();
+    let task_event_runtime = runtime.clone();
     tauri::async_runtime::spawn(async move {
         loop {
             match task_events.recv().await {
                 Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::TeamRun => {
-                    let _ = task_event_app.emit("team-run-task-updated", snapshot);
+                    let member_event =
+                        backend::application::AppService::from_runtime(&task_event_runtime)
+                            .member_stream_event_for_task(&snapshot);
+                    let _ = task_event_app.emit("team-run-task-updated", &snapshot);
+                    if let Some(member_event) = member_event {
+                        let _ = task_event_app.emit(
+                            adapters::tauri::commands::TEAM_MEMBER_SESSION_UPDATED_EVENT,
+                            member_event,
+                        );
+                    }
                 }
                 Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::Memory => {
                     let _ = task_event_app.emit("memory-task-updated", ());

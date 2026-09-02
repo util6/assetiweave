@@ -4,7 +4,7 @@ use crate::backend::{
         execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionError,
         AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
         SessionEvent, SessionEventDelivery, SessionEventIdentity, SessionEventKind,
-        SessionEventProjection, SessionSnapshot,
+        SessionEventProjection, SessionItemKind, SessionSnapshot,
     },
     application::AppService,
     models::{TeamMember, TeamMemberTurnInput},
@@ -20,6 +20,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 const MEMBER_TURN_WORKFLOW: &str = "team_member_turn";
@@ -31,6 +32,10 @@ pub(crate) struct TeamMemberStreamSnapshot {
     pub(crate) team_id: String,
     pub(crate) member_id: String,
     pub(crate) execution_id: String,
+    /// Monotonic projection revision used by transport consumers for
+    /// reconnect/dedup decisions. It is deliberately separate from task
+    /// lifecycle state, which may change without adding a Session item.
+    pub(crate) sequence: u64,
     pub(crate) replay: bool,
     pub(crate) task: TaskSnapshot,
     pub(crate) stream: SessionSnapshot,
@@ -250,6 +255,48 @@ impl AppService {
         self.member_stream_snapshot(&key, task).map(Some)
     }
 
+    /// Subscribe to the process-local projection for a validated member
+    /// scope. Transport adapters use this wrapper instead of reaching into
+    /// `SessionStreamRegistry` or reproducing its key validation.
+    pub(crate) fn subscribe_member_stream(
+        &self,
+        team_id: &str,
+        member_id: &str,
+        execution_id: &str,
+    ) -> AppResult<Option<broadcast::Receiver<SessionSnapshot>>> {
+        let member = self.validate_member_scope(team_id, member_id)?;
+        let key = self.member_stream_key(team_id, &member, execution_id)?;
+        Ok(self.runtime.session_streams().subscribe(&key))
+    }
+
+    /// Project a TaskRuntime update into the same safe member stream payload
+    /// used by start and polling calls. TaskRuntime owns lifecycle state;
+    /// this method only reads the transient stream projection for event
+    /// emission and never persists Session content.
+    pub(crate) fn member_stream_event_for_task(
+        &self,
+        task: &TaskSnapshot,
+    ) -> Option<TeamMemberStreamSnapshot> {
+        if !is_member_turn_task(task)
+            || task
+                .tenant_id
+                .as_deref()
+                .is_some_and(|tenant| tenant != self.tenant_id())
+        {
+            return None;
+        }
+        let team_id = task.detail.get("team_id").and_then(Value::as_str)?;
+        let member_id = task.detail.get("member_id").and_then(Value::as_str)?;
+        let execution_id = task.detail.get("execution_id").and_then(Value::as_str)?;
+        let key = SessionStreamKey {
+            tenant_id: self.tenant_id().to_string(),
+            team_id: team_id.to_string(),
+            member_id: member_id.to_string(),
+            execution_id: execution_id.to_string(),
+        };
+        self.member_stream_snapshot(&key, task.clone()).ok()
+    }
+
     pub(crate) fn get_member_turn_task(&self, task_id: &str) -> AppResult<Option<TaskSnapshot>> {
         Ok(self
             .runtime
@@ -437,10 +484,12 @@ impl AppService {
                 event_count: 0,
                 items: Vec::new(),
             });
+        let stream = public_session_snapshot(stream);
         Ok(TeamMemberStreamSnapshot {
             team_id: key.team_id.clone(),
             member_id: key.member_id.clone(),
             execution_id: key.execution_id.clone(),
+            sequence: stream.revision,
             replay: task
                 .detail
                 .get("replay")
@@ -450,6 +499,19 @@ impl AppService {
             stream,
         })
     }
+}
+
+/// Strip provider/tool detail before a member projection crosses a public
+/// transport boundary. Assistant and thinking text remain available to the
+/// chat workspace; tool items retain lifecycle state but never carry raw
+/// provider payloads.
+fn public_session_snapshot(mut snapshot: SessionSnapshot) -> SessionSnapshot {
+    for item in &mut snapshot.items {
+        if item.kind == SessionItemKind::Tool {
+            item.text = None;
+        }
+    }
+    snapshot
 }
 
 #[derive(Clone)]
@@ -593,7 +655,19 @@ impl AiExecutionProgressSink for MemberTurnProgressSink {
         ) {
             self.terminal_emitted.store(true, Ordering::Release);
         }
-        let _ = self.projection.apply(event);
+        if matches!(
+            self.projection.apply(event),
+            crate::backend::ai_execution::SessionEventApplyResult::Applied
+        ) {
+            // TaskRuntime is the resident event fan-out used by the desktop
+            // shell. Re-publishing only a safe identity/detail projection
+            // gives Tauri low-latency notifications without putting event
+            // bodies into task snapshots.
+            let phase = self.phase.lock().ok().and_then(|phase| *phase);
+            let _ = self
+                .task_runtime
+                .update_detail(&self.task_id, self.safe_detail(phase, None));
+        }
     }
 
     fn set_cleanup_report(&self, report: crate::backend::ai_execution::AiExecutionCleanupReport) {
@@ -921,6 +995,37 @@ mod tests {
                 .code(),
             "team_member_anchor_unavailable"
         );
+    }
+
+    #[test]
+    fn member_stream_transport_redacts_tool_payload_and_keeps_sequence() {
+        let public =
+            super::public_session_snapshot(crate::backend::ai_execution::SessionSnapshot {
+                revision: 7,
+                event_count: 1,
+                items: vec![crate::backend::ai_execution::SessionItemSnapshot {
+                    identity: crate::backend::ai_execution::SessionItemIdentity {
+                        session_id: "session".to_string(),
+                        member_id: "member".to_string(),
+                        execution_id: "execution".to_string(),
+                        turn_id: "turn".to_string(),
+                        item_id: "tool".to_string(),
+                    },
+                    kind: crate::backend::ai_execution::SessionItemKind::Tool,
+                    sequence: 7,
+                    delivery: SessionEventDelivery::Live,
+                    state: crate::backend::ai_execution::SessionItemState::Completed,
+                    text: Some("RAW_TOOL_PAYLOAD".to_string()),
+                    status: None,
+                    code: None,
+                }],
+            });
+
+        assert_eq!(public.revision, 7);
+        assert_eq!(public.items[0].text, None);
+        assert!(!serde_json::to_string(&public)
+            .expect("serialize public stream")
+            .contains("RAW_TOOL_PAYLOAD"));
     }
 
     struct FixtureRuntime {

@@ -46,3 +46,4 @@ pub(crate) use recent::{
 };
 pub(crate) use service::AppService;
 pub(crate) use sources::{SourceScanResult, SourceScanWorkflow};
+pub(crate) use team_member_workflow::TeamMemberStreamSnapshot;

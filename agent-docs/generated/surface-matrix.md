@@ -161,6 +161,12 @@
 | `team.list` | `list_teams`<br>`team.list` | `assetiweave-cli team list` | `list_teams` | `read` | `false` |
 | `team.mailbox.read` | `team_mailbox_read` | — | `team_mailbox_read` | `write` | `false` |
 | `team.mailbox.send` | `team_mailbox_send` | — | `team_mailbox_send` | `write` | `false` |
+| `team.member.replay.start` | `team_member_replay_start` | `assetiweave-cli team member replay <team-id> --member-id <member-id>` | `team_member_replay_start` | `read` | `false` |
+| `team.member.stream.snapshot` | `team_member_stream_snapshot` | `assetiweave-cli team member stream <team-id> --member-id <member-id> --execution-id <execution-id>` | `team_member_stream_snapshot` | `read` | `false` |
+| `team.member.task.get` | `team_member_task_get` | `assetiweave-cli team member task get <task-id>` | `team_member_task_get` | `read` | `false` |
+| `team.member.tasks.list` | `team_member_tasks_list` | `assetiweave-cli team member task list` | `team_member_tasks_list` | `read` | `false` |
+| `team.member.turn.cancel` | `team_member_turn_cancel` | `assetiweave-cli team member cancel <team-id> --member-id <member-id> --execution-id <execution-id>` | `team_member_turn_cancel` | `write` | `false` |
+| `team.member.turn.start` | `team_member_turn_start` | `assetiweave-cli team member turn <team-id> --member-id <member-id> --message <message>` | `team_member_turn_start` | `write` | `false` |
 | `team.run.cancel` | `team_run_cancel` | — | `team_run_cancel` | `write` | `false` |
 | `team.run.confirm` | `team.run.confirm`<br>`team_run_confirm` | `assetiweave-cli team run confirm <run-id> --revision <revision> --yes` | `team_run_confirm` | `high-risk-write` | `true` |
 | `team.run.draft` | `team.run.draft`<br>`team_run_draft` | `assetiweave-cli team run draft <team-id> --message <message>` | `team_run_draft` | `write` | `false` |

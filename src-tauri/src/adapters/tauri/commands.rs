@@ -101,6 +101,7 @@ use tauri::{AppHandle, Emitter, State};
 type RuntimeAppResult<T> = crate::backend::runtime::AppResult<T>;
 
 pub(crate) const AI_EXECUTION_TASK_UPDATED_EVENT: &str = "ai-execution://task-updated";
+pub(crate) const TEAM_MEMBER_SESSION_UPDATED_EVENT: &str = "team-member-session://updated";
 
 #[tauri::command]
 pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> RuntimeAppResult<()> {
@@ -3386,6 +3387,58 @@ pub(crate) fn delete_team(state: State<'_, AppState>, team_id: String) -> Runtim
 }
 
 #[tauri::command]
+pub(crate) fn team_member_turn_start(
+    state: State<'_, AppState>,
+    input: crate::backend::models::TeamMemberTurnInput,
+) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
+    AppService::from_runtime(&state.runtime).start_team_member_turn(input)
+}
+
+#[tauri::command]
+pub(crate) fn team_member_replay_start(
+    state: State<'_, AppState>,
+    team_id: String,
+    member_id: String,
+) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
+    AppService::from_runtime(&state.runtime).start_member_replay(&team_id, &member_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_member_stream_snapshot(
+    state: State<'_, AppState>,
+    team_id: String,
+    member_id: String,
+    execution_id: String,
+) -> RuntimeAppResult<Option<crate::backend::application::TeamMemberStreamSnapshot>> {
+    AppService::from_runtime(&state.runtime).get_member_stream(&team_id, &member_id, &execution_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_member_task_get(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> RuntimeAppResult<Option<crate::backend::runtime::tasks::TaskSnapshot>> {
+    AppService::from_runtime(&state.runtime).get_member_turn_task(&task_id)
+}
+
+#[tauri::command]
+pub(crate) fn team_member_tasks_list(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<crate::backend::runtime::tasks::TaskSnapshot>> {
+    AppService::from_runtime(&state.runtime).list_member_turn_tasks()
+}
+
+#[tauri::command]
+pub(crate) fn team_member_turn_cancel(
+    state: State<'_, AppState>,
+    team_id: String,
+    member_id: String,
+    execution_id: String,
+) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
+    AppService::from_runtime(&state.runtime).cancel_member_turn(&team_id, &member_id, &execution_id)
+}
+
+#[tauri::command]
 pub(crate) fn team_leader_chat(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamLeaderChatInput,
@@ -3731,6 +3784,12 @@ pub(crate) fn command_handler(
         list_teams,
         update_team,
         delete_team,
+        team_member_turn_start,
+        team_member_replay_start,
+        team_member_stream_snapshot,
+        team_member_task_get,
+        team_member_tasks_list,
+        team_member_turn_cancel,
         team_leader_chat,
         team_run_draft,
         team_run_get,

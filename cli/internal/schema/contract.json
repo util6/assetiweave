@@ -273,6 +273,12 @@
     "list_teams",
     "update_team",
     "delete_team",
+    "team_member_turn_start",
+    "team_member_replay_start",
+    "team_member_stream_snapshot",
+    "team_member_task_get",
+    "team_member_tasks_list",
+    "team_member_turn_cancel",
     "team_leader_chat",
     "team_run_draft",
     "team_run_get",
@@ -13723,6 +13729,229 @@
         "additionalProperties": false
       },
       "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_turn_start",
+      "canonical_method": "team.member.turn.start",
+      "description": "Start a background turn for one Team member",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "member_id",
+          "message",
+          "replay"
+        ],
+        "description": "A direct turn/replay request scoped to one Team member.\n\n`replay` deliberately shares the same request shape as a live turn so the\napplication workflow cannot grow a separate Leader/Teammate path. Provider\nanchors are resolved from Agent Execution by `execution_context_key` and\nnever arrive from a transport or the frontend.",
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Member identifier",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Member message"
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "Whether to replay member history"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team member turn <team-id> --member-id <member-id> --message <message>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_replay_start",
+      "canonical_method": "team.member.replay.start",
+      "description": "Start a background history replay for one Team member",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "member_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Member identifier",
+            "aliases": [
+              "memberId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team member replay <team-id> --member-id <member-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_stream_snapshot",
+      "canonical_method": "team.member.stream.snapshot",
+      "description": "Get a Team member Session stream snapshot",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "member_id",
+          "execution_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Member identifier",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "execution_id": {
+            "type": "string",
+            "description": "Member execution identifier",
+            "aliases": [
+              "executionId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team member stream <team-id> --member-id <member-id> --execution-id <execution-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_task_get",
+      "canonical_method": "team.member.task.get",
+      "description": "Get a Team member turn task snapshot",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "task_id"
+        ],
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Member turn task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team member task get <task-id>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_tasks_list",
+      "canonical_method": "team.member.tasks.list",
+      "description": "List Team member turn task snapshots",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": "assetiweave-cli team member task list",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "team_member_turn_cancel",
+      "canonical_method": "team.member.turn.cancel",
+      "description": "Cancel a Team member background turn",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "team_id",
+          "member_id",
+          "execution_id"
+        ],
+        "type": "object",
+        "properties": {
+          "team_id": {
+            "type": "string",
+            "description": "Team identifier",
+            "aliases": [
+              "teamId"
+            ]
+          },
+          "member_id": {
+            "type": "string",
+            "description": "Member identifier",
+            "aliases": [
+              "memberId"
+            ]
+          },
+          "execution_id": {
+            "type": "string",
+            "description": "Member execution identifier",
+            "aliases": [
+              "executionId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": "assetiweave-cli team member cancel <team-id> --member-id <member-id> --execution-id <execution-id>",
       "since": "0.1.0",
       "deprecated": false
     },

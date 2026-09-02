@@ -151,6 +151,19 @@ struct TeamTaskRuntimeGetParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct TeamMemberScopeParams {
+    team_id: String,
+    member_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct TeamMemberStreamParams {
+    team_id: String,
+    member_id: String,
+    execution_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct TeamToolCredentialIssueParams {
     team_id: String,
     run_id: String,
@@ -4307,6 +4320,102 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "team_member_turn_start",
+        "team.member.turn.start",
+        "Start a background turn for one Team member",
+        Write,
+        App,
+        false,
+        crate::backend::models::TeamMemberTurnInput,
+        Service => |service, params| service.start_team_member_turn(params),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("member_id", "Member identifier", ["memberId"]),
+            param!("message", "Member message"),
+            param!("replay", "Whether to replay member history"),
+        ],
+        Some("assetiweave-cli team member turn <team-id> --member-id <member-id> --message <message>")
+    ),
+    command!(
+        "team_member_replay_start",
+        "team.member.replay.start",
+        "Start a background history replay for one Team member",
+        Read,
+        App,
+        false,
+        TeamMemberScopeParams,
+        Service => |service, params| service.start_member_replay(&params.team_id, &params.member_id),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("member_id", "Member identifier", ["memberId"]),
+        ],
+        Some("assetiweave-cli team member replay <team-id> --member-id <member-id>")
+    ),
+    command!(
+        "team_member_stream_snapshot",
+        "team.member.stream.snapshot",
+        "Get a Team member Session stream snapshot",
+        Read,
+        App,
+        false,
+        TeamMemberStreamParams,
+        Service => |service, params| service.get_member_stream(
+            &params.team_id,
+            &params.member_id,
+            &params.execution_id,
+        ),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("member_id", "Member identifier", ["memberId"]),
+            param!("execution_id", "Member execution identifier", ["executionId"]),
+        ],
+        Some("assetiweave-cli team member stream <team-id> --member-id <member-id> --execution-id <execution-id>")
+    ),
+    command!(
+        "team_member_task_get",
+        "team.member.task.get",
+        "Get a Team member turn task snapshot",
+        Read,
+        App,
+        false,
+        TeamTaskRuntimeGetParams,
+        Service => |service, params| service.get_member_turn_task(&params.task_id),
+        &[param!("task_id", "Member turn task identifier", ["taskId"])],
+        Some("assetiweave-cli team member task get <task-id>")
+    ),
+    command!(
+        "team_member_tasks_list",
+        "team.member.tasks.list",
+        "List Team member turn task snapshots",
+        Read,
+        App,
+        false,
+        NoParams,
+        Service => |service, _params| service.list_member_turn_tasks(),
+        &[],
+        Some("assetiweave-cli team member task list")
+    ),
+    command!(
+        "team_member_turn_cancel",
+        "team.member.turn.cancel",
+        "Cancel a Team member background turn",
+        Write,
+        App,
+        false,
+        TeamMemberStreamParams,
+        Service => |service, params| service.cancel_member_turn(
+            &params.team_id,
+            &params.member_id,
+            &params.execution_id,
+        ),
+        &[
+            param!("team_id", "Team identifier", ["teamId"]),
+            param!("member_id", "Member identifier", ["memberId"]),
+            param!("execution_id", "Member execution identifier", ["executionId"]),
+        ],
+        Some("assetiweave-cli team member cancel <team-id> --member-id <member-id> --execution-id <execution-id>")
+    ),
+    command!(
         "team_leader_chat",
         "team.leader.chat",
         "Send a message to the persistent Team leader session or replay its history",
@@ -4914,6 +5023,22 @@ mod tests {
             .map(|spec| spec.method)
             .collect::<BTreeSet<_>>();
         assert_eq!(methods.len(), command_specs().len());
+    }
+
+    #[test]
+    fn team_member_transport_methods_are_registered_with_shared_app_authority() {
+        for (method, risk) in [
+            ("team.member.turn.start", CommandRisk::Write),
+            ("team.member.replay.start", CommandRisk::Read),
+            ("team.member.stream.snapshot", CommandRisk::Read),
+            ("team.member.task.get", CommandRisk::Read),
+            ("team.member.tasks.list", CommandRisk::Read),
+            ("team.member.turn.cancel", CommandRisk::Write),
+        ] {
+            let spec = find(method).unwrap_or_else(|| panic!("missing {method}"));
+            assert_eq!(spec.exposure, CommandExposure::App);
+            assert_eq!(spec.risk, risk);
+        }
     }
 
     #[test]

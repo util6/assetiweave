@@ -16,11 +16,125 @@ func newCmdTeam(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdTeamCreate(f))
 	cmd.AddCommand(newCmdTeamUpdate(f))
 	cmd.AddCommand(newCmdTeamDelete(f))
+	cmd.AddCommand(newCmdTeamMember(f))
 	cmd.AddCommand(newCmdTeamLeader(f))
 	cmd.AddCommand(newCmdTeamRun(f))
 	cmd.AddCommand(newCmdTeamTask(f))
 	cmd.AddCommand(newCmdTeamMailbox(f))
 	cmd.AddCommand(newCmdTeamTool(f))
+	return cmd
+}
+
+func newCmdTeamMember(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "member", Short: "Run and inspect a member Session"}
+	cmd.AddCommand(newCmdTeamMemberTurn(f))
+	cmd.AddCommand(newCmdTeamMemberReplay(f))
+	cmd.AddCommand(newCmdTeamMemberStream(f))
+	cmd.AddCommand(newCmdTeamMemberTask(f))
+	cmd.AddCommand(newCmdTeamMemberCancel(f))
+	return cmd
+}
+
+func newCmdTeamMemberTurn(f *cmdutil.Factory) *cobra.Command {
+	var memberID, message string
+	cmd := &cobra.Command{
+		Use:   "turn <team-id>",
+		Short: "Start a background turn for a Team member",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberTurnStart, map[string]any{
+				"team_id": args[0], "member_id": memberID, "message": message, "replay": false,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&memberID, "member-id", "", "Team member identifier")
+	cmd.Flags().StringVar(&message, "message", "", "message for the Team member")
+	_ = cmd.MarkFlagRequired("member-id")
+	_ = cmd.MarkFlagRequired("message")
+	return cmd
+}
+
+func newCmdTeamMemberReplay(f *cmdutil.Factory) *cobra.Command {
+	var memberID string
+	cmd := &cobra.Command{
+		Use:   "replay <team-id>",
+		Short: "Replay a Team member's provider history",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberReplayStart, map[string]any{
+				"team_id": args[0], "member_id": memberID,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&memberID, "member-id", "", "Team member identifier")
+	_ = cmd.MarkFlagRequired("member-id")
+	return cmd
+}
+
+func newCmdTeamMemberStream(f *cmdutil.Factory) *cobra.Command {
+	var memberID, executionID string
+	cmd := &cobra.Command{
+		Use:   "stream <team-id>",
+		Short: "Get a Team member Session stream snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberStreamSnapshot, map[string]any{
+				"team_id": args[0], "member_id": memberID, "execution_id": executionID,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&memberID, "member-id", "", "Team member identifier")
+	cmd.Flags().StringVar(&executionID, "execution-id", "", "member execution identifier")
+	_ = cmd.MarkFlagRequired("member-id")
+	_ = cmd.MarkFlagRequired("execution-id")
+	return cmd
+}
+
+func newCmdTeamMemberTask(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{Use: "task", Short: "Inspect Team member turn tasks"}
+	cmd.AddCommand(newCmdTeamMemberTaskGet(f))
+	cmd.AddCommand(newCmdTeamMemberTaskList(f))
+	return cmd
+}
+
+func newCmdTeamMemberTaskGet(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <task-id>",
+		Short: "Get a Team member turn task snapshot",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberTaskGet, map[string]any{"task_id": args[0]})
+		},
+	}
+}
+
+func newCmdTeamMemberTaskList(f *cmdutil.Factory) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List Team member turn tasks",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberTasksList, map[string]any{})
+		},
+	}
+}
+
+func newCmdTeamMemberCancel(f *cmdutil.Factory) *cobra.Command {
+	var memberID, executionID string
+	cmd := &cobra.Command{
+		Use:   "cancel <team-id>",
+		Short: "Cancel a Team member background turn",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return callAndPrint(cmd, f, schema.MethodTeamMemberTurnCancel, map[string]any{
+				"team_id": args[0], "member_id": memberID, "execution_id": executionID,
+			})
+		},
+	}
+	cmd.Flags().StringVar(&memberID, "member-id", "", "Team member identifier")
+	cmd.Flags().StringVar(&executionID, "execution-id", "", "member execution identifier")
+	_ = cmd.MarkFlagRequired("member-id")
+	_ = cmd.MarkFlagRequired("execution-id")
 	return cmd
 }
 
