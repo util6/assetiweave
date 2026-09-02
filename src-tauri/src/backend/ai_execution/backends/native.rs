@@ -24,6 +24,8 @@ use crate::backend::{
     operation_log::log_info,
 };
 
+use super::antigravity;
+
 pub(crate) struct NativeExecutionBackend {
     workspace_root: PathBuf,
 }
@@ -57,7 +59,8 @@ impl NativeExecutionBackend {
         guard.preserve_workspace = matches!(request.session_mode, AgentSessionMode::Persistent);
 
         let outcome = {
-            let execution = run_native_execution(&mut guard, definition, &request, started);
+            let execution =
+                run_selected_native_execution(&mut guard, definition, &request, started);
             tokio::pin!(execution);
             let cancellation = request.cancellation.cancelled();
             tokio::pin!(cancellation);
@@ -289,10 +292,10 @@ fn looks_like_model_id(token: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'))
 }
 
-struct NativeExecutionGuard {
-    workspace: PathBuf,
-    process: Option<ManagedAgentProcess>,
-    preserve_workspace: bool,
+pub(super) struct NativeExecutionGuard {
+    pub(super) workspace: PathBuf,
+    pub(super) process: Option<ManagedAgentProcess>,
+    pub(super) preserve_workspace: bool,
 }
 
 impl NativeExecutionGuard {
@@ -559,6 +562,21 @@ async fn run_native_execution(
     })
 }
 
+async fn run_selected_native_execution(
+    guard: &mut NativeExecutionGuard,
+    definition: &AgentDefinition,
+    request: &AiExecutionRequest,
+    started: Instant,
+) -> Result<AiExecutionResult, AiExecutionError> {
+    // Provider-specific selection belongs inside Agent Execution. Team,
+    // transport, and frontend callers continue to see one Native boundary.
+    if definition.id.as_str() == "antigravity" {
+        antigravity::run(guard, definition, request, started).await
+    } else {
+        run_native_execution(guard, definition, request, started).await
+    }
+}
+
 fn process_native_line(
     line: &[u8],
     accumulated_text: &mut String,
@@ -649,7 +667,7 @@ fn create_workspace(root: &Path) -> Result<PathBuf, AiExecutionError> {
     Ok(workspace)
 }
 
-fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
+pub(super) fn cancelled_error(definition: &AgentDefinition) -> AiExecutionError {
     AiExecutionError::Cancelled {
         program: PathBuf::from(&definition.command),
     }
@@ -662,7 +680,7 @@ fn timeout_error(definition: &AgentDefinition, timeout: std::time::Duration) -> 
     }
 }
 
-fn map_process_error(
+pub(super) fn map_process_error(
     definition: &AgentDefinition,
     error: ManagedAgentProcessError,
 ) -> AiExecutionError {

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Format fixture: Antigravity Direct-CLI `stream-json` envelopes mirrored from
+# the local AionCore Antigravity adapter reference; no provider login required.
+set -eu
+
+if [ -n "${ASSETIWEAVE_FAKE_AGY_RECORD_PATH:-}" ]; then
+  printf '%s\n' "$@" >> "$ASSETIWEAVE_FAKE_AGY_RECORD_PATH"
+  printf '%s\n' "--END--" >> "$ASSETIWEAVE_FAKE_AGY_RECORD_PATH"
+fi
+
+mode="${ASSETIWEAVE_FAKE_AGY_MODE:-success}"
+has_resume="false"
+for arg in "$@"; do
+  if [ "$arg" = "--conversation" ]; then
+    has_resume="true"
+  fi
+done
+
+case "$mode" in
+  auth-failure)
+    printf '%s\n' '{"event":"init","conversation_id":"","init":{"model":"fixture-model"}}'
+    printf '%s\n' '{"event":"result","result":{"conversation_id":"","status":"ERROR","error":"authentication failed or timed out"}}'
+    exit 1
+    ;;
+  result-id-only)
+    printf '%s\n' '{"event":"init","init":{"model":"fixture-model"}}'
+    printf '%s\n' '{"event":"step_update","step_update":{"conversation_id":"","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"result id response"}}'
+    printf '%s\n' '{"event":"result","result":{"conversation_id":"RESULT_ONLY_CONVERSATION_ID","status":"SUCCESS","response":"result id response"}}'
+    exit 0
+    ;;
+  unknown)
+    printf '%s\n' '{"event":"future_event","future":{"opaque":"ignored"}}'
+    ;;
+  malformed)
+    printf '%s\n' '{"event":"init","conversation_id":"REAL_CONVERSATION_ID","init":{"model":"fixture-model"}}'
+    printf '%s\n' '{not-json'
+    exit 0
+    ;;
+  hang)
+    printf '%s\n' '{"event":"init","conversation_id":"REAL_CONVERSATION_ID","init":{"model":"fixture-model"}}'
+    sleep 30
+    exit 0
+    ;;
+esac
+
+if [ "$has_resume" = "true" ]; then
+  response="resumed fixture response"
+else
+  response="first fixture response"
+fi
+
+printf '%s\n' '{"event":"init","conversation_id":"REAL_CONVERSATION_ID","init":{"model":"fixture-model"}}'
+printf '%s\n' "{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"REAL_CONVERSATION_ID\",\"step_index\":2,\"state\":\"ACTIVE\",\"step_type\":\"agent_response\",\"text_delta\":\"$response\"}}"
+printf '%s\n' '{"event":"step_update","step_update":{"conversation_id":"REAL_CONVERSATION_ID","step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"read_fixture","tool_info":{"name":"read fixture","parameters":{"secret":"RAW_TOOL_SECRET"}}}}'
+printf '%s\n' '{"event":"step_update","step_update":{"conversation_id":"REAL_CONVERSATION_ID","step_index":3,"state":"DONE","step_type":"tool","tool_info":{"name":"read fixture","output":"RAW_TOOL_SECRET"}}}'
+printf '%s\n' "{\"event\":\"result\",\"result\":{\"conversation_id\":\"REAL_CONVERSATION_ID\",\"status\":\"SUCCESS\",\"response\":\"$response\"}}"

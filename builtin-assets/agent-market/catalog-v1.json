@@ -134,7 +134,8 @@
         ],
         "textPrompt": true,
         "modelDiscovery": false,
-        "liveEvents": false,
+        "resume": true,
+        "liveEvents": true,
         "richHistoryReplay": false
       },
       "verification": {
