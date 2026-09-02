@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
@@ -17,6 +17,7 @@ const listTeamMemberTasksMock = vi.hoisted(() => vi.fn());
 const getTeamMemberStreamSnapshotMock = vi.hoisted(() => vi.fn());
 const subscribeTeamMemberSessionsMock = vi.hoisted(() => vi.fn());
 const getLatestTeamRunMock = vi.hoisted(() => vi.fn());
+const startTeamMemberTurnMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../services/team", () => ({
   createTeam: createTeamMock,
@@ -43,7 +44,7 @@ vi.mock("../../services/teamWorkflow", () => ({
   restoreTeamRun: vi.fn(),
   reviewTeamRun: vi.fn(),
   startTeamMemberReplay: vi.fn(),
-  startTeamMemberTurn: vi.fn(),
+  startTeamMemberTurn: startTeamMemberTurnMock,
   subscribeTeamMemberSessions: subscribeTeamMemberSessionsMock,
   teamLeaderChat: vi.fn(),
 }));
@@ -59,6 +60,8 @@ const fixture = {
     { id: "teammate", team_id: "team-1", role: "teammate" as const, sort_order: 1, agent_id: "agent-b", model: "model-b", execution_context_key: "ctx-teammate", created_at: "2026-08-31T00:00:00Z", updated_at: "2026-08-31T00:00:00Z" },
   ],
 };
+
+let emitMemberSnapshot: ((snapshot: TeamMemberStreamSnapshot) => void) | null = null;
 
 function renderPage() {
   return render(<I18nProvider><TeamPage /></I18nProvider>);
@@ -78,7 +81,12 @@ describe("TeamPage", () => {
     listAgentModelsMock.mockImplementation(async (agentId: string) => ({ agent_id: agentId, available: true, models: [{ id: agentId === "agent-a" ? "model-a" : "model-b", label: agentId === "agent-a" ? "Model A" : "Model B", description: null }], current_model_id: agentId === "agent-a" ? "model-a" : "model-b", error_code: null, error: null }));
     listTeamMemberTasksMock.mockResolvedValue([]);
     getTeamMemberStreamSnapshotMock.mockResolvedValue(null);
-    subscribeTeamMemberSessionsMock.mockResolvedValue(vi.fn());
+    emitMemberSnapshot = null;
+    subscribeTeamMemberSessionsMock.mockImplementation(async (listener: (snapshot: TeamMemberStreamSnapshot) => void) => {
+      emitMemberSnapshot = listener;
+      return vi.fn();
+    });
+    startTeamMemberTurnMock.mockReset();
     getLatestTeamRunMock.mockResolvedValue(null);
   });
 
@@ -151,10 +159,134 @@ describe("TeamPage", () => {
 
     fireEvent.click(screen.getByTestId("team-member-teammate"));
 
-    expect(screen.getByTestId("team-member-teammate").getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
-    expect(screen.getByTestId("team-timeline").textContent).toContain("Teammate timeline");
+    await waitFor(() => {
+      expect(screen.getByTestId("team-member-teammate").getAttribute("aria-selected")).toBe("true");
+      expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
+      expect(screen.getByTestId("team-timeline").textContent).toContain("Teammate timeline");
+    });
     expect(screen.getByTestId("team-member-leader-status").textContent).toContain("Working");
+  });
+
+  it("sends to the active teammate and shows one optimistic user item before backend acceptance", async () => {
+    let resolveStart: ((snapshot: TeamMemberStreamSnapshot) => void) | null = null;
+    startTeamMemberTurnMock.mockImplementation(() => new Promise<TeamMemberStreamSnapshot>((resolve) => {
+      resolveStart = resolve;
+    }));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    fireEvent.change(screen.getByLabelText("Message content"), { target: { value: "Inspect the cache" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(startTeamMemberTurnMock).toHaveBeenCalledWith({
+      team_id: "team-1",
+      member_id: "teammate",
+      message: "Inspect the cache",
+      replay: false,
+    });
+    expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Inspect the cache");
+    expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(true);
+
+    await act(async () => {
+      resolveStart?.(streamSnapshotWithItems("teammate", "execution-direct", "Running", [
+        sessionItem("teammate", "execution-direct", "workflow:user", "user_message", null, 1, "completed"),
+      ]));
+    });
+    await waitFor(() => expect(screen.getAllByText("Inspect the cache")).toHaveLength(1));
+  });
+
+  it("uses the same composer for the default Leader recipient", async () => {
+    startTeamMemberTurnMock.mockResolvedValue(streamSnapshotWithItems("leader", "execution-leader", "Running", [
+      sessionItem("leader", "execution-leader", "workflow:user", "user_message", null, 1, "completed"),
+    ]));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Message content"), { target: { value: "Ask the leader" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(startTeamMemberTurnMock).toHaveBeenCalledWith({
+      team_id: "team-1",
+      member_id: "leader",
+      message: "Ask the leader",
+      replay: false,
+    }));
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Ask the leader");
+  });
+
+  it("marks a rejected message failed only in the active member timeline", async () => {
+    const leader = memberStream("leader", "execution-leader", "Running", "Leader is still working");
+    listTeamMemberTasksMock.mockResolvedValue([leader.task]);
+    getTeamMemberStreamSnapshotMock.mockResolvedValue(leader);
+    startTeamMemberTurnMock.mockRejectedValue(new Error("member_busy"));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    fireEvent.change(screen.getByLabelText("Message content"), { target: { value: "This should fail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("team-timeline").textContent).toContain("member_busy");
+      expect(screen.getByTestId("team-timeline").textContent).toContain("failed");
+    });
+    fireEvent.click(screen.getByTestId("team-member-leader"));
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Leader is still working");
+    expect(screen.getByTestId("team-timeline").textContent).not.toContain("This should fail");
+  });
+
+  it("renders rich generic member events in place while inactive members keep running", async () => {
+    const accepted = streamSnapshotWithItems("teammate", "execution-direct", "Running", [
+      sessionItem("teammate", "execution-direct", "workflow:user", "user_message", null, 1, "completed"),
+    ]);
+    startTeamMemberTurnMock.mockResolvedValue(accepted);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    fireEvent.change(screen.getByLabelText("Message content"), { target: { value: "Stream the result" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.getAllByText("Stream the result")).toHaveLength(1));
+    await waitFor(() => expect(emitMemberSnapshot).not.toBeNull());
+
+    await act(async () => {
+      emitMemberSnapshot?.(streamSnapshotWithItems("teammate", "execution-direct", "Running", [
+        sessionItem("teammate", "execution-direct", "workflow:user", "user_message", null, 1, "completed"),
+        sessionItem("teammate", "execution-direct", "assistant-1", "assistant_text", "First delta", 2, "streaming"),
+        sessionItem("teammate", "execution-direct", "processing-1", "processing", null, 3, "streaming"),
+        sessionItem("teammate", "execution-direct", "tool-1", "tool", null, 4, "streaming"),
+      ], 4));
+    });
+    expect(screen.getByTestId("team-timeline").textContent).toContain("First delta");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Processing");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Tool activity");
+
+    await act(async () => {
+      emitMemberSnapshot?.(streamSnapshotWithItems("teammate", "execution-direct", "Running", [
+        sessionItem("teammate", "execution-direct", "workflow:user", "user_message", null, 1, "completed"),
+        sessionItem("teammate", "execution-direct", "assistant-1", "assistant_text", "Final delta", 2, "streaming"),
+        sessionItem("teammate", "execution-direct", "processing-1", "processing", null, 3, "completed"),
+        sessionItem("teammate", "execution-direct", "thinking-1", "thinking", "Provider thought", 4, "streaming"),
+        sessionItem("teammate", "execution-direct", "tool-1", "tool", null, 5, "succeeded"),
+        sessionItem("teammate", "execution-direct", "terminal-1", "final_result", "Terminal result", 6, "completed"),
+        sessionItem("teammate", "execution-direct", "error-1", "error", null, 7, "failed", null, "provider_error"),
+      ], 7));
+    });
+
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Final delta");
+    expect(screen.getByTestId("team-timeline").textContent).not.toContain("First delta");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Provider thought");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Terminal result");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("provider_error");
+    expect(screen.getAllByRole("listitem")).toHaveLength(7);
+
+    fireEvent.click(screen.getByTestId("team-member-leader"));
+    expect(screen.getByLabelText("Message content").hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Final delta");
+    expect(screen.getByTestId("team-member-teammate-status").textContent).toContain("Working");
   });
 });
 
@@ -164,6 +296,18 @@ function memberStream(
   taskState: TeamMemberTaskSnapshot["state"],
   text: string,
 ): TeamMemberStreamSnapshot {
+  return streamSnapshotWithItems(memberId, executionId, taskState, [
+    sessionItem(memberId, executionId, `item-${memberId}`, "assistant_text", text, 1, "streaming"),
+  ]);
+}
+
+function streamSnapshotWithItems(
+  memberId: string,
+  executionId: string,
+  taskState: TeamMemberTaskSnapshot["state"],
+  items: TeamMemberStreamSnapshot["stream"]["items"],
+  sequence = items.length,
+): TeamMemberStreamSnapshot {
   const task: TeamMemberTaskSnapshot = {
     task_id: `task-${executionId}`,
     kind: "TeamRun",
@@ -172,7 +316,9 @@ function memberStream(
     progress: null,
     error: null,
     started_at: "2026-08-31T00:00:00Z",
-    finished_at: null,
+    finished_at: ["Succeeded", "Failed", "Canceled"].includes(taskState)
+      ? "2026-08-31T00:00:01Z"
+      : null,
     detail: {
       workflow: "team_member_turn",
       tenant_id: "tenant-1",
@@ -182,34 +328,55 @@ function memberStream(
       replay: false,
       phase: "prompting",
     },
-    result: null,
+    result: ["Succeeded", "Failed", "Canceled"].includes(taskState) ? {
+      workflow: "team_member_turn",
+      team_id: "team-1",
+      member_id: memberId,
+      execution_id: executionId,
+      replay: false,
+      terminal: true,
+    } : null,
   };
   return {
     team_id: "team-1",
     member_id: memberId,
     execution_id: executionId,
-    sequence: 1,
+    sequence,
     replay: false,
     task,
     stream: {
-      revision: 1,
-      event_count: 1,
-      items: [{
-        identity: {
-          session_id: `session-${memberId}`,
-          member_id: memberId,
-          execution_id: executionId,
-          turn_id: "turn-1",
-          item_id: `item-${memberId}`,
-        },
-        kind: "assistant_text",
-        sequence: 1,
-        delivery: "live",
-        state: "streaming",
-        text,
-        status: null,
-        code: null,
-      }],
+      revision: sequence,
+      event_count: items.length,
+      items,
     },
+  };
+}
+
+function sessionItem(
+  memberId: string,
+  executionId: string,
+  itemId: string,
+  kind: TeamMemberStreamSnapshot["stream"]["items"][number]["kind"],
+  text: string | null,
+  sequence: number,
+  state: TeamMemberStreamSnapshot["stream"]["items"][number]["state"],
+  status: TeamMemberStreamSnapshot["stream"]["items"][number]["status"] = null,
+  code: string | null = null,
+) {
+  return {
+    identity: {
+      session_id: `session-${memberId}`,
+      member_id: memberId,
+      execution_id: executionId,
+      turn_id: executionId,
+      item_id: itemId,
+    },
+    kind,
+    sequence,
+    delivery: "live" as const,
+    state,
+    text,
+    status,
+    code,
   };
 }

@@ -38,6 +38,16 @@ export interface TeamWorkspaceShellProps {
   onOpenWorkflow: () => void;
 }
 
+interface OptimisticUserMessage {
+  clientId: string;
+  memberId: string;
+  message: string;
+  baselineExecutionId: string | null;
+  executionId: string | null;
+  state: "sending" | "accepted" | "failed";
+  errorCode: string | null;
+}
+
 export function TeamWorkspaceShell({
   onDelete,
   onEdit,
@@ -53,6 +63,8 @@ export function TeamWorkspaceShell({
   );
   const leader = members.find((member) => member.role === "leader") ?? members[0] ?? null;
   const [activeMemberId, setActiveMemberId] = useState<string | null>(leader?.id ?? null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [optimisticMessages, setOptimisticMessages] = useState<OptimisticUserMessage[]>([]);
 
   useEffect(() => {
     setActiveMemberId((current) => (
@@ -65,6 +77,50 @@ export function TeamWorkspaceShell({
   const activeMember = members.find((member) => member.id === activeMemberId) ?? leader;
   const activeSession = activeMember ? session.getMember(activeMember.id) : null;
   const activeStatus = getMemberStatus(activeSession, t);
+  const activeDraft = activeMember ? drafts[activeMember.id] ?? "" : "";
+  const activeMessages = activeMember
+    ? optimisticMessages.filter((message) => message.memberId === activeMember.id)
+    : [];
+  const activeMemberBusy = isActiveTask(activeSession?.task);
+  const activeMemberSending = activeMessages.some((message) => message.state === "sending");
+  const canSend = Boolean(activeMember && activeDraft.trim() && !activeMemberBusy && !activeMemberSending);
+
+  const sendMessage = async () => {
+    if (!activeMember || !canSend) return;
+    const message = activeDraft.trim();
+    const clientId = `optimistic-${activeMember.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const optimisticMessage: OptimisticUserMessage = {
+      clientId,
+      memberId: activeMember.id,
+      message,
+      baselineExecutionId: activeSession?.execution_id ?? null,
+      executionId: null,
+      state: "sending",
+      errorCode: null,
+    };
+    setOptimisticMessages((current) => [...current, optimisticMessage]);
+    setDrafts((current) => ({ ...current, [activeMember.id]: "" }));
+
+    try {
+      const snapshot = await session.startTurn(activeMember.id, message);
+      setOptimisticMessages((current) => current.map((item) => (
+        item.clientId === clientId
+          ? {
+            ...item,
+            executionId: snapshot.execution_id,
+            state: snapshot.task.state === "Failed" ? "failed" : "accepted",
+            errorCode: snapshot.task.error?.code ?? null,
+          }
+          : item
+      )));
+    } catch (error) {
+      setOptimisticMessages((current) => current.map((item) => (
+        item.clientId === clientId
+          ? { ...item, state: "failed", errorCode: errorCode(error) }
+          : item
+      )));
+    }
+  };
 
   if (members.length === 0) {
     return (
@@ -181,9 +237,11 @@ export function TeamWorkspaceShell({
             role="log"
             tabIndex={0}
           >
-            {activeSession?.stream.items.length ? (
+            {activeSession?.stream.items.length || activeMessages.length ? (
               <ol className="mx-auto grid w-full max-w-3xl gap-3">
-                {activeSession.stream.items.map((item) => <SessionItem item={item} key={`${item.identity.execution_id}:${item.identity.item_id}`} />)}
+                {composeTimelineItems(activeSession?.stream.items ?? [], activeMessages, activeSession?.execution_id).map((item) => (
+                  <SessionItem item={item} key={`${item.identity.execution_id}:${item.identity.item_id}`} />
+                ))}
               </ol>
             ) : (
               <EmptyState
@@ -199,26 +257,128 @@ export function TeamWorkspaceShell({
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-caption">
               <span className="text-on-surface-variant">{t("team.chat.recipient")}</span>
               <span className="font-semibold text-primary">{activeMember ? roleLabel(activeMember, t) : t("team.chat.noRecipient")}</span>
-              <span className="ml-auto text-on-surface-variant">{t("team.chat.composerPending")}</span>
+              <span className="ml-auto text-on-surface-variant">
+                {activeMemberSending || activeMemberBusy ? t("team.chat.status.working") : t("team.chat.composerPending")}
+              </span>
             </div>
-            <div className="flex items-end gap-2">
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendMessage();
+              }}
+            >
               <textarea
                 aria-label={t("team.chat.composerInput")}
                 className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled
+                disabled={!activeMember || activeMemberBusy || activeMemberSending}
                 placeholder={activeMember ? t("team.chat.composerPlaceholder", { name: roleLabel(activeMember, t) }) : t("team.chat.composerPlaceholderFallback")}
                 rows={2}
+                value={activeDraft}
+                onChange={(event) => {
+                  if (!activeMember) return;
+                  setDrafts((current) => ({ ...current, [activeMember.id]: event.target.value }));
+                }}
               />
-              <Button aria-label={t("team.chat.send")} disabled size="sm" type="button">
+              <Button aria-label={t("team.chat.send")} disabled={!canSend} size="sm" type="submit">
                 <Send size={14} />
                 {t("team.chat.send")}
               </Button>
-            </div>
+            </form>
           </section>
         </section>
       </div>
     </Panel>
   );
+}
+
+function composeTimelineItems(
+  streamItems: SessionItemSnapshot[],
+  localMessages: OptimisticUserMessage[],
+  currentExecutionId: string | null | undefined,
+): SessionItemSnapshot[] {
+  const items = new Map(streamItems.map((item) => [sessionItemKey(item), item]));
+  const claimedServerItems = new Set<string>();
+
+  for (const message of localMessages) {
+    const executionId = message.executionId
+      ?? (currentExecutionId && currentExecutionId !== message.baselineExecutionId
+        ? currentExecutionId
+        : null);
+    const serverItem = executionId
+      ? streamItems.find((item) => (
+        item.kind === "user_message"
+        && item.identity.execution_id === executionId
+        && !claimedServerItems.has(sessionItemKey(item))
+      ))
+      : undefined;
+
+    if (serverItem) {
+      const key = sessionItemKey(serverItem);
+      claimedServerItems.add(key);
+      items.set(key, {
+        ...serverItem,
+        text: message.message,
+        code: message.errorCode ?? serverItem.code,
+        state: message.state === "failed" ? "failed" : serverItem.state,
+      });
+      continue;
+    }
+
+    const optimisticItem = optimisticUserItem(message, executionId);
+    items.set(sessionItemKey(optimisticItem), optimisticItem);
+  }
+
+  return [...items.values()].sort((left, right) => (
+    left.sequence - right.sequence || sessionItemKey(left).localeCompare(sessionItemKey(right))
+  ));
+}
+
+function optimisticUserItem(
+  message: OptimisticUserMessage,
+  executionId: string | null,
+): SessionItemSnapshot {
+  const itemExecutionId = executionId ?? `optimistic:${message.clientId}`;
+  return {
+    identity: {
+      session_id: `optimistic:${message.memberId}`,
+      member_id: message.memberId,
+      execution_id: itemExecutionId,
+      turn_id: itemExecutionId,
+      item_id: `user:${message.clientId}`,
+    },
+    kind: "user_message",
+    sequence: 0,
+    delivery: "live",
+    state: message.state === "sending"
+      ? "pending"
+      : message.state === "failed"
+        ? "failed"
+        : "completed",
+    text: message.message,
+    status: null,
+    code: message.errorCode,
+  };
+}
+
+function sessionItemKey(item: SessionItemSnapshot): string {
+  const { identity } = item;
+  return [
+    identity.session_id,
+    identity.member_id,
+    identity.execution_id,
+    identity.turn_id,
+    identity.item_id,
+  ].join("\u0000");
+}
+
+function isActiveTask(task: TeamMemberSessionProjection["task"] | undefined | null): boolean {
+  return task?.state === "Pending" || task?.state === "Running" || task?.state === "Cancelling";
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return "member_turn_failed";
 }
 
 function SessionItem({ item }: { item: SessionItemSnapshot }) {
@@ -243,6 +403,7 @@ function SessionItem({ item }: { item: SessionItemSnapshot }) {
             <span className="ml-auto text-caption text-outline">{item.state}</span>
           </div>
           <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-on-surface">{detail}</p>
+          {item.code && item.text ? <p className="mt-1 text-caption text-status-remove">{item.code}</p> : null}
         </div>
       </div>
     </li>
