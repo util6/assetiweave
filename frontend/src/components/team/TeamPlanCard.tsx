@@ -25,6 +25,7 @@ export interface TeamPlanCardProps {
   restoreResult: TeamRestoreSnapshot | null;
   onTaskChange: (taskId: string, patch: { title?: string; description?: string; owner_member_id?: string }) => void;
   onMoveTask: (taskId: string, direction: -1 | 1) => void;
+  onTaskNavigate: (taskId: string, ownerMemberId: string | null) => void;
   onReview: () => void;
   onConfirm: () => void;
   onRestore: () => void;
@@ -36,6 +37,7 @@ export function TeamPlanCard({
   onCancel,
   onConfirm,
   onMoveTask,
+  onTaskNavigate,
   onRestore,
   onReview,
   onTaskChange,
@@ -50,6 +52,8 @@ export function TeamPlanCard({
   const awaitingReview = snapshot.run.state === "awaiting_review";
   const terminal = snapshot.run.state === "terminal";
   const activeTask = restoreTask && !["Succeeded", "Failed", "Canceled"].includes(restoreTask.state);
+  const completedCount = tasks.filter((task) => task.state === "succeeded").length;
+  const canNavigate = snapshot.run.state === "executing" || terminal;
 
   return (
     <li className="rounded-xl border border-theme-nav-active-border/45 bg-theme-nav-active/10 px-3.5 py-3" data-testid="team-plan-card">
@@ -66,6 +70,11 @@ export function TeamPlanCard({
             <span className="ml-auto text-caption text-on-surface-variant">{t("team.workflow.revision", { revision: snapshot.run.revision })}</span>
           </div>
           <p className="mt-1 text-body-sm text-on-surface">{t("team.workflow.planDescription")}</p>
+          {tasks.length > 0 && !awaitingReview ? (
+            <p className="mt-2 text-caption text-on-surface-variant" data-testid="team-plan-progress">
+              {t("team.workflow.progress", { completed: completedCount, total: tasks.length })}
+            </p>
+          ) : null}
 
           {tasks.length === 0 ? (
             <p className="mt-3 rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-caption text-on-surface-variant">
@@ -78,7 +87,19 @@ export function TeamPlanCard({
                 return (
                   <div className="grid gap-2 rounded-lg border border-theme-card-border/60 bg-theme-control/35 p-3" data-testid={`team-plan-task-${task.id}`} key={task.id}>
                     <div className="flex items-start justify-between gap-3">
-                      <span className="text-label-caps text-on-surface-variant">{t("team.workflow.taskNumber", { number: index + 1 })}</span>
+                      {task.owner_member_id && canNavigate ? (
+                        <button
+                          aria-label={t("team.workflow.jumpTask", { number: index + 1 })}
+                          className="rounded-md text-left text-label-caps text-on-surface-variant underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/55"
+                          data-testid={`team-plan-task-jump-${task.id}`}
+                          onClick={() => onTaskNavigate(task.id, task.owner_member_id)}
+                          type="button"
+                        >
+                          {t("team.workflow.taskNumber", { number: index + 1 })}
+                        </button>
+                      ) : (
+                        <span className="text-label-caps text-on-surface-variant">{t("team.workflow.taskNumber", { number: index + 1 })}</span>
+                      )}
                       <span className="shrink-0 text-label-caps text-primary">{task.state}</span>
                     </div>
                     <label className="grid gap-1 text-caption text-on-surface-variant">

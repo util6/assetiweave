@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { TeamPlanCard } from "./TeamPlanCard";
+import { TeamTaskCard, teamTaskAnchor } from "./TeamTaskCard";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTeamSession } from "../../app/backgroundTasks/TeamSessionProvider";
@@ -92,6 +93,7 @@ export function TeamWorkspaceShell({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<OptimisticUserMessage[]>([]);
   const [composerMode, setComposerMode] = useState<"normal" | "task">("normal");
+  const [pendingTaskNavigation, setPendingTaskNavigation] = useState<string | null>(null);
 
   useEffect(() => {
     setActiveMemberId((current) => (
@@ -113,11 +115,39 @@ export function TeamWorkspaceShell({
   const canSend = Boolean(activeMember && activeDraft.trim() && !activeMemberBusy && !activeMemberSending);
   const isLeader = activeMember?.role === "leader";
   const activeRun = isLeader && runSnapshot?.run.team_id === team.id ? runSnapshot : null;
+  const activeProjectedTasks = useMemo(() => {
+    if (
+      !activeMember
+      || activeMember.role === "leader"
+      || runSnapshot?.run.team_id !== team.id
+      || !["executing", "terminal"].includes(runSnapshot.run.state)
+    ) return [];
+    return runSnapshot.tasks
+      .filter((task) => task.owner_member_id === activeMember.id && task.state !== "draft")
+      .sort((left, right) => left.sort_order - right.sort_order || left.id.localeCompare(right.id));
+  }, [activeMember, runSnapshot, team.id]);
   const taskModeBusy = workflowBusy || ["drafting", "awaiting_review", "executing"].includes(activeRun?.run.state ?? "");
 
   useEffect(() => {
     if (!isLeader && composerMode === "task") setComposerMode("normal");
   }, [composerMode, isLeader]);
+
+  useEffect(() => {
+    if (!pendingTaskNavigation) return;
+    const anchor = document.getElementById(teamTaskAnchor(pendingTaskNavigation));
+    if (!anchor) return;
+    anchor.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    anchor.focus({ preventScroll: true });
+    setPendingTaskNavigation(null);
+  }, [activeMember?.id, activeProjectedTasks, pendingTaskNavigation]);
+
+  const navigateToTask = (taskId: string, ownerMemberId: string | null) => {
+    const owner = members.find((member) => member.id === ownerMemberId && member.role === "teammate");
+    if (!owner) return;
+    setPendingTaskNavigation(taskId);
+    setActiveMemberId(owner.id);
+    session.markSeen(owner.id);
+  };
 
   const sendMessage = async () => {
     if (!activeMember || !canSend) return;
@@ -278,10 +308,17 @@ export function TeamWorkspaceShell({
             role="log"
             tabIndex={0}
           >
-            {activeSession?.stream.items.length || activeMessages.length || activeRun ? (
+            {activeSession?.stream.items.length || activeMessages.length || activeProjectedTasks.length || activeRun ? (
               <ol className="mx-auto grid w-full max-w-3xl gap-3">
                 {composeTimelineItems(activeSession?.stream.items ?? [], activeMessages, activeSession?.execution_id).map((item) => (
                   <SessionItem item={item} key={`${item.identity.execution_id}:${item.identity.item_id}`} />
+                ))}
+                {activeProjectedTasks.map((task) => (
+                  <TeamTaskCard
+                    key={task.id}
+                    owner={members.find((member) => member.id === task.owner_member_id)}
+                    task={task}
+                  />
                 ))}
                 {activeRun ? (
                   <TeamPlanCard
@@ -290,6 +327,7 @@ export function TeamWorkspaceShell({
                     onCancel={onCancel}
                     onConfirm={onConfirm}
                     onMoveTask={onMoveTask}
+                    onTaskNavigate={navigateToTask}
                     onRestore={onRestore}
                     onReview={onReview}
                     onTaskChange={onTaskChange}

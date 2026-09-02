@@ -280,6 +280,40 @@ describe("TeamPage", () => {
     expect(screen.queryByRole("button", { name: "Team task" })).toBeNull();
   });
 
+  it("projects confirmed tasks only to their owners and jumps from the Leader plan", async () => {
+    const team = {
+      ...fixture,
+      members: [
+        ...fixture.members,
+        { id: "teammate-2", team_id: "team-1", role: "teammate" as const, sort_order: 2, agent_id: "agent-c", model: "model-c", execution_context_key: "ctx-teammate-2", created_at: "2026-08-31T00:00:00Z", updated_at: "2026-08-31T00:00:00Z" },
+      ],
+    };
+    listTeamsMock.mockResolvedValue([team]);
+    const executing = teamRunForMembers("executing", 4, [
+      teamTask("task-a", "Task A", "Owned by the first teammate", 0, "teammate", "running"),
+      teamTask("task-b", "Task B", "Owned by the second teammate", 1, "teammate-2", "succeeded"),
+    ], team.members);
+    getLatestTeamRunMock.mockResolvedValue(executing);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-plan-card")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    await waitFor(() => expect(screen.getByTestId("team-task-card-task-a")).toBeTruthy());
+    expect(screen.queryByTestId("team-task-card-task-b")).toBeNull();
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Task A");
+
+    fireEvent.click(screen.getByTestId("team-member-leader"));
+    fireEvent.click(screen.getByTestId("team-plan-task-jump-task-b"));
+    await waitFor(() => {
+      expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
+      expect(screen.getByTestId("team-task-card-task-b")).toBeTruthy();
+    });
+    expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
+    expect(screen.getByTestId("team-task-card-task-b").textContent).toContain("Task B");
+    expect(screen.queryByTestId("team-task-card-task-a")).toBeNull();
+  });
+
   it("marks a rejected message failed only in the active member timeline", async () => {
     const leader = memberStream("leader", "execution-leader", "Running", "Leader is still working");
     listTeamMemberTasksMock.mockResolvedValue([leader.task]);
@@ -370,6 +404,15 @@ function teamRun(
   revision: number,
   tasks: TeamRunSnapshot["tasks"],
 ): TeamRunSnapshot {
+  return teamRunForMembers(state, revision, tasks, fixture.members);
+}
+
+function teamRunForMembers(
+  state: TeamRunSnapshot["run"]["state"],
+  revision: number,
+  tasks: TeamRunSnapshot["tasks"],
+  members: typeof fixture.members,
+): TeamRunSnapshot {
   return {
     run: {
       id: "run-team-1",
@@ -377,10 +420,14 @@ function teamRun(
       state,
       revision,
       leader_member_id: "leader",
-      roster_snapshot: [
-        { member_id: "leader", role: "leader", sort_order: 0, agent_id: "agent-a", model: "model-a", execution_context_key: "ctx-leader" },
-        { member_id: "teammate", role: "teammate", sort_order: 1, agent_id: "agent-b", model: "model-b", execution_context_key: "ctx-teammate" },
-      ],
+      roster_snapshot: members.map(({ id, role, sort_order, agent_id, model, execution_context_key }) => ({
+        member_id: id,
+        role,
+        sort_order,
+        agent_id,
+        model,
+        execution_context_key,
+      })),
       created_at: "2026-08-31T00:00:00Z",
       updated_at: "2026-08-31T00:00:00Z",
       finished_at: null,
