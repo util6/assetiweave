@@ -1394,11 +1394,15 @@ mod tests {
                 tasks: vec![
                     TeamReviewTaskInput {
                         task_id: "task-b".to_string(),
+                        title: None,
+                        description: None,
                         owner_member_id: "member-a".to_string(),
                         sort_order: 100,
                     },
                     TeamReviewTaskInput {
                         task_id: "task-a".to_string(),
+                        title: None,
+                        description: None,
                         owner_member_id: "member-b".to_string(),
                         sort_order: -100,
                     },

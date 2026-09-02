@@ -259,6 +259,16 @@ pub struct TeamReviewInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TeamReviewTaskInput {
     pub task_id: String,
+    /// Optional for transport compatibility. When present, the AppService
+    /// validates and persists the edited title; when absent, the current Team
+    /// fact is retained.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Optional for transport compatibility. When present, the AppService
+    /// validates and persists the edited description; when absent, the
+    /// current Team fact is retained.
+    #[serde(default)]
+    pub description: Option<String>,
     pub owner_member_id: String,
     pub sort_order: i32,
 }

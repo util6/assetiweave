@@ -141,7 +141,13 @@ export interface TeamDraftInput {
 export interface TeamReviewInput {
   run_id: string;
   revision: number;
-  tasks: Array<{ task_id: string; owner_member_id: string; sort_order: number }>;
+  tasks: Array<{
+    task_id: string;
+    title?: string;
+    description?: string;
+    owner_member_id: string;
+    sort_order: number;
+  }>;
 }
 
 export interface TeamConfirmInput {

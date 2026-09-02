@@ -954,21 +954,35 @@ pub(crate) async fn review_team_run_sqlx(
     let roster: Vec<crate::backend::models::TeamRosterSnapshotMember> =
         serde_json::from_str(&roster_json).map_err(AppError::external)?;
     let task_rows =
-        sqlx::query("SELECT id FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 ORDER BY id")
+        sqlx::query("SELECT id, title, description FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 ORDER BY id")
             .bind(tenant_id)
             .bind(&input.run_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(AppError::external)?;
+    let task_facts = task_rows
+        .iter()
+        .map(|row| {
+            Ok::<_, AppError>((
+                row.try_get::<String, _>("id").map_err(AppError::external)?,
+                row.try_get::<String, _>("title")
+                    .map_err(AppError::external)?,
+                row.try_get::<String, _>("description")
+                    .map_err(AppError::external)?,
+            ))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
     let expected = task_rows
         .iter()
         .map(|row| row.try_get::<String, _>("id"))
         .collect::<Result<std::collections::HashSet<_>, _>>()
         .map_err(AppError::external)?;
     let mut supplied = std::collections::HashSet::new();
+    let mut updates = Vec::with_capacity(input.tasks.len());
     for task in &input.tasks {
         if !expected.contains(&task.task_id)
             || !supplied.insert(task.task_id.clone())
+            || task.owner_member_id.trim().is_empty()
             || task.owner_member_id == leader_id
         {
             return Err(AppError::Validation(
@@ -983,15 +997,46 @@ pub(crate) async fn review_team_run_sqlx(
                 "Task owner must be a teammate in the frozen roster".to_string(),
             ));
         }
+        let (_, current_title, current_description) = task_facts
+            .iter()
+            .find(|(task_id, _, _)| task_id == &task.task_id)
+            .ok_or_else(|| AppError::Validation("Reviewed task fact is missing".to_string()))?;
+        let title = task
+            .title
+            .as_deref()
+            .unwrap_or(current_title)
+            .trim()
+            .to_string();
+        let description = task
+            .description
+            .as_deref()
+            .unwrap_or(current_description)
+            .trim()
+            .to_string();
+        if title.is_empty() || description.is_empty() {
+            return Err(AppError::Validation(
+                "Task title and description are required".to_string(),
+            ));
+        }
+        updates.push((task, title, description));
     }
     if supplied != expected {
         return Err(AppError::Validation(
             "Review must include every Team task".to_string(),
         ));
     }
-    for (index, task) in input.tasks.iter().enumerate() {
-        sqlx::query("UPDATE team_tasks SET owner_member_id = ?1, sort_order = ?2, revision = revision + 1, updated_at = ?3 WHERE tenant_id = ?4 AND id = ?5")
-            .bind(&task.owner_member_id).bind(index as i32).bind(Utc::now().to_rfc3339()).bind(tenant_id).bind(&task.task_id).execute(&mut *tx).await.map_err(AppError::external)?;
+    for (index, (task, title, description)) in updates.iter().enumerate() {
+        sqlx::query("UPDATE team_tasks SET title = ?1, description = ?2, owner_member_id = ?3, sort_order = ?4, revision = revision + 1, updated_at = ?5 WHERE tenant_id = ?6 AND id = ?7")
+            .bind(title)
+            .bind(description)
+            .bind(&task.owner_member_id)
+            .bind(index as i32)
+            .bind(Utc::now().to_rfc3339())
+            .bind(tenant_id)
+            .bind(&task.task_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::external)?;
     }
     sqlx::query("UPDATE team_runs SET revision = revision + 1, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3")
         .bind(Utc::now().to_rfc3339()).bind(tenant_id).bind(&input.run_id).execute(&mut *tx).await.map_err(AppError::external)?;

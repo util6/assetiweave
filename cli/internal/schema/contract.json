@@ -1792,6 +1792,22 @@
                 "task_id": {
                   "type": "string"
                 },
+                "title": {
+                  "description": "Optional for transport compatibility. When present, the AppService\nvalidates and persists the edited title; when absent, the current Team\nfact is retained.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "description": {
+                  "description": "Optional for transport compatibility. When present, the AppService\nvalidates and persists the edited description; when absent, the\ncurrent Team fact is retained.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
                 "owner_member_id": {
                   "type": "string"
                 },
@@ -14183,6 +14199,22 @@
               "properties": {
                 "task_id": {
                   "type": "string"
+                },
+                "title": {
+                  "description": "Optional for transport compatibility. When present, the AppService\nvalidates and persists the edited title; when absent, the current Team\nfact is retained.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
+                },
+                "description": {
+                  "description": "Optional for transport compatibility. When present, the AppService\nvalidates and persists the edited description; when absent, the\ncurrent Team fact is retained.",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "default": null
                 },
                 "owner_member_id": {
                   "type": "string"

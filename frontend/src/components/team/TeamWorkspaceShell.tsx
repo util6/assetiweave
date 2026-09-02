@@ -18,6 +18,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
+import { TeamPlanCard } from "./TeamPlanCard";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTeamSession } from "../../app/backgroundTasks/TeamSessionProvider";
@@ -28,6 +29,9 @@ import type {
   TeamMember,
   TeamMemberRestoreState,
   TeamMemberSessionProjection,
+  TeamRestoreSnapshot,
+  TeamRunSnapshot,
+  TeamRuntimeTaskSnapshot,
 } from "../../types/team";
 
 export interface TeamWorkspaceShellProps {
@@ -35,7 +39,18 @@ export interface TeamWorkspaceShellProps {
   onOpenDetails: () => void;
   onEdit: () => void;
   onDelete: () => void;
-  onOpenWorkflow: () => void;
+  runSnapshot: TeamRunSnapshot | null;
+  workflowBusy: boolean;
+  workflowError: string | null;
+  restoreTask: TeamRuntimeTaskSnapshot | null;
+  restoreResult: TeamRestoreSnapshot | null;
+  onStartTeamDraft: (message: string) => void;
+  onTaskChange: (taskId: string, patch: { title?: string; description?: string; owner_member_id?: string }) => void;
+  onMoveTask: (taskId: string, direction: -1 | 1) => void;
+  onReview: () => void;
+  onConfirm: () => void;
+  onRestore: () => void;
+  onCancel: () => void;
 }
 
 interface OptimisticUserMessage {
@@ -52,8 +67,19 @@ export function TeamWorkspaceShell({
   onDelete,
   onEdit,
   onOpenDetails,
-  onOpenWorkflow,
+  onCancel,
+  onConfirm,
+  onMoveTask,
+  onRestore,
+  onReview,
+  onStartTeamDraft,
+  onTaskChange,
+  restoreResult,
+  restoreTask,
+  runSnapshot,
   team,
+  workflowBusy,
+  workflowError,
 }: TeamWorkspaceShellProps) {
   const { t } = useI18n();
   const session = useTeamSession();
@@ -65,6 +91,7 @@ export function TeamWorkspaceShell({
   const [activeMemberId, setActiveMemberId] = useState<string | null>(leader?.id ?? null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [optimisticMessages, setOptimisticMessages] = useState<OptimisticUserMessage[]>([]);
+  const [composerMode, setComposerMode] = useState<"normal" | "task">("normal");
 
   useEffect(() => {
     setActiveMemberId((current) => (
@@ -84,6 +111,13 @@ export function TeamWorkspaceShell({
   const activeMemberBusy = isActiveTask(activeSession?.task);
   const activeMemberSending = activeMessages.some((message) => message.state === "sending");
   const canSend = Boolean(activeMember && activeDraft.trim() && !activeMemberBusy && !activeMemberSending);
+  const isLeader = activeMember?.role === "leader";
+  const activeRun = isLeader && runSnapshot?.run.team_id === team.id ? runSnapshot : null;
+  const taskModeBusy = workflowBusy || ["drafting", "awaiting_review", "executing"].includes(activeRun?.run.state ?? "");
+
+  useEffect(() => {
+    if (!isLeader && composerMode === "task") setComposerMode("normal");
+  }, [composerMode, isLeader]);
 
   const sendMessage = async () => {
     if (!activeMember || !canSend) return;
@@ -122,6 +156,17 @@ export function TeamWorkspaceShell({
     }
   };
 
+  const submitComposer = async () => {
+    if (composerMode === "task" && isLeader && activeMember) {
+      if (!activeDraft.trim() || taskModeBusy) return;
+      const message = activeDraft.trim();
+      setDrafts((current) => ({ ...current, [activeMember.id]: "" }));
+      onStartTeamDraft(message);
+      return;
+    }
+    await sendMessage();
+  };
+
   if (members.length === 0) {
     return (
       <Panel className="min-h-0 flex-1" data-testid="team-chat-shell" padding="none" variant="muted">
@@ -154,10 +199,6 @@ export function TeamWorkspaceShell({
           <Button onClick={onOpenDetails} size="sm" type="button" variant="ghost">
             <Settings2 size={14} />
             {t("team.chat.details")}
-          </Button>
-          <Button onClick={onOpenWorkflow} size="sm" type="button" variant="outline">
-            <Sparkles size={14} />
-            {t("team.chat.workflow")}
           </Button>
           <Button onClick={onEdit} size="sm" type="button" variant="outline">
             {t("team.action.edit")}
@@ -237,11 +278,27 @@ export function TeamWorkspaceShell({
             role="log"
             tabIndex={0}
           >
-            {activeSession?.stream.items.length || activeMessages.length ? (
+            {activeSession?.stream.items.length || activeMessages.length || activeRun ? (
               <ol className="mx-auto grid w-full max-w-3xl gap-3">
                 {composeTimelineItems(activeSession?.stream.items ?? [], activeMessages, activeSession?.execution_id).map((item) => (
                   <SessionItem item={item} key={`${item.identity.execution_id}:${item.identity.item_id}`} />
                 ))}
+                {activeRun ? (
+                  <TeamPlanCard
+                    busy={workflowBusy}
+                    error={workflowError}
+                    onCancel={onCancel}
+                    onConfirm={onConfirm}
+                    onMoveTask={onMoveTask}
+                    onRestore={onRestore}
+                    onReview={onReview}
+                    onTaskChange={onTaskChange}
+                    restoreResult={restoreResult}
+                    restoreTask={restoreTask}
+                    snapshot={activeRun}
+                    team={team}
+                  />
+                ) : null}
               </ol>
             ) : (
               <EmptyState
@@ -261,18 +318,43 @@ export function TeamWorkspaceShell({
                 {activeMemberSending || activeMemberBusy ? t("team.chat.status.working") : t("team.chat.composerPending")}
               </span>
             </div>
+            {isLeader ? (
+              <div aria-label={t("team.chat.composerMode")} className="mb-2 flex items-center gap-1 rounded-lg border border-theme-control-border/60 bg-theme-control/30 p-1" role="group">
+                <Button
+                  aria-pressed={composerMode === "normal"}
+                  onClick={() => setComposerMode("normal")}
+                  size="sm"
+                  type="button"
+                  variant={composerMode === "normal" ? "secondary" : "ghost"}
+                >
+                  <MessageSquare size={14} />
+                  {t("team.chat.mode.normal")}
+                </Button>
+                <Button
+                  aria-pressed={composerMode === "task"}
+                  disabled={taskModeBusy}
+                  onClick={() => setComposerMode("task")}
+                  size="sm"
+                  type="button"
+                  variant={composerMode === "task" ? "secondary" : "ghost"}
+                >
+                  <Sparkles size={14} />
+                  {t("team.chat.mode.task")}
+                </Button>
+              </div>
+            ) : null}
             <form
               className="flex items-end gap-2"
               onSubmit={(event) => {
                 event.preventDefault();
-                void sendMessage();
+                void submitComposer();
               }}
             >
               <textarea
                 aria-label={t("team.chat.composerInput")}
                 className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={!activeMember || activeMemberBusy || activeMemberSending}
-                placeholder={activeMember ? t("team.chat.composerPlaceholder", { name: roleLabel(activeMember, t) }) : t("team.chat.composerPlaceholderFallback")}
+                disabled={!activeMember || activeMemberBusy || activeMemberSending || (composerMode === "task" && taskModeBusy)}
+                placeholder={composerMode === "task" ? t("team.chat.taskPlaceholder") : activeMember ? t("team.chat.composerPlaceholder", { name: roleLabel(activeMember, t) }) : t("team.chat.composerPlaceholderFallback")}
                 rows={2}
                 value={activeDraft}
                 onChange={(event) => {
@@ -280,9 +362,9 @@ export function TeamWorkspaceShell({
                   setDrafts((current) => ({ ...current, [activeMember.id]: event.target.value }));
                 }}
               />
-              <Button aria-label={t("team.chat.send")} disabled={!canSend} size="sm" type="submit">
+              <Button aria-label={composerMode === "task" ? t("team.workflow.draft") : t("team.chat.send")} disabled={composerMode === "task" ? !isLeader || taskModeBusy || !activeDraft.trim() : !canSend} size="sm" type="submit">
                 <Send size={14} />
-                {t("team.chat.send")}
+                {composerMode === "task" ? t("team.workflow.draft") : t("team.chat.send")}
               </Button>
             </form>
           </section>

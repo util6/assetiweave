@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
-import type { TeamMemberStreamSnapshot, TeamMemberTaskSnapshot } from "../../types/team";
+import type { TeamMemberStreamSnapshot, TeamMemberTaskSnapshot, TeamRunSnapshot } from "../../types/team";
 
 const listTeamsMock = vi.hoisted(() => vi.fn());
 const createTeamMock = vi.hoisted(() => vi.fn());
@@ -18,6 +18,10 @@ const getTeamMemberStreamSnapshotMock = vi.hoisted(() => vi.fn());
 const subscribeTeamMemberSessionsMock = vi.hoisted(() => vi.fn());
 const getLatestTeamRunMock = vi.hoisted(() => vi.fn());
 const startTeamMemberTurnMock = vi.hoisted(() => vi.fn());
+const draftTeamMock = vi.hoisted(() => vi.fn());
+const reviewTeamRunMock = vi.hoisted(() => vi.fn());
+const confirmTeamRunMock = vi.hoisted(() => vi.fn());
+const getTeamRunMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../services/team", () => ({
   createTeam: createTeamMock,
@@ -35,14 +39,14 @@ vi.mock("../../services/agentRuntime", () => ({
 vi.mock("../../services/teamWorkflow", () => ({
   cancelTeamMemberTurn: vi.fn(),
   cancelTeamRun: vi.fn(),
-  confirmTeamRun: vi.fn(),
-  draftTeam: vi.fn(),
+  confirmTeamRun: confirmTeamRunMock,
+  draftTeam: draftTeamMock,
   getLatestTeamRun: getLatestTeamRunMock,
   getTeamMemberStreamSnapshot: getTeamMemberStreamSnapshotMock,
-  getTeamRun: vi.fn(),
+  getTeamRun: getTeamRunMock,
   listTeamMemberTasks: listTeamMemberTasksMock,
   restoreTeamRun: vi.fn(),
-  reviewTeamRun: vi.fn(),
+  reviewTeamRun: reviewTeamRunMock,
   startTeamMemberReplay: vi.fn(),
   startTeamMemberTurn: startTeamMemberTurnMock,
   subscribeTeamMemberSessions: subscribeTeamMemberSessionsMock,
@@ -87,6 +91,10 @@ describe("TeamPage", () => {
       return vi.fn();
     });
     startTeamMemberTurnMock.mockReset();
+    draftTeamMock.mockReset();
+    reviewTeamRunMock.mockReset();
+    confirmTeamRunMock.mockReset();
+    getTeamRunMock.mockReset().mockResolvedValue(null);
     getLatestTeamRunMock.mockResolvedValue(null);
   });
 
@@ -216,6 +224,62 @@ describe("TeamPage", () => {
     expect(screen.getByTestId("team-timeline").textContent).toContain("Ask the leader");
   });
 
+  it("runs the Leader task mode inline and persists the edited plan before confirmation", async () => {
+    const drafting = teamRun("drafting", 1, []);
+    const awaitingReview = teamRun("awaiting_review", 2, [
+      teamTask("task-a", "First task", "First description", 0),
+      teamTask("task-b", "Second task", "Second description", 1),
+    ]);
+    const reviewed = teamRun("awaiting_review", 3, [
+      teamTask("task-b", "Edited second", "Edited details", 0, "teammate"),
+      teamTask("task-a", "First task", "First description", 1, "teammate"),
+    ]);
+    const executing = teamRun("executing", 4, [
+      teamTask("task-b", "Edited second", "Edited details", 0, "teammate", "queued"),
+      teamTask("task-a", "First task", "First description", 1, "teammate", "queued"),
+    ]);
+    draftTeamMock.mockResolvedValue(drafting);
+    reviewTeamRunMock.mockResolvedValue(reviewed);
+    confirmTeamRunMock.mockResolvedValue(executing);
+    getTeamRunMock.mockResolvedValue(awaitingReview);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Team task" }));
+    expect(screen.getByRole("button", { name: "Team task" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.change(screen.getByLabelText("Message content"), { target: { value: "Split this work" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate draft" }));
+
+    await waitFor(() => expect(draftTeamMock).toHaveBeenCalledWith({
+      team_id: "team-1",
+      leader_message: "Split this work",
+    }));
+    await waitFor(() => expect(screen.getByTestId("team-plan-task-task-a")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Task title 1"), { target: { value: "Edited first" } });
+    fireEvent.change(screen.getByLabelText("Task description 1"), { target: { value: "Edited first details" } });
+    fireEvent.change(screen.getByLabelText("Owner 1"), { target: { value: "teammate" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Move down" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Save review" }));
+
+    await waitFor(() => expect(reviewTeamRunMock).toHaveBeenCalledWith({
+      run_id: "run-team-1",
+      revision: 2,
+      tasks: [
+        { task_id: "task-b", title: "Second task", description: "Second description", owner_member_id: "teammate", sort_order: 0 },
+        { task_id: "task-a", title: "Edited first", description: "Edited first details", owner_member_id: "teammate", sort_order: 1 },
+      ],
+    }));
+    expect(confirmTeamRunMock).not.toHaveBeenCalled();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm execution" }).getAttribute("disabled")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm execution" }));
+    await waitFor(() => expect(confirmTeamRunMock).toHaveBeenCalledWith({ run_id: "run-team-1", revision: 3 }));
+    expect(screen.getByTestId("team-plan-card").textContent).toContain("executing");
+
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+    expect(screen.queryByRole("button", { name: "Team task" })).toBeNull();
+  });
+
   it("marks a rejected message failed only in the active member timeline", async () => {
     const leader = memberStream("leader", "execution-leader", "Running", "Leader is still working");
     listTeamMemberTasksMock.mockResolvedValue([leader.task]);
@@ -299,6 +363,58 @@ function memberStream(
   return streamSnapshotWithItems(memberId, executionId, taskState, [
     sessionItem(memberId, executionId, `item-${memberId}`, "assistant_text", text, 1, "streaming"),
   ]);
+}
+
+function teamRun(
+  state: TeamRunSnapshot["run"]["state"],
+  revision: number,
+  tasks: TeamRunSnapshot["tasks"],
+): TeamRunSnapshot {
+  return {
+    run: {
+      id: "run-team-1",
+      team_id: "team-1",
+      state,
+      revision,
+      leader_member_id: "leader",
+      roster_snapshot: [
+        { member_id: "leader", role: "leader", sort_order: 0, agent_id: "agent-a", model: "model-a", execution_context_key: "ctx-leader" },
+        { member_id: "teammate", role: "teammate", sort_order: 1, agent_id: "agent-b", model: "model-b", execution_context_key: "ctx-teammate" },
+      ],
+      created_at: "2026-08-31T00:00:00Z",
+      updated_at: "2026-08-31T00:00:00Z",
+      finished_at: null,
+      error_code: null,
+    },
+    tasks,
+    unread_mailbox_count: 0,
+  };
+}
+
+function teamTask(
+  id: string,
+  title: string,
+  description: string,
+  sortOrder: number,
+  ownerMemberId: string | null = null,
+  state: TeamRunSnapshot["tasks"][number]["state"] = "draft",
+): TeamRunSnapshot["tasks"][number] {
+  return {
+    id,
+    run_id: "run-team-1",
+    team_id: "team-1",
+    title,
+    description,
+    sort_order: sortOrder,
+    recommended_member_id: "teammate",
+    owner_member_id: ownerMemberId,
+    state,
+    revision: 1,
+    result: null,
+    error_code: null,
+    created_at: "2026-08-31T00:00:00Z",
+    updated_at: "2026-08-31T00:00:00Z",
+  };
 }
 
 function streamSnapshotWithItems(
