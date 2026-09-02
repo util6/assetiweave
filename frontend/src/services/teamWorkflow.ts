@@ -60,11 +60,6 @@ export async function confirmTeamRun(input: TeamConfirmInput): Promise<TeamRunSn
   return teamRunSnapshotSchema.parse(await invoke("team_run_confirm", { input }));
 }
 
-export async function restoreTeamRun(runId: string): Promise<TeamRuntimeTaskSnapshot> {
-  requireDesktop();
-  return teamRuntimeTaskSnapshotSchema.parse(await invoke("team_run_restore", { runId }));
-}
-
 export async function cancelTeamRun(runId: string): Promise<TeamRuntimeTaskSnapshot> {
   requireDesktop();
   return teamRuntimeTaskSnapshotSchema.parse(await invoke("team_run_cancel", { runId }));

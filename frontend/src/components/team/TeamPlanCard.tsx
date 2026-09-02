@@ -4,15 +4,12 @@ import {
   CheckCircle2,
   LoaderCircle,
   Play,
-  RotateCcw,
   XCircle,
 } from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
   TeamDetail,
-  TeamRestoreSnapshot,
   TeamRunSnapshot,
-  TeamRuntimeTaskSnapshot,
 } from "../../types/team";
 import { Button } from "../ui/button";
 
@@ -21,14 +18,11 @@ export interface TeamPlanCardProps {
   snapshot: TeamRunSnapshot;
   busy: boolean;
   error: string | null;
-  restoreTask: TeamRuntimeTaskSnapshot | null;
-  restoreResult: TeamRestoreSnapshot | null;
   onTaskChange: (taskId: string, patch: { title?: string; description?: string; owner_member_id?: string }) => void;
   onMoveTask: (taskId: string, direction: -1 | 1) => void;
   onTaskNavigate: (taskId: string, ownerMemberId: string | null) => void;
   onReview: () => void;
   onConfirm: () => void;
-  onRestore: () => void;
   onCancel: () => void;
 }
 export function TeamPlanCard({
@@ -38,11 +32,8 @@ export function TeamPlanCard({
   onConfirm,
   onMoveTask,
   onTaskNavigate,
-  onRestore,
   onReview,
   onTaskChange,
-  restoreResult,
-  restoreTask,
   snapshot,
   team,
 }: TeamPlanCardProps) {
@@ -51,7 +42,6 @@ export function TeamPlanCard({
   const tasks = [...snapshot.tasks].sort((left, right) => left.sort_order - right.sort_order);
   const awaitingReview = snapshot.run.state === "awaiting_review";
   const terminal = snapshot.run.state === "terminal";
-  const activeTask = restoreTask && !["Succeeded", "Failed", "Canceled"].includes(restoreTask.state);
   const completedCount = tasks.filter((task) => task.state === "succeeded").length;
   const canNavigate = snapshot.run.state === "executing" || terminal;
 
@@ -152,12 +142,9 @@ export function TeamPlanCard({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button disabled={busy || !awaitingReview || tasks.length === 0} onClick={onReview} size="sm" type="button" variant="outline">{t("team.workflow.review")}</Button>
             <Button disabled={busy || !awaitingReview || tasks.length === 0} onClick={onConfirm} size="sm" type="button"><Play size={14} />{t("team.workflow.confirm")}</Button>
-            <Button disabled={busy || Boolean(activeTask) || snapshot.run.state === "drafting"} onClick={onRestore} size="sm" type="button" variant="ghost"><RotateCcw size={14} />{t("team.workflow.restore")}</Button>
             <Button disabled={busy || terminal} onClick={onCancel} size="sm" type="button" variant="outline"><XCircle size={14} />{t("team.workflow.cancel")}</Button>
-            {activeTask ? <span className="text-caption text-on-surface-variant">{t("team.workflow.restoreProgress", { state: restoreTask?.state ?? "" })}</span> : null}
           </div>
 
-          {restoreResult ? <div className="mt-3 grid gap-1 rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-caption"><span className="font-semibold text-on-surface">{t("team.workflow.restoreStatus")}</span>{restoreResult.members.map((member) => <span className="text-on-surface-variant" key={member.member_id}>{member.member_id}: {member.state === "ready" ? t("team.workflow.ready") : t("team.workflow.unavailable")}</span>)}</div> : null}
           {error ? <p className="mt-3 rounded-lg border border-status-remove/35 bg-status-remove/10 p-2 text-caption text-status-remove">{error}</p> : null}
         </div>
       </div>

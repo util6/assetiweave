@@ -168,14 +168,11 @@ function shellProps() {
     runSnapshot: null,
     workflowBusy: false,
     workflowError: null,
-    restoreTask: null,
-    restoreResult: null,
     onStartTeamDraft: vi.fn(),
     onTaskChange: vi.fn(),
     onMoveTask: vi.fn(),
     onReview: vi.fn(),
     onConfirm: vi.fn(),
-    onRestore: vi.fn(),
     onCancel: vi.fn(),
   };
 }

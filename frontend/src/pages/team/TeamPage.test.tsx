@@ -45,7 +45,6 @@ vi.mock("../../services/teamWorkflow", () => ({
   getTeamMemberStreamSnapshot: getTeamMemberStreamSnapshotMock,
   getTeamRun: getTeamRunMock,
   listTeamMemberTasks: listTeamMemberTasksMock,
-  restoreTeamRun: vi.fn(),
   reviewTeamRun: reviewTeamRunMock,
   startTeamMemberReplay: vi.fn(),
   startTeamMemberTurn: startTeamMemberTurnMock,
@@ -325,6 +324,17 @@ describe("TeamPage", () => {
     expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
     expect(screen.getByTestId("team-task-card-task-b").textContent).toContain("Task B");
     expect(screen.queryByTestId("team-task-card-task-a")).toBeNull();
+  });
+
+  it("keeps restoration in the member Session path instead of exposing legacy run restore", async () => {
+    getLatestTeamRunMock.mockResolvedValue(teamRun("executing", 4, [
+      teamTask("task-a", "Task A", "Provider-backed task", 0, "teammate", "running"),
+    ]));
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-plan-card")).toBeTruthy());
+
+    expect(screen.queryByRole("button", { name: "Restore run" })).toBeNull();
   });
 
   it("renders Team facts before member history restoration resolves", async () => {

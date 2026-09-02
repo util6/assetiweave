@@ -18,7 +18,6 @@ import { TeamWorkspaceShell } from "../../components/team/TeamWorkspaceShell";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useI18n } from "../../i18n/I18nProvider";
-import { useOptionalTeamTasks } from "../../app/backgroundTasks/TeamTaskProvider";
 import { TeamSessionProvider } from "../../app/backgroundTasks/TeamSessionProvider";
 import { isTauriRuntime } from "../../services/appUpdater";
 import {
@@ -41,15 +40,12 @@ import {
   draftTeam,
   getLatestTeamRun,
   getTeamRun,
-  restoreTeamRun,
   reviewTeamRun,
 } from "../../services/teamWorkflow";
-import { teamRestoreTaskResultSchema } from "../../schemas/teamWorkflow";
 import type {
   TeamDetail,
   TeamMemberInput,
   TeamRunSnapshot,
-  TeamRestoreSnapshot,
   TeamRole,
 } from "../../types/team";
 
@@ -82,11 +78,8 @@ export function TeamPage() {
   const [runSnapshot, setRunSnapshot] = useState<TeamRunSnapshot | null>(null);
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
-  const [restoreResult, setRestoreResult] = useState<TeamRestoreSnapshot | null>(null);
-  const [restoreTaskId, setRestoreTaskId] = useState<string | null>(null);
   const [activeMemberId, setActiveMemberId] = useState<string | null>(null);
   const [teamListOpen, setTeamListOpen] = useState(true);
-  const teamTasks = useOptionalTeamTasks();
 
   const installedAgents = useMemo(() => {
     const installed = new Map(
@@ -163,8 +156,6 @@ export function TeamPage() {
   useEffect(() => {
     setRunSnapshot(null);
     setDetailsOpen(false);
-    setRestoreResult(null);
-    setRestoreTaskId(null);
     setWorkflowError(null);
     if (!selectedTeamId) return;
     let cancelled = false;
@@ -179,38 +170,6 @@ export function TeamPage() {
       cancelled = true;
     };
   }, [selectedTeamId]);
-
-  const restoreTask = restoreTaskId ? teamTasks?.getTask(restoreTaskId) : undefined;
-
-  useEffect(() => {
-    if (!restoreTask || !["Succeeded", "Failed", "Canceled"].includes(restoreTask.state)) return;
-    if (restoreTask.state === "Succeeded") {
-      const parsed = teamRestoreTaskResultSchema.safeParse(restoreTask.result);
-      if (parsed.success) {
-        const currentRun = runSnapshot;
-        if (!currentRun || currentRun.run.id !== parsed.data.run_id) {
-          setWorkflowError(t("team.workflow.error", { message: t("team.workflow.restoreInvalid") }));
-          setRestoreTaskId(null);
-          setWorkflowBusy(false);
-          return;
-        }
-        setRestoreResult({
-          run: currentRun,
-          leader: null,
-          leader_error_code: parsed.data.leader_error_code,
-          members: parsed.data.members,
-        });
-      } else {
-        setWorkflowError(t("team.workflow.error", { message: t("team.workflow.restoreInvalid") }));
-      }
-    } else {
-      setWorkflowError(t("team.workflow.error", {
-        message: restoreTask.error?.message ?? t("team.workflow.restoreFailed"),
-      }));
-    }
-    setRestoreTaskId(null);
-    setWorkflowBusy(false);
-  }, [restoreTask, runSnapshot, t]);
 
   useEffect(() => {
     if (!runSnapshot || runSnapshot.run.state === "terminal") return;
@@ -366,7 +325,6 @@ export function TeamPage() {
     setWorkflowError(null);
     try {
       setRunSnapshot(await draftTeam({ team_id: selectedTeam.id, leader_message: message.trim() }));
-      setRestoreResult(null);
     } catch (draftError: unknown) {
       setWorkflowError(t("team.workflow.error", { message: errorMessage(draftError) }));
     } finally {
@@ -412,31 +370,6 @@ export function TeamPage() {
       setRunSnapshot(await confirmTeamRun({ run_id: runSnapshot.run.id, revision: runSnapshot.run.revision }));
     } catch (confirmError: unknown) {
       setWorkflowError(t("team.workflow.error", { message: errorMessage(confirmError) }));
-    } finally {
-      setWorkflowBusy(false);
-    }
-  };
-
-  const restoreTeamExecution = async () => {
-    if (!runSnapshot) return;
-    setWorkflowBusy(true);
-    setWorkflowError(null);
-    try {
-      const task = await restoreTeamRun(runSnapshot.run.id);
-      setRestoreTaskId(task.task_id);
-      if (task.state === "Succeeded") {
-        const parsed = teamRestoreTaskResultSchema.safeParse(task.result);
-        if (parsed.success) {
-          setRestoreResult({
-            run: runSnapshot,
-            leader: null,
-            leader_error_code: parsed.data.leader_error_code,
-            members: parsed.data.members,
-          });
-        }
-      }
-    } catch (restoreError: unknown) {
-      setWorkflowError(t("team.workflow.error", { message: errorMessage(restoreError) }));
     } finally {
       setWorkflowBusy(false);
     }
@@ -564,12 +497,9 @@ export function TeamPage() {
               onConfirm={() => void startTeamExecution()}
               onMoveTask={moveRunTask}
               onOpenDetails={() => setDetailsOpen(true)}
-              onRestore={() => void restoreTeamExecution()}
               onReview={() => void saveRunReview()}
               onStartTeamDraft={(message) => void startTeamDraft(message)}
               onTaskChange={updateRunTask}
-              restoreResult={restoreResult}
-              restoreTask={restoreTask ?? null}
               runSnapshot={runSnapshot}
               team={selectedTeam}
               workflowBusy={workflowBusy}

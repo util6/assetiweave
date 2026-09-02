@@ -31,10 +31,8 @@ import type {
   TeamMember,
   TeamMemberRestoreState,
   TeamMemberSessionProjection,
-  TeamRestoreSnapshot,
   TeamRunSnapshot,
   TeamTask,
-  TeamRuntimeTaskSnapshot,
 } from "../../types/team";
 
 export interface TeamWorkspaceShellProps {
@@ -47,14 +45,11 @@ export interface TeamWorkspaceShellProps {
   runSnapshot: TeamRunSnapshot | null;
   workflowBusy: boolean;
   workflowError: string | null;
-  restoreTask: TeamRuntimeTaskSnapshot | null;
-  restoreResult: TeamRestoreSnapshot | null;
   onStartTeamDraft: (message: string) => void;
   onTaskChange: (taskId: string, patch: { title?: string; description?: string; owner_member_id?: string }) => void;
   onMoveTask: (taskId: string, direction: -1 | 1) => void;
   onReview: () => void;
   onConfirm: () => void;
-  onRestore: () => void;
   onCancel: () => void;
 }
 
@@ -77,12 +72,9 @@ export function TeamWorkspaceShell({
   onCancel,
   onConfirm,
   onMoveTask,
-  onRestore,
   onReview,
   onStartTeamDraft,
   onTaskChange,
-  restoreResult,
-  restoreTask,
   runSnapshot,
   team,
   workflowBusy,
@@ -423,11 +415,8 @@ export function TeamWorkspaceShell({
                     onConfirm={onConfirm}
                     onMoveTask={onMoveTask}
                     onTaskNavigate={navigateToTask}
-                    onRestore={onRestore}
                     onReview={onReview}
                     onTaskChange={onTaskChange}
-                    restoreResult={restoreResult}
-                    restoreTask={restoreTask}
                     snapshot={activeRun}
                     team={team}
                   />
