@@ -205,6 +205,65 @@ async fn antigravity_replay_prefers_full_transcript_and_emits_replay_only_events
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn antigravity_replay_keeps_each_history_message_as_a_distinct_logical_item() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-agy-history-items-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    write_transcript(
+        &root,
+        "transcript_full.jsonl",
+        &[
+            fixture_record("USER_INPUT", 1, "<USER_REQUEST>first user</USER_REQUEST>"),
+            fixture_record("PLANNER_RESPONSE", 2, "first assistant"),
+            fixture_record("USER_INPUT", 3, "<USER_REQUEST>second user</USER_REQUEST>"),
+            fixture_record("PLANNER_RESPONSE", 4, "second assistant"),
+        ]
+        .join("\n"),
+    );
+
+    let definition = definition(&root.join("agy-must-not-start.ndjson"));
+    let mut replay_request = request(&definition, "agy-history-items");
+    replay_request.binding = Some(provider_binding(&root, &workspace));
+    replay_request.replay = true;
+    let capture = Arc::new(CaptureSessionEvents::default());
+    replay_request.progress = Some(capture.clone());
+
+    crate::backend::ai_execution::backends::native::NativeExecutionBackend::new(
+        root.join("workspaces"),
+    )
+    .execute(&definition, replay_request)
+    .await
+    .expect("provider history replay");
+
+    let events = capture.events.lock().unwrap();
+    let user_item_ids = events
+        .iter()
+        .filter_map(|event| match event.kind {
+            SessionEventKind::UserMessageAcknowledged { .. } => {
+                Some(event.identity.item_id.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let assistant_item_ids = events
+        .iter()
+        .filter_map(|event| match event.kind {
+            SessionEventKind::AssistantTextDelta { .. } => Some(event.identity.item_id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(user_item_ids.len(), 2);
+    assert_eq!(assistant_item_ids.len(), 2);
+    assert_ne!(user_item_ids[0], user_item_ids[1]);
+    assert_ne!(assistant_item_ids[0], assistant_item_ids[1]);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn antigravity_replay_falls_back_to_simplified_transcript() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-agy-history-fallback-{}",

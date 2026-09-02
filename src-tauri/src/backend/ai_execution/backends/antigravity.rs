@@ -554,17 +554,17 @@ impl<'a> SessionEventBridge<'a> {
 
     fn emit_replay(&mut self, history: &HistoryReplayResult) {
         self.emit_processing(SessionProcessingState::Started);
-        for entry in &history.entries {
+        for (entry_index, entry) in history.entries.iter().enumerate() {
             match entry {
                 HistoryReplayEntry::UserMessage => {
                     self.emit_kind(
-                        "agy:history:user",
+                        &format!("agy:history:{entry_index}:user"),
                         SessionEventKind::UserMessageAcknowledged { accepted: true },
                     );
                 }
                 HistoryReplayEntry::AssistantText { text } => {
                     self.emit_kind(
-                        "agy:history:assistant",
+                        &format!("agy:history:{entry_index}:assistant"),
                         SessionEventKind::AssistantTextDelta { text: text.clone() },
                     );
                 }
@@ -587,7 +587,7 @@ impl<'a> SessionEventBridge<'a> {
                 }
                 HistoryReplayEntry::Notice { code } => {
                     self.emit_kind(
-                        "agy:history:notice",
+                        &format!("agy:history:{entry_index}:notice"),
                         SessionEventKind::Notice {
                             code: code.clone(),
                             detail: None,
