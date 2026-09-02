@@ -22,7 +22,7 @@ impl AppService {
     }
 
     pub(crate) fn memory_recall_run_sync<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.db.block_on(future)
+        self.runtime.run_sync(future)
     }
 
     pub(crate) fn create_memory_recall_session(
@@ -46,8 +46,8 @@ impl AppService {
             updated_at: now,
             turns: Vec::new(),
         };
-        self.db
-            .block_on(crate::backend::store::create_memory_recall_session_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::create_memory_recall_session_sqlx(
                 self.db.pool(),
                 self.tenant_id(),
                 &session,
@@ -60,8 +60,8 @@ impl AppService {
         params: MemoryRecallSessionGetParams,
     ) -> AppResult<MemoryRecallSession> {
         let session_id = normalize_recall_id(&params.session_id, "session")?;
-        self.db
-            .block_on(crate::backend::store::load_memory_recall_session_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::load_memory_recall_session_sqlx(
                 self.db.pool(),
                 self.tenant_id(),
                 &session_id,
@@ -107,8 +107,8 @@ impl AppService {
             created_at: now.clone(),
             updated_at: now,
         };
-        self.db
-            .block_on(crate::backend::store::create_memory_recall_turn_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::create_memory_recall_turn_sqlx(
                 self.db.pool(),
                 self.tenant_id(),
                 &turn,
@@ -118,8 +118,8 @@ impl AppService {
         history.push(turn.clone());
         if let Err(error) = self.persist_recall_conversation(self.tenant_id(), &session, &history) {
             let _ = self
-                .db
-                .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                .runtime
+                .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                     self.db.pool(),
                     self.tenant_id(),
                     &turn.id,
@@ -139,16 +139,16 @@ impl AppService {
     ) -> AppResult<MemoryRecallSession> {
         let turn_id = normalize_recall_id(&params.turn_id, "turn")?;
         let turn = self
-            .db
-            .block_on(crate::backend::store::load_memory_recall_turn_sqlx(
+            .runtime
+            .run_sync(crate::backend::store::load_memory_recall_turn_sqlx(
                 self.db.pool(),
                 self.tenant_id(),
                 &turn_id,
             ))?
             .ok_or_else(|| AppError::NotFound(format!("Recall turn not found: {turn_id}")))?;
         let task_id = format!("memory-recall:{turn_id}");
-        self.db
-            .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                 self.db.pool(),
                 self.tenant_id(),
                 &turn.id,
@@ -165,7 +165,7 @@ impl AppService {
         &self,
         tenant_id: &str,
     ) -> AppResult<usize> {
-        let turns = self.db.block_on(
+        let turns = self.runtime.run_sync(
             crate::backend::store::list_memory_recall_turns_for_recovery_sqlx(
                 self.db.pool(),
                 tenant_id,
@@ -174,8 +174,8 @@ impl AppService {
         let mut scheduled = 0;
         for (turn_id, status) in turns {
             if status == MemoryRecallTurnStatus::Running {
-                self.db
-                    .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                self.runtime
+                    .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                         self.db.pool(),
                         tenant_id,
                         &turn_id,
@@ -215,16 +215,15 @@ impl AppService {
             Box::new(move |context| {
                 let service = AppService::from_runtime(&runtime);
                 if context.is_cancelled() {
-                    let _ =
-                        service
-                            .db
-                            .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
-                                service.db.pool(),
-                                &tenant_id_for_task,
-                                &turn_id_for_task,
-                                MemoryRecallTurnStatus::Cancelled,
-                                "Recall task cancelled before execution",
-                            ));
+                    let _ = service.runtime.run_sync(
+                        crate::backend::store::fail_memory_recall_turn_sqlx(
+                            service.db.pool(),
+                            &tenant_id_for_task,
+                            &turn_id_for_task,
+                            MemoryRecallTurnStatus::Cancelled,
+                            "Recall task cancelled before execution",
+                        ),
+                    );
                     return Err(AppError::Canceled("Recall task cancelled".to_string()));
                 }
                 service.run_memory_recall_turn_for_tenant(
@@ -239,8 +238,8 @@ impl AppService {
             | Ok(crate::backend::runtime::tasks::SpawnOutcome::Existing) => Ok(()),
             Err(error) => {
                 let _ = self
-                    .db
-                    .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                    .runtime
+                    .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                         self.db.pool(),
                         tenant_id,
                         turn_id,
@@ -259,8 +258,8 @@ impl AppService {
         cancellation: AiExecutionCancellation,
     ) -> AppResult<Value> {
         let turn = self
-            .db
-            .block_on(crate::backend::store::load_memory_recall_turn_sqlx(
+            .runtime
+            .run_sync(crate::backend::store::load_memory_recall_turn_sqlx(
                 self.db.pool(),
                 tenant_id,
                 turn_id,
@@ -268,8 +267,8 @@ impl AppService {
             .ok_or_else(|| AppError::NotFound(format!("Recall turn not found: {turn_id}")))?;
         if cancellation.is_cancelled() {
             let _ = self
-                .db
-                .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                .runtime
+                .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                     self.db.pool(),
                     tenant_id,
                     turn_id,
@@ -278,15 +277,15 @@ impl AppService {
                 ));
             return Err(AppError::Canceled("Recall task cancelled".to_string()));
         }
-        self.db
-            .block_on(crate::backend::store::mark_memory_recall_turn_running_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::mark_memory_recall_turn_running_sqlx(
                 self.db.pool(),
                 tenant_id,
                 turn_id,
             ))?;
         let session = self
-            .db
-            .block_on(crate::backend::store::load_memory_recall_session_sqlx(
+            .runtime
+            .run_sync(crate::backend::store::load_memory_recall_session_sqlx(
                 self.db.pool(),
                 tenant_id,
                 &turn.session_id,
@@ -330,8 +329,8 @@ impl AppService {
                     MemoryRecallTurnStatus::Failed
                 };
                 let _ = self
-                    .db
-                    .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                    .runtime
+                    .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                         self.db.pool(),
                         tenant_id,
                         turn_id,
@@ -348,8 +347,8 @@ impl AppService {
         };
         if cancellation.is_cancelled() {
             let _ = self
-                .db
-                .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
+                .runtime
+                .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
                     self.db.pool(),
                     tenant_id,
                     turn_id,
@@ -362,21 +361,21 @@ impl AppService {
             match parse_and_validate_recall_output(self, tenant_id, &session.scope, &result.text) {
                 Ok(output) => output,
                 Err(error) => {
-                    let _ = self
-                        .db
-                        .block_on(crate::backend::store::fail_memory_recall_turn_sqlx(
-                            self.db.pool(),
-                            tenant_id,
-                            turn_id,
-                            MemoryRecallTurnStatus::Failed,
-                            &error.to_string(),
-                        ));
+                    let _ =
+                        self.runtime
+                            .run_sync(crate::backend::store::fail_memory_recall_turn_sqlx(
+                                self.db.pool(),
+                                tenant_id,
+                                turn_id,
+                                MemoryRecallTurnStatus::Failed,
+                                &error.to_string(),
+                            ));
                     return Err(error);
                 }
             };
         let current_status = self
-            .db
-            .block_on(crate::backend::store::load_memory_recall_turn_sqlx(
+            .runtime
+            .run_sync(crate::backend::store::load_memory_recall_turn_sqlx(
                 self.db.pool(),
                 tenant_id,
                 turn_id,
@@ -388,8 +387,8 @@ impl AppService {
             ));
         }
         let session_after = self
-            .db
-            .block_on(crate::backend::store::load_memory_recall_session_sqlx(
+            .runtime
+            .run_sync(crate::backend::store::load_memory_recall_session_sqlx(
                 self.db.pool(),
                 tenant_id,
                 &session.id,
@@ -406,8 +405,8 @@ impl AppService {
         current.status = MemoryRecallTurnStatus::Completed;
         self.persist_recall_conversation(tenant_id, &session_after, &history)?;
         self.record_recall_usage(tenant_id, turn_id, &output)?;
-        self.db
-            .block_on(crate::backend::store::complete_memory_recall_turn_sqlx(
+        self.runtime
+            .run_sync(crate::backend::store::complete_memory_recall_turn_sqlx(
                 self.db.pool(),
                 tenant_id,
                 turn_id,
@@ -429,7 +428,7 @@ impl AppService {
             return Ok(());
         }
         let used_at = Utc::now().to_rfc3339();
-        self.db.block_on(async {
+        self.runtime.run_sync(async {
             for reference in &output.session_references {
                 crate::backend::store::record_memory_usage_event_sqlx(
                     self.db.pool(),
@@ -539,7 +538,7 @@ impl AppService {
             source_fingerprint: Some(fingerprint),
             turns: normalized_turns,
         };
-        self.db.block_on(async {
+        self.runtime.run_sync(async {
             crate::backend::store::upsert_conversation_source_sqlx(
                 self.db.pool(),
                 tenant_id,
@@ -707,7 +706,7 @@ impl AppService {
         let source_id = scope.source_id.clone();
         let project_path = scope.project_path.clone();
         let scoped_session_id = scope.session_id.clone();
-        self.db.block_on(async move {
+        self.runtime.run_sync(async move {
             let session_exists = match record_kind {
                 crate::backend::dto::ConversationRecordKind::Session => (
                     sqlx::query_scalar::<_, i64>(
@@ -781,7 +780,7 @@ impl AppService {
         let source_id = scope.source_id.clone();
         let project_path = scope.project_path.clone();
         let scoped_session_id = scope.session_id.clone();
-        let parent_exists = self.db.block_on(async {
+        let parent_exists = self.runtime.run_sync(async {
             let exists = match record_kind {
                 crate::backend::dto::ConversationRecordKind::Session => {
                     sqlx::query_scalar::<_, i64>(
@@ -809,7 +808,7 @@ impl AppService {
         if !parent_exists {
             return Ok(false);
         }
-        let locators = self.db.block_on(
+        let locators = self.runtime.run_sync(
             crate::backend::store::list_conversation_block_locators_sqlx(
                 self.db.pool(),
                 tenant_id,
@@ -1017,7 +1016,7 @@ mod tests {
         assert!(output.content_references.is_empty());
         assert_eq!(output.follow_up_suggestions, vec!["继续缩小时间范围"]);
 
-        let counts = service.db.block_on(async {
+        let counts = service.runtime.run_sync(async {
             let source_count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM conversation_sources WHERE tenant_id='default' AND id='assetiweave-memory-recall'",
             )
