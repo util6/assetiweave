@@ -32,6 +32,10 @@ use crate::backend::{
 use super::acp_aggregator::{
     AggregatorAction, RecallStructuredAggregator, TranslationTextAggregator,
 };
+use super::history_replay::{
+    HistoryReplayFidelity, HistoryReplayFuture, HistoryReplayPort, HistoryReplayResult,
+    HistoryReplayStatus,
+};
 
 const PROTOCOL_EVENT_CAPACITY: usize = 128;
 const PROVIDER_SESSION_DELETE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -542,21 +546,22 @@ async fn run_execution(
 
     if request.replay {
         request.report_phase(AiExecutionPhase::Prompting);
-        let replay_text = collect_replay_text(
-            &mut channels.events,
-            &session,
+        let mut replay_port = AcpHistoryReplayPort {
+            events: &mut channels.events,
+            session_id: &session,
             request,
-            request.limits.text_bytes,
-        )
-        .await;
+        };
+        let replay = replay_port
+            .replay(&session.to_string(), request.limits.text_bytes)
+            .await;
         return Ok(AiExecutionResult {
-            text: replay_text.clone(),
+            text: replay.text.clone(),
             agent_id: definition.id.clone(),
             protocol: AgentProtocol::Acp,
             requested_model: request.model.clone(),
             elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             persistent_binding: None,
-            replay_text: Some(replay_text),
+            replay_text: Some(replay.text),
         });
     }
 
@@ -687,21 +692,44 @@ async fn collect_replay_text(
     session_id: &SessionId,
     request: &AiExecutionRequest,
     max_bytes: usize,
-) -> String {
+) -> HistoryReplayResult {
     let mut bridge = AcpSessionEventBridge::new(request, session_id);
     bridge.emit_processing(SessionProcessingState::Started);
     let deadline = tokio::time::sleep(std::time::Duration::from_millis(250));
     tokio::pin!(deadline);
     let mut text = String::new();
+    let mut saw_history_event = false;
+    let mut truncated = false;
     loop {
         tokio::select! {
             _ = &mut deadline => break,
             event = events.recv() => {
                 let Some(event) = event else { break; };
-                bridge.emit(&event);
+                saw_history_event = saw_history_event || event_matches_session(&event, session_id);
+                let is_completion = matches!(
+                    &event,
+                    crate::backend::agents::protocol::acp::AcpRuntimeEvent::TurnCompleted {
+                        session_id: event_session,
+                        ..
+                    } if event_session == session_id
+                );
+                if !is_completion {
+                    if let crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentText {
+                        session_id: event_session,
+                        text: chunk,
+                    } = &event
+                    {
+                        if event_session == session_id
+                            && text.len().saturating_add(chunk.len()) > max_bytes.max(1)
+                        {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    bridge.emit(&event);
+                }
                 match event {
                     crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentText { session_id: event_session, text: chunk } if &event_session == session_id => {
-                        if text.len().saturating_add(chunk.len()) > max_bytes { break; }
                         text.push_str(&chunk);
                     }
                     crate::backend::agents::protocol::acp::AcpRuntimeEvent::TurnCompleted { session_id: event_session, .. } if &event_session == session_id => break,
@@ -710,7 +738,82 @@ async fn collect_replay_text(
             }
         }
     }
-    text
+    let replay = if !saw_history_event {
+        HistoryReplayResult::unavailable()
+    } else if truncated {
+        HistoryReplayResult::new(
+            text,
+            HistoryReplayFidelity::Partial,
+            HistoryReplayStatus::Partial,
+            Vec::new(),
+        )
+    } else {
+        HistoryReplayResult::new(
+            text,
+            HistoryReplayFidelity::Full,
+            HistoryReplayStatus::Ready,
+            Vec::new(),
+        )
+    };
+    bridge.emit_replay_status(&replay);
+    bridge.emit_processing(SessionProcessingState::Completed);
+    if replay.is_available() {
+        bridge.emit_kind(
+            ACP_TERMINAL_ITEM_ID,
+            SessionEventKind::TerminalResult { text: None },
+        );
+    }
+    replay
+}
+
+struct AcpHistoryReplayPort<'a> {
+    events:
+        &'a mut tokio::sync::mpsc::Receiver<crate::backend::agents::protocol::acp::AcpRuntimeEvent>,
+    session_id: &'a SessionId,
+    request: &'a AiExecutionRequest,
+}
+
+impl HistoryReplayPort for AcpHistoryReplayPort<'_> {
+    fn replay<'a>(
+        &'a mut self,
+        _provider_session_id: &'a str,
+        max_bytes: usize,
+    ) -> HistoryReplayFuture<'a> {
+        Box::pin(collect_replay_text(
+            self.events,
+            self.session_id,
+            self.request,
+            max_bytes,
+        ))
+    }
+}
+
+fn event_matches_session(
+    event: &crate::backend::agents::protocol::acp::AcpRuntimeEvent,
+    session_id: &SessionId,
+) -> bool {
+    let event_session_id = match event {
+        crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentText {
+            session_id, ..
+        }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::AgentThought {
+            session_id, ..
+        }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::ToolCall { session_id, .. }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::ToolCallUpdate {
+            session_id,
+            ..
+        }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::PermissionRequested {
+            session_id,
+        }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::Other { session_id }
+        | crate::backend::agents::protocol::acp::AcpRuntimeEvent::TurnCompleted {
+            session_id,
+            ..
+        } => session_id,
+    };
+    event_session_id == session_id
 }
 
 struct AcpSessionEventBridge<'a> {
@@ -849,6 +952,16 @@ impl<'a> AcpSessionEventBridge<'a> {
         self.emit_kind(
             ACP_PROCESSING_ITEM_ID,
             SessionEventKind::Processing { state },
+        );
+    }
+
+    fn emit_replay_status(&mut self, replay: &HistoryReplayResult) {
+        self.emit_kind(
+            "history-status",
+            SessionEventKind::Notice {
+                code: "history_replay_status".to_string(),
+                detail: Some(replay.status_detail()),
+            },
         );
     }
 

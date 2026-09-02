@@ -11,6 +11,53 @@ use crate::backend::ai_execution::{
     AiExecutionCancellation, AiExecutionLimits, AiExecutionProgressSink, AiExecutionPurpose,
 };
 
+fn provider_binding(
+    root: &Path,
+    workspace: &Path,
+) -> crate::backend::ai_execution::PersistentExecutionBinding {
+    crate::backend::ai_execution::PersistentExecutionBinding {
+        tenant_id: "tenant-fixture".to_string(),
+        execution_context_key: "member-context".to_string(),
+        provider_session_id: "REAL_CONVERSATION_ID".to_string(),
+        agent_id: "antigravity".to_string(),
+        installation_id: Some("fixture-installation".to_string()),
+        model: Some("fixture-model".to_string()),
+        workspace_path: workspace.to_string_lossy().into_owned(),
+        binding_version: 1,
+        // The fixture mirrors Antigravity 1.1.x's brain/<conversation_id> store.
+        // It is passed through the Agent Execution binding rather than read from
+        // a user directory or the Conversation repository.
+        provider_metadata_json: serde_json::json!({
+            "protocol": "native",
+            "adapter": "antigravity-direct-cli",
+            "provider_store_root": root,
+        })
+        .to_string(),
+    }
+}
+
+fn write_transcript(root: &Path, name: &str, contents: &str) {
+    let logs = root
+        .join("brain")
+        .join("REAL_CONVERSATION_ID")
+        .join(".system_generated")
+        .join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(logs.join(name), contents).unwrap();
+}
+
+fn fixture_record(kind: &str, step_index: u64, content: &str) -> String {
+    serde_json::json!({
+        "step_index": step_index,
+        "source": "MODEL",
+        "type": kind,
+        "status": "DONE",
+        "created_at": format!("2026-08-20T00:00:{step_index:02}Z"),
+        "content": content,
+    })
+    .to_string()
+}
+
 #[derive(Default)]
 struct CaptureSessionEvents {
     events: Mutex<Vec<SessionEvent>>,
@@ -79,6 +126,182 @@ fn request(definition: &AgentDefinition, execution_id: &str) -> AiExecutionReque
         team_tools: None,
         recall_tools: None,
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn antigravity_replay_prefers_full_transcript_and_emits_replay_only_events() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-agy-history-full-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    write_transcript(
+        &root,
+        "transcript_full.jsonl",
+        &[
+            fixture_record("USER_INPUT", 1, "<USER_REQUEST>fixture user</USER_REQUEST>"),
+            fixture_record("PLANNER_RESPONSE", 2, "FULL_TRANSCRIPT_TEXT"),
+            serde_json::json!({
+                "step_index": 3,
+                "source": "MODEL",
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "created_at": "2026-08-20T00:00:03Z",
+                "content": "",
+                "tool_calls": [{"id": "fixture-tool", "name": "read_fixture"}],
+            })
+            .to_string(),
+            fixture_record("RUN_COMMAND", 4, "RAW_TOOL_PAYLOAD_MUST_NOT_BE_REPLAYED"),
+        ]
+        .join("\n"),
+    );
+    write_transcript(
+        &root,
+        "transcript.jsonl",
+        &fixture_record("PLANNER_RESPONSE", 2, "SHORT_TRANSCRIPT_TEXT"),
+    );
+
+    let record = root.join("agy-must-not-start.ndjson");
+    let definition = definition(&record);
+    let mut replay_request = request(&definition, "agy-history-full");
+    replay_request.binding = Some(provider_binding(&root, &workspace));
+    replay_request.replay = true;
+    let capture = Arc::new(CaptureSessionEvents::default());
+    replay_request.progress = Some(capture.clone());
+
+    let result = crate::backend::ai_execution::backends::native::NativeExecutionBackend::new(
+        root.join("workspaces"),
+    )
+    .execute(&definition, replay_request)
+    .await
+    .expect("provider history replay");
+
+    assert_eq!(result.replay_text.as_deref(), Some("FULL_TRANSCRIPT_TEXT"));
+    assert!(!record.exists(), "replay must not start agy");
+    let events = capture.events.lock().unwrap();
+    assert!(events.iter().all(|event| {
+        matches!(
+            event.delivery,
+            crate::backend::ai_execution::SessionEventDelivery::Replay
+        )
+    }));
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::AssistantTextDelta { text } if text == "FULL_TRANSCRIPT_TEXT"
+    )));
+    assert!(!format!("{events:?}").contains("RAW_TOOL_PAYLOAD_MUST_NOT_BE_REPLAYED"));
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::ToolStart { name: Some(name) } if name == "read_fixture"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::Notice { code, detail: Some(detail) }
+            if code == "history_replay_status" && detail.contains("fidelity=full") && detail.contains("status=ready")
+    )));
+    drop(events);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn antigravity_replay_falls_back_to_simplified_transcript() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-agy-history-fallback-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    write_transcript(
+        &root,
+        "transcript.jsonl",
+        &fixture_record("PLANNER_RESPONSE", 1, "SIMPLIFIED_TRANSCRIPT_TEXT"),
+    );
+
+    let definition = definition(&root.join("agy-must-not-start.ndjson"));
+    let mut replay_request = request(&definition, "agy-history-fallback");
+    replay_request.binding = Some(provider_binding(&root, &workspace));
+    replay_request.replay = true;
+    let capture = Arc::new(CaptureSessionEvents::default());
+    replay_request.progress = Some(capture.clone());
+    let result = crate::backend::ai_execution::backends::native::NativeExecutionBackend::new(
+        root.join("workspaces"),
+    )
+    .execute(&definition, replay_request)
+    .await
+    .expect("simplified provider history replay");
+
+    assert_eq!(
+        result.replay_text.as_deref(),
+        Some("SIMPLIFIED_TRANSCRIPT_TEXT")
+    );
+    assert!(capture.events.lock().unwrap().iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::Notice { code, detail: Some(detail) }
+            if code == "history_replay_status" && detail.contains("fidelity=simplified") && detail.contains("status=ready")
+    )));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn antigravity_replay_reports_partial_and_unavailable_without_replacing_binding() {
+    let root = std::env::temp_dir().join(format!(
+        "assetiweave-agy-history-status-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    write_transcript(
+        &root,
+        "transcript_full.jsonl",
+        &format!(
+            "{}\n{{malformed",
+            fixture_record("PLANNER_RESPONSE", 1, "PARTIAL_TEXT")
+        ),
+    );
+
+    let definition = definition(&root.join("agy-must-not-start.ndjson"));
+    let mut partial_request = request(&definition, "agy-history-partial");
+    partial_request.binding = Some(provider_binding(&root, &workspace));
+    partial_request.replay = true;
+    let partial_capture = Arc::new(CaptureSessionEvents::default());
+    partial_request.progress = Some(partial_capture.clone());
+    let partial = crate::backend::ai_execution::backends::native::NativeExecutionBackend::new(
+        root.join("workspaces"),
+    )
+    .execute(&definition, partial_request)
+    .await
+    .expect("partial replay remains readable");
+    assert_eq!(partial.replay_text.as_deref(), Some("PARTIAL_TEXT"));
+    assert!(partial_capture.events.lock().unwrap().iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::Notice { code, detail: Some(detail) }
+            if code == "history_replay_status" && detail.contains("fidelity=partial") && detail.contains("status=partial")
+    )));
+
+    let missing_root = root.join("missing");
+    let mut unavailable_request = request(&definition, "agy-history-unavailable");
+    unavailable_request.binding = Some(provider_binding(&missing_root, &workspace));
+    unavailable_request.replay = true;
+    let unavailable_capture = Arc::new(CaptureSessionEvents::default());
+    unavailable_request.progress = Some(unavailable_capture.clone());
+    let unavailable = crate::backend::ai_execution::backends::native::NativeExecutionBackend::new(
+        root.join("workspaces"),
+    )
+    .execute(&definition, unavailable_request)
+    .await
+    .expect("unavailable history is a reported state");
+    assert_eq!(unavailable.replay_text.as_deref(), Some(""));
+    assert!(unavailable_capture.events.lock().unwrap().iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::Notice { code, detail: Some(detail) }
+            if code == "history_replay_status" && detail.contains("fidelity=unavailable") && detail.contains("status=unavailable")
+    )));
+
+    let binding = provider_binding(&root, &workspace);
+    assert_eq!(binding.provider_session_id, "REAL_CONVERSATION_ID");
+    assert!(!binding.provider_session_id.starts_with("native-session-"));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[tokio::test(flavor = "current_thread")]

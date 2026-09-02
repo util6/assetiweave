@@ -255,7 +255,7 @@ mod tests {
             .expect("Antigravity catalog item");
         assert_eq!(antigravity.protocol, AgentMarketProtocol::Native);
         assert!(antigravity.capabilities.resume);
-        assert!(!antigravity.capabilities.history_replay);
+        assert!(antigravity.capabilities.history_replay);
         assert!(antigravity.capabilities.live_events);
         assert!(matches!(
             antigravity.distributions.as_slice(),

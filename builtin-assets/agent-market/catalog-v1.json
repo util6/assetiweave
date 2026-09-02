@@ -135,6 +135,7 @@
         "textPrompt": true,
         "modelDiscovery": false,
         "resume": true,
+        "historyReplay": true,
         "liveEvents": true,
         "richHistoryReplay": false
       },

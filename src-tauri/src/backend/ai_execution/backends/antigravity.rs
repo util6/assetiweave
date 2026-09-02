@@ -16,6 +16,10 @@ use crate::backend::{
 };
 
 use super::native::{cancelled_error, map_process_error, NativeExecutionGuard};
+use super::{
+    antigravity_history::AntigravityProviderHistoryReader,
+    history_replay::{HistoryReplayEntry, HistoryReplayPort, HistoryReplayResult},
+};
 
 const PROVIDER_NAME: &str = "Antigravity";
 const PRINT_TIMEOUT: &str = "10m";
@@ -45,6 +49,21 @@ pub(super) async fn run(
         .filter(|anchor| is_valid_resume_anchor(anchor));
     if request.binding.is_some() && existing_anchor.is_none() {
         return Err(AiExecutionError::ResumeUnavailable);
+    }
+
+    if request.replay {
+        let history = if let Some(anchor) = existing_anchor.as_deref() {
+            let mut reader = AntigravityProviderHistoryReader::from_request(
+                definition,
+                request.binding.as_ref(),
+            );
+            reader.replay(anchor, request.limits.text_bytes).await
+        } else {
+            HistoryReplayResult::unavailable()
+        };
+        let mut bridge = SessionEventBridge::new(request, existing_anchor.clone());
+        bridge.emit_replay(&history);
+        return Ok(replay_result(definition, request, started, history.text));
     }
 
     if request.restore_only {
@@ -335,6 +354,23 @@ fn result(
     }
 }
 
+fn replay_result(
+    definition: &AgentDefinition,
+    request: &AiExecutionRequest,
+    started: Instant,
+    text: String,
+) -> AiExecutionResult {
+    AiExecutionResult {
+        text: text.clone(),
+        agent_id: definition.id.clone(),
+        protocol: AgentProtocol::Native,
+        requested_model: request.model.clone(),
+        elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        persistent_binding: None,
+        replay_text: Some(text),
+    }
+}
+
 fn normalize_provider_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     if lower.contains("authentication")
@@ -513,6 +549,66 @@ impl<'a> SessionEventBridge<'a> {
             AgyEvent::StepUpdate(step) => self.emit_step(step, accumulated_text),
             AgyEvent::Result(result) => self.emit_result(result, accumulated_text),
             AgyEvent::Unknown => {}
+        }
+    }
+
+    fn emit_replay(&mut self, history: &HistoryReplayResult) {
+        self.emit_processing(SessionProcessingState::Started);
+        for entry in &history.entries {
+            match entry {
+                HistoryReplayEntry::UserMessage => {
+                    self.emit_kind(
+                        "agy:history:user",
+                        SessionEventKind::UserMessageAcknowledged { accepted: true },
+                    );
+                }
+                HistoryReplayEntry::AssistantText { text } => {
+                    self.emit_kind(
+                        "agy:history:assistant",
+                        SessionEventKind::AssistantTextDelta { text: text.clone() },
+                    );
+                }
+                HistoryReplayEntry::ToolStart { item_id, name } => {
+                    self.emit_kind(
+                        &format!("agy:history:tool:{item_id}"),
+                        SessionEventKind::ToolStart {
+                            name: Some(name.clone()),
+                        },
+                    );
+                }
+                HistoryReplayEntry::ToolResult { item_id, success } => {
+                    self.emit_kind(
+                        &format!("agy:history:tool:{item_id}"),
+                        SessionEventKind::ToolResult {
+                            success: *success,
+                            detail: None,
+                        },
+                    );
+                }
+                HistoryReplayEntry::Notice { code } => {
+                    self.emit_kind(
+                        "agy:history:notice",
+                        SessionEventKind::Notice {
+                            code: code.clone(),
+                            detail: None,
+                        },
+                    );
+                }
+            }
+        }
+        self.emit_kind(
+            "agy:history:status",
+            SessionEventKind::Notice {
+                code: "history_replay_status".to_string(),
+                detail: Some(history.status_detail()),
+            },
+        );
+        self.emit_processing(SessionProcessingState::Completed);
+        if history.is_available() {
+            self.emit_kind(
+                "agy:history:terminal",
+                SessionEventKind::TerminalResult { text: None },
+            );
         }
     }
 
