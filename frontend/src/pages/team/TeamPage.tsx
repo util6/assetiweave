@@ -8,6 +8,7 @@ import {
   Plus,
   RotateCcw,
   Shield,
+  Sparkles,
   Trash2,
   Users,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import { EmptyState } from "../../components/foundation/EmptyState";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { Panel } from "../../components/foundation/Panel";
+import { TeamWorkspaceShell } from "../../components/team/TeamWorkspaceShell";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -80,6 +82,8 @@ export function TeamPage() {
   const [formDescription, setFormDescription] = useState("");
   const [formMembers, setFormMembers] = useState<MemberDraft[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
   const [runSnapshot, setRunSnapshot] = useState<TeamRunSnapshot | null>(null);
   const [leaderMessage, setLeaderMessage] = useState("");
   const [workflowBusy, setWorkflowBusy] = useState(false);
@@ -153,6 +157,8 @@ export function TeamPage() {
 
   useEffect(() => {
     setRunSnapshot(null);
+    setDetailsOpen(false);
+    setWorkflowOpen(false);
     setRestoreResult(null);
     setRestoreTaskId(null);
     setWorkflowError(null);
@@ -486,199 +492,195 @@ export function TeamPage() {
             {t("team.action.create")}
           </Button>
         }
-        description={t("team.page.description")}
-        eyebrow={t("team.page.eyebrow")}
+        description={t("team.chat.pageDescription")}
+        eyebrow={t("team.chat.eyebrow")}
         icon={<Users size={17} />}
-        title={t("team.page.title")}
+        title={t("team.chat.pageTitle")}
       />
       {error && <Panel className="border-status-remove/35 bg-status-remove/10 text-body-sm text-status-remove" padding="sm">{error}</Panel>}
       {loading ? (
         <EmptyState className="min-h-0 flex-1" description={t("team.list.loading")} icon={<Users size={22} />} title={t("team.list.title")} />
       ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] gap-4 overflow-hidden">
-          <Panel className="min-h-0 overflow-y-auto" padding="sm" variant="muted">
-            <div className="flex items-center justify-between px-2 pb-2 text-label-caps uppercase text-on-surface-variant">
-              <span>{t("team.list.title")}</span>
-              <span>{t("team.list.count", { count: teams.length })}</span>
-            </div>
-            {teams.length === 0 ? (
-              <EmptyState className="min-h-52 border-0 bg-transparent shadow-none" description={t("team.list.emptyDescription")} icon={<Users size={20} />} title={t("team.list.empty")} />
-            ) : (
-              <div className="grid gap-2">
-                {teams.map((team) => {
-                  const leader = team.members.find((member) => member.role === "leader");
-                  const selected = team.id === selectedTeamId;
-                  return (
-                    <button
-                      aria-pressed={selected}
-                      className={`rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 ${selected ? "border-primary/50 bg-theme-nav-active/75" : "border-theme-card-border/60 bg-theme-card/40 hover:border-primary/35 hover:bg-theme-control-hover/50"}`}
-                      key={team.id}
-                      onClick={() => setSelectedTeamId(team.id)}
-                      type="button"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="truncate text-body-sm font-semibold text-on-surface">{team.name}</span>
-                        <span className="shrink-0 text-label-caps text-on-surface-variant">{team.members.length}</span>
-                      </div>
-                      {leader && <div className="mt-2 flex items-center gap-1.5 text-caption text-primary"><Shield size={13} />{leader.agent_id}</div>}
-                    </button>
-                  );
-                })}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] gap-3 overflow-hidden max-[860px]:grid-cols-1 max-[860px]:overflow-y-auto">
+          <nav aria-label={t("team.list.title")} className="min-h-0 overflow-y-auto">
+            <Panel className="min-h-full" padding="sm" variant="muted">
+              <div className="flex items-center justify-between px-2 pb-2 text-label-caps uppercase text-on-surface-variant">
+                <span>{t("team.list.title")}</span>
+                <span>{t("team.list.count", { count: teams.length })}</span>
               </div>
-            )}
-          </Panel>
-          {selectedTeam ? (
-            <Panel className="min-h-0 overflow-y-auto" padding="lg">
-              <div className="flex flex-wrap items-start justify-between gap-4 border-b border-theme-card-border/60 pb-4">
-                <div className="min-w-0">
-                  <h2 className="truncate text-h3 text-on-surface">{selectedTeam.name}</h2>
-                  {selectedTeam.description && <p className="mt-1 text-body-sm text-on-surface-variant">{selectedTeam.description}</p>}
-                  <p className="mt-2 text-caption text-on-surface-variant">{t("team.detail.teamId")}: <code>{selectedTeam.id}</code></p>
-                </div>
-                <div className="flex gap-2">
-                  <Button onClick={() => openEdit(selectedTeam)} size="sm" type="button" variant="outline"><Edit2 size={14} />{t("team.action.edit")}</Button>
-                  <Button onClick={() => setDeleting(selectedTeam)} size="sm" type="button" variant="destructive"><Trash2 size={14} />{t("team.action.delete")}</Button>
-                </div>
-              </div>
-              <div className="mt-5">
-                <div className="mb-3 flex items-center gap-2"><Users className="text-primary" size={16} /><h3 className="text-title-sm font-bold">{t("team.detail.roster")}</h3><span className="text-caption text-on-surface-variant">{t("team.detail.memberCount", { count: selectedTeam.members.length })}</span></div>
-                <div className="divide-y divide-theme-card-border/60 overflow-hidden rounded-xl border border-theme-card-border/70">
-                  {selectedTeam.members.slice().sort((left, right) => left.sort_order - right.sort_order).map((member) => (
-                    <div className="flex flex-wrap items-center justify-between gap-3 bg-theme-card/35 px-4 py-3" key={member.id}>
-                      <div className="flex min-w-0 items-center gap-3"><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-theme-control text-caption font-semibold text-on-surface-variant">{member.sort_order + 1}</span><div className="min-w-0"><div className="flex items-center gap-2"><span className="truncate text-body-sm font-semibold">{member.agent_id}</span><span className="text-label-caps text-primary">{member.role === "leader" ? t("team.detail.leader") : t("team.detail.teammate")}</span></div><p className="truncate text-caption text-on-surface-variant">{member.model || t("team.detail.defaultModel")}</p></div></div>
-                      <code className="text-caption text-on-surface-variant">{member.execution_context_key.slice(0, 12)}…</code>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-6 border-t border-theme-card-border/60 pt-5">
-                <div className="mb-3 flex items-center gap-2">
-                  <MessageSquare className="text-primary" size={16} />
-                  <h3 className="text-title-sm font-bold">{t("team.leader.title")}</h3>
-                </div>
-                <div className="grid gap-2 rounded-xl border border-theme-card-border/70 bg-theme-card/30 p-3">
-                  <label className="grid gap-1.5 text-body-sm font-semibold">
-                    {t("team.leader.message")}
-                    <Input
-                      disabled={leaderChatBusy}
-                      onChange={(event) => setLeaderChatMessage(event.target.value)}
-                      placeholder={t("team.leader.placeholder")}
-                      value={leaderChatMessage}
-                    />
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <Button disabled={leaderChatBusy || !leaderChatMessage.trim()} onClick={() => void sendLeaderMessage()} size="sm" type="button">
-                      <MessageSquare size={14} />
-                      {leaderChatBusy ? t("team.leader.sending") : t("team.leader.send")}
-                    </Button>
-                    <Button disabled={leaderChatBusy} onClick={() => void sendLeaderMessage(true)} size="sm" type="button" variant="outline">
-                      <RotateCcw size={14} />
-                      {t("team.leader.replay")}
-                    </Button>
-                  </div>
-                  {leaderChatResult ? <p className="whitespace-pre-wrap rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-body-sm text-on-surface">{leaderChatResult}</p> : null}
-                </div>
-              </div>
-              <div className="mt-6 border-t border-theme-card-border/60 pt-5">
-                <div className="mb-3 flex items-center gap-2">
-                  <CheckCircle2 className="text-primary" size={16} />
-                  <h3 className="text-title-sm font-bold">{t("team.workflow.title")}</h3>
-                </div>
-                <div className="grid gap-2 rounded-xl border border-theme-card-border/70 bg-theme-card/30 p-3">
-                  <label className="grid gap-1.5 text-body-sm font-semibold">
-                    {t("team.workflow.message")}
-                    <Input
-                      disabled={workflowBusy}
-                      onChange={(event) => setLeaderMessage(event.target.value)}
-                      placeholder={t("team.workflow.messagePlaceholder")}
-                      value={leaderMessage}
-                    />
-                  </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button disabled={workflowBusy || !leaderMessage.trim()} onClick={() => void startTeamDraft()} size="sm" type="button">
-                      <Play size={14} />
-                      {t("team.workflow.draft")}
-                    </Button>
-                    {runSnapshot && (
-                      <>
-                        <span className="text-caption text-on-surface-variant">
-                          {t("team.workflow.state", { state: runSnapshot.run.state })} · {t("team.workflow.revision", { revision: runSnapshot.run.revision })}
-                        </span>
-                        {runSnapshot.tasks.length > 0 && (
-                          <span className="text-caption text-on-surface-variant">
-                            {t("team.workflow.progress", { completed: completedRunTasks, total: runSnapshot.tasks.length })}
-                          </span>
-                        )}
-                        <Button disabled={workflowBusy || runSnapshot.run.state !== "awaiting_review"} onClick={() => void saveRunReview()} size="sm" type="button" variant="outline">
-                          {t("team.workflow.review")}
-                        </Button>
-                        <Button disabled={workflowBusy || runSnapshot.run.state !== "awaiting_review"} onClick={() => void startTeamExecution()} size="sm" type="button">
-                          {t("team.workflow.confirm")}
-                        </Button>
-                        <Button disabled={workflowBusy || Boolean(restoreTaskId) || runSnapshot.run.state === "drafting"} onClick={() => void restoreTeamExecution()} size="sm" type="button" variant="ghost">
-                          <RotateCcw size={14} />
-                          {t("team.workflow.restore")}
-                        </Button>
-                        <Button disabled={workflowBusy || runSnapshot.run.state === "terminal"} onClick={() => void cancelTeamExecution()} size="sm" type="button" variant="outline">
-                          {t("team.workflow.cancel")}
-                        </Button>
-                        {restoreTask && restoreTask.state !== "Succeeded" && restoreTask.state !== "Failed" && restoreTask.state !== "Canceled" && (
-                          <span className="text-caption text-on-surface-variant">
-                            {t("team.workflow.restoreProgress", { state: restoreTask.state })}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  {runSnapshot && runSnapshot.tasks.length === 0 && <p className="text-caption text-on-surface-variant">{t("team.workflow.noTasks")}</p>}
-                  {orderedRunTasks.length > 0 && (
-                    <div className="grid gap-2">
-                      {orderedRunTasks.map((task, index) => (
-                        <div className="grid gap-2 rounded-lg border border-theme-card-border/60 bg-theme-control/35 p-3" key={task.id}>
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-body-sm font-semibold">{task.title}</p>
-                              <p className="mt-1 text-caption text-on-surface-variant">{task.description}</p>
-                            </div>
-                            <span className="shrink-0 text-label-caps text-primary">{task.state}</span>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <label className="flex items-center gap-2 text-caption text-on-surface-variant">
-                              {t("team.workflow.owner")}
-                              <select
-                                className={selectClassName}
-                                disabled={workflowBusy || runState !== "awaiting_review"}
-                                onChange={(event) => setRunSnapshot((current) => current ? {
-                                  ...current,
-                                  tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? { ...currentTask, owner_member_id: event.target.value } : currentTask),
-                                } : current)}
-                                value={task.owner_member_id ?? ""}
-                              >
-                                <option value="">{t("team.workflow.unassigned")}</option>
-                                {runTeammates.map((member) => <option key={member.member_id} value={member.member_id}>{member.member_id} · {member.agent_id}</option>)}
-                              </select>
-                            </label>
-                            <Button aria-label={t("team.action.moveUp")} disabled={workflowBusy || runState !== "awaiting_review" || index === 0} onClick={() => moveRunTask(index, -1)} size="icon-sm" type="button" variant="ghost"><ArrowUp size={14} /></Button>
-                            <Button aria-label={t("team.action.moveDown")} disabled={workflowBusy || runState !== "awaiting_review" || index === orderedRunTasks.length - 1} onClick={() => moveRunTask(index, 1)} size="icon-sm" type="button" variant="ghost"><ArrowDown size={14} /></Button>
-                          </div>
+              {teams.length === 0 ? (
+                <EmptyState className="min-h-52 border-0 bg-transparent shadow-none" description={t("team.list.emptyDescription")} icon={<Users size={20} />} title={t("team.list.empty")} />
+              ) : (
+                <div className="grid gap-2">
+                  {teams.map((team) => {
+                    const leader = team.members.find((member) => member.role === "leader");
+                    const selected = team.id === selectedTeamId;
+                    return (
+                      <button
+                        aria-pressed={selected}
+                        className={`w-full rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 ${selected ? "border-theme-nav-active-border bg-theme-nav-active/20" : "border-theme-card-border/60 bg-theme-card/40 hover:border-theme-nav-active-border/55 hover:bg-theme-control-hover/50"}`}
+                        key={team.id}
+                        onClick={() => setSelectedTeamId(team.id)}
+                        type="button"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="truncate text-body-sm font-semibold text-on-surface">{team.name}</span>
+                          <span className="shrink-0 text-label-caps text-on-surface-variant">{team.members.length}</span>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                  {restoreResult && (
-                    <div className="grid gap-1 rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-caption">
-                      <span className="font-semibold text-on-surface">{t("team.workflow.restoreStatus")}</span>
-                      {restoreResult.members.map((member) => <span className="text-on-surface-variant" key={member.member_id}>{member.member_id}: {member.state === "ready" ? t("team.workflow.ready") : t("team.workflow.unavailable")}</span>)}
-                    </div>
-                  )}
-                  {workflowError && <p className="rounded-lg border border-status-remove/35 bg-status-remove/10 p-2 text-caption text-status-remove">{workflowError}</p>}
+                        {leader && <div className="mt-2 flex items-center gap-1.5 text-caption text-primary"><Shield size={13} />{t("team.detail.leader")} · {leader.agent_id}</div>}
+                      </button>
+                    );
+                  })}
                 </div>
-              </div>
+              )}
             </Panel>
+          </nav>
+          {selectedTeam ? (
+            <TeamWorkspaceShell
+              key={selectedTeam.id}
+              onDelete={() => setDeleting(selectedTeam)}
+              onEdit={() => openEdit(selectedTeam)}
+              onOpenDetails={() => setDetailsOpen(true)}
+              onOpenWorkflow={() => setWorkflowOpen(true)}
+              team={selectedTeam}
+            />
           ) : (
             <EmptyState className="min-h-0" description={t("team.list.emptyDescription")} icon={<Users size={22} />} title={t("team.detail.select")} />
           )}
         </div>
+      )}
+      {detailsOpen && selectedTeam && (
+        <DialogFrame
+          contentClassName="grid gap-4"
+          footer={
+            <>
+              <Button onClick={() => setDetailsOpen(false)} type="button" variant="outline">{t("team.action.cancel")}</Button>
+              <Button onClick={() => { setDetailsOpen(false); openEdit(selectedTeam); }} type="button">{t("team.action.edit")}</Button>
+              <Button onClick={() => { setDetailsOpen(false); setDeleting(selectedTeam); }} type="button" variant="destructive">{t("team.action.delete")}</Button>
+            </>
+          }
+          icon={<Users size={18} />}
+          onClose={() => setDetailsOpen(false)}
+          size="lg"
+          title={t("team.chat.details")}
+        >
+          <div className="grid gap-3">
+            <div>
+              <h3 className="text-title-sm font-bold text-on-surface">{selectedTeam.name}</h3>
+              {selectedTeam.description && <p className="mt-1 text-body-sm text-on-surface-variant">{selectedTeam.description}</p>}
+              <p className="mt-2 text-caption text-on-surface-variant">{t("team.detail.teamId")}: <code>{selectedTeam.id}</code></p>
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2 text-label-caps uppercase text-on-surface-variant">
+                <Users size={14} />
+                <span>{t("team.detail.roster")}</span>
+                <span>· {t("team.detail.memberCount", { count: selectedTeam.members.length })}</span>
+              </div>
+              <div className="divide-y divide-theme-card-border/60 overflow-hidden rounded-xl border border-theme-card-border/70">
+                {selectedTeam.members.slice().sort((left, right) => left.sort_order - right.sort_order).map((member) => (
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-theme-card/35 px-4 py-3" key={member.id}>
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-theme-control text-caption font-semibold text-on-surface-variant">{member.sort_order + 1}</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-body-sm font-semibold">{member.agent_id}</span>
+                          <span className="text-label-caps text-primary">{member.role === "leader" ? t("team.detail.leader") : t("team.detail.teammate")}</span>
+                        </div>
+                        <p className="truncate text-caption text-on-surface-variant">{member.model || t("team.detail.defaultModel")}</p>
+                      </div>
+                    </div>
+                    <code className="text-caption text-on-surface-variant">{member.execution_context_key.slice(0, 12)}…</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </DialogFrame>
+      )}
+      {workflowOpen && selectedTeam && (
+        <DialogFrame
+          contentClassName="grid gap-5"
+          footer={<Button onClick={() => setWorkflowOpen(false)} type="button" variant="outline">{t("team.action.cancel")}</Button>}
+          icon={<Sparkles size={18} />}
+          onClose={() => setWorkflowOpen(false)}
+          size="xl"
+          title={t("team.chat.workflow")}
+        >
+          <section className="grid gap-2 rounded-xl border border-theme-card-border/70 bg-theme-card/30 p-3">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="text-primary" size={16} />
+              <h3 className="text-title-sm font-bold">{t("team.leader.title")}</h3>
+            </div>
+            <label className="grid gap-1.5 text-body-sm font-semibold">
+              {t("team.leader.message")}
+              <Input disabled={leaderChatBusy} onChange={(event) => setLeaderChatMessage(event.target.value)} placeholder={t("team.leader.placeholder")} value={leaderChatMessage} />
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={leaderChatBusy || !leaderChatMessage.trim()} onClick={() => void sendLeaderMessage()} size="sm" type="button">
+                <MessageSquare size={14} />
+                {leaderChatBusy ? t("team.leader.sending") : t("team.leader.send")}
+              </Button>
+              <Button disabled={leaderChatBusy} onClick={() => void sendLeaderMessage(true)} size="sm" type="button" variant="outline">
+                <RotateCcw size={14} />
+                {t("team.leader.replay")}
+              </Button>
+            </div>
+            {leaderChatResult ? <p className="whitespace-pre-wrap rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-body-sm text-on-surface">{leaderChatResult}</p> : null}
+          </section>
+          <section className="grid gap-2 rounded-xl border border-theme-card-border/70 bg-theme-card/30 p-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="text-primary" size={16} />
+              <h3 className="text-title-sm font-bold">{t("team.workflow.title")}</h3>
+            </div>
+            <label className="grid gap-1.5 text-body-sm font-semibold">
+              {t("team.workflow.message")}
+              <Input disabled={workflowBusy} onChange={(event) => setLeaderMessage(event.target.value)} placeholder={t("team.workflow.messagePlaceholder")} value={leaderMessage} />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button disabled={workflowBusy || !leaderMessage.trim()} onClick={() => void startTeamDraft()} size="sm" type="button">
+                <Play size={14} />
+                {t("team.workflow.draft")}
+              </Button>
+              {runSnapshot && (
+                <>
+                  <span className="text-caption text-on-surface-variant">{t("team.workflow.state", { state: runSnapshot.run.state })} · {t("team.workflow.revision", { revision: runSnapshot.run.revision })}</span>
+                  {runSnapshot.tasks.length > 0 && <span className="text-caption text-on-surface-variant">{t("team.workflow.progress", { completed: completedRunTasks, total: runSnapshot.tasks.length })}</span>}
+                  <Button disabled={workflowBusy || runSnapshot.run.state !== "awaiting_review"} onClick={() => void saveRunReview()} size="sm" type="button" variant="outline">{t("team.workflow.review")}</Button>
+                  <Button disabled={workflowBusy || runSnapshot.run.state !== "awaiting_review"} onClick={() => void startTeamExecution()} size="sm" type="button">{t("team.workflow.confirm")}</Button>
+                  <Button disabled={workflowBusy || Boolean(restoreTaskId) || runSnapshot.run.state === "drafting"} onClick={() => void restoreTeamExecution()} size="sm" type="button" variant="ghost"><RotateCcw size={14} />{t("team.workflow.restore")}</Button>
+                  <Button disabled={workflowBusy || runSnapshot.run.state === "terminal"} onClick={() => void cancelTeamExecution()} size="sm" type="button" variant="outline">{t("team.workflow.cancel")}</Button>
+                  {restoreTask && restoreTask.state !== "Succeeded" && restoreTask.state !== "Failed" && restoreTask.state !== "Canceled" && <span className="text-caption text-on-surface-variant">{t("team.workflow.restoreProgress", { state: restoreTask.state })}</span>}
+                </>
+              )}
+            </div>
+            {runSnapshot && runSnapshot.tasks.length === 0 && <p className="text-caption text-on-surface-variant">{t("team.workflow.noTasks")}</p>}
+            {orderedRunTasks.length > 0 && (
+              <div className="grid gap-2">
+                {orderedRunTasks.map((task, index) => (
+                  <div className="grid gap-2 rounded-lg border border-theme-card-border/60 bg-theme-control/35 p-3" key={task.id}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0"><p className="truncate text-body-sm font-semibold">{task.title}</p><p className="mt-1 text-caption text-on-surface-variant">{task.description}</p></div>
+                      <span className="shrink-0 text-label-caps text-primary">{task.state}</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="flex items-center gap-2 text-caption text-on-surface-variant">
+                        {t("team.workflow.owner")}
+                        <select className={selectClassName} disabled={workflowBusy || runState !== "awaiting_review"} onChange={(event) => setRunSnapshot((current) => current ? { ...current, tasks: current.tasks.map((currentTask) => currentTask.id === task.id ? { ...currentTask, owner_member_id: event.target.value } : currentTask) } : current)} value={task.owner_member_id ?? ""}>
+                          <option value="">{t("team.workflow.unassigned")}</option>
+                          {runTeammates.map((member) => <option key={member.member_id} value={member.member_id}>{member.member_id} · {member.agent_id}</option>)}
+                        </select>
+                      </label>
+                      <Button aria-label={t("team.action.moveUp")} disabled={workflowBusy || runState !== "awaiting_review" || index === 0} onClick={() => moveRunTask(index, -1)} size="icon-sm" type="button" variant="ghost"><ArrowUp size={14} /></Button>
+                      <Button aria-label={t("team.action.moveDown")} disabled={workflowBusy || runState !== "awaiting_review" || index === orderedRunTasks.length - 1} onClick={() => moveRunTask(index, 1)} size="icon-sm" type="button" variant="ghost"><ArrowDown size={14} /></Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {restoreResult && <div className="grid gap-1 rounded-lg border border-theme-card-border/60 bg-theme-control/25 p-3 text-caption"><span className="font-semibold text-on-surface">{t("team.workflow.restoreStatus")}</span>{restoreResult.members.map((member) => <span className="text-on-surface-variant" key={member.member_id}>{member.member_id}: {member.state === "ready" ? t("team.workflow.ready") : t("team.workflow.unavailable")}</span>)}</div>}
+            {workflowError && <p className="rounded-lg border border-status-remove/35 bg-status-remove/10 p-2 text-caption text-status-remove">{workflowError}</p>}
+          </section>
+        </DialogFrame>
       )}
       {editor && <DialogFrame
         busy={busy}

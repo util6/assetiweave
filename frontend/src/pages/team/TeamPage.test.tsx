@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
+import type { TeamMemberStreamSnapshot, TeamMemberTaskSnapshot } from "../../types/team";
 
 const listTeamsMock = vi.hoisted(() => vi.fn());
 const createTeamMock = vi.hoisted(() => vi.fn());
@@ -12,6 +13,10 @@ const deleteTeamMock = vi.hoisted(() => vi.fn());
 const listAgentCatalogMock = vi.hoisted(() => vi.fn());
 const listAgentMarketMock = vi.hoisted(() => vi.fn());
 const listAgentModelsMock = vi.hoisted(() => vi.fn());
+const listTeamMemberTasksMock = vi.hoisted(() => vi.fn());
+const getTeamMemberStreamSnapshotMock = vi.hoisted(() => vi.fn());
+const subscribeTeamMemberSessionsMock = vi.hoisted(() => vi.fn());
+const getLatestTeamRunMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../services/team", () => ({
   createTeam: createTeamMock,
@@ -24,6 +29,23 @@ vi.mock("../../services/agentRuntime", () => ({
   listAgentCatalog: listAgentCatalogMock,
   listAgentMarket: listAgentMarketMock,
   listAgentModels: listAgentModelsMock,
+}));
+
+vi.mock("../../services/teamWorkflow", () => ({
+  cancelTeamMemberTurn: vi.fn(),
+  cancelTeamRun: vi.fn(),
+  confirmTeamRun: vi.fn(),
+  draftTeam: vi.fn(),
+  getLatestTeamRun: getLatestTeamRunMock,
+  getTeamMemberStreamSnapshot: getTeamMemberStreamSnapshotMock,
+  getTeamRun: vi.fn(),
+  listTeamMemberTasks: listTeamMemberTasksMock,
+  restoreTeamRun: vi.fn(),
+  reviewTeamRun: vi.fn(),
+  startTeamMemberReplay: vi.fn(),
+  startTeamMemberTurn: vi.fn(),
+  subscribeTeamMemberSessions: subscribeTeamMemberSessionsMock,
+  teamLeaderChat: vi.fn(),
 }));
 
 const fixture = {
@@ -54,6 +76,10 @@ describe("TeamPage", () => {
     ]);
     listAgentMarketMock.mockResolvedValue([]);
     listAgentModelsMock.mockImplementation(async (agentId: string) => ({ agent_id: agentId, available: true, models: [{ id: agentId === "agent-a" ? "model-a" : "model-b", label: agentId === "agent-a" ? "Model A" : "Model B", description: null }], current_model_id: agentId === "agent-a" ? "model-a" : "model-b", error_code: null, error: null }));
+    listTeamMemberTasksMock.mockResolvedValue([]);
+    getTeamMemberStreamSnapshotMock.mockResolvedValue(null);
+    subscribeTeamMemberSessionsMock.mockResolvedValue(vi.fn());
+    getLatestTeamRunMock.mockResolvedValue(null);
   });
 
   afterEach(() => cleanup());
@@ -108,4 +134,82 @@ describe("TeamPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(deleteTeamMock).toHaveBeenCalledWith("team-1"));
   });
+
+  it("opens on the Leader session and switches one active timeline without changing member activity", async () => {
+    const leader = memberStream("leader", "execution-leader", "Running", "Leader timeline");
+    const teammate = memberStream("teammate", "execution-teammate", "Running", "Teammate timeline");
+    listTeamMemberTasksMock.mockResolvedValue([leader.task, teammate.task]);
+    getTeamMemberStreamSnapshotMock.mockImplementation(async (_teamId: string, memberId: string) => memberId === "leader" ? leader : teammate);
+
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("team-chat-shell")).toBeTruthy());
+
+    expect(screen.getByTestId("team-member-leader").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("team-active-recipient").textContent).toContain("Leader");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Leader timeline");
+    expect(screen.getByTestId("team-member-teammate-status").textContent).toContain("Working");
+
+    fireEvent.click(screen.getByTestId("team-member-teammate"));
+
+    expect(screen.getByTestId("team-member-teammate").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("team-active-recipient").textContent).toContain("Teammate");
+    expect(screen.getByTestId("team-timeline").textContent).toContain("Teammate timeline");
+    expect(screen.getByTestId("team-member-leader-status").textContent).toContain("Working");
+  });
 });
+
+function memberStream(
+  memberId: string,
+  executionId: string,
+  taskState: TeamMemberTaskSnapshot["state"],
+  text: string,
+): TeamMemberStreamSnapshot {
+  const task: TeamMemberTaskSnapshot = {
+    task_id: `task-${executionId}`,
+    kind: "TeamRun",
+    dedup_key: null,
+    state: taskState,
+    progress: null,
+    error: null,
+    started_at: "2026-08-31T00:00:00Z",
+    finished_at: null,
+    detail: {
+      workflow: "team_member_turn",
+      tenant_id: "tenant-1",
+      team_id: "team-1",
+      member_id: memberId,
+      execution_id: executionId,
+      replay: false,
+      phase: "prompting",
+    },
+    result: null,
+  };
+  return {
+    team_id: "team-1",
+    member_id: memberId,
+    execution_id: executionId,
+    sequence: 1,
+    replay: false,
+    task,
+    stream: {
+      revision: 1,
+      event_count: 1,
+      items: [{
+        identity: {
+          session_id: `session-${memberId}`,
+          member_id: memberId,
+          execution_id: executionId,
+          turn_id: "turn-1",
+          item_id: `item-${memberId}`,
+        },
+        kind: "assistant_text",
+        sequence: 1,
+        delivery: "live",
+        state: "streaming",
+        text,
+        status: null,
+        code: null,
+      }],
+    },
+  };
+}
