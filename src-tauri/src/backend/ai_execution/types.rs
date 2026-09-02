@@ -99,6 +99,7 @@ pub(crate) enum AiExecutionPurpose {
     GlobalMemory,
     Recall,
     TeamLeaderChat,
+    TeamMemberTurn,
     TeamDraft,
     TeamTask,
     TeamSummary,

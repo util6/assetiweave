@@ -26,6 +26,7 @@ mod skills;
 mod sources;
 mod system;
 mod team;
+mod team_member_workflow;
 mod team_workflow;
 mod tenants;
 mod utils;

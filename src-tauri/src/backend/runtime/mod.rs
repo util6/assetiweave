@@ -7,6 +7,7 @@
 mod app_runtime;
 mod error;
 mod memory_legacy_archive;
+pub(crate) mod session_streams;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]

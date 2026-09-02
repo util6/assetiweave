@@ -229,6 +229,20 @@ pub struct TeamLeaderChatResult {
     pub replay: bool,
 }
 
+/// A direct turn/replay request scoped to one Team member.
+///
+/// `replay` deliberately shares the same request shape as a live turn so the
+/// application workflow cannot grow a separate Leader/Teammate path. Provider
+/// anchors are resolved from Agent Execution by `execution_context_key` and
+/// never arrive from a transport or the frontend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TeamMemberTurnInput {
+    pub team_id: String,
+    pub member_id: String,
+    pub message: String,
+    pub replay: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TeamDraftInput {
     pub team_id: String,

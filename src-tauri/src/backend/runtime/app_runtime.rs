@@ -1,4 +1,4 @@
-use super::{tasks::TaskRuntime, AppError, AppResult};
+use super::{session_streams, tasks::TaskRuntime, AppError, AppResult};
 use arc_swap::ArcSwap;
 use std::{
     path::{Path, PathBuf},
@@ -91,6 +91,7 @@ pub(crate) struct AppRuntime {
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     session_memory_coordinator: Mutex<Option<SessionMemoryCoordinatorHandle>>,
     team_coordinator: Mutex<Option<TeamCoordinatorHandle>>,
+    session_streams: session_streams::SessionStreamRegistry,
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
     builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
@@ -222,6 +223,7 @@ impl AppRuntime {
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
             team_coordinator: Mutex::new(None),
+            session_streams: session_streams::SessionStreamRegistry::default(),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
@@ -295,6 +297,7 @@ impl AppRuntime {
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
             team_coordinator: Mutex::new(None),
+            session_streams: session_streams::SessionStreamRegistry::default(),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
@@ -586,6 +589,10 @@ impl AppRuntime {
         &self.task_runtime
     }
 
+    pub(crate) fn session_streams(&self) -> &session_streams::SessionStreamRegistry {
+        &self.session_streams
+    }
+
     /// Stop accepting work and wait for resident tasks before close-time
     /// persistence runs. The final dispatcher/database shutdown remains in
     /// `shutdown_with_grace` so callers can persist through this same runtime.
@@ -712,6 +719,7 @@ impl AppRuntime {
                 handle.stop_with_timeout(remaining)
             })
             .unwrap_or_default();
+        self.session_streams.clear();
         let _ = self.block_on(self.db.pool().close());
         ShutdownReport {
             unfinished_task_ids: task_report.unfinished_task_ids,
