@@ -1,135 +1,105 @@
+import { useCallback, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
-import {
-  getConversationSearchIndexStatus,
-  getConversationSearchIndexTask,
   startConversationSearchIndexRebuild,
   subscribeConversationSearchIndexTasks,
   type ConversationSearchIndexStatus,
   type ConversationSearchIndexTaskSnapshot,
 } from "../../services/conversations";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
 import {
-  useBackgroundTaskRuntime,
-  type BackgroundTaskRuntimeAdapter,
-} from "./BackgroundTaskRuntime";
+  mergeSearchIndexQueryState,
+  searchIndexQueryOptions,
+  type SearchIndexQueryState,
+} from "./searchIndexQueries";
 
-interface SearchIndexRuntimeState {
-  status: ConversationSearchIndexStatus | null;
-  task: ConversationSearchIndexTaskSnapshot | null;
-}
-
-interface SearchIndexStatusRuntimeEvent {
-  status: ConversationSearchIndexStatus;
-  snapshot: ConversationSearchIndexTaskSnapshot;
-}
-
-interface SearchIndexContextValue {
-  status: ConversationSearchIndexStatus | null;
-  task: ConversationSearchIndexTaskSnapshot | null;
+export interface SearchIndexContextValue {
   rebuild: () => Promise<ConversationSearchIndexTaskSnapshot>;
   refresh: () => Promise<void>;
+  status: ConversationSearchIndexStatus | null;
+  task: ConversationSearchIndexTaskSnapshot | null;
 }
 
-const SearchIndexContext = createContext<SearchIndexContextValue | null>(null);
+export function SearchIndexProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "search-index");
 
-export function SearchIndexProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<
-    BackgroundTaskRuntimeAdapter<
-      SearchIndexRuntimeState,
-      ConversationSearchIndexTaskSnapshot | SearchIndexStatusRuntimeEvent
-    >
-  >(
-    () => ({
-      initialState: { status: null, task: null },
-      isRunning: (state) => state.task?.status === "running",
-      merge: (current, incoming) => {
-        if (isSearchIndexTaskSnapshot(incoming)) {
-          return { ...current, task: incoming };
+  // Root task query: single owner of polling
+  useQuery({
+    ...searchIndexQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) =>
+      query.state.data?.task?.status === "running" ? 1000 : 10000,
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<
+        SearchIndexQueryState,
+        ConversationSearchIndexTaskSnapshot
+      >
+        merge={(current, snapshot) => {
+          return mergeSearchIndexQueryState(current, {
+            status: current?.status ?? null,
+            task: snapshot,
+          });
+        }}
+        queryKey={queryKey}
+        subscribe={(listener) =>
+          subscribeConversationSearchIndexTasks((snapshot) => {
+            listener(snapshot);
+            if (snapshot.status !== "running") {
+              void queryClient.invalidateQueries({
+                exact: true,
+                queryKey,
+              });
+            }
+          })
         }
-
-        if (isSearchIndexStatusRuntimeEvent(incoming)) {
-          return { status: incoming.status, task: incoming.snapshot };
-        }
-
-        return {
-          status: incoming.status,
-          task:
-            current.task?.status === "running" && !incoming.task
-              ? current.task
-              : incoming.task,
-        };
-      },
-      refresh: async () => {
-        const [status, task] = await Promise.all([
-          getConversationSearchIndexStatus(),
-          getConversationSearchIndexTask(),
-        ]);
-        return { status, task };
-      },
-      subscribe: (listener) =>
-        subscribeConversationSearchIndexTasks((snapshot) => {
-          listener(snapshot);
-          if (snapshot.status !== "running") {
-            void getConversationSearchIndexStatus()
-              .then((status) => listener({ status, snapshot }))
-              .catch(() => undefined);
-          }
-        }),
-    }),
-    [],
+      />
+      {children}
+    </>
   );
-  const { merge, refresh, state } = useBackgroundTaskRuntime(adapter);
+}
+
+export function useSearchIndex(): SearchIndexContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "search-index");
+
+  const query = useQuery({
+    ...searchIndexQueryOptions(activeScope),
+  });
 
   const rebuild = useCallback(async () => {
     const snapshot = await startConversationSearchIndexRebuild();
-    merge(snapshot);
+    queryClient.setQueryData<SearchIndexQueryState>(queryKey, (current) =>
+      mergeSearchIndexQueryState(current, {
+        status: current?.status ?? null,
+        task: snapshot,
+      }),
+    );
     return snapshot;
-  }, [merge]);
+  }, [queryClient, queryKey]);
 
-  const value = useMemo<SearchIndexContextValue>(
-    () => ({
-      status: state.status,
-      task: state.task,
-      rebuild,
-      refresh: async () => {
-        await refresh();
-      },
-    }),
-    [rebuild, refresh, state.status, state.task],
-  );
-  return (
-    <SearchIndexContext.Provider value={value}>
-      {children}
-    </SearchIndexContext.Provider>
-  );
-}
+  const refresh = useCallback(async () => {
+    await queryClient.refetchQueries({ exact: true, queryKey });
+  }, [queryClient, queryKey]);
 
-export function useSearchIndex() {
-  const context = useContext(SearchIndexContext);
-  if (!context)
-    throw new Error("useSearchIndex must be used inside SearchIndexProvider");
-  return context;
-}
-
-function isSearchIndexTaskSnapshot(
-  incoming:
-    | SearchIndexRuntimeState
-    | ConversationSearchIndexTaskSnapshot
-    | SearchIndexStatusRuntimeEvent,
-): incoming is ConversationSearchIndexTaskSnapshot {
-  return "id" in incoming;
-}
-
-function isSearchIndexStatusRuntimeEvent(
-  incoming:
-    | ConversationSearchIndexTaskSnapshot
-    | SearchIndexRuntimeState
-    | SearchIndexStatusRuntimeEvent,
-): incoming is SearchIndexStatusRuntimeEvent {
-  return "snapshot" in incoming;
+  return {
+    rebuild,
+    refresh,
+    status: query.data?.status ?? null,
+    task: query.data?.task ?? null,
+  };
 }

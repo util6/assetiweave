@@ -30,15 +30,16 @@ export function AppProviders({ children }: { children: ReactNode }) {
                 <AiExecutionTaskProvider>
                   <AgentLifecycleTaskProvider>
                     <MemoryTaskProvider>
-                      <SearchIndexProvider>
-                        <SkillBackupProvider>
-                          <CatalogTaskProvider>
-                            <TeamTaskProvider>
-                              <AppUpdateProvider>{children}</AppUpdateProvider>
-                            </TeamTaskProvider>
-                          </CatalogTaskProvider>
-                        </SkillBackupProvider>
-                      </SearchIndexProvider>
+                      <SkillBackupProvider>
+                        <CatalogTaskProvider>
+                          <TeamTaskProvider>
+                            <AppUpdateProvider>
+                              <SearchIndexProvider />
+                              {children}
+                            </AppUpdateProvider>
+                          </TeamTaskProvider>
+                        </CatalogTaskProvider>
+                      </SkillBackupProvider>
                     </MemoryTaskProvider>
                   </AgentLifecycleTaskProvider>
                 </AiExecutionTaskProvider>

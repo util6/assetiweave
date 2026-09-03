@@ -17,7 +17,7 @@ const mockGetAppSettings = vi.hoisted(() =>
     config_dir: "/tmp/app",
     config_path: "/tmp/app/data.db",
     conversation_adapter_dir: "/tmp/app/adapters",
-    settings: { theme: "sunlight" },
+    settings: { theme: "sunlight" } as Record<string, unknown>,
   })),
 );
 
@@ -163,6 +163,12 @@ describe("settingsQueries & useAppSettings", () => {
   });
 
   it("setColumnLayout 合并列宽偏好并持久化", async () => {
+    mockGetAppSettings.mockResolvedValueOnce({
+      config_dir: "/tmp/app",
+      config_path: "/tmp/app/data.db",
+      conversation_adapter_dir: "/tmp/app/adapters",
+      settings: { ...defaultSettings, columnLayouts: { explorer: [1, 2] } },
+    });
     const client = createTestQueryClient();
     client.setQueryData(appSettingsKey, {
       settings: { ...defaultSettings, columnLayouts: { explorer: [1, 2] } },
