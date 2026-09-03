@@ -15,6 +15,8 @@ use std::{
 
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const DISCOVERY_OUTPUT_CAP: usize = 8 * 1024;
+#[cfg(any(test, windows))]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug)]
 pub(crate) struct HostProcessOutput {
@@ -679,7 +681,24 @@ pub(crate) fn configure_process_tree(command: &mut Command) {
 }
 
 #[cfg(windows)]
-pub(crate) fn configure_process_tree(_command: &mut Command) {}
+pub(crate) fn configure_process_tree(command: &mut Command) {
+    configure_background_process(command);
+}
+
+#[cfg(windows)]
+pub(crate) fn configure_background_process(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(windows_background_process_creation_flags());
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_background_process(_command: &mut Command) {}
+
+#[cfg(any(test, windows))]
+fn windows_background_process_creation_flags() -> u32 {
+    WINDOWS_CREATE_NO_WINDOW
+}
 
 #[cfg(unix)]
 pub(crate) fn signal_process_tree(
@@ -714,9 +733,6 @@ pub(crate) fn signal_process_tree(
     process_id: u32,
     signal: HostProcessSignal,
 ) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     if process_id == 0 {
         return Err("process id must be positive".to_string());
     }
@@ -726,8 +742,8 @@ pub(crate) fn signal_process_tree(
     if signal == HostProcessSignal::Kill {
         command.arg("/F");
     }
+    configure_background_process(&mut command);
     let output = command
-        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|error| format!("failed to launch taskkill: {error}"))?;
     if output.status.success() {
@@ -778,6 +794,14 @@ mod tests {
             }
             _ => {}
         }
+    }
+
+    #[test]
+    fn windows_background_processes_request_no_console_window() {
+        assert_eq!(
+            windows_background_process_creation_flags() & 0x0800_0000,
+            0x0800_0000
+        );
     }
 
     #[test]

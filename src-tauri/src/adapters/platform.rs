@@ -3,6 +3,7 @@
 //! 提供在操作系统文件管理器（Finder / Explorer / xdg-open）中定位与打开指定路径的能力。
 
 use crate::backend::{
+    host_process::configure_background_process,
     path_utils::expand_path,
     runtime::{AppError, AppResult},
 };
@@ -112,9 +113,10 @@ fn build_file_manager_invocation(
 
 /// 执行文件管理器命令并检查返回状态
 fn command_status(invocation: &FileManagerInvocation) -> AppResult<()> {
-    let status = Command::new(invocation.program)
-        .args(&invocation.args)
-        .status()?;
+    let mut command = Command::new(invocation.program);
+    command.args(&invocation.args);
+    configure_background_process(&mut command);
+    let status = command.status()?;
     if status.success() {
         Ok(())
     } else {

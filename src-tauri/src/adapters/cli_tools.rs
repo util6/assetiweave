@@ -3,6 +3,8 @@
 //! 负责检查应用随包附带的 CLI / Engine 二进制文件状态，
 //! 并提供将其安装（或创建 Shim 脚本）到系统 PATH 路径及更新用户 Shell 配置文件（如 `.zshrc`, `.profile` 等）的功能。
 
+#[cfg(windows)]
+use crate::backend::host_process::configure_background_process;
 use crate::backend::runtime::{AppError, AppResult};
 use serde::Serialize;
 #[cfg(windows)]
@@ -311,14 +313,16 @@ fn configure_windows_user_path(install_dir: &Path) -> AppResult<()> {
         "$dir = '{}'; $current = [Environment]::GetEnvironmentVariable('Path', 'User'); if ([string]::IsNullOrWhiteSpace($current)) {{ [Environment]::SetEnvironmentVariable('Path', $dir, 'User') }} elseif (((';' + $current + ';').ToLowerInvariant()).IndexOf((';' + $dir + ';').ToLowerInvariant()) -lt 0) {{ [Environment]::SetEnvironmentVariable('Path', $dir + ';' + $current, 'User') }}",
         powershell_single_quote(&install_dir.to_string_lossy())
     );
-    let status = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ])
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        &script,
+    ]);
+    configure_background_process(&mut command);
+    let status = command
         .status()
         .map_err(|error| AppError::Process(format!("update user PATH: {error}")))?;
     if !status.success() {
@@ -363,14 +367,14 @@ fn user_path_configuration_mentions(install_dir: &Path) -> bool {
 
 #[cfg(windows)]
 fn windows_user_path() -> Option<String> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "[Environment]::GetEnvironmentVariable('Path', 'User')",
-        ])
-        .output()
-        .ok()?;
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "[Environment]::GetEnvironmentVariable('Path', 'User')",
+    ]);
+    configure_background_process(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

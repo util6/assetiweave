@@ -1,6 +1,7 @@
 use crate::backend::host_paths::HostPathResolver;
 use crate::backend::{
     dto::GitRepositoryInfo,
+    host_process::configure_background_process,
     runtime::{AppError, AppResult},
 };
 use crate::backend::{models::AppKind, target_catalog::TargetCatalog};
@@ -200,12 +201,13 @@ fn git_current_branch(root: &Path) -> Option<String> {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .args(args)
         .current_dir(root)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .output()
-        .ok()?;
+        .env("GIT_OPTIONAL_LOCKS", "0");
+    configure_background_process(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

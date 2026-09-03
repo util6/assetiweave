@@ -1,3 +1,4 @@
+use crate::backend::host_process::configure_background_process;
 use chrono::Local;
 use serde::Serialize;
 use std::{
@@ -496,24 +497,30 @@ fn sanitize_log_value(value: &str) -> String {
 fn open_directory(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(path)
+        let mut command = std::process::Command::new("open");
+        command.arg(path);
+        configure_background_process(&mut command);
+        command
             .spawn()
             .map_err(|error| format!("打开目录失败: {error}"))?;
     }
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .arg(path)
+        let mut command = std::process::Command::new("explorer");
+        command.arg(path);
+        configure_background_process(&mut command);
+        command
             .spawn()
             .map_err(|error| format!("打开目录失败: {error}"))?;
     }
 
     #[cfg(target_os = "linux")]
     {
-        std::process::Command::new("xdg-open")
-            .arg(path)
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(path);
+        configure_background_process(&mut command);
+        command
             .spawn()
             .map_err(|error| format!("打开目录失败: {error}"))?;
     }
