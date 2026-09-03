@@ -5307,6 +5307,8 @@ fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
                 revision: reviewed.run.revision,
                 tasks: vec![crate::backend::models::TeamReviewTaskInput {
                     task_id: "task-one".to_string(),
+                    title: None,
+                    description: None,
                     owner_member_id: "worker".to_string(),
                     sort_order: 123,
                 }],
