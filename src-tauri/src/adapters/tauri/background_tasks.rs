@@ -422,9 +422,9 @@ impl BackgroundTaskRegistry {
         .with_conflict_keys(conflict_keys);
         spec.detail = detail;
         match self.task_runtime.register_external(spec)? {
-            ExternalRegistrationOutcome::Started(_snapshot) => self
+            ExternalRegistrationOutcome::Started(snapshot) => self
                 .task_runtime
-                .start_external(task_id)
+                .activate_external(task_id, snapshot.detail)
                 .map(ExternalRegistrationOutcome::Started),
             outcome @ ExternalRegistrationOutcome::Existing(_)
             | outcome @ ExternalRegistrationOutcome::Conflict(_) => Ok(outcome),
@@ -2478,6 +2478,47 @@ mod tests {
         assert!(!should_start_second);
         assert_eq!(first.id, second.id);
         assert!(registry.has_running_tasks());
+    }
+
+    #[test]
+    fn background_conversation_sync_launches_task_fn() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let registry = BackgroundTaskRegistry::default();
+        let (task, should_start) = registry
+            .begin_conversation_sync(&params(Some("session")))
+            .unwrap();
+        assert!(should_start);
+        assert_eq!(task.status, BackgroundTaskStatus::Running);
+
+        let runtime = registry.task_runtime().expect("task runtime");
+        let executed = Arc::new(AtomicBool::new(false));
+        let executed_clone = executed.clone();
+
+        runtime
+            .start_external_with(
+                &task.id,
+                Value::Null,
+                Box::new(move |_| {
+                    executed_clone.store(true, Ordering::SeqCst);
+                    Ok(Value::Null)
+                }),
+            )
+            .expect("start external with");
+
+        for _ in 0..100 {
+            if executed.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            executed.load(Ordering::SeqCst),
+            "task closure should have been launched and executed"
+        );
     }
 
     #[test]
