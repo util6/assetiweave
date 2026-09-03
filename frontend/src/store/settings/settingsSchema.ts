@@ -2,6 +2,7 @@ import type { ThemeId } from "../../theme/schema";
 import { normalizeThemeId } from "../../theme/themes";
 
 export type InterfaceDensity = "comfortable" | "compact";
+export type AppLocale = "zh" | "en";
 
 export type FontFamilyPresetId =
   "system" | "jetbrains" | "serif" | "mono" | "custom";
@@ -250,11 +251,13 @@ export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardCo
 export interface AppSettings {
   agentAssignments: AgentAssignments;
   columnMinWidth: number;
+  columnLayouts: Record<string, number[]>;
 
   conversationRuntimeOverrides: ConversationRuntimeOverrideSettings;
   conversationTranslation: ConversationTranslationSettings;
   dataBackup: DataBackupSettings;
   density: InterfaceDensity;
+  locale: AppLocale | null;
   memory: MemorySettings;
   promptOptimization: PromptOptimizationSettings;
 
@@ -356,6 +359,7 @@ export const defaultSettings: AppSettings = {
     "prompt.optimization": { agentId: "opencode", modelId: null },
   },
   columnMinWidth: DEFAULT_COLUMN_MIN_WIDTH,
+  columnLayouts: {},
 
   conversationRuntimeOverrides: {
     bash: "",
@@ -366,6 +370,7 @@ export const defaultSettings: AppSettings = {
     customDirectory: "",
   },
   density: "comfortable",
+  locale: null,
   memory: {
     generationEnabled: true,
     usageEnabled: true,
@@ -436,6 +441,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
   return {
     agentAssignments,
     columnMinWidth: normalizeColumnMinWidth(stored.columnMinWidth),
+    columnLayouts: normalizeColumnLayouts(stored.columnLayouts),
 
     dataBackup: normalizeDataBackupSettings(stored.dataBackup),
     conversationRuntimeOverrides: normalizeConversationRuntimeOverrides(
@@ -443,6 +449,7 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     ),
     conversationTranslation,
     density: stored.density === "compact" ? "compact" : defaultSettings.density,
+    locale: normalizeAppLocale(stored.locale),
     memory: normalizeMemorySettings(stored.memory),
     promptOptimization,
 
@@ -454,6 +461,33 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
     typography,
     conversations,
   };
+}
+
+export function normalizeAppLocale(value: unknown): AppLocale | null {
+  if (value === "zh" || value === "en") {
+    return value;
+  }
+  return null;
+}
+
+export function normalizeColumnLayouts(
+  value: unknown,
+): Record<string, number[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const result: Record<string, number[]> = {};
+  for (const [key, rawArray] of Object.entries(value)) {
+    if (!Array.isArray(rawArray)) continue;
+    if (rawArray.length < 2 || rawArray.length > 16) continue;
+    const allValidNumbers = rawArray.every(
+      (item) => typeof item === "number" && Number.isFinite(item) && item > 0,
+    );
+    if (allValidNumbers) {
+      result[key] = [...rawArray];
+    }
+  }
+  return result;
 }
 
 function migrateLegacyStoredSettings(

@@ -562,4 +562,41 @@ describe("AppSettingsProvider", () => {
       defaultSettings.typography.contentFontFamily,
     );
   });
+
+  it("normalizes missing or invalid locale to null, and preserves valid locales", () => {
+    expect(normalizeStoredSettings({}).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: null }).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: "zh" }).locale).toBe("zh");
+    expect(normalizeStoredSettings({ locale: "en" }).locale).toBe("en");
+    expect(normalizeStoredSettings({ locale: "fr" }).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: 123 }).locale).toBeNull();
+  });
+
+  it("normalizes columnLayouts filtering invalid entries and preserving valid arrays", () => {
+    expect(normalizeStoredSettings({}).columnLayouts).toEqual({});
+    expect(
+      normalizeStoredSettings({ columnLayouts: null }).columnLayouts,
+    ).toEqual({});
+    expect(
+      normalizeStoredSettings({ columnLayouts: "invalid" }).columnLayouts,
+    ).toEqual({});
+
+    const validLayout = { catalog: [1, 2, 1], explorer: [2, 3] };
+    expect(
+      normalizeStoredSettings({ columnLayouts: validLayout }).columnLayouts,
+    ).toEqual(validLayout);
+
+    // Filters entries with invalid structure or values
+    const mixed = {
+      valid: [1, 2],
+      tooShort: [1],
+      tooLong: Array(17).fill(1),
+      containsZero: [0, 1],
+      containsNegative: [-1, 2],
+      containsNonNumber: ["1", 2],
+    };
+    expect(
+      normalizeStoredSettings({ columnLayouts: mixed }).columnLayouts,
+    ).toEqual({ valid: [1, 2] });
+  });
 });

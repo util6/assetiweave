@@ -100,7 +100,9 @@ pub(crate) use search_index_repo::{
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
 pub(crate) use session_memory_repo::*;
-pub(crate) use settings_repo::{load_app_settings_sqlx, save_app_settings_sqlx};
+pub(crate) use settings_repo::{
+    initialize_app_locale_sqlx, load_app_settings_sqlx, save_app_settings_sqlx,
+};
 pub(crate) use shortcut_repo::{
     load_app_shortcut_settings_sqlx, load_app_shortcuts_sqlx, save_app_shortcuts_sqlx,
 };

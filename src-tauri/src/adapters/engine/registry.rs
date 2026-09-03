@@ -2260,6 +2260,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Some("assetiweave-cli settings save --json <json>")
     ),
     command!(
+        "initialize_app_locale_if_unset",
+        "settings.locale.initialize",
+        "Initialize the application locale if not yet set",
+        Write,
+        App,
+        false,
+        crate::backend::application::InitializeAppLocaleParams,
+        Service => |service, params| service.initialize_app_locale_if_unset(params.locale),
+        &[param!("locale", "Application locale (zh or en)")],
+        None
+    ),
+    command!(
         "list_memory_recent",
         "memory.recent.list",
         "List the current tenant's recent conversation work within the 72-hour window",

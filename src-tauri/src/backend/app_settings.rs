@@ -13,11 +13,28 @@ use std::{
 const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 4;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP: bool = true;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AppLocale {
+    Zh,
+    En,
+}
+
+impl AppLocale {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Zh => "zh",
+            Self::En => "en",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
+
 pub(crate) struct AppSettingsFile {
     pub(crate) config_dir: String,
     pub(crate) config_path: String,
@@ -66,6 +83,18 @@ pub(crate) fn save_app_settings_for_database(
         &settings,
     ))?;
     Ok(paths.into_file(settings))
+}
+
+pub(crate) fn initialize_app_locale_for_database(
+    db: &Database,
+    locale: AppLocale,
+) -> AppResult<AppSettingsFile> {
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let _ = read_app_settings_value_for_database(db)?;
+    let settings = db.block_on(store::initialize_app_locale_sqlx(db.pool(), locale))?;
+    let canonical = canonicalize_settings(settings)?;
+    Ok(paths.into_file(canonical))
 }
 
 pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
@@ -233,7 +262,7 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
     Ok(settings)
 }
 
-fn canonicalize_settings(settings: Value) -> AppResult<Value> {
+pub(crate) fn canonicalize_settings(settings: Value) -> AppResult<Value> {
     let mut settings = normalize_settings_paths(settings)?;
     let Some(root) = settings.as_object_mut() else {
         return Ok(settings);
@@ -249,6 +278,57 @@ fn canonicalize_settings(settings: Value) -> AppResult<Value> {
         translation.remove("cli");
         translation.remove("model");
     }
+
+    if let Some(locale_val) = root.get("locale") {
+        if !locale_val.is_null() {
+            match locale_val.as_str() {
+                Some("zh") | Some("en") => {}
+                _ => {
+                    return Err(AppError::Validation(format!(
+                        "invalid locale value: {locale_val}"
+                    )));
+                }
+            }
+        }
+    } else {
+        root.insert("locale".to_string(), Value::Null);
+    }
+
+    if let Some(layouts_val) = root.get("columnLayouts") {
+        if let Some(layouts_obj) = layouts_val.as_object() {
+            for (key, array_val) in layouts_obj {
+                let Some(arr) = array_val.as_array() else {
+                    return Err(AppError::Validation(format!(
+                        "columnLayouts entry '{key}' must be an array"
+                    )));
+                };
+                if arr.len() < 2 || arr.len() > 16 {
+                    return Err(AppError::Validation(format!(
+                        "columnLayouts entry '{key}' must have between 2 and 16 elements"
+                    )));
+                }
+                for item in arr {
+                    let Some(num) = item.as_f64() else {
+                        return Err(AppError::Validation(format!(
+                            "columnLayouts entry '{key}' elements must be positive numbers"
+                        )));
+                    };
+                    if !num.is_finite() || num <= 0.0 {
+                        return Err(AppError::Validation(format!(
+                            "columnLayouts entry '{key}' elements must be positive finite numbers"
+                        )));
+                    }
+                }
+            }
+        } else {
+            return Err(AppError::Validation(
+                "columnLayouts must be an object".to_string(),
+            ));
+        }
+    } else {
+        root.insert("columnLayouts".to_string(), json!({}));
+    }
+
     Ok(settings)
 }
 
@@ -835,5 +915,117 @@ mod tests {
         assert!(settings["agentAssignments"]
             .get("prompt.optimization")
             .is_none());
+    }
+
+    #[test]
+    fn canonical_settings_handles_locale_validation_and_normalization() {
+        // Missing locale normalizes to null
+        let s = canonicalize_settings(json!({})).unwrap();
+        assert_eq!(s["locale"], serde_json::Value::Null);
+
+        // Explicit null stays null
+        let s = canonicalize_settings(json!({ "locale": null })).unwrap();
+        assert_eq!(s["locale"], serde_json::Value::Null);
+
+        // Valid locales are preserved
+        let s_zh = canonicalize_settings(json!({ "locale": "zh" })).unwrap();
+        assert_eq!(s_zh["locale"], "zh");
+        let s_en = canonicalize_settings(json!({ "locale": "en" })).unwrap();
+        assert_eq!(s_en["locale"], "en");
+
+        // Invalid locales return validation error
+        assert!(canonicalize_settings(json!({ "locale": "fr" })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": 123 })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": true })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": {} })).is_err());
+    }
+
+    #[test]
+    fn canonical_settings_handles_column_layouts_validation_and_normalization() {
+        // Missing columnLayouts normalizes to empty map
+        let s = canonicalize_settings(json!({})).unwrap();
+        assert_eq!(s["columnLayouts"], json!({}));
+
+        // Valid map is preserved
+        let s = canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [1.0, 2.0, 1.0] }
+        }))
+        .unwrap();
+        assert_eq!(s["columnLayouts"]["explorer"], json!([1.0, 2.0, 1.0]));
+
+        // Invalid: not an object
+        assert!(canonicalize_settings(json!({ "columnLayouts": [1, 2] })).is_err());
+
+        // Invalid: < 2 items
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [1.0] }
+        }))
+        .is_err());
+
+        // Invalid: > 16 items
+        let seventeen = vec![1.0; 17];
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": seventeen }
+        }))
+        .is_err());
+
+        // Invalid: zero or negative
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [0.0, 1.0] }
+        }))
+        .is_err());
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [-1.0, 2.0] }
+        }))
+        .is_err());
+        // Invalid: non-number
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": ["1", "2"] }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn canonical_settings_preserves_unknown_fields() {
+        let s = canonicalize_settings(json!({
+            "customUserKey": "customValue",
+            "nestedObject": { "a": 1 }
+        }))
+        .unwrap();
+        assert_eq!(s["customUserKey"], "customValue");
+        assert_eq!(s["nestedObject"]["a"], 1);
+        assert_eq!(s["locale"], serde_json::Value::Null);
+        assert_eq!(s["columnLayouts"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn sqlite_v3_to_v4_migration_upgrades_schema_version_and_populates_defaults() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE app_settings (settings_id TEXT PRIMARY KEY NOT NULL, schema_version INTEGER NOT NULL, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Seed a v3 row without locale or columnLayouts
+        store::save_app_settings_sqlx(&pool, 3, &json!({ "theme": "promptStudio" }))
+            .await
+            .unwrap();
+
+        // Load via load_or_import_app_settings_sqlx
+        let loaded = load_or_import_app_settings_sqlx(&pool).await.unwrap();
+        assert_eq!(loaded["theme"], "promptStudio");
+        assert_eq!(loaded["locale"], serde_json::Value::Null);
+        assert_eq!(loaded["columnLayouts"], json!({}));
+
+        // Verify stored row was upgraded to version 4
+        let (version, stored) = store::load_app_settings_sqlx(&pool).await.unwrap().unwrap();
+        assert_eq!(version, 4);
+        assert_eq!(stored["theme"], "promptStudio");
+        assert_eq!(stored["locale"], serde_json::Value::Null);
+        assert_eq!(stored["columnLayouts"], json!({}));
     }
 }

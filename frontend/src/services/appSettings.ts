@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings } from "../store/settings/settingsSchema";
+import type { AppLocale, AppSettings } from "../store/settings/settingsSchema";
 
 export interface AppSettingsFile {
   config_dir: string;
@@ -19,4 +19,10 @@ export async function saveAppSettings(
   settings: AppSettings,
 ): Promise<AppSettingsFile> {
   return invoke<AppSettingsFile>("save_app_settings", { settings });
+}
+
+export async function initializeAppLocaleIfUnset(
+  locale: AppLocale,
+): Promise<AppSettingsFile> {
+  return invoke<AppSettingsFile>("initialize_app_locale_if_unset", { locale });
 }

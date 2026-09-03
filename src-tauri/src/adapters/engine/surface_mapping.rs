@@ -611,6 +611,11 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "settings.locale.initialize",
+        tauri_command: Some("initialize_app_locale_if_unset"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "settings.save",
         tauri_command: Some("save_app_settings"),
         note: None,

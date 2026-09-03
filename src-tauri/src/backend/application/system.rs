@@ -235,6 +235,13 @@ impl AppService {
         Ok(crate::backend::app_settings::save_app_settings_for_database(&self.db, settings)?)
     }
 
+    pub(crate) fn initialize_app_locale_if_unset(
+        &self,
+        locale: crate::backend::app_settings::AppLocale,
+    ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
+        Ok(crate::backend::app_settings::initialize_app_locale_for_database(&self.db, locale)?)
+    }
+
     fn validate_agent_capability_assignments(&self, settings: &Value) -> AppResult<()> {
         let Some(assignments) = settings.get("agentAssignments").and_then(Value::as_object) else {
             return Ok(());

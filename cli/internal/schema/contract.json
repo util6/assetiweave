@@ -132,6 +132,7 @@
     "switch_tenant",
     "get_app_settings",
     "save_app_settings",
+    "initialize_app_locale_if_unset",
     "list_memory_recent",
     "get_memory_recent_event_target",
     "resolve_memory_context",
@@ -6511,6 +6512,36 @@
         "additionalProperties": false
       },
       "cli": "assetiweave-cli settings save --json <json>",
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "initialize_app_locale_if_unset",
+      "canonical_method": "settings.locale.initialize",
+      "description": "Initialize the application locale if not yet set",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "locale"
+        ],
+        "type": "object",
+        "properties": {
+          "locale": {
+            "type": "string",
+            "enum": [
+              "zh",
+              "en"
+            ],
+            "description": "Application locale (zh or en)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
       "since": "0.1.0",
       "deprecated": false
     },

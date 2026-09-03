@@ -175,6 +175,14 @@ pub(crate) fn save_app_settings(
 }
 
 #[tauri::command]
+pub(crate) fn initialize_app_locale_if_unset(
+    state: State<'_, AppState>,
+    locale: crate::backend::app_settings::AppLocale,
+) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
+    AppService::from_runtime(&state.runtime).initialize_app_locale_if_unset(locale)
+}
+
+#[tauri::command]
 pub(crate) fn cancel_app_close_prompt(state: State<'_, AppState>) -> RuntimeAppResult<()> {
     state
         .exit_prompt_open
@@ -3609,6 +3617,7 @@ pub(crate) fn command_handler(
         switch_tenant,
         get_app_settings,
         save_app_settings,
+        initialize_app_locale_if_unset,
         cancel_app_close_prompt,
         complete_app_close,
         list_assets,
