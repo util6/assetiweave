@@ -167,7 +167,15 @@ src-tauri/src/backend/store|91
 src-tauri/src/backend/target_catalog.rs|0
 EOF
 
+# Frontend architecture boundaries: enforce services-only Tauri IPC via ESLint
+if [ -f "$ROOT/package.json" ]; then
+  if ! (cd "$ROOT" && node scripts/lint-architecture.mjs); then
+    fail=1
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 printf '%s\n' 'module boundary checks passed'
+

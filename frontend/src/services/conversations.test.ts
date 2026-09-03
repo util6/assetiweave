@@ -31,18 +31,29 @@ import {
   syncConversations,
   startConversationSearchIndexRebuild,
   uninstallConversationAdapterPackage,
+  subscribeConversationScriptInstallTask,
+  SCRIPT_INSTALL_TASK_UPDATED_EVENT,
 } from "./conversations";
 
+
+
 const invokeMock = vi.hoisted(() => vi.fn());
+const listenMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: listenMock,
+}));
+
 describe("conversation services", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    listenMock.mockReset().mockResolvedValue(vi.fn());
   });
+
 
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -698,4 +709,26 @@ describe("conversation services", () => {
       retainedSessionCount: 3,
     });
   });
+
+  it("subscribes to script install task updates in Tauri runtime", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const listener = vi.fn();
+    await subscribeConversationScriptInstallTask(listener);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      SCRIPT_INSTALL_TASK_UPDATED_EVENT,
+      expect.any(Function),
+    );
+    const callback = listenMock.mock.calls[0][1];
+    const fakeSnapshot = {
+      task_id: "task-1",
+      status: "running",
+      progress_percent: 50,
+      message: "installing",
+      error: null,
+    };
+    callback({ payload: fakeSnapshot });
+    expect(listener).toHaveBeenCalledWith(fakeSnapshot);
+  });
 });
+

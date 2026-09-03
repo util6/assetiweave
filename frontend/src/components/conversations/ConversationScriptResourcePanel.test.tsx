@@ -22,10 +22,6 @@ const serviceMocks = vi.hoisted(() => ({
   update: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
-}));
-
 vi.mock("../../services/conversations", async () => {
   const actual = await vi.importActual<typeof import("../../services/conversations")>(
     "../../services/conversations",
@@ -42,11 +38,13 @@ vi.mock("../../services/conversations", async () => {
     listInstalledConversationAdapterPackageVersions: serviceMocks.listVersions,
     prepareConversationAdapterPackageChange: serviceMocks.prepare,
     registerConversationAdapter: serviceMocks.register,
+    subscribeConversationScriptInstallTask: vi.fn().mockResolvedValue(() => {}),
     unregisterConversationAdapter: serviceMocks.unregister,
     uninstallConversationAdapterPackage: serviceMocks.uninstall,
     updateConversationAdapterPackage: serviceMocks.update,
   };
 });
+
 
 describe("ConversationScriptResourcePanel", () => {
   beforeEach(() => {

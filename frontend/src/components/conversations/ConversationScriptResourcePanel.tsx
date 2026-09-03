@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import clsx from "clsx";
 import {
   CircleAlert,
@@ -32,6 +31,7 @@ import {
   rollbackConversationAdapterPackageVersion,
   setConversationAdapterPackageUpdatePolicy,
   switchConversationAdapterPackageVersion,
+  subscribeConversationScriptInstallTask,
   unregisterConversationAdapter,
   uninstallConversationAdapterPackage,
   updateConversationAdapterPackage,
@@ -50,8 +50,8 @@ import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 
-const SCRIPT_INSTALL_TASK_UPDATED_EVENT = "conversation-script-install-task-updated";
 const SCRIPT_INSTALL_POLL_INTERVAL_MS = 1000;
+
 
 type ScriptResourceNotification = Omit<NotificationMessage, "id">;
 
@@ -141,20 +141,13 @@ export function ConversationScriptResourcePanel({
   }, []);
 
   useEffect(() => {
-    if (!isTauriRuntime()) {
-      return;
-    }
-
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<ConversationScriptInstallTaskSnapshot>(
-      SCRIPT_INSTALL_TASK_UPDATED_EVENT,
-      (event) => {
-        if (!cancelled) {
-          setInstallTask(event.payload);
-        }
-      },
-    )
+    void subscribeConversationScriptInstallTask((snapshot) => {
+      if (!cancelled) {
+        setInstallTask(snapshot);
+      }
+    })
       .then((removeListener) => {
         if (cancelled) {
           removeListener();

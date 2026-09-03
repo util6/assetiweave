@@ -1069,6 +1069,24 @@ export async function getConversationScriptInstallTask(): Promise<
   }
 }
 
+export const SCRIPT_INSTALL_TASK_UPDATED_EVENT =
+  "conversation-script-install-task-updated";
+
+export function subscribeConversationScriptInstallTask(
+  listener: (snapshot: ConversationScriptInstallTaskSnapshot) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(() => undefined);
+  }
+  return listen<ConversationScriptInstallTaskSnapshot>(
+    SCRIPT_INSTALL_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
+}
+
+
 export async function syncConversations(
   params: {
     source_id?: string | null;

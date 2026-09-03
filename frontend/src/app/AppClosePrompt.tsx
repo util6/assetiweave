@@ -1,13 +1,14 @@
-import { listen } from "@tauri-apps/api/event";
 import { Database, Minimize2, Power } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n/I18nProvider";
 import { DialogFrame } from "../components/foundation/DialogFrame";
 import { Button } from "../components/ui/button";
-import { cancelAppClosePrompt, completeAppClose } from "../services/appLifecycle";
+import {
+  cancelAppClosePrompt,
+  completeAppClose,
+  subscribeAppCloseRequested,
+} from "../services/appLifecycle";
 import { runWindowAction } from "../services/windowChrome";
-
-const APP_CLOSE_REQUESTED_EVENT = "app-close-requested";
 
 export function AppClosePrompt() {
   const { t } = useI18n();
@@ -20,7 +21,7 @@ export function AppClosePrompt() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
 
-    void listen(APP_CLOSE_REQUESTED_EVENT, () => {
+    void subscribeAppCloseRequested(() => {
       if (cancelled) {
         return;
       }
@@ -28,21 +29,20 @@ export function AppClosePrompt() {
       setBackupDatabase(true);
       setError("");
       setOpen(true);
-    })
-      .then((removeListener) => {
-        if (cancelled) {
-          removeListener();
-        } else {
-          unlisten = removeListener;
-        }
-      })
-      .catch(() => {});
+    }).then((removeListener) => {
+      if (cancelled) {
+        removeListener();
+      } else {
+        unlisten = removeListener;
+      }
+    });
 
     return () => {
       cancelled = true;
       unlisten?.();
     };
   }, []);
+
 
   async function handleConfirmClose() {
     setBusy(true);
