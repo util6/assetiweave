@@ -346,12 +346,7 @@ impl AppService {
 
 #[cfg(test)]
 fn engine_db_path() -> AppResult<PathBuf> {
-    if let Ok(path) = env::var("ASSETIWEAVE_DB_PATH") {
-        if !path.trim().is_empty() {
-            return Ok(PathBuf::from(path));
-        }
-    }
-    Ok(crate::backend::path_utils::app_db_path()?)
+    crate::backend::path_utils::app_db_path()
 }
 
 fn conversation_runtime_doctor_summary(

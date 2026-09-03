@@ -95,6 +95,7 @@ pub(crate) struct AppRuntime {
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
     builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
+    config: Arc<super::config::RuntimeConfig>,
 }
 
 struct TeamCoordinatorHandle {
@@ -213,6 +214,10 @@ impl AppRuntime {
                 conversation_adapters,
             )),
         };
+        let mut config = super::config::RuntimeConfig::from_environment()?;
+        config.db_path = db_path.clone();
+        let config = Arc::new(config);
+
         let app_runtime = Arc::new(Self {
             db_path,
             db,
@@ -227,7 +232,9 @@ impl AppRuntime {
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
+            config,
         });
+
         // The ResidentHost owns long-lived dispatchers. OneShot deliberately only
         // gets the in-process task runtime and never starts a dispatcher.
         if role == RuntimeRole::ResidentHost {
@@ -282,7 +289,7 @@ impl AppRuntime {
             .cloned()
             .collect();
         Arc::new(Self {
-            db_path,
+            db_path: db_path.clone(),
             db,
             context: ArcSwap::from_pointee(RequestContextSnapshot {
                 tenant: context.tenant.clone(),
@@ -301,7 +308,24 @@ impl AppRuntime {
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
+            config: {
+                let mut config =
+                    super::config::RuntimeConfig::from_environment().unwrap_or_else(|_| {
+                        let defaults = super::config::RuntimeConfigDefaults {
+                            home_dir: PathBuf::from("/fixture/home"),
+                            data_dir: PathBuf::from("/fixture/data"),
+                        };
+                        super::config::RuntimeConfig::from_env_map(&Default::default(), &defaults)
+                            .unwrap()
+                    });
+                config.db_path = db_path;
+                Arc::new(config)
+            },
         })
+    }
+
+    pub(crate) fn config(&self) -> Arc<super::config::RuntimeConfig> {
+        Arc::clone(&self.config)
     }
 
     fn start_resident_services(self: &Arc<Self>) {

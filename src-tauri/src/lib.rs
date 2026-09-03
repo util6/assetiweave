@@ -529,12 +529,7 @@ pub fn run_engine_stdio() {
         eprintln!("failed to install AssetIWeave system Skills: {error}");
         std::process::exit(1);
     }
-    let engine_db_path = std::env::var("ASSETIWEAVE_DB_PATH")
-        .ok()
-        .filter(|path| !path.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
+    let engine_db_path = backend::path_utils::app_db_path();
     let runtime = match engine_db_path {
         Ok(path) => match AppRuntime::bootstrap(path, RuntimeRole::OneShot) {
             Ok(runtime) => {
@@ -568,11 +563,7 @@ pub fn run_engine_stdio() {
 /// The bridge is a separate process with only a tenant/member-scoped opaque
 /// credential in its environment; every operation still crosses AppService.
 pub fn run_team_mcp_stdio() {
-    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
+    let db_path = backend::path_utils::app_db_path();
     let runtime = match db_path.and_then(|path| {
         backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
     }) {
@@ -605,11 +596,7 @@ pub fn run_team_mcp_stdio() {
 /// The bridge intentionally exposes search and locator reads only; mutation
 /// commands are not part of this protocol surface.
 pub fn run_memory_recall_mcp_stdio() {
-    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
+    let db_path = backend::path_utils::app_db_path();
     let runtime = match db_path.and_then(|path| {
         backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
     }) {

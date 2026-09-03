@@ -10,22 +10,16 @@ use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
 
 pub(crate) fn app_db_path() -> AppResult<PathBuf> {
-    if let Some(path) = std::env::var_os("ASSETIWEAVE_DB_PATH").filter(|path| !path.is_empty()) {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent)?;
-        }
-        return Ok(path);
+    let path = crate::backend::runtime::config::runtime_config()?
+        .db_path
+        .clone();
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
     }
-
-    let mut data_dir =
-        dirs::data_dir().ok_or_else(|| AppError::NotFound("无法确定系统数据目录".to_string()))?;
-    data_dir.push("AssetIWeave");
-    fs::create_dir_all(&data_dir)?;
-    Ok(data_dir.join("app.db"))
+    Ok(path)
 }
 
 pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
@@ -56,15 +50,10 @@ pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
 }
 
 pub(crate) fn memory_legacy_archive_root() -> AppResult<PathBuf> {
-    if let Some(home) = std::env::var_os("ASSETIWEAVE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(home).join("library").join("memory-legacy"));
-    }
-    let home =
-        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home
-        .join(".assetiweave")
-        .join("library")
-        .join("memory-legacy"))
+    let home = crate::backend::runtime::config::runtime_config()?
+        .home_dir
+        .clone();
+    Ok(home.join("library").join("memory-legacy"))
 }
 
 pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {

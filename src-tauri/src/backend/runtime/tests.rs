@@ -365,3 +365,15 @@ fn shutdown_report_without_resident_services_is_clean() {
     assert!(!report.dispatcher_timed_out);
     assert!(report.unfinished_task_ids.is_empty());
 }
+
+#[test]
+fn runtime_config_db_path_matches_injected_path() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-config-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot)
+        .expect("bootstrap test runtime");
+    assert_eq!(runtime.config().db_path, temp_db);
+    let _ = std::fs::remove_file(&temp_db);
+}

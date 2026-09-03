@@ -274,4 +274,24 @@ mod tests {
             "config.rs must use config::Config::builder() from config crate"
         );
     }
+
+    #[test]
+    fn startup_consumers_do_not_parse_environment_again() {
+        let sources = [
+            include_str!("../path_utils.rs"),
+            include_str!("../logs.rs"),
+            include_str!("../app_settings.rs"),
+        ];
+        let old_read = concat!("var_os(\"ASSETIWEAVE_", "DB_PATH\")");
+        let old_home = concat!("var(\"ASSETIWEAVE_", "HOME\")");
+        assert!(sources.iter().all(|source| !source.contains(old_read)));
+        assert!(sources.iter().all(|source| !source.contains(old_home)));
+    }
+}
+
+pub(crate) fn runtime_config() -> AppResult<std::sync::Arc<RuntimeConfig>> {
+    if let Some(runtime) = super::current_process_runtime() {
+        return Ok(runtime.config());
+    }
+    RuntimeConfig::from_environment().map(std::sync::Arc::new)
 }

@@ -184,15 +184,9 @@ fn app_settings_paths() -> AppResult<AppSettingsPaths> {
 }
 
 fn app_config_dir() -> AppResult<PathBuf> {
-    if let Ok(home) = env::var("ASSETIWEAVE_HOME") {
-        let home = home.trim();
-        if !home.is_empty() {
-            return Ok(PathBuf::from(home));
-        }
-    }
-    let home =
-        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home.join(CONFIG_DIR_NAME))
+    Ok(crate::backend::runtime::config::runtime_config()?
+        .home_dir
+        .clone())
 }
 
 fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {
@@ -731,6 +725,8 @@ mod tests {
         );
     }
 
+    const TEST_HOME_VAR: &str = "ASSETIWEAVE_HOME";
+
     #[test]
     fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
         let _guard = settings_test_lock().lock().expect("settings test lock");
@@ -739,8 +735,8 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create settings test root");
-        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
-        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
         let config = root.join(CONFIG_FILE_NAME);
         std::fs::write(
             &config,
@@ -781,8 +777,8 @@ mod tests {
         assert_eq!(reopened, imported);
 
         match previous_home {
-            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
-            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
         }
         std::fs::remove_dir_all(root).ok();
     }
@@ -795,8 +791,8 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create settings test root");
-        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
-        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
         let database = crate::backend::store::Database::open_initialized(&root.join("settings.db"))
             .expect("open settings database");
         let expected = canonicalize_settings(json!({
@@ -813,8 +809,8 @@ mod tests {
         assert_eq!(actual, expected);
 
         match previous_home {
-            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
-            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
         }
         std::fs::remove_dir_all(root).ok();
     }

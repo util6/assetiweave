@@ -194,17 +194,12 @@ pub(crate) fn logs_write_operation(
 }
 
 fn get_log_dir() -> Result<PathBuf, String> {
-    if let Some(log_dir) = std::env::var_os("ASSETIWEAVE_LOG_DIR") {
-        let log_dir = PathBuf::from(log_dir);
-        fs::create_dir_all(&log_dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
-        return Ok(log_dir);
-    }
-
-    let mut data_dir = dirs::data_dir().ok_or("无法确定系统数据目录")?;
-    data_dir.push("AssetIWeave");
-    data_dir.push("logs");
-    fs::create_dir_all(&data_dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
-    Ok(data_dir)
+    let log_dir = crate::backend::runtime::config::runtime_config()
+        .map_err(|error| format!("无法获取运行配置: {error}"))?
+        .log_dir
+        .clone();
+    fs::create_dir_all(&log_dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
+    Ok(log_dir)
 }
 
 fn ensure_default_log_file() -> Result<(), String> {
