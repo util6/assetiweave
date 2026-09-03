@@ -50,7 +50,11 @@ export function GroupExclusiveMountControls({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <button
-            aria-label={allSelected ? t("group.exclusive.clearAll") : t("group.exclusive.selectAll")}
+            aria-label={
+              allSelected
+                ? t("group.exclusive.clearAll")
+                : t("group.exclusive.selectAll")
+            }
             aria-pressed={allSelected}
             className={clsx(
               "grid size-9 place-items-center rounded-xl border text-primary transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-45",
@@ -60,10 +64,18 @@ export function GroupExclusiveMountControls({
             )}
             disabled={busy || selectableGroupCount === 0}
             onClick={onToggleAll}
-            title={allSelected ? t("group.exclusive.clearAll") : t("group.exclusive.selectAll")}
+            title={
+              allSelected
+                ? t("group.exclusive.clearAll")
+                : t("group.exclusive.selectAll")
+            }
             type="button"
           >
-            {partiallySelected && !allSelected ? <Minus size={17} /> : <CheckCheck size={17} />}
+            {partiallySelected && !allSelected ? (
+              <Minus size={17} />
+            ) : (
+              <CheckCheck size={17} />
+            )}
           </button>
           <span className="text-body-sm font-semibold text-on-surface">
             {t("group.exclusive.selectedGroups", { count: selectedGroupCount })}
@@ -91,7 +103,9 @@ export function GroupExclusiveMountControls({
 
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {availableShortcuts.length === 0 ? (
-            <span className="text-body-sm text-on-surface-variant">{t("group.mount.noApps")}</span>
+            <span className="text-body-sm text-on-surface-variant">
+              {t("group.mount.noApps")}
+            </span>
           ) : (
             availableShortcuts.map((shortcut) => (
               <button
@@ -110,7 +124,10 @@ export function GroupExclusiveMountControls({
                 title={targetActionLabel(mode, shortcut.profileName, t)}
                 type="button"
               >
-                <AppShortcutIconForShortcut className="size-4" shortcut={shortcut} />
+                <AppShortcutIconForShortcut
+                  className="size-4"
+                  shortcut={shortcut}
+                />
               </button>
             ))
           )}
@@ -137,7 +154,9 @@ function ModeChoice({
     <label
       className={clsx(
         "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-body-sm font-semibold transition-[background-color,color,box-shadow] duration-200",
-        checked ? "bg-primary/15 text-primary" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+        checked
+          ? "bg-primary/15 text-primary"
+          : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
         disabled && "cursor-not-allowed opacity-45",
       )}
     >
@@ -157,9 +176,17 @@ function ModeChoice({
 function targetActionLabel(
   mode: GroupMountMode,
   profileName: string,
-  t: (key: "group.exclusive.keepOnlyTo" | "group.exclusive.addOnlyTo", params?: Record<string, string | number>) => string,
+  t: (
+    key: "group.exclusive.keepOnlyTo" | "group.exclusive.addOnlyTo",
+    params?: Record<string, string | number>,
+  ) => string,
 ) {
-  return t(mode === "exclusive" ? "group.exclusive.keepOnlyTo" : "group.exclusive.addOnlyTo", {
-    profile: profileName,
-  });
+  return t(
+    mode === "exclusive"
+      ? "group.exclusive.keepOnlyTo"
+      : "group.exclusive.addOnlyTo",
+    {
+      profile: profileName,
+    },
+  );
 }

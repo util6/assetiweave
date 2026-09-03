@@ -1,5 +1,12 @@
 import clsx from "clsx";
-import { ArrowUpRight, Bot, Check, CircleHelp, LoaderCircle, PlugZap } from "lucide-react";
+import {
+  ArrowUpRight,
+  Bot,
+  Check,
+  CircleHelp,
+  LoaderCircle,
+  PlugZap,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import {
@@ -11,7 +18,10 @@ import type { AppShortcut } from "../../types";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
-import { AgentCatalogIcon, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
+import {
+  AgentCatalogIcon,
+  resolveAgentIconAccentColor,
+} from "./AgentCatalogIcon";
 import {
   agentCatalog,
   marketItemToCatalogItem,
@@ -36,45 +46,67 @@ export function AgentCapabilityDialog({
   onOpenAgentSettings: (agentId: string) => void;
 }) {
   const { t } = useI18n();
-  const [connectionStates, setConnectionStates] = useState<Record<string, AgentConnectionState>>({});
-  const [marketAgents, setMarketAgents] = useState<AgentCatalogItem[] | null>(null);
-  const capabilityAgents = useMemo(
-    () => {
-      const readyAgents = marketAgents ?? agentCatalog.filter((agent) => agent.connectionMode === "registry");
-      const currentUnavailable = agentId && !readyAgents.some((agent) => agent.id === agentId)
+  const [connectionStates, setConnectionStates] = useState<
+    Record<string, AgentConnectionState>
+  >({});
+  const [marketAgents, setMarketAgents] = useState<AgentCatalogItem[] | null>(
+    null,
+  );
+  const capabilityAgents = useMemo(() => {
+    const readyAgents =
+      marketAgents ??
+      agentCatalog.filter((agent) => agent.connectionMode === "registry");
+    const currentUnavailable =
+      agentId && !readyAgents.some((agent) => agent.id === agentId)
         ? agentCatalog.find((agent) => agent.id === agentId)
         : undefined;
-      return currentUnavailable ? [currentUnavailable, ...readyAgents] : readyAgents;
-    },
-    [agentId, marketAgents],
-  );
-  const selectedAgent = capabilityAgents.find((agent) => agent.id === agentId)
-    ?? agentCatalog.find((agent) => agent.id === agentId);
-  const availableCount = Object.values(connectionStates).filter((state) => state === "available").length;
-  const checkingCount = Object.values(connectionStates).filter((state) => state === "checking").length;
+    return currentUnavailable
+      ? [currentUnavailable, ...readyAgents]
+      : readyAgents;
+  }, [agentId, marketAgents]);
+  const selectedAgent =
+    capabilityAgents.find((agent) => agent.id === agentId) ??
+    agentCatalog.find((agent) => agent.id === agentId);
+  const availableCount = Object.values(connectionStates).filter(
+    (state) => state === "available",
+  ).length;
+  const checkingCount = Object.values(connectionStates).filter(
+    (state) => state === "checking",
+  ).length;
 
   useEffect(() => {
     let cancelled = false;
     const ids = registryAgentIds;
 
     async function checkAvailability() {
-      setConnectionStates(Object.fromEntries(ids.map((id) => [id, "checking"])));
-      await Promise.all(ids.map(async (id) => {
-        try {
-          const result = await checkAgentConnection(id, "installation");
-          if (!cancelled) {
-            setConnectionStates((current) => ({ ...current, [id]: connectionStateFromResult(result) }));
+      setConnectionStates(
+        Object.fromEntries(ids.map((id) => [id, "checking"])),
+      );
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const result = await checkAgentConnection(id, "installation");
+            if (!cancelled) {
+              setConnectionStates((current) => ({
+                ...current,
+                [id]: connectionStateFromResult(result),
+              }));
+            }
+          } catch {
+            if (!cancelled) {
+              setConnectionStates((current) => ({
+                ...current,
+                [id]: "failed",
+              }));
+            }
           }
-        } catch {
-          if (!cancelled) {
-            setConnectionStates((current) => ({ ...current, [id]: "failed" }));
-          }
-        }
-      }));
+        }),
+      );
     }
 
     if (typeof agentRuntime.listAgentMarket === "function") {
-      void agentRuntime.listAgentMarket()
+      void agentRuntime
+        .listAgentMarket()
         .then((items) => {
           if (cancelled) return;
           if (items.length === 0) {
@@ -85,13 +117,28 @@ export function AgentCapabilityDialog({
           const agents = allAgents.filter((agent) => {
             const item = items.find((candidate) => candidate.id === agent.id);
             const installed = item?.installed;
-            return installed?.enabled === true && installed.executionReady === true;
+            return (
+              installed?.enabled === true && installed.executionReady === true
+            );
           });
           setMarketAgents(agents);
-          setConnectionStates(Object.fromEntries(allAgents.map((agent) => {
-            const item = items.find((candidate) => candidate.id === agent.id);
-            return [agent.id, item?.installed ? "failed" : "not-installed"];
-          }).concat(agents.map((agent) => [agent.id, "available"] as const))));
+          setConnectionStates(
+            Object.fromEntries(
+              allAgents
+                .map((agent) => {
+                  const item = items.find(
+                    (candidate) => candidate.id === agent.id,
+                  );
+                  return [
+                    agent.id,
+                    item?.installed ? "failed" : "not-installed",
+                  ];
+                })
+                .concat(
+                  agents.map((agent) => [agent.id, "available"] as const),
+                ),
+            ),
+          );
         })
         .catch(() => undefined);
       return () => {
@@ -114,11 +161,13 @@ export function AgentCapabilityDialog({
       headerActions={
         <Badge tone="neutral">
           {checkingCount > 0
-            ? t("settings.agentCapabilities.dialogChecking", { count: checkingCount })
+            ? t("settings.agentCapabilities.dialogChecking", {
+                count: checkingCount,
+              })
             : t("settings.agentCapabilities.dialogCount", {
-              available: availableCount,
-              total: capabilityAgents.length,
-            })}
+                available: availableCount,
+                total: capabilityAgents.length,
+              })}
         </Badge>
       }
       icon={<PlugZap size={18} />}
@@ -133,10 +182,19 @@ export function AgentCapabilityDialog({
         <div className="flex items-center gap-3 rounded-xl border border-theme-nav-active-border/35 bg-theme-nav-active/10 px-3 py-3">
           <span
             className="grid size-10 shrink-0 place-items-center rounded-lg border border-theme-nav-active-border/45 bg-theme-card text-primary"
-            style={{ color: selectedAgent ? resolveAgentIconAccentColor(selectedAgent, appShortcuts) : undefined }}
+            style={{
+              color: selectedAgent
+                ? resolveAgentIconAccentColor(selectedAgent, appShortcuts)
+                : undefined,
+            }}
           >
             {selectedAgent ? (
-              <AgentCatalogIcon agent={selectedAgent} appShortcuts={appShortcuts} className="size-5" fallbackSize={20} />
+              <AgentCatalogIcon
+                agent={selectedAgent}
+                appShortcuts={appShortcuts}
+                className="size-5"
+                fallbackSize={20}
+              />
             ) : (
               <Bot aria-hidden="true" size={20} />
             )}
@@ -168,7 +226,10 @@ export function AgentCapabilityDialog({
                   agent={agent}
                   connectionState={connectionStates[agent.id] ?? "not-tested"}
                   currentModel={agent.id === agentId ? model : undefined}
-                  disabled={agent.id === agentId && connectionStates[agent.id] !== "available"}
+                  disabled={
+                    agent.id === agentId &&
+                    connectionStates[agent.id] !== "available"
+                  }
                   onOpenAgentSettings={() => onOpenAgentSettings(agent.id)}
                   onSelect={() => onAgentChange(agent.id)}
                   selected={agent.id === agentId}
@@ -236,24 +297,41 @@ function CapabilityAgentOption({
           className="grid size-9 shrink-0 place-items-center rounded-lg border border-theme-control-border bg-theme-card text-primary sm:size-10"
           style={{ color: resolveAgentIconAccentColor(agent, appShortcuts) }}
         >
-          <AgentCatalogIcon agent={agent} appShortcuts={appShortcuts} className="size-[19px]" fallbackSize={19} />
+          <AgentCatalogIcon
+            agent={agent}
+            appShortcuts={appShortcuts}
+            className="size-[19px]"
+            fallbackSize={19}
+          />
         </span>
         <span className="min-w-0">
           <span className="flex flex-wrap items-center gap-2">
-            <span className="text-body-md font-semibold text-on-surface">{agent.name}</span>
+            <span className="text-body-md font-semibold text-on-surface">
+              {agent.name}
+            </span>
             <Badge tone={statusTone}>{statusLabel}</Badge>
-            {selected ? <Badge tone="primary">{t("settings.agentCapabilities.current")}</Badge> : null}
+            {selected ? (
+              <Badge tone="primary">
+                {t("settings.agentCapabilities.current")}
+              </Badge>
+            ) : null}
           </span>
           <span className="mt-1 block truncate text-body-xs text-on-surface-variant">
             {currentModel
-              ? t("settings.agentCapabilities.usingModel", { model: currentModel })
+              ? t("settings.agentCapabilities.usingModel", {
+                  model: currentModel,
+                })
               : t("settings.agentCapabilities.usingDefaultModel")}
           </span>
         </span>
       </button>
       <div className="flex shrink-0 items-center gap-1">
-        {connectionState === "checking" ? <LoaderCircle className="animate-spin text-outline" size={16} /> : null}
-        {selected && available ? <Check aria-hidden="true" className="text-status-create" size={17} /> : null}
+        {connectionState === "checking" ? (
+          <LoaderCircle className="animate-spin text-outline" size={16} />
+        ) : null}
+        {selected && available ? (
+          <Check aria-hidden="true" className="text-status-create" size={17} />
+        ) : null}
         <Button
           aria-label={`${t("settings.agentCapabilities.openAgentSettings")} ${agent.name}`}
           onClick={onOpenAgentSettings}
@@ -283,7 +361,9 @@ function agentStatusTone(state: AgentConnectionState) {
   return "neutral" as const;
 }
 
-function connectionStateFromResult(result: AgentConnectionResult): AgentConnectionState {
+function connectionStateFromResult(
+  result: AgentConnectionResult,
+): AgentConnectionState {
   if (result.available) return "available";
   if (!result.installed) return "not-installed";
   return "failed";

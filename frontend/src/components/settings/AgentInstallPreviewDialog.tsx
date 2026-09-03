@@ -1,7 +1,10 @@
 import { AlertTriangle, Download, PackageCheck } from "lucide-react";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { AgentCatalogItem } from "./agentCatalog";
-import type { AgentDistributionCandidate, AgentInstallPreview } from "../../services/agentRuntime";
+import type {
+  AgentDistributionCandidate,
+  AgentInstallPreview,
+} from "../../services/agentRuntime";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
@@ -22,24 +25,42 @@ export function AgentInstallPreviewDialog({
   preview: AgentInstallPreview;
 }) {
   const { t } = useI18n();
-  const candidates = [preview.selectedDistribution, ...preview.alternatives]
-    .filter((candidate, index, all) => all.findIndex((item) => item.distributionId === candidate.distributionId) === index);
+  const candidates = [
+    preview.selectedDistribution,
+    ...preview.alternatives,
+  ].filter(
+    (candidate, index, all) =>
+      all.findIndex(
+        (item) => item.distributionId === candidate.distributionId,
+      ) === index,
+  );
 
   return (
     <DialogFrame
       closeLabel={t("common.close")}
       contentClassName="grid gap-4"
       description={t("settings.agents.installPreviewDescription")}
-      footer={(
+      footer={
         <div className="flex w-full justify-end gap-2">
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             {t("common.cancel")}
           </Button>
-          <Button disabled={busy || preview.conflicts.length > 0} onClick={onConfirm} type="button">
-            {busy ? t("settings.agents.installing") : t("settings.agents.confirmInstall")}
+          <Button
+            disabled={busy || preview.conflicts.length > 0}
+            onClick={onConfirm}
+            type="button"
+          >
+            {busy
+              ? t("settings.agents.installing")
+              : t("settings.agents.confirmInstall")}
           </Button>
         </div>
-      )}
+      }
       icon={<PackageCheck size={18} />}
       onClose={onClose}
       size="lg"
@@ -56,14 +77,22 @@ export function AgentInstallPreviewDialog({
           ) : null}
         </div>
 
-        <section aria-label={t("settings.agents.distributionOptions")} className="grid gap-2">
-          <p className="text-label-caps uppercase text-outline">{t("settings.agents.distributionOptions")}</p>
+        <section
+          aria-label={t("settings.agents.distributionOptions")}
+          className="grid gap-2"
+        >
+          <p className="text-label-caps uppercase text-outline">
+            {t("settings.agents.distributionOptions")}
+          </p>
           {candidates.map((candidate) => (
             <DistributionOption
               candidate={candidate}
               key={candidate.distributionId}
               onSelect={() => onSelectDistribution(candidate.distributionId)}
-              selected={candidate.distributionId === preview.selectedDistribution.distributionId}
+              selected={
+                candidate.distributionId ===
+                preview.selectedDistribution.distributionId
+              }
               t={t}
             />
           ))}
@@ -82,7 +111,9 @@ export function AgentInstallPreviewDialog({
         ) : null}
         {preview.warnings.length > 0 ? (
           <ul className="grid gap-1 rounded-xl border border-status-update/35 bg-status-update/10 px-3 py-2 text-on-surface-variant">
-            {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+            {preview.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
           </ul>
         ) : null}
       </div>
@@ -103,9 +134,11 @@ function DistributionOption({
 }) {
   return (
     <button
-      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${selected
-        ? "border-theme-nav-active-border bg-theme-nav-active/12"
-        : "border-theme-card-border bg-theme-control/45 hover:border-theme-nav-active-border/55"} ${candidate.selectable ? "" : "cursor-not-allowed opacity-55"}`}
+      className={`flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+        selected
+          ? "border-theme-nav-active-border bg-theme-nav-active/12"
+          : "border-theme-card-border bg-theme-control/45 hover:border-theme-nav-active-border/55"
+      } ${candidate.selectable ? "" : "cursor-not-allowed opacity-55"}`}
       disabled={!candidate.selectable || selected}
       onClick={onSelect}
       type="button"
@@ -113,14 +146,21 @@ function DistributionOption({
       <span className="min-w-0">
         <span className="flex flex-wrap items-center gap-2 font-semibold text-on-surface">
           <span>{candidate.distributionType}</span>
-          {candidate.recommended ? <Badge tone="primary">{t("settings.agents.recommended")}</Badge> : null}
+          {candidate.recommended ? (
+            <Badge tone="primary">{t("settings.agents.recommended")}</Badge>
+          ) : null}
         </span>
         <span className="mt-1 block text-body-xs text-on-surface-variant">
-          {candidate.resolvedVersion || candidate.requiredRuntime || candidate.reasonCode || t("settings.agents.distributionUnavailable")}
+          {candidate.resolvedVersion ||
+            candidate.requiredRuntime ||
+            candidate.reasonCode ||
+            t("settings.agents.distributionUnavailable")}
         </span>
       </span>
       <Badge tone={candidate.selectable ? "create" : "neutral"}>
-        {candidate.selectable ? t("settings.agents.select") : t("settings.agents.unavailable")}
+        {candidate.selectable
+          ? t("settings.agents.select")
+          : t("settings.agents.unavailable")}
       </Badge>
     </button>
   );

@@ -7,10 +7,18 @@ import { displayAssetPath } from "../../utils/path";
 
 const ASSET_PICKER_SEARCH_COMMIT_DELAY_MS = 700;
 
-export function GroupField({ children, label }: { children: ReactNode; label: string }) {
+export function GroupField({
+  children,
+  label,
+}: {
+  children: ReactNode;
+  label: string;
+}) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-body-sm font-medium text-on-surface-variant">{label}</span>
+      <span className="text-body-sm font-medium text-on-surface-variant">
+        {label}
+      </span>
       {children}
     </label>
   );
@@ -52,7 +60,10 @@ export function AssetPickerHeader({
         <div className="min-w-0">
           <div className="text-label-caps uppercase text-outline">{title}</div>
           <div className="mt-1 text-body-sm text-on-surface-variant">
-            {t("group.assets.selected", { selected: selectedCount, total: totalCount })}
+            {t("group.assets.selected", {
+              selected: selectedCount,
+              total: totalCount,
+            })}
           </div>
         </div>
         {onToggleAll && (

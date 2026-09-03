@@ -10,21 +10,32 @@ describe("groupSourceDisplayAssets", () => {
           name: "canvas-design",
           backup_status: {
             state: "backed_up",
-            backup_path: "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+            backup_path:
+              "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
             hidden_asset_ids: ["backup-canvas"],
           },
         }),
       ],
-      [source("source-a", "Source A", "local_folder"), source("assetiweave-library-skills", "Backup Library", "assetiweave_library")],
+      [
+        source("source-a", "Source A", "local_folder"),
+        source(
+          "assetiweave-library-skills",
+          "Backup Library",
+          "assetiweave_library",
+        ),
+      ],
     );
 
-    expect(grouped.get("source-a")?.map((candidate) => candidate.id)).toEqual(["source-canvas"]);
+    expect(grouped.get("source-a")?.map((candidate) => candidate.id)).toEqual([
+      "source-canvas",
+    ]);
     expect(grouped.get("assetiweave-library-skills")).toMatchObject([
       {
         id: "backup-canvas",
         source_id: "assetiweave-library-skills",
         name: "canvas-design",
-        absolute_path: "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+        absolute_path:
+          "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
         backup_status: {
           state: "backed_up",
           hidden_asset_ids: [],
@@ -36,24 +47,42 @@ describe("groupSourceDisplayAssets", () => {
   it("does not duplicate backup assets that are already visible", () => {
     const grouped = groupSourceDisplayAssets(
       [
-        asset("backup-canvas", "assetiweave-library-skills", { name: "canvas-design" }),
+        asset("backup-canvas", "assetiweave-library-skills", {
+          name: "canvas-design",
+        }),
         asset("source-canvas", "source-a", {
           name: "canvas-design",
           backup_status: {
             state: "backed_up",
-            backup_path: "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
+            backup_path:
+              "/Users/util6/.assetiweave/library/skills/backed-up/source-a/canvas-design",
             hidden_asset_ids: ["backup-canvas"],
           },
         }),
       ],
-      [source("source-a", "Source A", "local_folder"), source("assetiweave-library-skills", "Backup Library", "assetiweave_library")],
+      [
+        source("source-a", "Source A", "local_folder"),
+        source(
+          "assetiweave-library-skills",
+          "Backup Library",
+          "assetiweave_library",
+        ),
+      ],
     );
 
-    expect(grouped.get("assetiweave-library-skills")?.map((candidate) => candidate.id)).toEqual(["backup-canvas"]);
+    expect(
+      grouped
+        .get("assetiweave-library-skills")
+        ?.map((candidate) => candidate.id),
+    ).toEqual(["backup-canvas"]);
   });
 });
 
-function asset(id: string, sourceId: string, overrides: Partial<Asset> = {}): Asset {
+function asset(
+  id: string,
+  sourceId: string,
+  overrides: Partial<Asset> = {},
+): Asset {
   return {
     id,
     source_id: sourceId,
@@ -71,12 +100,19 @@ function asset(id: string, sourceId: string, overrides: Partial<Asset> = {}): As
   };
 }
 
-function source(id: string, name: string, sourceOrigin: Source["source_origin"]): Source {
+function source(
+  id: string,
+  name: string,
+  sourceOrigin: Source["source_origin"],
+): Source {
   return {
     id,
     name,
     kind: "local",
-    root_path: id === "assetiweave-library-skills" ? "/Users/util6/.assetiweave/library/skills" : `/tmp/${id}`,
+    root_path:
+      id === "assetiweave-library-skills"
+        ? "/Users/util6/.assetiweave/library/skills"
+        : `/tmp/${id}`,
     scanner_kind: "skill",
     source_origin: sourceOrigin,
     repo_root: null,

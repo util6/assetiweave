@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appShortcutIconCatalog } from "../../config/appShortcutIcons";
 import { fallbackAppShortcuts } from "../../mock/catalog";
@@ -11,7 +18,9 @@ import { GlobalSettingsDialog } from "./GlobalSettingsDialog";
 const startSyncMock = vi.hoisted(() => vi.fn());
 const resetSettingsMock = vi.hoisted(() => vi.fn());
 const updateSettingMock = vi.hoisted(() => vi.fn());
-const conversationSyncState = vi.hoisted(() => ({ tasks: [] as Array<Record<string, unknown>> }));
+const conversationSyncState = vi.hoisted(() => ({
+  tasks: [] as Array<Record<string, unknown>>,
+}));
 
 vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   useConversationSync: () => ({
@@ -23,11 +32,18 @@ vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
 }));
 
 vi.mock("../../i18n/I18nProvider", () => ({
-  useI18n: () => ({ locale: "en", setLocale: vi.fn(), t: (key: string) => key }),
+  useI18n: () => ({
+    locale: "en",
+    setLocale: vi.fn(),
+    t: (key: string) => key,
+  }),
 }));
 
 vi.mock("../../store/settings/AppSettingsProvider", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../store/settings/AppSettingsProvider")>();
+  const actual =
+    await importOriginal<
+      typeof import("../../store/settings/AppSettingsProvider")
+    >();
   return {
     ...actual,
     useAppSettings: () => ({
@@ -135,9 +151,15 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "settings.agents.addCustom" })).toBeNull();
-    await waitFor(() => expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy());
+    expect(
+      screen.getByRole("heading", { name: "settings.agents.title" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "settings.agents.addCustom" }),
+    ).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "OpenCode" })).toBeTruthy(),
+    );
   });
 
   it("keeps ACP market and ACP settings as separate Agent navigation panels", () => {
@@ -153,12 +175,22 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "settings.section.acpMarket" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "settings.section.acpSettings" }));
+    expect(
+      screen.getByRole("button", { name: "settings.section.acpMarket" }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.section.acpSettings" }),
+    );
 
-    expect(screen.getByRole("heading", { name: "settings.section.acpSettings" })).toBeTruthy();
-    expect(screen.queryByRole("tab", { name: "settings.agents.marketTab" })).toBeNull();
-    expect(screen.queryByRole("tab", { name: "settings.agents.installedTab" })).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "settings.section.acpSettings" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("tab", { name: "settings.agents.marketTab" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("tab", { name: "settings.agents.installedTab" }),
+    ).toBeNull();
   });
 
   it("renders every built-in APP icon as an editable row in the shared APP settings list", () => {
@@ -174,8 +206,12 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    expect(screen.getAllByLabelText("settings.shortcuts.color")).toHaveLength(appShortcutIconCatalog.length);
-    expect(screen.queryByRole("list", { name: "settings.shortcuts.appIcon" })).toBeNull();
+    expect(screen.getAllByLabelText("settings.shortcuts.color")).toHaveLength(
+      appShortcutIconCatalog.length,
+    );
+    expect(
+      screen.queryByRole("list", { name: "settings.shortcuts.appIcon" }),
+    ).toBeNull();
     for (const shortcut of fallbackAppShortcuts) {
       expect(screen.getByText(shortcut.profileName)).toBeTruthy();
     }
@@ -194,10 +230,18 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "settings.section.memory" })).toBeTruthy();
-    expect(screen.queryByText("settings.conversation.translationCli")).toBeNull();
-    expect(screen.queryByText("settings.conversation.translationModel")).toBeNull();
-    expect(screen.queryByText("settings.conversation.translationConnection")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "settings.section.memory" }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByText("settings.conversation.translationCli"),
+    ).toBeNull();
+    expect(
+      screen.queryByText("settings.conversation.translationModel"),
+    ).toBeNull();
+    expect(
+      screen.queryByText("settings.conversation.translationConnection"),
+    ).toBeNull();
     expect(screen.queryByText("settings.ai.executionBoundary")).toBeNull();
     expect(screen.getByText("settings.memory.extraction")).toBeTruthy();
   });
@@ -216,10 +260,23 @@ describe("GlobalSettingsDialog", () => {
     );
 
     fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
-    expect(screen.getByRole("heading", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
-    expect(screen.getByText("settings.agentCapabilities.selectedLabel")).toBeTruthy();
-    expect(screen.getAllByText("settings.agentCapabilities.usingDefaultModel").length).toBeGreaterThan(0);
-    expect(screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        name: "settings.agentCapabilities.dialogTitle",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("settings.agentCapabilities.selectedLabel"),
+    ).toBeTruthy();
+    expect(
+      screen.getAllByText("settings.agentCapabilities.usingDefaultModel")
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("list", {
+        name: "settings.agentCapabilities.dialogTitle",
+      }),
+    ).toBeTruthy();
 
     const geminiOptions = screen.getAllByRole("button", { name: /Gemini CLI/ });
     fireEvent.click(geminiOptions[0]);
@@ -246,8 +303,14 @@ describe("GlobalSettingsDialog", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
 
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByRole("list", { name: "settings.agentCapabilities.dialogTitle" })).toBeTruthy();
-    expect(within(dialog).getByRole("button", { name: "common.close" })).toBeTruthy();
+    expect(
+      within(dialog).getByRole("list", {
+        name: "settings.agentCapabilities.dialogTitle",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: "common.close" }),
+    ).toBeTruthy();
   });
 
   it("keeps settings navigation and modal content in independent scroll containers", () => {
@@ -263,14 +326,20 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    const navigation = screen.getByRole("navigation", { name: "settings.navAria" });
+    const navigation = screen.getByRole("navigation", {
+      name: "settings.navAria",
+    });
     expect(navigation.className).toContain("overflow-y-auto");
     expect(navigation.className).toContain("min-h-0");
 
     fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
-    const dialogList = screen.getByRole("list", { name: "settings.agentCapabilities.dialogTitle" });
+    const dialogList = screen.getByRole("list", {
+      name: "settings.agentCapabilities.dialogTitle",
+    });
     expect(dialogList.className).not.toContain("overflow-y-auto");
-    expect(dialogList.parentElement?.parentElement?.className).toContain("overflow-y-auto");
+    expect(dialogList.parentElement?.parentElement?.className).toContain(
+      "overflow-y-auto",
+    );
   });
 
   it("does not add a feature-level document scroll lock", () => {
@@ -318,14 +387,22 @@ describe("GlobalSettingsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "settings.reset" }));
 
     expect(resetSettingsMock).not.toHaveBeenCalled();
-    const resetConfirmTitle = screen.getByRole("heading", { name: "settings.resetConfirmTitle" });
+    const resetConfirmTitle = screen.getByRole("heading", {
+      name: "settings.resetConfirmTitle",
+    });
     expect(resetConfirmTitle).toBeTruthy();
-    expect(resetConfirmTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
+    expect(
+      resetConfirmTitle.closest('[role="dialog"]')?.parentElement?.className,
+    ).toContain("z-[60]");
 
-    fireEvent.click(screen.getByRole("button", { name: "settings.resetConfirmAction" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.resetConfirmAction" }),
+    );
 
     expect(resetSettingsMock).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("heading", { name: "settings.resetConfirmTitle" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "settings.resetConfirmTitle" }),
+    ).toBeNull();
   });
 
   it("jumps from the capability picker to the focused Agent settings row", () => {
@@ -342,39 +419,54 @@ describe("GlobalSettingsDialog", () => {
     );
 
     fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: /settings\.agentCapabilities\.openAgentSettings Codex CLI/ })[0]);
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /settings\.agentCapabilities\.openAgentSettings Codex CLI/,
+      })[0],
+    );
 
-    expect(screen.getByRole("heading", { name: "settings.agents.title" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "settings.agents.title" }),
+    ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Codex CLI" })).toBeTruthy();
   });
 
   it.each([
     ["conversations.translation", "cardTranslation", "codex"],
     ["general.promptOptimization", "promptOptimization", "claude"],
-  ] as const)("stores the Agent assignment for %s", (initialPanel, serviceId, agentId) => {
-    render(
-      <GlobalSettingsDialog
-        appShortcuts={[]}
-        initialPanel={initialPanel}
-        navigationModel={navigationModel}
-        onAppShortcutsChange={vi.fn()}
-        onClose={vi.fn()}
-        onNavigationModelChange={vi.fn()}
-        open
-      />,
-    );
+  ] as const)(
+    "stores the Agent assignment for %s",
+    (initialPanel, serviceId, agentId) => {
+      render(
+        <GlobalSettingsDialog
+          appShortcuts={[]}
+          initialPanel={initialPanel}
+          navigationModel={navigationModel}
+          onAppShortcutsChange={vi.fn()}
+          onClose={vi.fn()}
+          onNavigationModelChange={vi.fn()}
+          open
+        />,
+      );
 
-    fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
-    fireEvent.click(screen.getAllByRole("button", { name: new RegExp(agentId === "codex" ? "Codex CLI" : "Claude Code") })[0]);
+      fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
+      fireEvent.click(
+        screen.getAllByRole("button", {
+          name: new RegExp(agentId === "codex" ? "Codex CLI" : "Claude Code"),
+        })[0],
+      );
 
-    expect(updateSettingMock).toHaveBeenCalledWith("agentAssignments", {
-      ...defaultSettings.agentAssignments,
-      [serviceId === "cardTranslation" ? "translation.card" : "prompt.optimization"]: {
-        agentId,
-        modelId: null,
-      },
-    });
-  });
+      expect(updateSettingMock).toHaveBeenCalledWith("agentAssignments", {
+        ...defaultSettings.agentAssignments,
+        [serviceId === "cardTranslation"
+          ? "translation.card"
+          : "prompt.optimization"]: {
+          agentId,
+          modelId: null,
+        },
+      });
+    },
+  );
 
   it("shows and stores the editable prompt optimization system prompt", () => {
     render(
@@ -392,14 +484,19 @@ describe("GlobalSettingsDialog", () => {
     const systemPrompt = screen.getByRole("textbox", {
       name: "settings.promptOptimization.systemPrompt",
     });
-    expect((systemPrompt as HTMLTextAreaElement).value).toBe(defaultSettings.promptOptimization.promptTemplate);
+    expect((systemPrompt as HTMLTextAreaElement).value).toBe(
+      defaultSettings.promptOptimization.promptTemplate,
+    );
 
     fireEvent.change(systemPrompt, {
-      target: { value: "Optimize the request for an implementation plan.\n{content}" },
+      target: {
+        value: "Optimize the request for an implementation plan.\n{content}",
+      },
     });
 
     expect(updateSettingMock).toHaveBeenCalledWith("promptOptimization", {
-      promptTemplate: "Optimize the request for an implementation plan.\n{content}",
+      promptTemplate:
+        "Optimize the request for an implementation plan.\n{content}",
     });
   });
 
@@ -416,40 +513,56 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "settings.conversation.fullSyncAction" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.conversation.fullSyncAction",
+      }),
+    );
     expect(startSyncMock).not.toHaveBeenCalled();
-    const fullSyncConfirmTitle = screen.getByRole("heading", { name: "settings.conversation.fullSyncConfirmTitle" });
-    expect(fullSyncConfirmTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
+    const fullSyncConfirmTitle = screen.getByRole("heading", {
+      name: "settings.conversation.fullSyncConfirmTitle",
+    });
+    expect(
+      fullSyncConfirmTitle.closest('[role="dialog"]')?.parentElement?.className,
+    ).toContain("z-[60]");
 
-    fireEvent.click(screen.getByRole("button", { name: "settings.conversation.fullSyncConfirmAction" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "settings.conversation.fullSyncConfirmAction",
+      }),
+    );
 
-    await waitFor(() => expect(startSyncMock).toHaveBeenCalledWith({
-      dry_run: false,
-      mode: "full",
-      record_kind: null,
-    }));
+    await waitFor(() =>
+      expect(startSyncMock).toHaveBeenCalledWith({
+        dry_run: false,
+        mode: "full",
+        record_kind: null,
+      }),
+    );
   });
 
   it("shows source-level progress for a running full reparse", () => {
-    conversationSyncState.tasks = [{
-      id: "sync-full",
-      status: "running",
-      source_id: null,
-      adapter_id: null,
-      record_kind: null,
-      mode: "full",
-      dry_run: false,
-      started_at: "2026-07-28T00:00:00Z",
-      finished_at: null,
-      result: null,
-      error: null,
-      progress: {
-        phase: "syncing",
-        completed_source_count: 1,
-        total_source_count: 3,
-        current_source_name: "Gemini Web",
+    conversationSyncState.tasks = [
+      {
+        id: "sync-full",
+        status: "running",
+        source_id: null,
+        adapter_id: null,
+        record_kind: null,
+        mode: "full",
+        dry_run: false,
+        started_at: "2026-07-28T00:00:00Z",
+        finished_at: null,
+        result: null,
+        error: null,
+        progress: {
+          phase: "syncing",
+          completed_source_count: 1,
+          total_source_count: 3,
+          current_source_name: "Gemini Web",
+        },
       },
-    }];
+    ];
 
     render(
       <GlobalSettingsDialog
@@ -473,7 +586,9 @@ describe("GlobalSettingsDialog", () => {
       name: "settings.conversation.fullSyncButtonRunningWithProgress",
     });
     expect(runningButton.className).toContain("disabled:opacity-100");
-    expect(runningButton.querySelector("svg")?.getAttribute("class")).toContain("motion-safe:animate-spin");
+    expect(runningButton.querySelector("svg")?.getAttribute("class")).toContain(
+      "motion-safe:animate-spin",
+    );
   });
 
   it("updates the startup full sync preference from the conversation settings", () => {
@@ -489,9 +604,11 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("switch", {
-      name: "settings.conversation.autoFullSyncOnStartup",
-    }));
+    fireEvent.click(
+      screen.getByRole("switch", {
+        name: "settings.conversation.autoFullSyncOnStartup",
+      }),
+    );
 
     expect(updateSettingMock).toHaveBeenCalledWith("conversations", {
       ...defaultSettings.conversations,
@@ -512,9 +629,15 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "backup.action.changeDirectory" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "backup.action.changeDirectory" }),
+    );
 
-    const backupDialogTitle = await screen.findByRole("heading", { name: "backup.dialog.title" });
-    expect(backupDialogTitle.closest('[role="dialog"]')?.parentElement?.className).toContain("z-[60]");
+    const backupDialogTitle = await screen.findByRole("heading", {
+      name: "backup.dialog.title",
+    });
+    expect(
+      backupDialogTitle.closest('[role="dialog"]')?.parentElement?.className,
+    ).toContain("z-[60]");
   });
 });

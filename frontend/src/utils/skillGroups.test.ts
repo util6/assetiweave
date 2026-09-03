@@ -10,12 +10,17 @@ import {
 
 describe("skill group helpers", () => {
   it("returns resolved member asset ids in group order", () => {
-    expect(groupMemberAssetIds(group(["asset-a", "asset-b"]))).toEqual(["asset-a", "asset-b"]);
+    expect(groupMemberAssetIds(group(["asset-a", "asset-b"]))).toEqual([
+      "asset-a",
+      "asset-b",
+    ]);
     expect(groupMemberAssetIds(null)).toEqual([]);
   });
 
   it("includes manual asset ids when resolved members are stale", () => {
-    expect(groupMemberAssetIds(group(["asset-a"], ["asset-a", "asset-b"]))).toEqual(["asset-a", "asset-b"]);
+    expect(
+      groupMemberAssetIds(group(["asset-a"], ["asset-a", "asset-b"])),
+    ).toEqual(["asset-a", "asset-b"]);
   });
 
   it("does not keep stale manual resolved members after they are removed", () => {
@@ -23,7 +28,9 @@ describe("skill group helpers", () => {
   });
 
   it("keeps rule resolved members even when manual asset ids are empty", () => {
-    expect(groupMemberAssetIds(group(["asset-a"], [], "rule"))).toEqual(["asset-a"]);
+    expect(groupMemberAssetIds(group(["asset-a"], [], "rule"))).toEqual([
+      "asset-a",
+    ]);
   });
 
   it("counts physically mounted members per profile", () => {
@@ -42,14 +49,29 @@ describe("skill group helpers", () => {
   it("selects and clears all enabled groups without selecting disabled groups", () => {
     const enabledA = group(["asset-a"], ["asset-a"], "manual", "group-a");
     const enabledB = group(["asset-b"], ["asset-b"], "manual", "group-b");
-    const disabled = group(["asset-c"], ["asset-c"], "manual", "group-c", false);
+    const disabled = group(
+      ["asset-c"],
+      ["asset-c"],
+      "manual",
+      "group-c",
+      false,
+    );
 
-    expect(enabledGroupIds([enabledA, enabledB, disabled])).toEqual(["group-a", "group-b"]);
-    expect([...toggleEnabledGroupSelection([], [enabledA, enabledB, disabled])].sort()).toEqual([
+    expect(enabledGroupIds([enabledA, enabledB, disabled])).toEqual([
       "group-a",
       "group-b",
     ]);
-    expect([...toggleEnabledGroupSelection(["group-a", "group-b"], [enabledA, enabledB, disabled])]).toEqual([]);
+    expect(
+      [
+        ...toggleEnabledGroupSelection([], [enabledA, enabledB, disabled]),
+      ].sort(),
+    ).toEqual(["group-a", "group-b"]);
+    expect([
+      ...toggleEnabledGroupSelection(
+        ["group-a", "group-b"],
+        [enabledA, enabledB, disabled],
+      ),
+    ]).toEqual([]);
   });
 
   it("shows exclusive mount controls only after at least one group is selected", () => {
@@ -84,7 +106,11 @@ function group(
   };
 }
 
-function status(assetId: string, profileId: string, state: AssetMountStatus["state"]): AssetMountStatus {
+function status(
+  assetId: string,
+  profileId: string,
+  state: AssetMountStatus["state"],
+): AssetMountStatus {
   return {
     asset_id: assetId,
     profile_id: profileId,

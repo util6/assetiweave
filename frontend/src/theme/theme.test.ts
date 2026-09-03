@@ -3,7 +3,13 @@ import { themeCssVars } from "./cssVars";
 import type { ThemeDefinition, ThemeTokens } from "./schema";
 import { normalizeThemeId, themeOptions, themeRegistry } from "./themes";
 
-const themeIds = ["promptStudio", "midnight", "sunlight", "violetDark", "violetLight"] as const;
+const themeIds = [
+  "promptStudio",
+  "midnight",
+  "sunlight",
+  "violetDark",
+  "violetLight",
+] as const;
 
 const tokenGroups = [
   "palette",

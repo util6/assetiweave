@@ -11,7 +11,10 @@ import {
   updateSource,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
-import type { SourceScanScope, SourceScanTaskSnapshot } from "../../services/catalog";
+import type {
+  SourceScanScope,
+  SourceScanTaskSnapshot,
+} from "../../services/catalog";
 
 const SKILL_SOURCES_CACHE_KEY = "catalog.skill-sources";
 const SKILL_SOURCE_ASSETS_CACHE_KEY = "catalog.skill-source-assets";
@@ -24,7 +27,9 @@ export function useSourcesController(
   ) => Promise<SourceScanTaskSnapshot>,
   sourceScan?: SourceScanTaskSnapshot | null,
 ) {
-  const [sources, setSources] = useState<Source[]>(() => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? []);
+  const [sources, setSources] = useState<Source[]>(
+    () => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? [],
+  );
   const [sourceAssets, setSourceAssets] = useState<Asset[]>(
     () => readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) ?? [],
   );
@@ -39,7 +44,9 @@ export function useSourcesController(
   const settledScanIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
-    void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() => setLoading(false));
+    void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() =>
+      setLoading(false),
+    );
   }, []);
 
   useEffect(() => {
@@ -88,14 +95,30 @@ export function useSourcesController(
     return {
       total: sources.length,
       enabled: sources.filter((source) => source.enabled).length,
-      assets: Object.values(assetCounts).reduce((total, count) => total + count, 0),
-      issues: sources.filter((source) => source.last_scan_status?.startsWith("error:")).length,
+      assets: Object.values(assetCounts).reduce(
+        (total, count) => total + count,
+        0,
+      ),
+      issues: sources.filter((source) =>
+        source.last_scan_status?.startsWith("error:"),
+      ).length,
     };
   }, [assetCounts, sources]);
-  const nextPriority = useMemo(() => sources.reduce((highest, source) => Math.max(highest, source.priority), -10) + 10, [sources]);
+  const nextPriority = useMemo(
+    () =>
+      sources.reduce(
+        (highest, source) => Math.max(highest, source.priority),
+        -10,
+      ) + 10,
+    [sources],
+  );
 
   async function refreshSources() {
-    const nextSources = await loadSharedResource(SKILL_SOURCES_CACHE_KEY, listSkillSources, { force: true });
+    const nextSources = await loadSharedResource(
+      SKILL_SOURCES_CACHE_KEY,
+      listSkillSources,
+      { force: true },
+    );
     setSources(nextSources);
     return nextSources;
   }
@@ -114,7 +137,11 @@ export function useSourcesController(
     setBusy(true);
     try {
       const saved = await updateSource({ ...source, enabled: !source.enabled });
-      setSources((currentSources) => currentSources.map((candidate) => (candidate.id === saved.id ? saved : candidate)));
+      setSources((currentSources) =>
+        currentSources.map((candidate) =>
+          candidate.id === saved.id ? saved : candidate,
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -124,8 +151,12 @@ export function useSourcesController(
     setBusy(true);
     try {
       await deleteSourceById(source.id);
-      setSources((currentSources) => currentSources.filter((candidate) => candidate.id !== source.id));
-      setSourceAssets((currentAssets) => currentAssets.filter((candidate) => candidate.source_id !== source.id));
+      setSources((currentSources) =>
+        currentSources.filter((candidate) => candidate.id !== source.id),
+      );
+      setSourceAssets((currentAssets) =>
+        currentAssets.filter((candidate) => candidate.source_id !== source.id),
+      );
       await onCatalogRefresh?.();
     } finally {
       setBusy(false);
@@ -136,7 +167,9 @@ export function useSourcesController(
     setBusy(true);
     try {
       const saved = await updateSource(source);
-      setSources((currentSources) => upsertAndSortSources(currentSources, saved));
+      setSources((currentSources) =>
+        upsertAndSortSources(currentSources, saved),
+      );
       if (saved.enabled && saved.last_scan_status !== "preview") {
         await startSkillScan();
       } else {
@@ -151,7 +184,9 @@ export function useSourcesController(
     setBusy(true);
     try {
       const saved = await createSource(sourceInput);
-      setSources((currentSources) => upsertAndSortSources(currentSources, saved));
+      setSources((currentSources) =>
+        upsertAndSortSources(currentSources, saved),
+      );
       if (saved.enabled && saved.last_scan_status !== "preview") {
         await startSkillScan();
       } else {
@@ -198,7 +233,11 @@ export function useSourcesController(
 
   return {
     applySourceAssetUpdate: (asset: Asset) =>
-      setSourceAssets((currentAssets) => currentAssets.map((candidate) => (candidate.id === asset.id ? asset : candidate))),
+      setSourceAssets((currentAssets) =>
+        currentAssets.map((candidate) =>
+          candidate.id === asset.id ? asset : candidate,
+        ),
+      ),
     assetCounts,
     busy,
     filteredSources,
@@ -216,17 +255,28 @@ export function useSourcesController(
     summary,
     toggleSource,
     removeSourceAsset: (assetId: string) =>
-      setSourceAssets((currentAssets) => currentAssets.filter((asset) => asset.id !== assetId)),
+      setSourceAssets((currentAssets) =>
+        currentAssets.filter((asset) => asset.id !== assetId),
+      ),
   };
 }
 
 function isTerminalSourceScan(task: SourceScanTaskSnapshot) {
-  return task.status === "completed" || task.status === "failed" || task.status === "cancelled";
+  return (
+    task.status === "completed" ||
+    task.status === "failed" ||
+    task.status === "cancelled"
+  );
 }
 
 function upsertAndSortSources(sources: Source[], source: Source) {
-  return [...sources.filter((candidate) => candidate.id !== source.id), source].sort((left, right) => {
+  return [
+    ...sources.filter((candidate) => candidate.id !== source.id),
+    source,
+  ].sort((left, right) => {
     const priorityOrder = left.priority - right.priority;
-    return priorityOrder === 0 ? left.name.localeCompare(right.name) : priorityOrder;
+    return priorityOrder === 0
+      ? left.name.localeCompare(right.name)
+      : priorityOrder;
   });
 }

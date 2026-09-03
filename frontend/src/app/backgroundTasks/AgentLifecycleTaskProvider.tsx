@@ -11,7 +11,10 @@ import {
   subscribeAgentLifecycleTasks,
   type AgentLifecycleTaskSnapshot,
 } from "../../services/agentRuntime";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import {
+  useBackgroundTaskRuntime,
+  type BackgroundTaskRuntimeAdapter,
+} from "./BackgroundTaskRuntime";
 
 const TERMINAL_TASK_LIMIT = 100;
 
@@ -27,44 +30,62 @@ interface AgentLifecycleTaskContextValue {
   mergeSnapshot: (snapshot: AgentLifecycleTaskSnapshot) => void;
 }
 
-const AgentLifecycleTaskContext = createContext<AgentLifecycleTaskContextValue | null>(null);
+const AgentLifecycleTaskContext =
+  createContext<AgentLifecycleTaskContextValue | null>(null);
 
-export function AgentLifecycleTaskProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<AgentLifecycleTaskSnapshot[], AgentLifecycleRuntimeEvent>>(
+export function AgentLifecycleTaskProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const adapter = useMemo<
+    BackgroundTaskRuntimeAdapter<
+      AgentLifecycleTaskSnapshot[],
+      AgentLifecycleRuntimeEvent
+    >
+  >(
     () => ({
       initialState: [],
       isRunning: (tasks) => tasks.some(isActiveAgentLifecycleTask),
-      merge: (current, incoming) => mergeAgentLifecycleTaskSnapshots(
-        current,
-        "snapshot" in incoming ? [incoming.snapshot] : incoming,
-      ),
+      merge: (current, incoming) =>
+        mergeAgentLifecycleTaskSnapshots(
+          current,
+          "snapshot" in incoming ? [incoming.snapshot] : incoming,
+        ),
       refresh: listAgentLifecycleTasks,
-      subscribe: (listener) => subscribeAgentLifecycleTasks((snapshot) => listener({ snapshot })),
+      subscribe: (listener) =>
+        subscribeAgentLifecycleTasks((snapshot) => listener({ snapshot })),
     }),
     [],
   );
   const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
 
-  const cancelTask = useCallback(async (taskId: string) => {
-    const snapshot = await cancelAgentLifecycleTask(taskId);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  const cancelTask = useCallback(
+    async (taskId: string) => {
+      const snapshot = await cancelAgentLifecycleTask(taskId);
+      merge({ snapshot });
+      return snapshot;
+    },
+    [merge],
+  );
 
   const getTask = useCallback(
     (taskId: string) => tasks.find((task) => task.id === taskId),
     [tasks],
   );
 
-  const value = useMemo<AgentLifecycleTaskContextValue>(() => ({
-    tasks,
-    cancelTask,
-    getTask,
-    refresh: async () => {
-      await refresh();
-    },
-    mergeSnapshot: (snapshot) => merge({ snapshot }),
-  }), [cancelTask, getTask, merge, refresh, tasks]);
+  const value = useMemo<AgentLifecycleTaskContextValue>(
+    () => ({
+      tasks,
+      cancelTask,
+      getTask,
+      refresh: async () => {
+        await refresh();
+      },
+      mergeSnapshot: (snapshot) => merge({ snapshot }),
+    }),
+    [cancelTask, getTask, merge, refresh, tasks],
+  );
 
   return (
     <AgentLifecycleTaskContext.Provider value={value}>
@@ -76,7 +97,9 @@ export function AgentLifecycleTaskProvider({ children }: { children: ReactNode }
 export function useAgentLifecycleTasks() {
   const context = useContext(AgentLifecycleTaskContext);
   if (!context) {
-    throw new Error("useAgentLifecycleTasks must be used inside AgentLifecycleTaskProvider");
+    throw new Error(
+      "useAgentLifecycleTasks must be used inside AgentLifecycleTaskProvider",
+    );
   }
   return context;
 }
@@ -86,7 +109,11 @@ export function useOptionalAgentLifecycleTasks() {
 }
 
 export function isActiveAgentLifecycleTask(task: AgentLifecycleTaskSnapshot) {
-  return task.state === "queued" || task.state === "running" || task.state === "cancelling";
+  return (
+    task.state === "queued" ||
+    task.state === "running" ||
+    task.state === "cancelling"
+  );
 }
 
 export function mergeAgentLifecycleTaskSnapshots(
@@ -107,11 +134,17 @@ export function mergeAgentLifecycleTaskSnapshots(
   const active = [...byId.values()].filter(isActiveAgentLifecycleTask);
   const terminal = [...byId.values()]
     .filter((task) => !isActiveAgentLifecycleTask(task))
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+    .sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.id.localeCompare(left.id),
+    )
     .slice(0, TERMINAL_TASK_LIMIT);
-  return [...active, ...terminal].sort((left, right) => (
-    left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)
-  ));
+  return [...active, ...terminal].sort(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 function shouldReplaceSnapshot(
@@ -120,7 +153,10 @@ function shouldReplaceSnapshot(
 ) {
   const timestampOrder = incoming.updatedAt.localeCompare(existing.updatedAt);
   if (timestampOrder !== 0) return timestampOrder > 0;
-  if (isActiveAgentLifecycleTask(existing) !== isActiveAgentLifecycleTask(incoming)) {
+  if (
+    isActiveAgentLifecycleTask(existing) !==
+    isActiveAgentLifecycleTask(incoming)
+  ) {
     return !isActiveAgentLifecycleTask(incoming);
   }
   return lifecycleProgress(incoming) >= lifecycleProgress(existing);

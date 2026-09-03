@@ -21,19 +21,31 @@ export function AgentUninstallPreviewDialog({
   preview: AgentUninstallPreview;
 }) {
   const { t } = useI18n();
-  const [selectedAssignments, setSelectedAssignments] = useState(() => new Set<string>());
-  const blockingConflicts = preview.conflicts.filter((conflict) => !conflict.startsWith("assignment:"));
-  const canConfirm = blockingConflicts.length === 0
-    && preview.capabilityAssignments.every((assignment) => selectedAssignments.has(assignment));
+  const [selectedAssignments, setSelectedAssignments] = useState(
+    () => new Set<string>(),
+  );
+  const blockingConflicts = preview.conflicts.filter(
+    (conflict) => !conflict.startsWith("assignment:"),
+  );
+  const canConfirm =
+    blockingConflicts.length === 0 &&
+    preview.capabilityAssignments.every((assignment) =>
+      selectedAssignments.has(assignment),
+    );
 
   return (
     <DialogFrame
       closeLabel={t("common.close")}
       contentClassName="grid gap-4"
       description={t("settings.agents.uninstallPreviewDescription")}
-      footer={(
+      footer={
         <div className="flex w-full justify-end gap-2">
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             {t("common.cancel")}
           </Button>
           <Button
@@ -42,10 +54,12 @@ export function AgentUninstallPreviewDialog({
             type="button"
             variant="destructive"
           >
-            {busy ? t("settings.agents.installing") : t("settings.agents.confirmUninstall")}
+            {busy
+              ? t("settings.agents.installing")
+              : t("settings.agents.confirmUninstall")}
           </Button>
         </div>
-      )}
+      }
       icon={<PackageX size={18} />}
       onClose={onClose}
       size="lg"
@@ -55,24 +69,40 @@ export function AgentUninstallPreviewDialog({
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone="neutral">v{preview.currentInstallation.version}</Badge>
           <Badge tone="neutral">{preview.ownership}</Badge>
-          <Badge tone={preview.currentInstallation.enabled ? "create" : "neutral"}>
-            {preview.currentInstallation.enabled ? t("settings.agents.enabled") : t("settings.agents.disabled")}
+          <Badge
+            tone={preview.currentInstallation.enabled ? "create" : "neutral"}
+          >
+            {preview.currentInstallation.enabled
+              ? t("settings.agents.enabled")
+              : t("settings.agents.disabled")}
           </Badge>
         </div>
 
         <div className="grid gap-1">
-          <span className="text-label-caps uppercase text-outline">{t("settings.agents.installPath")}</span>
+          <span className="text-label-caps uppercase text-outline">
+            {t("settings.agents.installPath")}
+          </span>
           <code className="rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-sm text-on-surface">
             {preview.targetPath || t("settings.agents.externalRuntime")}
           </code>
         </div>
 
         {preview.capabilityAssignments.length > 0 ? (
-          <section className="grid gap-2" aria-label={t("settings.agents.assignmentsToClear")}>
-            <p className="text-label-caps uppercase text-outline">{t("settings.agents.assignmentsToClear")}</p>
-            <p className="text-body-sm text-on-surface-variant">{t("settings.agents.assignmentsToClearDescription")}</p>
+          <section
+            className="grid gap-2"
+            aria-label={t("settings.agents.assignmentsToClear")}
+          >
+            <p className="text-label-caps uppercase text-outline">
+              {t("settings.agents.assignmentsToClear")}
+            </p>
+            <p className="text-body-sm text-on-surface-variant">
+              {t("settings.agents.assignmentsToClearDescription")}
+            </p>
             {preview.capabilityAssignments.map((assignment) => (
-              <label className="flex items-center gap-2 rounded-lg border border-theme-card-border bg-theme-control/55 px-3 py-2" key={assignment}>
+              <label
+                className="flex items-center gap-2 rounded-lg border border-theme-card-border bg-theme-control/55 px-3 py-2"
+                key={assignment}
+              >
                 <input
                   checked={selectedAssignments.has(assignment)}
                   disabled={busy}
@@ -100,7 +130,9 @@ export function AgentUninstallPreviewDialog({
         ) : null}
         {preview.warnings.length > 0 ? (
           <ul className="grid gap-1 rounded-xl border border-status-update/35 bg-status-update/10 px-3 py-2 text-on-surface-variant">
-            {preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+            {preview.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
           </ul>
         ) : null}
       </div>

@@ -82,7 +82,8 @@ const themes = [
         panelShadow: "0 26px 74px rgb(var(--theme-panel-shadow) / 0.42)",
         toolbarShadow: "0 14px 34px rgb(var(--theme-panel-shadow) / 0.28)",
         dialogShadow: "0 30px 86px rgb(var(--theme-panel-shadow) / 0.54)",
-        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.24)",
+        controlInsetShadow:
+          "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.24)",
         activeShadow: "0 12px 30px rgb(var(--theme-glow) / 0.22)",
       },
     },
@@ -165,7 +166,8 @@ const themes = [
         panelShadow: "0 20px 48px rgb(var(--theme-panel-shadow) / 0.26)",
         toolbarShadow: "0 12px 28px rgb(var(--theme-panel-shadow) / 0.18)",
         dialogShadow: "0 24px 70px rgb(var(--theme-panel-shadow) / 0.34)",
-        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.4)",
+        controlInsetShadow:
+          "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.4)",
         activeShadow: "0 10px 24px rgb(var(--theme-panel-shadow) / 0.22)",
       },
     },
@@ -248,7 +250,8 @@ const themes = [
         panelShadow: "0 20px 42px rgb(var(--theme-panel-shadow) / 0.16)",
         toolbarShadow: "0 12px 24px rgb(var(--theme-panel-shadow) / 0.12)",
         dialogShadow: "0 24px 70px rgb(var(--theme-panel-shadow) / 0.2)",
-        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.72)",
+        controlInsetShadow:
+          "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.72)",
         activeShadow: "0 10px 24px rgb(var(--theme-panel-shadow) / 0.14)",
       },
     },
@@ -331,7 +334,8 @@ const themes = [
         panelShadow: "0 22px 54px rgb(var(--theme-panel-shadow) / 0.34)",
         toolbarShadow: "0 12px 30px rgb(var(--theme-panel-shadow) / 0.22)",
         dialogShadow: "0 24px 76px rgb(var(--theme-panel-shadow) / 0.42)",
-        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.28)",
+        controlInsetShadow:
+          "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.28)",
         activeShadow: "0 10px 28px rgb(var(--theme-glow) / 0.2)",
       },
     },
@@ -414,18 +418,25 @@ const themes = [
         panelShadow: "0 22px 46px rgb(var(--theme-panel-shadow) / 0.16)",
         toolbarShadow: "0 12px 24px rgb(var(--theme-panel-shadow) / 0.1)",
         dialogShadow: "0 24px 70px rgb(var(--theme-panel-shadow) / 0.22)",
-        controlInsetShadow: "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.76)",
+        controlInsetShadow:
+          "inset 0 1px 0 rgb(var(--theme-inset-highlight) / 0.76)",
         activeShadow: "0 10px 24px rgb(var(--theme-panel-shadow) / 0.14)",
       },
     },
   }),
 ] satisfies ThemeDefinition[];
 
-export const themeRegistry: Record<ThemeId, ThemeDefinition> = Object.fromEntries(
-  themes.map((theme) => [theme.id, theme]),
-) as Record<ThemeId, ThemeDefinition>;
+export const themeRegistry: Record<ThemeId, ThemeDefinition> =
+  Object.fromEntries(themes.map((theme) => [theme.id, theme])) as Record<
+    ThemeId,
+    ThemeDefinition
+  >;
 
-export const themeOptions = themes.map(({ id, labelKey, swatches }) => ({ id, labelKey, swatches }));
+export const themeOptions = themes.map(({ id, labelKey, swatches }) => ({
+  id,
+  labelKey,
+  swatches,
+}));
 
 export function isThemeId(value: unknown): value is ThemeId {
   return typeof value === "string" && value in themeRegistry;

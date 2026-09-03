@@ -5,7 +5,10 @@ import { MemoryRecentWorkspace } from "../../components/memory/MemoryRecentWorks
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { useI18n } from "../../i18n/I18nProvider";
 import { getMemoryRecentEventTarget } from "../../services/memory";
-import type { MemoryNavigationTarget, RecentMemoryEvent } from "../../types/memory";
+import type {
+  MemoryNavigationTarget,
+  RecentMemoryEvent,
+} from "../../types/memory";
 
 export function MemoryPage({
   activeSubNavId,
@@ -17,17 +20,28 @@ export function MemoryPage({
   const { t } = useI18n();
   const isRecall = activeSubNavId === "recall";
   return (
-    <MemoryWorkspacePage description={t(isRecall ? "memory.recall.description" : "memory.recent.description")} title={t(isRecall ? "memory.recall.title" : "memory.recent.title")}>
+    <MemoryWorkspacePage
+      description={t(
+        isRecall ? "memory.recall.description" : "memory.recent.description",
+      )}
+      title={t(isRecall ? "memory.recall.title" : "memory.recent.title")}
+    >
       {isRecall ? (
         <MemoryRecallWorkspace onNavigate={onNavigate} t={t} />
       ) : (
-        <MemoryRecentWorkspace onEventOpen={(event) => void openRecentEvent(event, onNavigate)} t={t} />
+        <MemoryRecentWorkspace
+          onEventOpen={(event) => void openRecentEvent(event, onNavigate)}
+          t={t}
+        />
       )}
     </MemoryWorkspacePage>
   );
 }
 
-async function openRecentEvent(event: RecentMemoryEvent, onNavigate?: (target: MemoryNavigationTarget) => void) {
+async function openRecentEvent(
+  event: RecentMemoryEvent,
+  onNavigate?: (target: MemoryNavigationTarget) => void,
+) {
   if (!onNavigate) return;
   const target = await getMemoryRecentEventTarget(event.id);
   if (!target) return;
@@ -42,11 +56,24 @@ async function openRecentEvent(event: RecentMemoryEvent, onNavigate?: (target: M
   });
 }
 
-function MemoryWorkspacePage({ children, description, title }: { children: ReactNode; description: string; title: string }) {
+function MemoryWorkspacePage({
+  children,
+  description,
+  title,
+}: {
+  children: ReactNode;
+  description: string;
+  title: string;
+}) {
   const { t } = useI18n();
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]">
-      <PageHeader description={description} eyebrow={t("memory.page.eyebrow")} icon={<Brain size={16} />} title={title} />
+      <PageHeader
+        description={description}
+        eyebrow={t("memory.page.eyebrow")}
+        icon={<Brain size={16} />}
+        title={title}
+      />
       {children}
     </section>
   );

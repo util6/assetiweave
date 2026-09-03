@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { getAppSettings, saveAppSettings } from "../../services/appSettings";
 import { applyThemeToElement } from "../../theme/cssVars";
@@ -78,16 +87,22 @@ interface AppSettingsContextValue {
   settingsError: string | null;
   settingsLoaded: boolean;
   storageInfo: AppSettingsStorageInfo;
-  updateSetting: <Key extends keyof AppSettings>(key: Key, value: AppSettings[Key]) => void;
+  updateSetting: <Key extends keyof AppSettings>(
+    key: Key,
+    value: AppSettings[Key],
+  ) => void;
 }
 
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
 
 export function AppSettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<AppSettings>(() => readCachedSettings());
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    readCachedSettings(),
+  );
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const [storageInfo, setStorageInfo] = useState<AppSettingsStorageInfo>(defaultStorageInfo);
+  const [storageInfo, setStorageInfo] =
+    useState<AppSettingsStorageInfo>(defaultStorageInfo);
   const lastPersistedSettingsRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -104,7 +119,9 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
           ...defaultStorageInfo,
           configDir: file.display_config_dir ?? file.config_dir,
           configPath: file.display_config_path ?? file.config_path,
-          conversationAdapterDir: file.display_conversation_adapter_dir ?? file.conversation_adapter_dir,
+          conversationAdapterDir:
+            file.display_conversation_adapter_dir ??
+            file.conversation_adapter_dir,
         });
         setSettingsError(null);
         setSettingsLoaded(true);
@@ -135,13 +152,17 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
         lastPersistedSettingsRef.current = JSON.stringify(normalizedSettings);
         setSettings((current) => {
           if (!settingsEqual(current, settings)) return current;
-          return settingsEqual(current, normalizedSettings) ? current : normalizedSettings;
+          return settingsEqual(current, normalizedSettings)
+            ? current
+            : normalizedSettings;
         });
         setStorageInfo({
           ...defaultStorageInfo,
           configDir: file.display_config_dir ?? file.config_dir,
           configPath: file.display_config_path ?? file.config_path,
-          conversationAdapterDir: file.display_conversation_adapter_dir ?? file.conversation_adapter_dir,
+          conversationAdapterDir:
+            file.display_conversation_adapter_dir ??
+            file.conversation_adapter_dir,
         });
         setSettingsError(null);
       })
@@ -186,7 +207,10 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
   }, [settings.density, settings.theme, settings.typography]);
 
   const value = useMemo<AppSettingsContextValue>(() => {
-    function updateSetting<Key extends keyof AppSettings>(key: Key, settingValue: AppSettings[Key]) {
+    function updateSetting<Key extends keyof AppSettings>(
+      key: Key,
+      settingValue: AppSettings[Key],
+    ) {
       setSettingsError(null);
       lastPersistedSettingsRef.current = null;
       setSettings((currentSettings) => ({
@@ -209,7 +233,11 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     };
   }, [settings, settingsError, settingsLoaded, storageInfo]);
 
-  return <AppSettingsContext.Provider value={value}>{children}</AppSettingsContext.Provider>;
+  return (
+    <AppSettingsContext.Provider value={value}>
+      {children}
+    </AppSettingsContext.Provider>
+  );
 }
 
 export function useAppSettings() {

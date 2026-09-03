@@ -1,4 +1,10 @@
-import type { AssetKind, DeploymentActionType, DeploymentStrategy, SourceKind, SourceOrigin } from "../types";
+import type {
+  AssetKind,
+  DeploymentActionType,
+  DeploymentStrategy,
+  SourceKind,
+  SourceOrigin,
+} from "../types";
 import type { Translator } from "./I18nProvider";
 import type { TranslationKey } from "./messages";
 
@@ -6,11 +12,17 @@ export function assetKindLabel(kind: AssetKind, t: Translator) {
   return t(`assetKind.${kind}` as TranslationKey);
 }
 
-export function deploymentActionLabel(actionType: DeploymentActionType, t: Translator) {
+export function deploymentActionLabel(
+  actionType: DeploymentActionType,
+  t: Translator,
+) {
   return t(`deploymentAction.${actionType}` as TranslationKey);
 }
 
-export function deploymentStrategyLabel(strategy: DeploymentStrategy, t: Translator) {
+export function deploymentStrategyLabel(
+  strategy: DeploymentStrategy,
+  t: Translator,
+) {
   return t(`deploymentStrategy.${strategy}` as TranslationKey);
 }
 
@@ -22,7 +34,10 @@ export function sourceOriginLabel(origin: SourceOrigin, t: Translator) {
   return t(`source.origin.${origin}` as TranslationKey);
 }
 
-export function translateScanStatus(status: string | null | undefined, t: Translator) {
+export function translateScanStatus(
+  status: string | null | undefined,
+  t: Translator,
+) {
   if (!status) {
     return t("status.loading");
   }
@@ -34,7 +49,10 @@ export function translateScanStatus(status: string | null | undefined, t: Transl
   if (normalized === "等待首次扫描") {
     return t("status.waitingFirstScan");
   }
-  if (normalized === "preview" || normalized === "浏览器预览模式：使用内置示例数据") {
+  if (
+    normalized === "preview" ||
+    normalized === "浏览器预览模式：使用内置示例数据"
+  ) {
     return t("status.previewData");
   }
 
@@ -43,7 +61,9 @@ export function translateScanStatus(status: string | null | undefined, t: Transl
     return t("status.scanOk", { count: okMatch[1] });
   }
 
-  const validatedMatch = normalized.match(/^validated: (\d+) assets, (\d+) removed, (\d+) updated$/);
+  const validatedMatch = normalized.match(
+    /^validated: (\d+) assets, (\d+) removed, (\d+) updated$/,
+  );
   if (validatedMatch) {
     return t("status.validatedAssets", {
       count: validatedMatch[1],
@@ -68,7 +88,9 @@ export function translatePlanReason(reason: string, t: Translator) {
     return t("plan.reason.conflictExisting");
   }
 
-  const unsupportedMatch = reason.match(/^(.+) 不支持 ([A-Za-z]+) 或未命中 include 规则$/);
+  const unsupportedMatch = reason.match(
+    /^(.+) 不支持 ([A-Za-z]+) 或未命中 include 规则$/,
+  );
   if (unsupportedMatch) {
     return t("plan.reason.unsupported", {
       profile: unsupportedMatch[1],
@@ -76,7 +98,9 @@ export function translatePlanReason(reason: string, t: Translator) {
     });
   }
 
-  const projectMatch = reason.match(/^(.+) 支持 ([A-Za-z]+)，将以 ([A-Za-z]+) 投影到目标目录$/);
+  const projectMatch = reason.match(
+    /^(.+) 支持 ([A-Za-z]+)，将以 ([A-Za-z]+) 投影到目标目录$/,
+  );
   if (projectMatch) {
     return t("plan.reason.project", {
       profile: projectMatch[1],
@@ -130,5 +154,11 @@ function isAssetKind(value: string): value is AssetKind {
 }
 
 function isDeploymentStrategy(value: string): value is DeploymentStrategy {
-  return ["symlink_to_source", "copy_to_target", "render", "append", "config_merge"].includes(value);
+  return [
+    "symlink_to_source",
+    "copy_to_target",
+    "render",
+    "append",
+    "config_merge",
+  ].includes(value);
 }

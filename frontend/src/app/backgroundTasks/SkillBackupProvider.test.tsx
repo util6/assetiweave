@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillBackupProvider, useSkillBackup } from "./SkillBackupProvider";
 
@@ -46,13 +52,18 @@ describe("SkillBackupProvider", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start backup" }));
     await act(async () => {});
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Other feature" }).disabled).toBe(false);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "Other feature" })
+        .disabled,
+    ).toBe(false);
     expect(screen.getByTestId("backup-status").textContent).toBe("running:0/2");
 
     await act(async () => {
       backupListener?.(taskSnapshot("completed", 2));
     });
-    expect(screen.getByTestId("backup-status").textContent).toBe("completed:2/2");
+    expect(screen.getByTestId("backup-status").textContent).toBe(
+      "completed:2/2",
+    );
   });
 
   it("polls task status when a completion event is missed", async () => {
@@ -76,7 +87,9 @@ describe("SkillBackupProvider", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByTestId("backup-status").textContent).toBe("completed:2/2");
+    expect(screen.getByTestId("backup-status").textContent).toBe(
+      "completed:2/2",
+    );
   });
 });
 
@@ -85,12 +98,17 @@ function ProviderHarness() {
 
   return (
     <>
-      <button onClick={() => void startBackup(["skill-a", "skill-b"])} type="button">
+      <button
+        onClick={() => void startBackup(["skill-a", "skill-b"])}
+        type="button"
+      >
         Start backup
       </button>
       <button type="button">Other feature</button>
       <output data-testid="backup-status">
-        {task ? `${task.status}:${task.completed_count}/${task.total_count}` : "idle"}
+        {task
+          ? `${task.status}:${task.completed_count}/${task.total_count}`
+          : "idle"}
       </output>
     </>
   );

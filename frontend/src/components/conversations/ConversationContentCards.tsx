@@ -1,4 +1,13 @@
-import { Check, CheckCircle2, ChevronDown, ChevronUp, Copy, GitCompareArrows, Languages, XCircle } from "lucide-react";
+import {
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  GitCompareArrows,
+  Languages,
+  XCircle,
+} from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
@@ -39,12 +48,18 @@ import {
   conversationCardPresentationKind,
   useConversationCardKindRegistry,
 } from "./ConversationCardKindRegistry";
-import { ConversationDiff, summarizeConversationDiff } from "./ConversationDiff";
+import {
+  ConversationDiff,
+  summarizeConversationDiff,
+} from "./ConversationDiff";
 
 export type ConversationContentFormat = "plain" | "markdown";
 
 export { DEFAULT_CONVERSATION_CONTENT_VISIBILITY } from "../../types";
-export type { ConversationContentType, ConversationContentVisibility } from "../../types";
+export type {
+  ConversationContentType,
+  ConversationContentVisibility,
+} from "../../types";
 import {
   useConversationContentController,
   type ConversationContentController,
@@ -139,7 +154,10 @@ export function buildConversationDisplayNodesFromNodes(
   nodes: ConversationContentNode[],
 ): ConversationDisplayNode[] {
   const displayNodes: ConversationDisplayNode[] = [];
-  const executions = new Map<string, Extract<ConversationDisplayNode, { type: "execution" }>>();
+  const executions = new Map<
+    string,
+    Extract<ConversationDisplayNode, { type: "execution" }>
+  >();
 
   for (const node of nodes) {
     const block = conversationContentNodeToBlock(node);
@@ -178,7 +196,9 @@ export function buildConversationDisplayNodesFromBlocks(
   return blocks.map((block) => ({ type: "card", turnId: "", block }));
 }
 
-function conversationContentBlockSeedToBlock(card: ConversationContentBlockSeed): ConversationContentBlock {
+function conversationContentBlockSeedToBlock(
+  card: ConversationContentBlockSeed,
+): ConversationContentBlock {
   return {
     id: card.node_id,
     kind: card.kind,
@@ -198,7 +218,9 @@ function conversationContentBlockSeedToBlock(card: ConversationContentBlockSeed)
   };
 }
 
-function conversationContentNodeToBlock(node: ConversationContentNode): ConversationContentBlock {
+function conversationContentNodeToBlock(
+  node: ConversationContentNode,
+): ConversationContentBlock {
   return {
     id: node.node_id,
     kind: node.node_type,
@@ -247,41 +269,51 @@ export function ConversationContentCards({
   resultPreviewLineLimit?: number;
   t: Translator;
   translationAvailabilityChecker?: () => Promise<OpencodeTranslationAvailability>;
-  translationSaver?: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
+  translationSaver?: (
+    request: ConversationPartTranslationUpdateRequest,
+  ) => Promise<void>;
   translationSettings?: ResolvedConversationTranslationSettings;
   translationTaskController?: ConversationTranslationTaskController;
-  translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
+  translator?: (
+    request: ConversationCardTranslationRequest,
+  ) => Promise<OpencodeTranslationResult>;
   visibility: ConversationContentVisibility;
 }) {
   const displayNodes = nodes;
-  const visibleNodes = displayNodes.flatMap((node): ConversationDisplayNode[] => {
-    if (node.type === "card") {
-      return (visibility[node.block.type] ?? true) && shouldDisplayContentBlock(node.block)
-        ? [node]
+  const visibleNodes = displayNodes.flatMap(
+    (node): ConversationDisplayNode[] => {
+      if (node.type === "card") {
+        return (visibility[node.block.type] ?? true) &&
+          shouldDisplayContentBlock(node.block)
+          ? [node]
+          : [];
+      }
+      const commands = node.commands.filter(
+        (block) => visibility[block.type] ?? true,
+      );
+      const results = node.results.filter(
+        (block) =>
+          (visibility[block.type] ?? true) && shouldDisplayContentBlock(block),
+      );
+      if (commands.length === 1 && results.length === 0) {
+        return commands.map((command) => ({
+          type: "card",
+          turnId: node.turnId,
+          block: command,
+        }));
+      }
+      return commands.length > 0 || results.length > 0
+        ? [{ ...node, commands, results }]
         : [];
-    }
-    const commands = node.commands.filter((block) => (
-      visibility[block.type] ?? true
-    ));
-    const results = node.results.filter((block) => (
-      (visibility[block.type] ?? true) && shouldDisplayContentBlock(block)
-    ));
-    if (commands.length === 1 && results.length === 0) {
-      return commands.map((command) => ({ type: "card", turnId: node.turnId, block: command }));
-    }
-    return commands.length > 0 || results.length > 0
-      ? [{ ...node, commands, results }]
-      : [];
-  });
+    },
+  );
   const [nodeRenderLimit, setNodeRenderLimit] = useState(12);
   const nodeLoadMoreRef = useRef<HTMLDivElement>(null);
   const renderedNodes = visibleNodes.slice(0, nodeRenderLimit);
   const hasMoreNodes = renderedNodes.length < visibleNodes.length;
-  const visibleBlocks = renderedNodes.flatMap((node) => (
-      node.type === "card"
-      ? [node.block]
-      : [...node.commands, ...node.results]
-  ));
+  const visibleBlocks = renderedNodes.flatMap((node) =>
+    node.type === "card" ? [node.block] : [...node.commands, ...node.results],
+  );
 
   useEffect(() => {
     if (!onCommandPartsVisible) return;
@@ -289,7 +321,8 @@ export function ConversationContentCards({
     for (const node of renderedNodes) {
       const commands = node.type === "card" ? [node.block] : node.commands;
       for (const command of commands) {
-        if (command.type === "command" && command.partId) partIds.add(command.partId);
+        if (command.type === "command" && command.partId)
+          partIds.add(command.partId);
       }
     }
     if (partIds.size > 0) onCommandPartsVisible([...partIds]);
@@ -299,10 +332,15 @@ export function ConversationContentCards({
     if (!hasMoreNodes || typeof IntersectionObserver === "undefined") return;
     const target = nodeLoadMoreRef.current;
     if (!target) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      setNodeRenderLimit((current) => Math.min(current + 12, visibleNodes.length));
-    }, { rootMargin: "480px 0px" });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setNodeRenderLimit((current) =>
+          Math.min(current + 12, visibleNodes.length),
+        );
+      },
+      { rootMargin: "480px 0px" },
+    );
     observer.observe(target);
     return () => observer.disconnect();
   }, [hasMoreNodes, renderedNodes.length, visibleNodes.length]);
@@ -349,7 +387,11 @@ export function ConversationContentCards({
         <div className="flex justify-center py-2" ref={nodeLoadMoreRef}>
           <button
             className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-            onClick={() => setNodeRenderLimit((current) => Math.min(current + 12, visibleNodes.length))}
+            onClick={() =>
+              setNodeRenderLimit((current) =>
+                Math.min(current + 12, visibleNodes.length),
+              )
+            }
             type="button"
           >
             {t("conversation.content.loadMoreActivities")}
@@ -366,10 +408,15 @@ export function ConversationContentCards({
         colors={colors}
         copied={contentController.isCopied(block.id)}
         expanded={contentController.expandedBlockIds.has(block.id)}
-        highlighted={activeBlockId === block.id || block.legacyAnchorIds?.includes(activeBlockId ?? "") === true}
+        highlighted={
+          activeBlockId === block.id ||
+          block.legacyAnchorIds?.includes(activeBlockId ?? "") === true
+        }
         key={block.id}
         onCopy={() => void contentController.copyBlock(block)}
-        onCancelTranslation={() => void contentController.cancelTranslation(block.id)}
+        onCancelTranslation={() =>
+          void contentController.cancelTranslation(block.id)
+        }
         onToggleExpanded={() => contentController.toggleExpanded(block.id)}
         onTranslate={() => void contentController.translateBlock(block)}
         resultPreviewLineLimit={resultPreviewLineLimit}
@@ -398,11 +445,15 @@ function ConversationExecutionContent({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [renderLimit, setRenderLimit] = useState(COMMAND_RENDER_BATCH_SIZE);
-  const [resultRenderLimit, setResultRenderLimit] = useState(RESULT_RENDER_BATCH_SIZE);
+  const [resultRenderLimit, setResultRenderLimit] = useState(
+    RESULT_RENDER_BATCH_SIZE,
+  );
   const loadMoreRef = useRef<HTMLDivElement>(null);
   const loadMoreResultsRef = useRef<HTMLDivElement>(null);
   const hasFoldedCommands = node.commands.length > 1;
-  const visibleCommandCount = expanded ? Math.min(renderLimit, node.commands.length) : Math.min(1, node.commands.length);
+  const visibleCommandCount = expanded
+    ? Math.min(renderLimit, node.commands.length)
+    : Math.min(1, node.commands.length);
   const hasMore = expanded && visibleCommandCount < node.commands.length;
   const visibleResultCount = Math.min(resultRenderLimit, node.results.length);
   const hasMoreResults = visibleResultCount < node.results.length;
@@ -411,10 +462,15 @@ function ConversationExecutionContent({
     if (!hasMore || typeof IntersectionObserver === "undefined") return;
     const target = loadMoreRef.current;
     if (!target) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length));
-    }, { rootMargin: "320px 0px" });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setRenderLimit((current) =>
+          Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length),
+        );
+      },
+      { rootMargin: "320px 0px" },
+    );
     observer.observe(target);
     return () => observer.disconnect();
   }, [hasMore, node.commands.length, visibleCommandCount]);
@@ -423,10 +479,15 @@ function ConversationExecutionContent({
     if (!hasMoreResults || typeof IntersectionObserver === "undefined") return;
     const target = loadMoreResultsRef.current;
     if (!target) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length));
-    }, { rootMargin: "320px 0px" });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        setResultRenderLimit((current) =>
+          Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length),
+        );
+      },
+      { rootMargin: "320px 0px" },
+    );
     observer.observe(target);
     return () => observer.disconnect();
   }, [hasMoreResults, node.results.length, visibleResultCount]);
@@ -448,7 +509,9 @@ function ConversationExecutionContent({
             {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
             {expanded
               ? t("conversation.content.collapseCommands")
-              : t("conversation.content.expandCommands", { count: node.commands.length - 1 })}
+              : t("conversation.content.expandCommands", {
+                  count: node.commands.length - 1,
+                })}
           </button>
         </div>
       ) : null}
@@ -456,7 +519,14 @@ function ConversationExecutionContent({
         <div className="flex justify-center py-1" ref={loadMoreRef}>
           <button
             className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-            onClick={() => setRenderLimit((current) => Math.min(current + COMMAND_RENDER_BATCH_SIZE, node.commands.length))}
+            onClick={() =>
+              setRenderLimit((current) =>
+                Math.min(
+                  current + COMMAND_RENDER_BATCH_SIZE,
+                  node.commands.length,
+                ),
+              )
+            }
             type="button"
           >
             {t("conversation.content.loadMoreCommands")}
@@ -468,7 +538,14 @@ function ConversationExecutionContent({
         <div className="flex justify-center py-1" ref={loadMoreResultsRef}>
           <button
             className="rounded-md border border-theme-control-border bg-theme-control/80 px-3 py-1.5 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover"
-            onClick={() => setResultRenderLimit((current) => Math.min(current + RESULT_RENDER_BATCH_SIZE, node.results.length))}
+            onClick={() =>
+              setResultRenderLimit((current) =>
+                Math.min(
+                  current + RESULT_RENDER_BATCH_SIZE,
+                  node.results.length,
+                ),
+              )
+            }
             type="button"
           >
             {t("conversation.content.loadMoreResults")}
@@ -524,15 +601,23 @@ function ConversationContentCard({
 }) {
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   const { definitions } = useConversationCardKindRegistry();
-  const definition = block.kind && block.kind === block.type ? definitions.get(block.kind) : undefined;
+  const definition =
+    block.kind && block.kind === block.type
+      ? definitions.get(block.kind)
+      : undefined;
   const label = definition?.label ?? conversationCardLabel(block.type, t);
   const role = t(`conversation.part.role.${block.role}` as TranslationKey);
   const accentColor = conversationCardColor(block.type, colors);
   const copyLabel = copied
     ? t("conversation.content.copied")
     : t("conversation.content.copy", { type: label });
-  const translationTargetLabel = normalizeConversationTranslationTargetLanguage(translationTargetLanguage);
-  const translateDisabled = renderer === "path" || translationAvailability !== "available" || translating;
+  const translationTargetLabel = normalizeConversationTranslationTargetLanguage(
+    translationTargetLanguage,
+  );
+  const translateDisabled =
+    renderer === "path" ||
+    translationAvailability !== "available" ||
+    translating;
   const translateLabel = translationButtonLabel({
     hasTranslation: Boolean(translatedText),
     label,
@@ -541,27 +626,33 @@ function ConversationContentCard({
     targetLanguage: translationTargetLabel,
     translating,
   });
-  const resultPresentation = block.type === "result"
-    ? describeResultPresentation(block)
-    : undefined;
-  const diffSummary = renderer === "diff"
-    ? summarizeConversationDiff(block.text)
-    : undefined;
-  const preview = resultPresentation?.type === "file-change"
-    ? {
-        hasOverflow: false,
-        lines: [],
-        visibleLineCount: 0,
-        visibleValue: "",
-      }
-    : buildConversationCardPreview(block.text, resultPreviewLineLimit, expanded);
-  const canExpandDiff = resultPresentation?.type === "file-change" && block.text.trim().length > 0;
+  const resultPresentation =
+    block.type === "result" ? describeResultPresentation(block) : undefined;
+  const diffSummary =
+    renderer === "diff" ? summarizeConversationDiff(block.text) : undefined;
+  const preview =
+    resultPresentation?.type === "file-change"
+      ? {
+          hasOverflow: false,
+          lines: [],
+          visibleLineCount: 0,
+          visibleValue: "",
+        }
+      : buildConversationCardPreview(
+          block.text,
+          resultPreviewLineLimit,
+          expanded,
+        );
+  const canExpandDiff =
+    resultPresentation?.type === "file-change" && block.text.trim().length > 0;
   const canExpandResult = canExpandDiff || preview.hasOverflow;
 
   return (
     <section
       className={`scroll-mt-32 overflow-hidden rounded-xl border transition-shadow ${
-        highlighted ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]" : ""
+        highlighted
+          ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
+          : ""
       }`}
       data-content-type={block.type}
       data-conversation-card-id={block.id}
@@ -572,11 +663,18 @@ function ConversationContentCard({
       }}
     >
       <header className="conversation-content-header flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-label-caps" style={{ color: accentColor }}>
+        <div
+          className="flex min-w-0 flex-wrap items-center gap-2 text-label-caps"
+          style={{ color: accentColor }}
+        >
           {isSuccessfulCommand(block) ? (
             <CheckCircle2 aria-hidden="true" size={15} />
           ) : (
-            <ConversationCardKindIcon iconHint={definition?.icon_hint} kind={block.type} renderer={renderer} />
+            <ConversationCardKindIcon
+              iconHint={definition?.icon_hint}
+              kind={block.type}
+              renderer={renderer}
+            />
           )}
           <span>{label}</span>
           {block.commandLabel ? (
@@ -609,7 +707,11 @@ function ConversationContentCard({
             title={copyLabel}
             type="button"
           >
-            {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+            {copied ? (
+              <Check className="size-[1em]" />
+            ) : (
+              <Copy className="size-[1em]" />
+            )}
           </button>
           <button
             aria-label={translateLabel}
@@ -619,7 +721,11 @@ function ConversationContentCard({
             title={translateLabel}
             type="button"
           >
-            <Languages className={translating ? "size-[1em] animate-pulse" : "size-[1em]"} />
+            <Languages
+              className={
+                translating ? "size-[1em] animate-pulse" : "size-[1em]"
+              }
+            />
           </button>
         </div>
       </header>
@@ -627,7 +733,11 @@ function ConversationContentCard({
         <ConversationCardBody
           block={block}
           label={label}
-          text={resultPresentation?.type === "file-change" ? block.text : preview.visibleValue}
+          text={
+            resultPresentation?.type === "file-change"
+              ? block.text
+              : preview.visibleValue
+          }
           expanded={expanded}
           diffSummary={diffSummary}
           resultPresentation={resultPresentation}
@@ -637,7 +747,9 @@ function ConversationContentCard({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-inherit bg-theme-card/35 px-3 py-2">
             {canExpandDiff ? (
               <span className="text-code-sm text-on-surface-muted">
-                {t("conversation.content.diffSummaryFiles", { count: resultPresentation.summary.files.length })}
+                {t("conversation.content.diffSummaryFiles", {
+                  count: resultPresentation.summary.files.length,
+                })}
               </span>
             ) : (
               <span className="text-code-sm text-on-surface-muted">
@@ -664,7 +776,9 @@ function ConversationContentCard({
         {translatedText ? (
           <div className="mt-3 rounded-xl border border-inherit bg-theme-card/45 px-3 py-3">
             <div className="mb-2 text-label-caps text-on-surface-muted">
-              {t("conversation.content.translation", { language: translationTargetLabel })}
+              {t("conversation.content.translation", {
+                language: translationTargetLabel,
+              })}
             </div>
             <MarkdownContent value={translatedText} />
           </div>
@@ -679,7 +793,10 @@ function ConversationContentCard({
             <button
               aria-label={t("conversation.content.translationCancel")}
               className="rounded-md border border-theme-control-border bg-theme-control/80 px-2.5 py-1 text-body-sm font-semibold text-theme-control-fg transition-colors hover:bg-theme-control-hover disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={translationPhase === "cancelling" || translationPhase === "cleaning_up"}
+              disabled={
+                translationPhase === "cancelling" ||
+                translationPhase === "cleaning_up"
+              }
               onClick={onCancelTranslation}
               type="button"
             >
@@ -805,10 +922,15 @@ type ConversationResultPresentation =
       type: "failure";
     };
 
-function describeResultPresentation(block: ConversationContentBlock): ConversationResultPresentation | undefined {
+function describeResultPresentation(
+  block: ConversationContentBlock,
+): ConversationResultPresentation | undefined {
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   if (renderer === "diff") {
-    return { type: "file-change", summary: summarizeConversationDiff(block.text) };
+    return {
+      type: "file-change",
+      summary: summarizeConversationDiff(block.text),
+    };
   }
   if (isSuccessfulResult(block)) return { type: "success" };
   if (isFailedResult(block)) return { type: "failure" };
@@ -832,7 +954,10 @@ function ConversationResultBody({
 }) {
   if (presentation.type === "file-change") {
     return expanded ? (
-      <ConversationDiff summary={diffSummary ?? presentation.summary} value={block.text} />
+      <ConversationDiff
+        summary={diffSummary ?? presentation.summary}
+        value={block.text}
+      />
     ) : (
       <FileChangeResultSummary summary={presentation.summary} t={t} />
     );
@@ -840,10 +965,17 @@ function ConversationResultBody({
 
   if (presentation.type === "success") {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-status-create/30 bg-status-create/10 px-3 py-2.5 text-body-sm text-status-create" data-result-summary="success">
+      <div
+        className="flex items-center gap-2 rounded-xl border border-status-create/30 bg-status-create/10 px-3 py-2.5 text-body-sm text-status-create"
+        data-result-summary="success"
+      >
         <CheckCircle2 aria-hidden="true" size={16} />
         <span>{t("conversation.content.resultSuccess")}</span>
-        {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
+        {block.exitCode != null ? (
+          <span>
+            · {t("conversation.content.exitCode", { code: block.exitCode })}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -853,7 +985,11 @@ function ConversationResultBody({
       <div className="flex items-center gap-2 rounded-xl border border-status-remove/30 bg-status-remove/10 px-3 py-2.5 text-body-sm text-status-remove">
         <XCircle aria-hidden="true" size={16} />
         <span>{t("conversation.content.resultFailed")}</span>
-        {block.exitCode != null ? <span>· {t("conversation.content.exitCode", { code: block.exitCode })}</span> : null}
+        {block.exitCode != null ? (
+          <span>
+            · {t("conversation.content.exitCode", { code: block.exitCode })}
+          </span>
+        ) : null}
       </div>
       {text ? (
         <pre className="max-h-[24rem] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-status-remove/20 bg-status-remove/[0.06] p-3 text-code-sm leading-6 text-on-surface">
@@ -874,21 +1010,46 @@ function FileChangeResultSummary({
   return (
     <div className="grid gap-2" data-result-summary="file-change">
       <div className="flex items-center gap-2 text-body-sm font-semibold text-on-surface">
-        <GitCompareArrows aria-hidden="true" size={16} className="text-status-update" />
+        <GitCompareArrows
+          aria-hidden="true"
+          size={16}
+          className="text-status-update"
+        />
         <span>
-          {t("conversation.content.changedFiles", { count: summary.files.length })}
-          <span className="ml-2 font-mono text-code-sm font-normal text-status-create">+{summary.additions}</span>
-          <span className="ml-1 font-mono text-code-sm font-normal text-status-remove">-{summary.deletions}</span>
+          {t("conversation.content.changedFiles", {
+            count: summary.files.length,
+          })}
+          <span className="ml-2 font-mono text-code-sm font-normal text-status-create">
+            +{summary.additions}
+          </span>
+          <span className="ml-1 font-mono text-code-sm font-normal text-status-remove">
+            -{summary.deletions}
+          </span>
         </span>
       </div>
       {summary.files.length > 0 ? (
         <div className="grid gap-1.5 overflow-hidden rounded-xl border border-theme-card-border/55 bg-theme-card/35 p-1.5">
           {summary.files.map((file) => (
-            <div className="flex items-center gap-3 rounded-md bg-theme-card-header/35 px-3 py-2 font-mono text-code-sm" data-diff-summary-file={file.path} key={file.path}>
-              <span className="w-4 shrink-0 text-center text-on-surface-muted">{fileStatusMark(file.status, file.binary)}</span>
-              <span className="min-w-0 flex-1 truncate text-on-surface" title={file.path}>{file.path}</span>
-              <span className="shrink-0 text-status-create">+{file.additions}</span>
-              <span className="shrink-0 text-status-remove">-{file.deletions}</span>
+            <div
+              className="flex items-center gap-3 rounded-md bg-theme-card-header/35 px-3 py-2 font-mono text-code-sm"
+              data-diff-summary-file={file.path}
+              key={file.path}
+            >
+              <span className="w-4 shrink-0 text-center text-on-surface-muted">
+                {fileStatusMark(file.status, file.binary)}
+              </span>
+              <span
+                className="min-w-0 flex-1 truncate text-on-surface"
+                title={file.path}
+              >
+                {file.path}
+              </span>
+              <span className="shrink-0 text-status-create">
+                +{file.additions}
+              </span>
+              <span className="shrink-0 text-status-remove">
+                -{file.deletions}
+              </span>
             </div>
           ))}
         </div>
@@ -901,7 +1062,10 @@ function FileChangeResultSummary({
   );
 }
 
-function fileStatusMark(status: "added" | "deleted" | "modified" | "renamed", binary: boolean) {
+function fileStatusMark(
+  status: "added" | "deleted" | "modified" | "renamed",
+  binary: boolean,
+) {
   if (binary) return "B";
   if (status === "added") return "A";
   if (status === "deleted") return "D";
@@ -909,7 +1073,15 @@ function fileStatusMark(status: "added" | "deleted" | "modified" | "renamed", bi
   return "M";
 }
 
-function LocalPathCardBody({ label, path, t }: { label: string; path: string; t: Translator }) {
+function LocalPathCardBody({
+  label,
+  path,
+  t,
+}: {
+  label: string;
+  path: string;
+  t: Translator;
+}) {
   const [error, setError] = useState<string | null>(null);
   const revealLabel = t("conversation.content.revealPath", { type: label });
 
@@ -942,7 +1114,13 @@ function LocalPathCardBody({ label, path, t }: { label: string; path: string; t:
   );
 }
 
-const builtInCardKinds = new Set(["answer", "tool", "command", "code", "result"]);
+const builtInCardKinds = new Set([
+  "answer",
+  "tool",
+  "command",
+  "code",
+  "result",
+]);
 
 export function conversationCardLabel(kind: string, t: Translator) {
   if (builtInCardKinds.has(kind)) {
@@ -950,11 +1128,13 @@ export function conversationCardLabel(kind: string, t: Translator) {
   }
   const segments = kind.split(".");
   const leaf = segments[segments.length - 1] ?? kind;
-  return leaf
-    .split(/[-_]+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ") || kind;
+  return (
+    leaf
+      .split(/[-_]+/)
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ") || kind
+  );
 }
 
 export function conversationCardColor(
@@ -977,20 +1157,25 @@ function hslToHex(hue: number, saturation: number, lightness: number) {
   const chroma = (1 - Math.abs(2 * l - 1)) * s;
   const segment = hue / 60;
   const x = chroma * (1 - Math.abs((segment % 2) - 1));
-  const [red, green, blue] = segment < 1
-    ? [chroma, x, 0]
-    : segment < 2
-      ? [x, chroma, 0]
-      : segment < 3
-        ? [0, chroma, x]
-        : segment < 4
-          ? [0, x, chroma]
-          : segment < 5
-            ? [x, 0, chroma]
-            : [chroma, 0, x];
+  const [red, green, blue] =
+    segment < 1
+      ? [chroma, x, 0]
+      : segment < 2
+        ? [x, chroma, 0]
+        : segment < 3
+          ? [0, chroma, x]
+          : segment < 4
+            ? [0, x, chroma]
+            : segment < 5
+              ? [x, 0, chroma]
+              : [chroma, 0, x];
   const match = l - chroma / 2;
   return `#${[red, green, blue]
-    .map((channel) => Math.round((channel + match) * 255).toString(16).padStart(2, "0"))
+    .map((channel) =>
+      Math.round((channel + match) * 255)
+        .toString(16)
+        .padStart(2, "0"),
+    )
     .join("")}`;
 }
 
@@ -1019,8 +1204,14 @@ function translationButtonLabel({
     return t("conversation.content.translationUnavailable");
   }
   return hasTranslation
-    ? t("conversation.content.retranslate", { language: targetLanguage, type: label })
-    : t("conversation.content.translate", { language: targetLanguage, type: label });
+    ? t("conversation.content.retranslate", {
+        language: targetLanguage,
+        type: label,
+      })
+    : t("conversation.content.translate", {
+        language: targetLanguage,
+        type: label,
+      });
 }
 
 function translationPhaseLabel(phase: AiExecutionPhase, t: Translator) {
@@ -1038,7 +1229,11 @@ function normalizeResultPreviewText(value: string) {
   return value.replace(/\r\n?/g, "\n").trimEnd();
 }
 
-function buildConversationCardPreview(value: string, lineLimit: number, expanded: boolean) {
+function buildConversationCardPreview(
+  value: string,
+  lineLimit: number,
+  expanded: boolean,
+) {
   const safeLineLimit = Number.isFinite(lineLimit)
     ? Math.max(1, Math.round(lineLimit))
     : DEFAULT_RESULT_PREVIEW_LINE_LIMIT;
@@ -1050,9 +1245,10 @@ function buildConversationCardPreview(value: string, lineLimit: number, expanded
     hasOverflow,
     lines,
     visibleLineCount: hasOverflow && !expanded ? safeLineLimit : lines.length,
-    visibleValue: hasOverflow && !expanded
-      ? lines.slice(0, safeLineLimit).join("\n")
-      : formattedValue,
+    visibleValue:
+      hasOverflow && !expanded
+        ? lines.slice(0, safeLineLimit).join("\n")
+        : formattedValue,
   };
 }
 
@@ -1112,25 +1308,42 @@ function BlockMetadata({
 function isSuccessfulCommand(block: ConversationContentBlock) {
   if (block.type !== "command") return false;
   if (block.exitCode === 0) return true;
-  return ["success", "succeeded", "completed", "complete", "done", "ok"].includes(
-    block.status?.toLowerCase() ?? "",
-  );
+  return [
+    "success",
+    "succeeded",
+    "completed",
+    "complete",
+    "done",
+    "ok",
+  ].includes(block.status?.toLowerCase() ?? "");
 }
 
 function isSuccessfulResult(block: ConversationContentBlock) {
   if (block.type !== "result") return false;
   if (block.exitCode === 0) return true;
-  return ["success", "succeeded", "completed", "complete", "done", "ok"].includes(
-    block.status?.toLowerCase() ?? "",
-  );
+  return [
+    "success",
+    "succeeded",
+    "completed",
+    "complete",
+    "done",
+    "ok",
+  ].includes(block.status?.toLowerCase() ?? "");
 }
 
 function isFailedResult(block: ConversationContentBlock) {
   if (block.type !== "result") return false;
   if (block.exitCode != null && block.exitCode !== 0) return true;
-  return ["error", "failed", "failure", "cancelled", "canceled", "interrupted", "timeout", "timed_out"].includes(
-    block.status?.toLowerCase() ?? "",
-  );
+  return [
+    "error",
+    "failed",
+    "failure",
+    "cancelled",
+    "canceled",
+    "interrupted",
+    "timeout",
+    "timed_out",
+  ].includes(block.status?.toLowerCase() ?? "");
 }
 
 function shouldDisplayContentBlock(block: ConversationContentBlock) {
@@ -1152,13 +1365,16 @@ function createBlock(
 ): ConversationContentBlock[] {
   const text = visibleCardText(value) ?? "";
   const hasOverride = (key: keyof ConversationContentBlock) =>
-    Object.prototype.hasOwnProperty.call(overrides, key) && overrides[key] !== undefined;
+    Object.prototype.hasOwnProperty.call(overrides, key) &&
+    overrides[key] !== undefined;
   const status = hasOverride("status") ? overrides.status : part.status;
-  const exitCode = hasOverride("exitCode") ? overrides.exitCode : part.exit_code;
+  const exitCode = hasOverride("exitCode")
+    ? overrides.exitCode
+    : part.exit_code;
   const renderer = overrides.renderer ?? legacyRenderer(type, overrides.format);
-  const statusOnlyResult = type === "result" && (
-    status != null || exitCode != null || renderer === "diff"
-  );
+  const statusOnlyResult =
+    type === "result" &&
+    (status != null || exitCode != null || renderer === "diff");
   if (!text && !statusOnlyResult) return [];
 
   return [
@@ -1196,16 +1412,25 @@ function createBlock(
   ];
 }
 
-function createDeclaredContentBlock(part: ConversationPart): ConversationContentBlock[] {
+function createDeclaredContentBlock(
+  part: ConversationPart,
+): ConversationContentBlock[] {
   if (part.content_card) {
     const renderer = part.content_card.renderer ?? "plain";
     const declaredType = contentTypeValue(part.content_card.kind);
     if (!declaredType) return [];
     const type = conversationCardPresentationKind(declaredType);
-    return createBlock(part, type, defaultContentCardText(part, type), type, "all", {
-      renderer,
-      format: renderer === "markdown" ? "markdown" : "plain",
-    });
+    return createBlock(
+      part,
+      type,
+      defaultContentCardText(part, type),
+      type,
+      "all",
+      {
+        renderer,
+        format: renderer === "markdown" ? "markdown" : "plain",
+      },
+    );
   }
   const card = contentCardMetadata(part.metadata_json);
   if (!card) return [];
@@ -1215,9 +1440,12 @@ function createDeclaredContentBlock(part: ConversationPart): ConversationContent
   const type = conversationCardPresentationKind(declaredType);
 
   const format = contentFormatValue(card.format);
-  const renderer = rendererValue(card.renderer)
-    ?? rendererValue(isRecord(card.presentation) ? card.presentation.renderer : undefined)
-    ?? legacyRenderer(type, format);
+  const renderer =
+    rendererValue(card.renderer) ??
+    rendererValue(
+      isRecord(card.presentation) ? card.presentation.renderer : undefined,
+    ) ??
+    legacyRenderer(type, format);
   const text = stringValue(card.text) ?? defaultContentCardText(part, type);
   const suffix = stringValue(card.suffix) ?? type;
 
@@ -1277,11 +1505,16 @@ function legacyRenderer(
   return "markdown";
 }
 
-function contentFormatValue(value: unknown): ConversationContentFormat | undefined {
+function contentFormatValue(
+  value: unknown,
+): ConversationContentFormat | undefined {
   return value === "markdown" || value === "plain" ? value : undefined;
 }
 
-function defaultContentCardText(part: ConversationPart, type: ConversationContentType) {
+function defaultContentCardText(
+  part: ConversationPart,
+  type: ConversationContentType,
+) {
   if (type === "command") {
     return part.command?.trim() || part.text;
   }
@@ -1298,7 +1531,9 @@ function visibleCardText(value?: string | null) {
 }
 
 function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

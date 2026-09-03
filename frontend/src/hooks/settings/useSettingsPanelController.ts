@@ -17,8 +17,12 @@ export function useSettingsPanelController({
   normalizePanel: (panel: SettingsPanelId) => SettingsPanelId;
   open: boolean;
 }) {
-  const [activePanel, setActivePanel] = useState<SettingsPanelId>(() => normalizePanel(initialPanel));
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [activePanel, setActivePanel] = useState<SettingsPanelId>(() =>
+    normalizePanel(initialPanel),
+  );
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(),
+  );
   const previousOpenRef = useRef(open);
   const previousInitialPanelRef = useRef(initialPanel);
 
@@ -31,21 +35,29 @@ export function useSettingsPanelController({
     });
   }, []);
 
-  const openPanel = useCallback((panelId: SettingsPanelId) => {
-    const normalizedPanelId = normalizePanel(panelId);
-    const group = groups.find((candidate) => candidate.panels.some((panel) => panel.id === normalizedPanelId));
-    setActivePanel(normalizedPanelId);
-    if (!group) return;
-    setCollapsedGroups((current) => {
-      if (!current.has(group.id)) return current;
-      const next = new Set(current);
-      next.delete(group.id);
-      return next;
-    });
-  }, [groups, normalizePanel]);
+  const openPanel = useCallback(
+    (panelId: SettingsPanelId) => {
+      const normalizedPanelId = normalizePanel(panelId);
+      const group = groups.find((candidate) =>
+        candidate.panels.some((panel) => panel.id === normalizedPanelId),
+      );
+      setActivePanel(normalizedPanelId);
+      if (!group) return;
+      setCollapsedGroups((current) => {
+        if (!current.has(group.id)) return current;
+        const next = new Set(current);
+        next.delete(group.id);
+        return next;
+      });
+    },
+    [groups, normalizePanel],
+  );
 
   useEffect(() => {
-    const shouldSyncPanel = open && (!previousOpenRef.current || previousInitialPanelRef.current !== initialPanel);
+    const shouldSyncPanel =
+      open &&
+      (!previousOpenRef.current ||
+        previousInitialPanelRef.current !== initialPanel);
     previousOpenRef.current = open;
     previousInitialPanelRef.current = initialPanel;
     if (shouldSyncPanel) {

@@ -2,7 +2,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
-import { copyPromptImagesToClipboard, copyPromptTextToClipboard } from "./promptClipboard";
+import {
+  copyPromptImagesToClipboard,
+  copyPromptTextToClipboard,
+} from "./promptClipboard";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async () => undefined),
@@ -20,7 +23,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
-  delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  delete (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
 });
 
 describe("promptClipboard", () => {
@@ -59,29 +63,40 @@ describe("promptClipboard", () => {
         writeText: vi.fn(async () => undefined),
       },
     });
-    vi.stubGlobal("ClipboardItem", class ClipboardItem {
-      constructor(public readonly items: Record<string, Blob>) {}
-    });
-    vi.mocked(invoke).mockRejectedValueOnce(new Error("native clipboard unavailable"));
+    vi.stubGlobal(
+      "ClipboardItem",
+      class ClipboardItem {
+        constructor(public readonly items: Record<string, Blob>) {}
+      },
+    );
+    vi.mocked(invoke).mockRejectedValueOnce(
+      new Error("native clipboard unavailable"),
+    );
 
-    await copyPromptImagesToClipboard([{
-      dataUrl: "data:image/png;base64,ZGlhZ3JhbQ==",
-      mimeType: "image/png",
-      name: "diagram.png",
-    }]);
+    await copyPromptImagesToClipboard([
+      {
+        dataUrl: "data:image/png;base64,ZGlhZ3JhbQ==",
+        mimeType: "image/png",
+        name: "diagram.png",
+      },
+    ]);
 
     expect(write).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to image placeholders when image clipboard writes are unavailable outside Tauri", async () => {
-    await copyPromptImagesToClipboard([{
-      dataUrl: "data:image/png;base64,ZGlhZ3JhbQ==",
-      mimeType: "image/png",
-      name: "diagram.png",
-    }]);
+    await copyPromptImagesToClipboard([
+      {
+        dataUrl: "data:image/png;base64,ZGlhZ3JhbQ==",
+        mimeType: "image/png",
+        name: "diagram.png",
+      },
+    ]);
 
     expect(invoke).not.toHaveBeenCalled();
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("[image: diagram.png]");
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "[image: diagram.png]",
+    );
   });
 
   it("copies text through the web clipboard path inside Tauri", async () => {
@@ -93,6 +108,8 @@ describe("promptClipboard", () => {
     await copyPromptTextToClipboard("Text only prompt.\n");
 
     expect(invoke).not.toHaveBeenCalled();
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Text only prompt.");
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "Text only prompt.",
+    );
   });
 });

@@ -9,7 +9,9 @@ import {
 
 describe("ConversationSkeleton", () => {
   it("composes the page fallback from the columns recipe", () => {
-    const html = renderToStaticMarkup(<ConversationsPageSkeleton label="Loading conversations" />);
+    const html = renderToStaticMarkup(
+      <ConversationsPageSkeleton label="Loading conversations" />,
+    );
 
     expect(html).toContain("app-skeleton-root");
     expect(html).toContain("lg:flex-row");
@@ -18,8 +20,12 @@ describe("ConversationSkeleton", () => {
   });
 
   it("uses one content status root for local loading fallbacks", () => {
-    const listHtml = renderToStaticMarkup(<ConversationLoadingState label="Loading session" />);
-    const previewHtml = renderToStaticMarkup(<ConversationPreviewLoadingState label="Loading preview" />);
+    const listHtml = renderToStaticMarkup(
+      <ConversationLoadingState label="Loading session" />,
+    );
+    const previewHtml = renderToStaticMarkup(
+      <ConversationPreviewLoadingState label="Loading preview" />,
+    );
 
     expect((listHtml.match(/role="status"/g) ?? []).length).toBe(1);
     expect((previewHtml.match(/role="status"/g) ?? []).length).toBe(1);
@@ -31,6 +37,8 @@ describe("ConversationSkeleton", () => {
     const html = renderToStaticMarkup(<ConversationTurnSkeleton />);
     expect(html).toContain("conversation-turn-skeleton");
     expect(html).toContain("aurora-skeleton");
-    expect((html.match(/aria-hidden="true"/g) ?? []).length).toBeGreaterThanOrEqual(1);
+    expect(
+      (html.match(/aria-hidden="true"/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 });

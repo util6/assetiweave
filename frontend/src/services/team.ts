@@ -1,9 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { teamDetailSchema, teamListSchema } from "../schemas/team";
-import type { CreateTeamInput, TeamDetail, UpdateTeamInput } from "../types/team";
+import type {
+  CreateTeamInput,
+  TeamDetail,
+  UpdateTeamInput,
+} from "../types/team";
 import { isTauriRuntime } from "./appUpdater";
 
-const DESKTOP_REQUIRED = "Team changes require the desktop application runtime.";
+const DESKTOP_REQUIRED =
+  "Team changes require the desktop application runtime.";
 
 export async function listTeams(): Promise<TeamDetail[]> {
   if (!isTauriRuntime()) {

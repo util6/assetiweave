@@ -73,7 +73,8 @@ export interface ConversationAdapterManifest {
   card_kinds?: import("../types").ConversationCardKindDefinition[];
 }
 
-export type ConversationAdapterRuntimeKind = "node" | "python" | "bash" | "executable";
+export type ConversationAdapterRuntimeKind =
+  "node" | "python" | "bash" | "executable";
 
 export interface ConversationAdapterRuntime {
   type: ConversationAdapterRuntimeKind;
@@ -136,17 +137,16 @@ export type ImportConversationSourceProgress = "validating" | "source" | "sync";
 export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus =
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
-const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT = "conversation-search-index-task-updated";
-const CONVERSATION_DATA_MAINTENANCE_TASK_UPDATED_EVENT = "conversation-data-maintenance-task-updated";
+const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT =
+  "conversation-search-index-task-updated";
+const CONVERSATION_DATA_MAINTENANCE_TASK_UPDATED_EVENT =
+  "conversation-data-maintenance-task-updated";
 
-export type ConversationScriptCatalogSourceKind = "github" | "artifact_zip" | "local_directory";
+export type ConversationScriptCatalogSourceKind =
+  "github" | "artifact_zip" | "local_directory";
 
 export interface ConversationScriptCatalogSource {
   type: ConversationScriptCatalogSourceKind;
@@ -206,12 +206,7 @@ export interface ConversationAdapterPackageCatalogEntry {
 }
 
 export type ConversationAdapterPackageChangeAction =
-  | "register"
-  | "unregister"
-  | "install"
-  | "update"
-  | "uninstall"
-  | "revalidate";
+  "register" | "unregister" | "install" | "update" | "uninstall" | "revalidate";
 
 export interface ConversationAdapterPackageInspection {
   origin: ConversationAdapterPackage["origin"];
@@ -283,7 +278,8 @@ export interface ConversationScriptCatalogEntry {
   install_path?: string | null;
 }
 
-export type ConversationScriptInstallTaskStatus = "running" | "completed" | "failed";
+export type ConversationScriptInstallTaskStatus =
+  "running" | "completed" | "failed";
 
 export interface ConversationScriptInstallTaskSnapshot {
   id: string;
@@ -327,11 +323,7 @@ export interface ConversationSyncTaskProgress {
 
 export type ConversationDataMaintenanceOperation = "audit" | "repair";
 export type ConversationDataMaintenanceTaskStatus =
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 export interface ConversationDataMaintenanceTaskSnapshot {
   id: string;
@@ -427,7 +419,9 @@ export function summarizeConversationSyncTask(
 
   return results.reduce<ConversationSyncSummaryCounts>(
     (summary, rawResult) => {
-      const result = isRecord(rawResult) ? (rawResult as ConversationSyncResultItem) : {};
+      const result = isRecord(rawResult)
+        ? (rawResult as ConversationSyncResultItem)
+        : {};
       const sessionCount = numberValue(result.session_count);
       const activeSessionCount = numberValue(result.active_session_count);
       const skippedSessionCount = numberValue(result.skipped_session_count);
@@ -437,13 +431,17 @@ export function summarizeConversationSyncTask(
         incrementalStatsAvailable:
           summary.incrementalStatsAvailable || result.incremental === true,
         discoveredSessionCount:
-          summary.discoveredSessionCount + (result.incremental === true ? sessionCount : 0),
+          summary.discoveredSessionCount +
+          (result.incremental === true ? sessionCount : 0),
         changedSessionCount:
           summary.changedSessionCount +
-          (hasActiveSessionCount ? activeSessionCount : Math.max(0, sessionCount - skippedSessionCount)),
+          (hasActiveSessionCount
+            ? activeSessionCount
+            : Math.max(0, sessionCount - skippedSessionCount)),
         skippedSessionCount: summary.skippedSessionCount + skippedSessionCount,
         retainedSessionCount:
-          summary.retainedSessionCount + numberValue(result.retained_session_count),
+          summary.retainedSessionCount +
+          numberValue(result.retained_session_count),
         turnCount: summary.turnCount + numberValue(result.turn_count),
         warningCount: summary.warningCount + numberValue(result.warning_count),
         errorCount: summary.errorCount,
@@ -463,7 +461,9 @@ export function summarizeConversationSyncTask(
   );
 }
 
-export async function listConversationAdapters(): Promise<ConversationAdapter[]> {
+export async function listConversationAdapters(): Promise<
+  ConversationAdapter[]
+> {
   try {
     return await invoke<ConversationAdapter[]>("list_conversation_adapters");
   } catch (error) {
@@ -479,9 +479,12 @@ export async function validateConversationAdapter(
   manifestPath: string,
 ): Promise<ConversationAdapterValidationResult> {
   try {
-    return await invoke<ConversationAdapterValidationResult>("validate_conversation_adapter", {
-      params: { manifest_path: manifestPath },
-    });
+    return await invoke<ConversationAdapterValidationResult>(
+      "validate_conversation_adapter",
+      {
+        params: { manifest_path: manifestPath },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -536,9 +539,16 @@ export async function registerConversationAdapter(
   confirmed = false,
 ): Promise<ConversationAdapterRegisterResult> {
   try {
-    const result = await invoke<ConversationAdapterRegisterResult>("register_conversation_adapter", {
-      params: { dry_run: dryRun, manifest_path: manifestPath, yes: confirmed },
-    });
+    const result = await invoke<ConversationAdapterRegisterResult>(
+      "register_conversation_adapter",
+      {
+        params: {
+          dry_run: dryRun,
+          manifest_path: manifestPath,
+          yes: confirmed,
+        },
+      },
+    );
     if (!dryRun) notifyConversationAdaptersChanged();
     return result;
   } catch (error) {
@@ -562,9 +572,12 @@ export async function upsertConversationSource(
   dryRun = false,
 ): Promise<ConversationSourceUpsertResult> {
   try {
-    return await invoke<ConversationSourceUpsertResult>("upsert_conversation_source", {
-      params: { dry_run: dryRun, source },
-    });
+    return await invoke<ConversationSourceUpsertResult>(
+      "upsert_conversation_source",
+      {
+        params: { dry_run: dryRun, source },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -584,14 +597,26 @@ export async function importConversationSource(
   if (!validation.manifest.capabilities.includes("read_session")) {
     throw new Error("conversation adapter must declare read_session");
   }
-  if (params.record_kind === "web" && !validation.manifest.capabilities.includes("web_records")) {
-    throw new Error("web record imports require an adapter with web_records capability");
+  if (
+    params.record_kind === "web" &&
+    !validation.manifest.capabilities.includes("web_records")
+  ) {
+    throw new Error(
+      "web record imports require an adapter with web_records capability",
+    );
   }
-  if (params.record_kind !== "web" && validation.manifest.capabilities.includes("web_records")) {
-    throw new Error("web record adapters must be imported from the web records page");
+  if (
+    params.record_kind !== "web" &&
+    validation.manifest.capabilities.includes("web_records")
+  ) {
+    throw new Error(
+      "web record adapters must be imported from the web records page",
+    );
   }
   if (!validation.manifest.input_kinds.includes(params.source_kind)) {
-    throw new Error(`conversation adapter does not support source kind: ${params.source_kind}`);
+    throw new Error(
+      `conversation adapter does not support source kind: ${params.source_kind}`,
+    );
   }
 
   onProgress?.("source");
@@ -725,9 +750,12 @@ export async function listConversationScriptCatalog(
   catalogUrl?: string | null,
 ): Promise<ConversationScriptCatalogEntry[]> {
   try {
-    return await invoke<ConversationScriptCatalogEntry[]>("list_conversation_script_catalog", {
-      params: { catalog_url: catalogUrl?.trim() || null },
-    });
+    return await invoke<ConversationScriptCatalogEntry[]>(
+      "list_conversation_script_catalog",
+      {
+        params: { catalog_url: catalogUrl?.trim() || null },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -741,9 +769,12 @@ export async function listConversationAdapterPackages(
   catalogUrl?: string | null,
 ): Promise<ConversationAdapterPackageCatalogEntry[]> {
   try {
-    return await invoke<ConversationAdapterPackageCatalogEntry[]>("list_conversation_adapter_packages", {
-      params: { catalog_url: catalogUrl?.trim() || null },
-    });
+    return await invoke<ConversationAdapterPackageCatalogEntry[]>(
+      "list_conversation_adapter_packages",
+      {
+        params: { catalog_url: catalogUrl?.trim() || null },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -757,12 +788,15 @@ export async function inspectConversationAdapterPackage(params: {
   packageId?: string | null;
   adapterId?: string | null;
 }): Promise<ConversationAdapterPackageInspection> {
-  return await invoke<ConversationAdapterPackageInspection>("inspect_conversation_adapter_package", {
-    params: {
-      package_id: params.packageId?.trim() || null,
-      adapter_id: params.adapterId?.trim() || null,
+  return await invoke<ConversationAdapterPackageInspection>(
+    "inspect_conversation_adapter_package",
+    {
+      params: {
+        package_id: params.packageId?.trim() || null,
+        adapter_id: params.adapterId?.trim() || null,
+      },
     },
-  });
+  );
 }
 
 export async function prepareConversationAdapterPackageChange(params: {
@@ -914,15 +948,18 @@ export async function installConversationAdapterPackage(params: {
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
-    const result = await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_adapter_package", {
-      params: {
-        catalog_url: params.catalogUrl?.trim() || null,
-        dry_run: params.dryRun ?? false,
-        package_id: params.packageId,
-        version: params.version?.trim() || null,
-        yes: params.confirmed ?? false,
+    const result = await invoke<ConversationScriptInstallTaskSnapshot>(
+      "install_conversation_adapter_package",
+      {
+        params: {
+          catalog_url: params.catalogUrl?.trim() || null,
+          dry_run: params.dryRun ?? false,
+          package_id: params.packageId,
+          version: params.version?.trim() || null,
+          yes: params.confirmed ?? false,
+        },
       },
-    });
+    );
     if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
     return result;
   } catch (error) {
@@ -930,7 +967,11 @@ export async function installConversationAdapterPackage(params: {
       throw error;
     }
 
-    const result = fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    const result = fallbackPackageTask(
+      params.packageId,
+      params.catalogUrl,
+      params.dryRun,
+    );
     if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
     return result;
   }
@@ -944,15 +985,18 @@ export async function updateConversationAdapterPackage(params: {
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
-    const result = await invoke<ConversationScriptInstallTaskSnapshot>("update_conversation_adapter_package", {
-      params: {
-        catalog_url: params.catalogUrl?.trim() || null,
-        dry_run: params.dryRun ?? false,
-        package_id: params.packageId,
-        version: params.version?.trim() || null,
-        yes: params.confirmed ?? false,
+    const result = await invoke<ConversationScriptInstallTaskSnapshot>(
+      "update_conversation_adapter_package",
+      {
+        params: {
+          catalog_url: params.catalogUrl?.trim() || null,
+          dry_run: params.dryRun ?? false,
+          package_id: params.packageId,
+          version: params.version?.trim() || null,
+          yes: params.confirmed ?? false,
+        },
       },
-    });
+    );
     if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
     return result;
   } catch (error) {
@@ -960,7 +1004,11 @@ export async function updateConversationAdapterPackage(params: {
       throw error;
     }
 
-    const result = fallbackPackageTask(params.packageId, params.catalogUrl, params.dryRun);
+    const result = fallbackPackageTask(
+      params.packageId,
+      params.catalogUrl,
+      params.dryRun,
+    );
     if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
     return result;
   }
@@ -971,13 +1019,16 @@ export async function uninstallConversationAdapterPackage(params: {
   dryRun?: boolean;
   confirmed?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
-  const result = await invoke<ConversationScriptInstallTaskSnapshot>("uninstall_conversation_adapter_package", {
-    params: {
-      dry_run: params.dryRun ?? false,
-      package_id: params.packageId,
-      yes: params.confirmed ?? false,
+  const result = await invoke<ConversationScriptInstallTaskSnapshot>(
+    "uninstall_conversation_adapter_package",
+    {
+      params: {
+        dry_run: params.dryRun ?? false,
+        package_id: params.packageId,
+        yes: params.confirmed ?? false,
+      },
     },
-  });
+  );
   if (!(params.dryRun ?? false)) notifyConversationAdaptersChanged();
   return result;
 }
@@ -999,8 +1050,13 @@ export async function unregisterConversationAdapter(params: {
 }
 
 function notifyConversationAdaptersChanged() {
-  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
-    window.dispatchEvent(new Event("assetiweave:conversation-adapters-changed"));
+  if (
+    typeof window !== "undefined" &&
+    typeof window.dispatchEvent === "function"
+  ) {
+    window.dispatchEvent(
+      new Event("assetiweave:conversation-adapters-changed"),
+    );
   }
 }
 
@@ -1010,14 +1066,17 @@ export async function installConversationScript(params: {
   dryRun?: boolean;
 }): Promise<ConversationScriptInstallTaskSnapshot> {
   try {
-    return await invoke<ConversationScriptInstallTaskSnapshot>("install_conversation_script", {
-      params: {
-        catalog_url: params.catalogUrl?.trim() || null,
-        dry_run: params.dryRun ?? false,
-        item_id: params.itemId,
-        yes: params.dryRun ? false : true,
+    return await invoke<ConversationScriptInstallTaskSnapshot>(
+      "install_conversation_script",
+      {
+        params: {
+          catalog_url: params.catalogUrl?.trim() || null,
+          dry_run: params.dryRun ?? false,
+          item_id: params.itemId,
+          yes: params.dryRun ? false : true,
+        },
       },
-    });
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1039,9 +1098,7 @@ export async function installConversationScript(params: {
   }
 }
 
-export async function getConversationAdapterPackageTask(): Promise<
-  ConversationScriptInstallTaskSnapshot | null
-> {
+export async function getConversationAdapterPackageTask(): Promise<ConversationScriptInstallTaskSnapshot | null> {
   try {
     return await invoke<ConversationScriptInstallTaskSnapshot | null>(
       "get_conversation_adapter_package_task",
@@ -1054,9 +1111,7 @@ export async function getConversationAdapterPackageTask(): Promise<
   }
 }
 
-export async function getConversationScriptInstallTask(): Promise<
-  ConversationScriptInstallTaskSnapshot | null
-> {
+export async function getConversationScriptInstallTask(): Promise<ConversationScriptInstallTaskSnapshot | null> {
   try {
     return await invoke<ConversationScriptInstallTaskSnapshot | null>(
       "get_conversation_script_install_task",
@@ -1086,18 +1141,17 @@ export function subscribeConversationScriptInstallTask(
   );
 }
 
-
-export async function syncConversations(
-  params: {
-    source_id?: string | null;
-    adapter_id?: string | null;
-    dry_run?: boolean;
-    record_kind?: ConversationRecordKind | null;
-    mode?: ConversationSyncMode;
-  },
-): Promise<ConversationSyncTaskSnapshot> {
+export async function syncConversations(params: {
+  source_id?: string | null;
+  adapter_id?: string | null;
+  dry_run?: boolean;
+  record_kind?: ConversationRecordKind | null;
+  mode?: ConversationSyncMode;
+}): Promise<ConversationSyncTaskSnapshot> {
   try {
-    return await invoke<ConversationSyncTaskSnapshot>("sync_conversations", { params });
+    return await invoke<ConversationSyncTaskSnapshot>("sync_conversations", {
+      params,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1135,7 +1189,10 @@ export async function syncConversations(
             active_session_count: fallbackSessions.length,
             skipped_session_count: 0,
             retained_session_count: 0,
-            turn_count: fallbackSessions.reduce((total, session) => total + session.turn_count, 0),
+            turn_count: fallbackSessions.reduce(
+              (total, session) => total + session.turn_count,
+              0,
+            ),
             warning_count: 0,
             warnings: [],
           },
@@ -1148,7 +1205,9 @@ export async function syncConversations(
 
 export async function getConversationSyncTask(): Promise<ConversationSyncTaskSnapshot | null> {
   try {
-    return await invoke<ConversationSyncTaskSnapshot | null>("get_conversation_sync_task");
+    return await invoke<ConversationSyncTaskSnapshot | null>(
+      "get_conversation_sync_task",
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1158,17 +1217,19 @@ export async function getConversationSyncTask(): Promise<ConversationSyncTaskSna
 }
 
 export async function cancelConversationSync(taskId: string) {
-  return invoke<ConversationSyncTaskSnapshot>(
-    "cancel_conversation_sync",
-    { params: { task_id: taskId } },
-  );
+  return invoke<ConversationSyncTaskSnapshot>("cancel_conversation_sync", {
+    params: { task_id: taskId },
+  });
 }
 
 export async function auditConversationData(
   params: ConversationDataAuditParams = {},
 ): Promise<ConversationDataMaintenanceTaskSnapshot> {
   try {
-    return await invoke<ConversationDataMaintenanceTaskSnapshot>("audit_conversation_data", { params });
+    return await invoke<ConversationDataMaintenanceTaskSnapshot>(
+      "audit_conversation_data",
+      { params },
+    );
   } catch (error) {
     if (isTauriRuntime()) throw error;
     return previewConversationDataMaintenanceTask("audit", params, false);
@@ -1179,10 +1240,17 @@ export async function repairConversationData(
   params: ConversationDataRepairParams = {},
 ): Promise<ConversationDataMaintenanceTaskSnapshot> {
   try {
-    return await invoke<ConversationDataMaintenanceTaskSnapshot>("repair_conversation_data", { params });
+    return await invoke<ConversationDataMaintenanceTaskSnapshot>(
+      "repair_conversation_data",
+      { params },
+    );
   } catch (error) {
     if (isTauriRuntime()) throw error;
-    return previewConversationDataMaintenanceTask("repair", params, Boolean(params.dry_run));
+    return previewConversationDataMaintenanceTask(
+      "repair",
+      params,
+      Boolean(params.dry_run),
+    );
   }
 }
 
@@ -1197,7 +1265,9 @@ export async function getConversationDataMaintenanceTask(): Promise<Conversation
   }
 }
 
-export async function listConversationDataMaintenanceTasks(): Promise<ConversationDataMaintenanceTaskSnapshot[]> {
+export async function listConversationDataMaintenanceTasks(): Promise<
+  ConversationDataMaintenanceTaskSnapshot[]
+> {
   try {
     return await invoke<ConversationDataMaintenanceTaskSnapshot[]>(
       "list_conversation_data_maintenance_tasks",
@@ -1267,14 +1337,19 @@ export function subscribeConversationSyncTasks(
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<ConversationSyncTaskSnapshot>(CONVERSATION_SYNC_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+  return listen<ConversationSyncTaskSnapshot>(
+    CONVERSATION_SYNC_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
 export async function getConversationSearchIndexStatus(): Promise<ConversationSearchIndexStatus> {
   try {
-    return await invoke<ConversationSearchIndexStatus>("get_conversation_search_index_status");
+    return await invoke<ConversationSearchIndexStatus>(
+      "get_conversation_search_index_status",
+    );
   } catch (error) {
     if (isTauriRuntime()) throw error;
     return previewConversationSearchIndexStatus("missing");
@@ -1283,17 +1358,28 @@ export async function getConversationSearchIndexStatus(): Promise<ConversationSe
 
 export async function startConversationSearchIndexRebuild(): Promise<ConversationSearchIndexTaskSnapshot> {
   try {
-    return await invoke<ConversationSearchIndexTaskSnapshot>("start_conversation_search_index_rebuild");
+    return await invoke<ConversationSearchIndexTaskSnapshot>(
+      "start_conversation_search_index_rebuild",
+    );
   } catch (error) {
     if (isTauriRuntime()) throw error;
     const now = new Date().toISOString();
-    return { id: "preview-search-index", status: "completed", started_at: now, finished_at: now, result: null, error: null };
+    return {
+      id: "preview-search-index",
+      status: "completed",
+      started_at: now,
+      finished_at: now,
+      result: null,
+      error: null,
+    };
   }
 }
 
 export async function getConversationSearchIndexTask(): Promise<ConversationSearchIndexTaskSnapshot | null> {
   try {
-    return await invoke<ConversationSearchIndexTaskSnapshot | null>("get_conversation_search_index_task");
+    return await invoke<ConversationSearchIndexTaskSnapshot | null>(
+      "get_conversation_search_index_task",
+    );
   } catch (error) {
     if (isTauriRuntime()) throw error;
     return null;
@@ -1306,12 +1392,17 @@ export function subscribeConversationSearchIndexTasks(
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<ConversationSearchIndexTaskSnapshot>(CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+  return listen<ConversationSearchIndexTaskSnapshot>(
+    CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
-function previewConversationSearchIndexStatus(health: ConversationSearchIndexStatus["health"]): ConversationSearchIndexStatus {
+function previewConversationSearchIndexStatus(
+  health: ConversationSearchIndexStatus["health"],
+): ConversationSearchIndexStatus {
   return {
     health,
     schema_version: 1,
@@ -1331,9 +1422,13 @@ function previewConversationSearchIndexStatus(health: ConversationSearchIndexSta
   };
 }
 
-export async function listConversationSyncTasks(): Promise<ConversationSyncTaskSnapshot[]> {
+export async function listConversationSyncTasks(): Promise<
+  ConversationSyncTaskSnapshot[]
+> {
   try {
-    return await invoke<ConversationSyncTaskSnapshot[]>("list_conversation_sync_tasks");
+    return await invoke<ConversationSyncTaskSnapshot[]>(
+      "list_conversation_sync_tasks",
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1342,26 +1437,43 @@ export async function listConversationSyncTasks(): Promise<ConversationSyncTaskS
   }
 }
 
-export async function listConversationSessions(params: ConversationSessionListParams): Promise<ConversationSessionListItem[]> {
+export async function listConversationSessions(
+  params: ConversationSessionListParams,
+): Promise<ConversationSessionListItem[]> {
   try {
-    return await invoke<ConversationSessionListItem[]>("list_conversation_sessions", { params });
+    return await invoke<ConversationSessionListItem[]>(
+      "list_conversation_sessions",
+      { params },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
     return fallbackSessions.filter((session) => {
-      if (params.adapter_id && session.adapter_id !== params.adapter_id) return false;
-      if (params.source_id && session.source_id !== params.source_id) return false;
-      if (params.query && !`${session.title} ${session.project_path ?? ""}`.toLowerCase().includes(params.query.toLowerCase())) return false;
+      if (params.adapter_id && session.adapter_id !== params.adapter_id)
+        return false;
+      if (params.source_id && session.source_id !== params.source_id)
+        return false;
+      if (
+        params.query &&
+        !`${session.title} ${session.project_path ?? ""}`
+          .toLowerCase()
+          .includes(params.query.toLowerCase())
+      )
+        return false;
       return true;
     });
   }
 }
 
-export async function getConversationSession(sessionId: string): Promise<ConversationSessionDetail> {
+export async function getConversationSession(
+  sessionId: string,
+): Promise<ConversationSessionDetail> {
   try {
-    return await invoke<ConversationSessionDetail>("get_conversation_session", { params: { session_id: sessionId } });
+    return await invoke<ConversationSessionDetail>("get_conversation_session", {
+      params: { session_id: sessionId },
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1371,26 +1483,41 @@ export async function getConversationSession(sessionId: string): Promise<Convers
   }
 }
 
-export async function listWebRecordSessions(params: ConversationSessionListParams): Promise<ConversationSessionListItem[]> {
+export async function listWebRecordSessions(
+  params: ConversationSessionListParams,
+): Promise<ConversationSessionListItem[]> {
   try {
-    return await invoke<ConversationSessionListItem[]>("list_web_record_sessions", { params });
+    return await invoke<ConversationSessionListItem[]>(
+      "list_web_record_sessions",
+      { params },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
     return fallbackWebSessions.filter((session) => {
-      if (params.adapter_id && session.adapter_id !== params.adapter_id) return false;
-      if (params.source_id && session.source_id !== params.source_id) return false;
-      if (params.query && !session.title.toLowerCase().includes(params.query.toLowerCase())) return false;
+      if (params.adapter_id && session.adapter_id !== params.adapter_id)
+        return false;
+      if (params.source_id && session.source_id !== params.source_id)
+        return false;
+      if (
+        params.query &&
+        !session.title.toLowerCase().includes(params.query.toLowerCase())
+      )
+        return false;
       return true;
     });
   }
 }
 
-export async function getWebRecordSession(sessionId: string): Promise<ConversationSessionDetail> {
+export async function getWebRecordSession(
+  sessionId: string,
+): Promise<ConversationSessionDetail> {
   try {
-    return await invoke<ConversationSessionDetail>("get_web_record_session", { params: { session_id: sessionId } });
+    return await invoke<ConversationSessionDetail>("get_web_record_session", {
+      params: { session_id: sessionId },
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1400,7 +1527,9 @@ export async function getWebRecordSession(sessionId: string): Promise<Conversati
   }
 }
 
-export async function searchConversationRecords(params: ConversationSearchParams): Promise<ConversationSearchResult> {
+export async function searchConversationRecords(
+  params: ConversationSearchParams,
+): Promise<ConversationSearchResult> {
   const trimmedQuery = params.query.trim();
   if (!trimmedQuery) {
     const recordKind = params.record_kind ?? "session";
@@ -1444,7 +1573,10 @@ export async function searchConversationRecords(params: ConversationSearchParams
   };
 
   try {
-    return await invoke<ConversationSearchResult>("search_conversation_records", { params: payload });
+    return await invoke<ConversationSearchResult>(
+      "search_conversation_records",
+      { params: payload },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1454,9 +1586,14 @@ export async function searchConversationRecords(params: ConversationSearchParams
   }
 }
 
-export async function listConversationQuestions(params: ConversationQuestionListParams): Promise<ConversationQuestionDetail[]> {
+export async function listConversationQuestions(
+  params: ConversationQuestionListParams,
+): Promise<ConversationQuestionDetail[]> {
   try {
-    return await invoke<ConversationQuestionDetail[]>("list_conversation_questions", { params });
+    return await invoke<ConversationQuestionDetail[]>(
+      "list_conversation_questions",
+      { params },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1466,23 +1603,38 @@ export async function listConversationQuestions(params: ConversationQuestionList
   }
 }
 
-export async function getConversationQuestion(questionId: string): Promise<ConversationQuestionDetail> {
+export async function getConversationQuestion(
+  questionId: string,
+): Promise<ConversationQuestionDetail> {
   try {
-    return await invoke<ConversationQuestionDetail>("get_conversation_question", { params: { question_id: questionId } });
+    return await invoke<ConversationQuestionDetail>(
+      "get_conversation_question",
+      { params: { question_id: questionId } },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
-    return fallbackSessionDetail.questions.find((question) => question.question.id === questionId) ?? fallbackSessionDetail.questions[0];
+    return (
+      fallbackSessionDetail.questions.find(
+        (question) => question.question.id === questionId,
+      ) ?? fallbackSessionDetail.questions[0]
+    );
   }
 }
 
-export async function mergeConversationQuestions(questionIds: string[], dryRun = false): Promise<ConversationMutationResult> {
+export async function mergeConversationQuestions(
+  questionIds: string[],
+  dryRun = false,
+): Promise<ConversationMutationResult> {
   try {
-    return await invoke<ConversationMutationResult>("merge_conversation_questions", {
-      params: { question_ids: questionIds, dry_run: dryRun },
-    });
+    return await invoke<ConversationMutationResult>(
+      "merge_conversation_questions",
+      {
+        params: { question_ids: questionIds, dry_run: dryRun },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1492,16 +1644,29 @@ export async function mergeConversationQuestions(questionIds: string[], dryRun =
       dry_run: dryRun,
       session_id: fallbackSessionDetail.session.id,
       affected_question_ids: questionIds,
-      questions: fallbackSessionDetail.questions.filter((question) => questionIds.includes(question.question.id)),
+      questions: fallbackSessionDetail.questions.filter((question) =>
+        questionIds.includes(question.question.id),
+      ),
     };
   }
 }
 
-export async function splitConversationQuestion(questionId: string, beforeTurnId: string, dryRun = false): Promise<ConversationMutationResult> {
+export async function splitConversationQuestion(
+  questionId: string,
+  beforeTurnId: string,
+  dryRun = false,
+): Promise<ConversationMutationResult> {
   try {
-    return await invoke<ConversationMutationResult>("split_conversation_question", {
-      params: { question_id: questionId, before_turn_id: beforeTurnId, dry_run: dryRun },
-    });
+    return await invoke<ConversationMutationResult>(
+      "split_conversation_question",
+      {
+        params: {
+          question_id: questionId,
+          before_turn_id: beforeTurnId,
+          dry_run: dryRun,
+        },
+      },
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -1511,7 +1676,11 @@ export async function splitConversationQuestion(questionId: string, beforeTurnId
       dry_run: dryRun,
       session_id: fallbackSessionDetail.session.id,
       affected_question_ids: [questionId],
-      questions: fallbackSessionDetail.questions.filter((question) => question.question.id === questionId || question.turns.some((turn) => turn.id === beforeTurnId)),
+      questions: fallbackSessionDetail.questions.filter(
+        (question) =>
+          question.question.id === questionId ||
+          question.turns.some((turn) => turn.id === beforeTurnId),
+      ),
     };
   }
 }
@@ -1592,11 +1761,32 @@ export async function exportWebRecordSession(
   }
 }
 
-function fallbackConversationSearch(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchResult {
-  const detail = params.record_kind === "web" ? fallbackWebSessionDetail : fallbackSessionDetail;
-  const session = params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
+function fallbackConversationSearch(
+  params: Required<
+    Pick<
+      ConversationSearchParams,
+      | "query"
+      | "record_kind"
+      | "content_types"
+      | "limit"
+      | "offset"
+      | "timeline"
+    >
+  > &
+    ConversationSearchParams,
+): ConversationSearchResult {
+  const detail =
+    params.record_kind === "web"
+      ? fallbackWebSessionDetail
+      : fallbackSessionDetail;
+  const session =
+    params.record_kind === "web" ? fallbackWebSessions[0] : fallbackSessions[0];
   const needle = params.query.trim().toLowerCase();
-  if (params.record_kind !== "web" && params.project_path && session.project_path !== params.project_path) {
+  if (
+    params.record_kind !== "web" &&
+    params.project_path &&
+    session.project_path !== params.project_path
+  ) {
     return {
       query: params.query,
       record_kind: params.record_kind,
@@ -1605,7 +1795,9 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
       hits: [],
     };
   }
-  if (!conversationSessionWithinSearchTime(session, params.since, params.until)) {
+  if (
+    !conversationSessionWithinSearchTime(session, params.since, params.until)
+  ) {
     return {
       query: params.query,
       record_kind: params.record_kind,
@@ -1617,38 +1809,49 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
   const allowedTypes = new Set(params.content_types);
   const allowedCardKinds = new Set(params.card_kinds ?? []);
   const allowedSemanticRoles = new Set(params.semantic_roles ?? []);
-  const filtersCards = allowedTypes.size > 0 || allowedCardKinds.size > 0 || allowedSemanticRoles.size > 0;
-  const includeQuestions = params.include_questions
-    ?? (!filtersCards || allowedTypes.has("question"));
-  const includeCards = params.include_cards
-    ?? (allowedTypes.size === 0 || allowedCardKinds.size > 0 || allowedSemanticRoles.size > 0);
+  const filtersCards =
+    allowedTypes.size > 0 ||
+    allowedCardKinds.size > 0 ||
+    allowedSemanticRoles.size > 0;
+  const includeQuestions =
+    params.include_questions ?? (!filtersCards || allowedTypes.has("question"));
+  const includeCards =
+    params.include_cards ??
+    (allowedTypes.size === 0 ||
+      allowedCardKinds.size > 0 ||
+      allowedSemanticRoles.size > 0);
   const hits: ConversationSearchHit[] = [];
 
   for (const [questionIndex, questionDetail] of detail.questions.entries()) {
-    const questionTitle = conversationQuestionTitle(questionDetail) ?? "Untitled question";
+    const questionTitle =
+      conversationQuestionTitle(questionDetail) ?? "Untitled question";
     for (const turn of questionDetail.turns) {
-      if (includeQuestions) pushFallbackHit(hits, {
-        blockId: `${turn.id}-question`,
-        cardType: "question",
-        needle,
-        partId: null,
-        questionDetail,
-        questionIndex,
-        questionTitle,
-        session,
-        text: turn.user_text,
-        turnId: turn.id,
-      });
+      if (includeQuestions)
+        pushFallbackHit(hits, {
+          blockId: `${turn.id}-question`,
+          cardType: "question",
+          needle,
+          partId: null,
+          questionDetail,
+          questionIndex,
+          questionTitle,
+          session,
+          text: turn.user_text,
+          turnId: turn.id,
+        });
 
       if (!includeCards) continue;
-      for (const node of questionDetail.projected_content_nodes.filter((candidate) => candidate.turn_id === turn.id)) {
+      for (const node of questionDetail.projected_content_nodes.filter(
+        (candidate) => candidate.turn_id === turn.id,
+      )) {
         const presentationKind = conversationContentNodePresentationKind(node);
-        const selected = !filtersCards
-          || allowedTypes.has(node.node_type)
-          || allowedTypes.has(presentationKind)
-          || (node.semantic_role ? allowedTypes.has(node.semantic_role) : false)
-          || allowedCardKinds.has(node.node_type)
-          || allowedSemanticRoles.has(node.semantic_role ?? "");
+        const selected =
+          !filtersCards ||
+          allowedTypes.has(node.node_type) ||
+          allowedTypes.has(presentationKind) ||
+          (node.semantic_role ? allowedTypes.has(node.semantic_role) : false) ||
+          allowedCardKinds.has(node.node_type) ||
+          allowedSemanticRoles.has(node.semantic_role ?? "");
         if (!selected) continue;
         pushFallbackHit(hits, {
           blockId: node.node_id,
@@ -1681,7 +1884,20 @@ function fallbackConversationSearch(params: Required<Pick<ConversationSearchPara
   };
 }
 
-function conversationSearchScope(params: Required<Pick<ConversationSearchParams, "query" | "record_kind" | "content_types" | "limit" | "offset" | "timeline">> & ConversationSearchParams): ConversationSearchScope {
+function conversationSearchScope(
+  params: Required<
+    Pick<
+      ConversationSearchParams,
+      | "query"
+      | "record_kind"
+      | "content_types"
+      | "limit"
+      | "offset"
+      | "timeline"
+    >
+  > &
+    ConversationSearchParams,
+): ConversationSearchScope {
   return {
     record_kind: params.record_kind,
     adapter_id: params.adapter_id ?? null,
@@ -1691,11 +1907,17 @@ function conversationSearchScope(params: Required<Pick<ConversationSearchParams,
     content_types: params.content_types,
     card_kinds: params.card_kinds ?? [],
     semantic_roles: params.semantic_roles ?? [],
-    include_questions: params.include_questions
-      ?? ((params.content_types.length === 0 && (params.card_kinds?.length ?? 0) === 0 && (params.semantic_roles?.length ?? 0) === 0)
-        || params.content_types.includes("question")),
-    include_cards: params.include_cards
-      ?? (params.content_types.length === 0 || (params.card_kinds?.length ?? 0) > 0 || (params.semantic_roles?.length ?? 0) > 0),
+    include_questions:
+      params.include_questions ??
+      ((params.content_types.length === 0 &&
+        (params.card_kinds?.length ?? 0) === 0 &&
+        (params.semantic_roles?.length ?? 0) === 0) ||
+        params.content_types.includes("question")),
+    include_cards:
+      params.include_cards ??
+      (params.content_types.length === 0 ||
+        (params.card_kinds?.length ?? 0) > 0 ||
+        (params.semantic_roles?.length ?? 0) > 0),
     since: params.since ?? null,
     until: params.until ?? null,
     timeline: params.timeline,
@@ -1704,12 +1926,22 @@ function conversationSearchScope(params: Required<Pick<ConversationSearchParams,
   };
 }
 
-function conversationSessionWithinSearchTime(session: ConversationSessionListItem, since?: string | null, until?: string | null) {
+function conversationSessionWithinSearchTime(
+  session: ConversationSessionListItem,
+  since?: string | null,
+  until?: string | null,
+) {
   if (!since && !until) return true;
-  const sessionTime = Date.parse(session.started_at ?? session.updated_at ?? session.imported_at);
+  const sessionTime = Date.parse(
+    session.started_at ?? session.updated_at ?? session.imported_at,
+  );
   if (!Number.isFinite(sessionTime)) return false;
-  const sinceTime = since ? Date.parse(searchDateBound(since, "start")) : Number.NEGATIVE_INFINITY;
-  const untilTime = until ? Date.parse(searchDateBound(until, "end")) : Number.POSITIVE_INFINITY;
+  const sinceTime = since
+    ? Date.parse(searchDateBound(since, "start"))
+    : Number.NEGATIVE_INFINITY;
+  const untilTime = until
+    ? Date.parse(searchDateBound(until, "end"))
+    : Number.POSITIVE_INFINITY;
   return sessionTime >= sinceTime && sessionTime <= untilTime;
 }
 
@@ -1745,7 +1977,8 @@ function pushFallbackHit(
     question_id: params.questionDetail.question.id,
     question_index: params.questionIndex,
     question_title: params.questionTitle,
-    score: Math.max(1, text.toLowerCase().split(params.needle).length - 1) * 100,
+    score:
+      Math.max(1, text.toLowerCase().split(params.needle).length - 1) * 100,
     session: params.session,
     snippet: fallbackSnippet(text, params.needle),
     turn_id: params.turnId,
@@ -1769,7 +2002,8 @@ const now = new Date().toISOString();
 
 const repositoryCatalogVersionByAdapterId = new Map(
   repositoryConversationCatalog.items.flatMap((item) =>
-    item.adapter_id ? [[item.adapter_id, item.version] as const] : []),
+    item.adapter_id ? [[item.adapter_id, item.version] as const] : [],
+  ),
 );
 
 function repositoryCatalogVersion(adapterId: string, fallback: string) {
@@ -1783,7 +2017,8 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
     executable_path: "~/.assetiweave/conversation-adapters/codex/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
@@ -1797,8 +2032,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "directory", "file"],
@@ -1811,8 +2048,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
     trust_state: "built_in",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["live", "sqlite"],
@@ -1825,8 +2064,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "0.1.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/market/qwen-web/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/market/qwen-web/adapter.js",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/market/qwen-web/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/market/qwen-web/adapter.js",
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
@@ -1839,8 +2080,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "0.2.1",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/market/zcode-session/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/market/zcode-session/zcode_adapter.py",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/market/zcode-session/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/market/zcode-session/zcode_adapter.py",
     trust_state: "trusted",
     capabilities: ["probe", "list_sessions", "read_session"],
     input_kinds: ["sqlite"],
@@ -1853,8 +2096,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "0.1.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/market/chatgpt-web/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/market/chatgpt-web/adapter.js",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/market/chatgpt-web/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/market/chatgpt-web/adapter.js",
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
@@ -1867,8 +2112,10 @@ const fallbackAdapters: ConversationAdapter[] = [
     kind: "external",
     version: "0.1.2",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/market/gemini-web/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/market/gemini-web/adapter.js",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/market/gemini-web/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/market/gemini-web/adapter.js",
     trust_state: "trusted",
     capabilities: ["probe", "read_session", "web_records"],
     input_kinds: ["directory"],
@@ -1886,11 +2133,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "session",
       provider: "codex",
       adapter_id: "codex",
-      description: "Reads local Codex session records and exports normalized conversation turns.",
+      description:
+        "Reads local Codex session records and exports normalized conversation turns.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "codex", "node"],
-      expected_package_hash: "9289a6e3da31a0f0b5d1880921e0237efdecf8fcadd6a96f439e60209ce42f78",
-      expected_content_hash: "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
+      expected_package_hash:
+        "9289a6e3da31a0f0b5d1880921e0237efdecf8fcadd6a96f439e60209ce42f78",
+      expected_content_hash:
+        "7cc193fcb5db8f7536792fd7480e376a9ca1acbca9c201736744304b599db094",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex",
@@ -1903,11 +2153,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "session",
       provider: "opencode",
       adapter_id: "opencode",
-      description: "Reads OpenCode SQLite state and converts sessions into conversation records.",
+      description:
+        "Reads OpenCode SQLite state and converts sessions into conversation records.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "opencode", "sqlite", "node"],
-      expected_package_hash: "6ed55931a1e4f43506ac27838543a1fa2d045a63f395f00ea8a0a2d8dd63c344",
-      expected_content_hash: "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
+      expected_package_hash:
+        "6ed55931a1e4f43506ac27838543a1fa2d045a63f395f00ea8a0a2d8dd63c344",
+      expected_content_hash:
+        "7402082acd6351b771383f98988bf0a88ae1c5093b278ecce5d946df6884bd7e",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode",
@@ -1920,11 +2173,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "session",
       provider: "claude-code",
       adapter_id: "claude-code",
-      description: "Reads Claude Code project conversations and emits the shared external adapter protocol.",
+      description:
+        "Reads Claude Code project conversations and emits the shared external adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "claude-code", "node"],
-      expected_package_hash: "f1ca450d6936012f6cbf8cc1e0046b625fcfa7175025a08d3fe5c5bd82be2a97",
-      expected_content_hash: "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
+      expected_package_hash:
+        "f1ca450d6936012f6cbf8cc1e0046b625fcfa7175025a08d3fe5c5bd82be2a97",
+      expected_content_hash:
+        "84768c83036672f6a6569f9b22914352f58dc677ca4764a7387788376d64a475",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/claude-code",
@@ -1937,11 +2193,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "session",
       provider: "zcode",
       adapter_id: "zcode",
-      description: "Reads ZCode SQLite conversation records using the existing external adapter script.",
+      description:
+        "Reads ZCode SQLite conversation records using the existing external adapter script.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["session", "zcode", "sqlite", "python"],
-      expected_package_hash: "e81a32d1266f199faf37b267691de5b6c12e6dd9acc99b44e384b6bc7630abe5",
-      expected_content_hash: "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
+      expected_package_hash:
+        "e81a32d1266f199faf37b267691de5b6c12e6dd9acc99b44e384b6bc7630abe5",
+      expected_content_hash:
+        "5a50814a30a7894ee5243873bce8cb175ffdce9fab8d6a75324b5d446837c044",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/zcode",
@@ -1954,11 +2213,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "web",
       provider: "chatgpt",
       adapter_id: "chatgpt-web",
-      description: "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
+      description:
+        "Collects ChatGPT web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "chatgpt", "node", "browser-cookie-auth"],
-      expected_package_hash: "9d76886074b7835a3ce60e2a9081e3962d4a1681ad67724ed20f0137b4b6e90b",
-      expected_content_hash: "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
+      expected_package_hash:
+        "9d76886074b7835a3ce60e2a9081e3962d4a1681ad67724ed20f0137b4b6e90b",
+      expected_content_hash:
+        "1b00dd931991ecfbe19954b4dd59cb92513fc28f43a0d8d1f129f275e737aa31",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/chatgpt-web",
@@ -1971,11 +2233,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "web",
       provider: "qwen",
       adapter_id: "qwen-web",
-      description: "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
+      description:
+        "Collects Qwen web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "qwen", "node", "browser-cookie-auth"],
-      expected_package_hash: "e4540023a6f615f79d5653bf166d1381fb5b779e083a8d11defdbea02e255770",
-      expected_content_hash: "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
+      expected_package_hash:
+        "e4540023a6f615f79d5653bf166d1381fb5b779e083a8d11defdbea02e255770",
+      expected_content_hash:
+        "3c485df513a682713de1a946e69c19ddf2d6ed86e68e926e7af4f81338971756",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/qwen-web",
@@ -1988,11 +2253,14 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
       record_kind: "web",
       provider: "gemini",
       adapter_id: "gemini-web",
-      description: "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
+      description:
+        "Collects Gemini web conversations and exposes normalized web records through the adapter protocol.",
       repository_url: "https://github.com/util6/assetiweave",
       tags: ["web", "gemini", "node", "browser-cookie-auth"],
-      expected_package_hash: "e0fd8d5c0add44370c3e3aef249e6cedd1eda20d87c389ddaefb86f3f83856ea",
-      expected_content_hash: "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
+      expected_package_hash:
+        "e0fd8d5c0add44370c3e3aef249e6cedd1eda20d87c389ddaefb86f3f83856ea",
+      expected_content_hash:
+        "20f277c789a111d06f87b30be7523905826d9cb63b7194f5bd18fcf6bc8bfd76",
       source: {
         type: "github",
         url: "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/gemini-web",
@@ -2002,14 +2270,22 @@ function fallbackConversationScriptCatalogEntries(): ConversationScriptCatalogEn
 
   return items.map((item) => {
     const adapterId = item.adapter_id ?? item.id;
-    const installedAdapter = fallbackAdapters.find((adapter) => adapter.id === adapterId) ?? null;
-    const versionState = conversationAdapterVersionState(installedAdapter?.version, item.version);
+    const installedAdapter =
+      fallbackAdapters.find((adapter) => adapter.id === adapterId) ?? null;
+    const versionState = conversationAdapterVersionState(
+      installedAdapter?.version,
+      item.version,
+    );
     return {
       item,
       installed: Boolean(installedAdapter),
       update_available: versionState.update_available,
       installed_adapter: installedAdapter,
-      install_path: installedAdapter?.manifest_path?.replace(/\/conversation-adapter\.json$/, "") ?? null,
+      install_path:
+        installedAdapter?.manifest_path?.replace(
+          /\/conversation-adapter\.json$/,
+          "",
+        ) ?? null,
     };
   });
 }
@@ -2040,7 +2316,10 @@ function fallbackConversationAdapterPackageCatalogEntries(): ConversationAdapter
   });
 }
 
-function conversationAdapterVersionState(installedVersion: string | undefined, catalogVersion: string) {
+function conversationAdapterVersionState(
+  installedVersion: string | undefined,
+  catalogVersion: string,
+) {
   if (!installedVersion) {
     return { update_available: false, ahead_of_release: false };
   }
@@ -2069,7 +2348,10 @@ function compareSemanticVersions(left: string, right: string): number | null {
     return null;
   }
   for (let index = 0; index < 3; index += 1) {
-    const comparison = compareNumericIdentifiers(leftVersion.core[index], rightVersion.core[index]);
+    const comparison = compareNumericIdentifiers(
+      leftVersion.core[index],
+      rightVersion.core[index],
+    );
     if (comparison !== 0) {
       return comparison;
     }
@@ -2083,7 +2365,10 @@ function compareSemanticVersions(left: string, right: string): number | null {
   if (!rightVersion.prerelease) {
     return -1;
   }
-  const length = Math.max(leftVersion.prerelease.length, rightVersion.prerelease.length);
+  const length = Math.max(
+    leftVersion.prerelease.length,
+    rightVersion.prerelease.length,
+  );
   for (let index = 0; index < length; index += 1) {
     const leftIdentifier = leftVersion.prerelease[index];
     const rightIdentifier = rightVersion.prerelease[index];
@@ -2096,7 +2381,10 @@ function compareSemanticVersions(left: string, right: string): number | null {
     const leftNumeric = /^\d+$/.test(leftIdentifier);
     const rightNumeric = /^\d+$/.test(rightIdentifier);
     if (leftNumeric && rightNumeric) {
-      const comparison = compareNumericIdentifiers(leftIdentifier, rightIdentifier);
+      const comparison = compareNumericIdentifiers(
+        leftIdentifier,
+        rightIdentifier,
+      );
       if (comparison !== 0) {
         return comparison;
       }
@@ -2110,16 +2398,21 @@ function compareSemanticVersions(left: string, right: string): number | null {
 }
 
 function parseSemanticVersion(value: string): ParsedSemanticVersion | null {
-  const match = value.trim().match(
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
-  );
+  const match = value
+    .trim()
+    .match(
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    );
   if (!match) {
     return null;
   }
   const prerelease = match[4]?.split(".") ?? null;
   if (
     prerelease?.some(
-      (identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith("0"),
+      (identifier) =>
+        /^\d+$/.test(identifier) &&
+        identifier.length > 1 &&
+        identifier.startsWith("0"),
     )
   ) {
     return null;
@@ -2271,7 +2564,8 @@ const fallbackSessionDetail: ConversationSessionDetail = {
           semanticRole: "answer",
           renderer: "markdown",
           role: "assistant",
-          content: "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
+          content:
+            "AssetIWeave imports source sessions into normalized turns, then groups adjacent turns into question records.",
         }),
         fallbackContentNode({
           nodeId: "preview-part-2",
@@ -2382,24 +2676,29 @@ const fallbackWebSessionDetail: ConversationSessionDetail = {
       question_id: `preview-web-question-${questionIndex + 1}`,
       turn_id: `preview-web-turn-${questionIndex + 1}-${turnIndex + 1}`,
     })),
-    projected_content_nodes: detail.projected_content_nodes.map((node, nodeIndex) => {
-      const turnId = `preview-web-turn-${questionIndex + 1}-${Math.min(node.turn_order + 1, detail.turns.length)}`;
-      const partId = `preview-web-part-${questionIndex + 1}-${nodeIndex + 1}`;
-      const questionId = `preview-web-question-${questionIndex + 1}`;
-      return {
-        ...node,
-        node_id: node.node_order === 0 ? partId : `${partId}-node-${node.node_order}`,
-        question_id: questionId,
-        turn_id: turnId,
-        part_id: partId,
-        locator: {
-          ...node.locator,
+    projected_content_nodes: detail.projected_content_nodes.map(
+      (node, nodeIndex) => {
+        const turnId = `preview-web-turn-${questionIndex + 1}-${Math.min(node.turn_order + 1, detail.turns.length)}`;
+        const partId = `preview-web-part-${questionIndex + 1}-${nodeIndex + 1}`;
+        const questionId = `preview-web-question-${questionIndex + 1}`;
+        return {
+          ...node,
+          node_id:
+            node.node_order === 0
+              ? partId
+              : `${partId}-node-${node.node_order}`,
           question_id: questionId,
           turn_id: turnId,
           part_id: partId,
-        },
-      };
-    }),
+          locator: {
+            ...node.locator,
+            question_id: questionId,
+            turn_id: turnId,
+            part_id: partId,
+          },
+        };
+      },
+    ),
   })),
 };
 
@@ -2420,7 +2719,15 @@ function fallbackContentNode({
   partId: string;
   nodeType: string;
   semanticRole: string;
-  renderer: "markdown" | "plain" | "path" | "json" | "code" | "command" | "terminal_output" | "diff";
+  renderer:
+    | "markdown"
+    | "plain"
+    | "path"
+    | "json"
+    | "code"
+    | "command"
+    | "terminal_output"
+    | "diff";
   role: "user" | "assistant" | "tool" | "system";
   content: string;
 }) {

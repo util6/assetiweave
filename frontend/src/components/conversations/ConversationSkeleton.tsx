@@ -7,7 +7,11 @@ import {
   SkeletonText,
 } from "../foundation/skeleton";
 
-export function ConversationsPageSkeleton({ label }: { label: string }): React.ReactElement {
+export function ConversationsPageSkeleton({
+  label,
+}: {
+  label: string;
+}): React.ReactElement {
   return (
     <AppSkeleton label={label} layout="columns" layoutProps={{ columns: 3 }}>
       <SkeletonColumn>
@@ -62,7 +66,11 @@ export function ConversationTurnSkeleton(): React.ReactElement {
   );
 }
 
-export function ConversationLoadingState({ label }: { label: string }): React.ReactElement {
+export function ConversationLoadingState({
+  label,
+}: {
+  label: string;
+}): React.ReactElement {
   return (
     <AppSkeleton label={label} layout="list" scope="content">
       <ConversationListItemsSkeleton rows={4} />
@@ -70,7 +78,11 @@ export function ConversationLoadingState({ label }: { label: string }): React.Re
   );
 }
 
-export function ConversationPreviewLoadingState({ label }: { label: string }): React.ReactElement {
+export function ConversationPreviewLoadingState({
+  label,
+}: {
+  label: string;
+}): React.ReactElement {
   return (
     <AppSkeleton label={label} layout="cards" scope="content">
       <ConversationPreviewSkeleton />
@@ -82,11 +94,18 @@ function ConversationQuestionListSkeleton(): React.ReactElement {
   return <ConversationListItemsSkeleton rows={5} />;
 }
 
-function ConversationListItemsSkeleton({ rows }: { rows: number }): React.ReactElement {
+function ConversationListItemsSkeleton({
+  rows,
+}: {
+  rows: number;
+}): React.ReactElement {
   return (
     <SkeletonList>
       {Array.from({ length: rows }, (_, index) => (
-        <div className="flex min-w-0 gap-3 rounded-xl border border-theme-card-border/45 bg-theme-control/25 p-3" key={index}>
+        <div
+          className="flex min-w-0 gap-3 rounded-xl border border-theme-card-border/45 bg-theme-control/25 p-3"
+          key={index}
+        >
           <Skeleton className="size-8 shrink-0 rounded-xl" />
           <div className="grid min-w-0 flex-1 gap-2">
             <Skeleton className="h-3.5 w-4/5 rounded-md" />

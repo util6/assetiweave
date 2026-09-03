@@ -15,7 +15,10 @@ export interface SkeletonSurfaceProps {
   className?: string;
 }
 
-export function SkeletonSurface({ children, className }: SkeletonSurfaceProps): React.ReactElement {
+export function SkeletonSurface({
+  children,
+  className,
+}: SkeletonSurfaceProps): React.ReactElement {
   return (
     <div
       aria-hidden="true"
@@ -35,7 +38,11 @@ export interface SkeletonListProps {
   density?: SkeletonDensity;
 }
 
-export function SkeletonList({ children, className, density = "default" }: SkeletonListProps): React.ReactElement {
+export function SkeletonList({
+  children,
+  className,
+  density = "default",
+}: SkeletonListProps): React.ReactElement {
   return (
     <SkeletonSurface className={cn("grid", densityClasses[density], className)}>
       {children}
@@ -85,7 +92,12 @@ export function SkeletonColumns({
   density = "default",
 }: SkeletonColumnsProps): React.ReactElement {
   return (
-    <SkeletonSurface className={cn("grid min-h-[24rem] grid-rows-[minmax(0,1fr)_auto]", className)}>
+    <SkeletonSurface
+      className={cn(
+        "grid min-h-[24rem] grid-rows-[minmax(0,1fr)_auto]",
+        className,
+      )}
+    >
       <div
         className={cn(
           "grid min-h-0 lg:flex lg:flex-row",

@@ -1,9 +1,25 @@
 import clsx from "clsx";
-import { ChevronDown, ChevronRight, FolderOpen, Pencil, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FolderOpen,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { AssetRow } from "../assets/AssetRow";
-import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i18n/domain";
+import {
+  sourceKindLabel,
+  sourceOriginLabel,
+  translateScanStatus,
+} from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { isManagedSkillSource } from "../../utils/sourcePolicy";
 import { SourceBulkMountControls } from "./SourceBulkMountControls";
@@ -40,7 +56,11 @@ export function SourceRow({
   onEditAsset: (asset: Asset) => void;
   onAssetReveal: (path: string) => void;
   onReveal: () => void;
-  onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
+  onSetSourceMountProfile: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => void;
   onToggleAsset: (assetId: string) => void;
   onToggleExpanded: () => void;
   onToggleMount: (assetId: string, profileId: string) => void;
@@ -55,25 +75,33 @@ export function SourceRow({
       : "idle";
 
   return (
-    <article className={clsx("aurora-list-row group", expanded && "source-expanded")} data-expanded={expanded}>
+    <article
+      className={clsx("aurora-list-row group", expanded && "source-expanded")}
+      data-expanded={expanded}
+    >
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-theme-card-header/55">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <span
               className={clsx(
                 "size-2 rounded-full",
-                source.enabled ? "bg-status-create shadow-[0_0_12px_rgb(var(--color-status-create)/0.45)]" : "bg-outline",
+                source.enabled
+                  ? "bg-status-create shadow-[0_0_12px_rgb(var(--color-status-create)/0.45)]"
+                  : "bg-outline",
               )}
               aria-hidden="true"
             />
-            <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">{source.name}</h3>
+            <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">
+              {source.name}
+            </h3>
             <span className="rounded-full border border-theme-control-border/65 bg-theme-control/65 px-2.5 py-1 text-label-caps uppercase text-on-surface-variant">
               {sourceKindLabel(source.kind, t)}
             </span>
             <span
               className={clsx(
                 "rounded-full border px-2.5 py-1 text-label-caps uppercase",
-                source.source_origin === "app_target" || source.source_origin === "app_local"
+                source.source_origin === "app_target" ||
+                  source.source_origin === "app_local"
                   ? "border-status-conflict/30 bg-status-conflict/10 text-status-conflict"
                   : "border-theme-control-border bg-theme-control text-on-surface-variant",
               )}
@@ -83,8 +111,10 @@ export function SourceRow({
             <span
               className={clsx(
                 "rounded-full border border-transparent px-2.5 py-1 text-label-caps uppercase",
-                statusTone === "create" && "bg-status-create/15 text-status-create",
-                statusTone === "conflict" && "bg-status-conflict/15 text-status-conflict",
+                statusTone === "create" &&
+                  "bg-status-create/15 text-status-create",
+                statusTone === "conflict" &&
+                  "bg-status-conflict/15 text-status-conflict",
                 statusTone === "idle" && "bg-theme-control-hover text-outline",
               )}
             >
@@ -113,22 +143,42 @@ export function SourceRow({
             source={source}
           />
           <div className="flex items-start gap-1.5">
-            <SourceIconButton disabled={busy} label={t("source.action.edit")} onClick={onEdit}>
+            <SourceIconButton
+              disabled={busy}
+              label={t("source.action.edit")}
+              onClick={onEdit}
+            >
               <Pencil size={16} />
             </SourceIconButton>
-            <SourceIconButton label={t("source.action.reveal")} onClick={onReveal}>
+            <SourceIconButton
+              label={t("source.action.reveal")}
+              onClick={onReveal}
+            >
               <FolderOpen size={16} />
             </SourceIconButton>
             <SourceIconButton
               disabled={busy || isProtectedSource(source)}
-              label={isProtectedSource(source) ? t("source.delete.protected") : t("source.action.delete")}
+              label={
+                isProtectedSource(source)
+                  ? t("source.delete.protected")
+                  : t("source.action.delete")
+              }
               onClick={onDelete}
               danger
             >
               <Trash2 size={16} />
             </SourceIconButton>
-            <SourceIconButton label={t(expanded ? "source.action.collapse" : "source.action.expand")} onClick={onToggleExpanded}>
-              {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+            <SourceIconButton
+              label={t(
+                expanded ? "source.action.collapse" : "source.action.expand",
+              )}
+              onClick={onToggleExpanded}
+            >
+              {expanded ? (
+                <ChevronDown size={17} />
+              ) : (
+                <ChevronRight size={17} />
+              )}
             </SourceIconButton>
           </div>
         </div>
@@ -138,11 +188,14 @@ export function SourceRow({
         <div className="aurora-list-row-detail py-2 pl-4 pr-3">
           <div className="pl-3">
             {assets.length === 0 ? (
-              <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("source.emptySkills")}</div>
+              <div className="px-4 py-4 text-body-sm text-on-surface-variant">
+                {t("source.emptySkills")}
+              </div>
             ) : (
               <div className="aurora-list-surface !gap-2 !p-2">
                 {assets.map((asset) => {
-                  const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
+                  const mountStatuses =
+                    mountStatusesByAssetId.get(asset.id) ?? [];
                   return (
                     <AssetRow
                       appShortcuts={appShortcuts}
@@ -153,7 +206,9 @@ export function SourceRow({
                       onEdit={() => onEditAsset(asset)}
                       onRevealPath={onAssetReveal}
                       onToggleExpanded={() => onToggleAsset(asset.id)}
-                      onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
+                      onToggleMount={(profileId) =>
+                        onToggleMount(asset.id, profileId)
+                      }
                       profiles={profiles}
                       source={source}
                       mountStatuses={mountStatuses}

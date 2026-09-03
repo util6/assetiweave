@@ -13,7 +13,10 @@ import {
   type AiExecutionTaskSnapshot,
   type ConversationCardTranslationRequest,
 } from "../../services/cardTranslation";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import {
+  useBackgroundTaskRuntime,
+  type BackgroundTaskRuntimeAdapter,
+} from "./BackgroundTaskRuntime";
 
 interface AiExecutionRuntimeEvent {
   snapshot: AiExecutionTaskSnapshot;
@@ -31,47 +34,68 @@ interface AiExecutionTaskContextValue {
   refresh: () => Promise<void>;
 }
 
-const AiExecutionTaskContext = createContext<AiExecutionTaskContextValue | null>(null);
+const AiExecutionTaskContext =
+  createContext<AiExecutionTaskContextValue | null>(null);
 
 export function AiExecutionTaskProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<AiExecutionTaskSnapshot[], AiExecutionRuntimeEvent>>(() => ({
-    initialState: [],
-    isRunning: (tasks: AiExecutionTaskSnapshot[]) => tasks.some(isActiveAiExecutionTask),
-    merge: (current, incoming) => mergeAiExecutionTaskSnapshots(
-      current,
-      "snapshot" in incoming ? [incoming.snapshot] : incoming,
-    ),
-    refresh: listAiExecutionTasks,
-    subscribe: (listener) => subscribeAiExecutionTasks((snapshot) => listener({ snapshot })),
-  }), []);
+  const adapter = useMemo<
+    BackgroundTaskRuntimeAdapter<
+      AiExecutionTaskSnapshot[],
+      AiExecutionRuntimeEvent
+    >
+  >(
+    () => ({
+      initialState: [],
+      isRunning: (tasks: AiExecutionTaskSnapshot[]) =>
+        tasks.some(isActiveAiExecutionTask),
+      merge: (current, incoming) =>
+        mergeAiExecutionTaskSnapshots(
+          current,
+          "snapshot" in incoming ? [incoming.snapshot] : incoming,
+        ),
+      refresh: listAiExecutionTasks,
+      subscribe: (listener) =>
+        subscribeAiExecutionTasks((snapshot) => listener({ snapshot })),
+    }),
+    [],
+  );
   const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
 
-  const startTranslation = useCallback(async (request: ConversationCardTranslationRequest) => {
-    const snapshot = await startConversationCardTranslation(request);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  const startTranslation = useCallback(
+    async (request: ConversationCardTranslationRequest) => {
+      const snapshot = await startConversationCardTranslation(request);
+      merge({ snapshot });
+      return snapshot;
+    },
+    [merge],
+  );
 
-  const cancelTask = useCallback(async (taskId: string) => {
-    const snapshot = await cancelAiExecutionTask(taskId);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  const cancelTask = useCallback(
+    async (taskId: string) => {
+      const snapshot = await cancelAiExecutionTask(taskId);
+      merge({ snapshot });
+      return snapshot;
+    },
+    [merge],
+  );
 
   const getTask = useCallback(
     (taskId: string) => tasks.find((task) => task.id === taskId),
     [tasks],
   );
 
-  const value = useMemo<AiExecutionTaskContextValue>(() => ({
-    tasks,
-    startTranslation,
-    cancelTask,
-    getTask,
-    refresh: async () => {
-      await refresh();
-    },
-  }), [cancelTask, getTask, refresh, startTranslation, tasks]);
+  const value = useMemo<AiExecutionTaskContextValue>(
+    () => ({
+      tasks,
+      startTranslation,
+      cancelTask,
+      getTask,
+      refresh: async () => {
+        await refresh();
+      },
+    }),
+    [cancelTask, getTask, refresh, startTranslation, tasks],
+  );
 
   return (
     <AiExecutionTaskContext.Provider value={value}>
@@ -83,7 +107,9 @@ export function AiExecutionTaskProvider({ children }: { children: ReactNode }) {
 export function useAiExecutionTasks() {
   const context = useContext(AiExecutionTaskContext);
   if (!context) {
-    throw new Error("useAiExecutionTasks must be used inside AiExecutionTaskProvider");
+    throw new Error(
+      "useAiExecutionTasks must be used inside AiExecutionTaskProvider",
+    );
   }
   return context;
 }
@@ -111,18 +137,22 @@ export function mergeAiExecutionTaskSnapshots(
     }
   }
   if (!changed) return current;
-  return retainRecentAiExecutionTasks([...byId.values()]).sort((left, right) => (
-    left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)
-  ));
+  return retainRecentAiExecutionTasks([...byId.values()]).sort(
+    (left, right) =>
+      left.created_at.localeCompare(right.created_at) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 function retainRecentAiExecutionTasks(tasks: AiExecutionTaskSnapshot[]) {
   const active = tasks.filter(isActiveAiExecutionTask);
   const terminal = tasks
     .filter((task) => !isActiveAiExecutionTask(task))
-    .sort((left, right) => (
-      right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id)
-    ))
+    .sort(
+      (left, right) =>
+        right.updated_at.localeCompare(left.updated_at) ||
+        right.id.localeCompare(left.id),
+    )
     .slice(0, TERMINAL_TASK_LIMIT);
   return [...active, ...terminal];
 }

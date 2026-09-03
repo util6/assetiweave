@@ -43,7 +43,6 @@ export function AppClosePrompt() {
     };
   }, []);
 
-
   async function handleConfirmClose() {
     setBusy(true);
     setError("");
@@ -98,11 +97,20 @@ export function AppClosePrompt() {
       contentClassName="grid gap-4"
       footer={
         <>
-          <Button disabled={busy} onClick={() => void handleMinimize()} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={() => void handleMinimize()}
+            type="button"
+            variant="outline"
+          >
             <Minimize2 size={16} />
             {t("app.close.minimize")}
           </Button>
-          <Button disabled={busy} onClick={() => void handleConfirmClose()} type="button">
+          <Button
+            disabled={busy}
+            onClick={() => void handleConfirmClose()}
+            type="button"
+          >
             <Power size={16} />
             {t("app.close.confirm")}
           </Button>
@@ -116,7 +124,9 @@ export function AppClosePrompt() {
       size="sm"
       title={t("app.close.title")}
     >
-      <p className="text-body-sm leading-6 text-on-surface-variant">{t("app.close.message")}</p>
+      <p className="text-body-sm leading-6 text-on-surface-variant">
+        {t("app.close.message")}
+      </p>
       <label className="flex items-center gap-3 rounded-lg border border-theme-control-border bg-theme-control/60 px-3 py-3 text-body-sm text-on-surface">
         <input
           aria-label={t("app.close.backupDatabase")}
@@ -131,7 +141,11 @@ export function AppClosePrompt() {
           {t("app.close.backupDatabase")}
         </span>
       </label>
-      {error ? <p className="text-body-sm text-status-remove" role="alert">{error}</p> : null}
+      {error ? (
+        <p className="text-body-sm text-status-remove" role="alert">
+          {error}
+        </p>
+      ) : null}
     </DialogFrame>
   );
 }

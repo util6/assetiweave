@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
+import eslintConfigPrettier from "eslint-config-prettier";
 
 const isArchitectureOnly = process.env.ESLINT_ARCHITECTURE_ONLY === "1";
 
@@ -79,7 +80,8 @@ const architectureRulesConfig = [
       "no-restricted-syntax": [
         "error",
         {
-          selector: "ImportExpression[source.value=/^@tauri-apps\\/(api|plugin-)/]",
+          selector:
+            "ImportExpression[source.value=/^@tauri-apps\\/(api|plugin-)/]",
           message:
             "Dynamic imports of Tauri runtime APIs are restricted to frontend/src/services/**. Use a service method instead.",
         },
@@ -88,4 +90,11 @@ const architectureRulesConfig = [
   },
 ];
 
-export default tseslint.config(...baseConfig, ...generalConfig, ...architectureRulesConfig);
+const prettierConfig = isArchitectureOnly ? [] : [eslintConfigPrettier];
+
+export default tseslint.config(
+  ...baseConfig,
+  ...generalConfig,
+  ...architectureRulesConfig,
+  ...prettierConfig,
+);

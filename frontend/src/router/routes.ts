@@ -12,7 +12,10 @@ export type AppRouteId =
   | "team"
   | "under-construction";
 
-const retiredRouteKeys = new Set(["conversations.sources", "conversations.adapters"]);
+const retiredRouteKeys = new Set([
+  "conversations.sources",
+  "conversations.adapters",
+]);
 
 const implementedRoutes: Record<string, AppRouteId> = {
   "conversations.sessions": "conversations",
@@ -27,11 +30,15 @@ const implementedRoutes: Record<string, AppRouteId> = {
   "skills.sources": "sources",
 };
 
-export function normalizeNavigationModelRoutes(navigationModel: NavigationModel): NavigationModel {
+export function normalizeNavigationModelRoutes(
+  navigationModel: NavigationModel,
+): NavigationModel {
   let changed = false;
   const subNavItems = Object.fromEntries(
     Object.entries(navigationModel.subNavItems).map(([parentId, items]) => {
-      const activeItems = items.filter((item) => !retiredRouteKeys.has(item.routeKey));
+      const activeItems = items.filter(
+        (item) => !retiredRouteKeys.has(item.routeKey),
+      );
       if (activeItems.length !== items.length) {
         changed = true;
       }
@@ -44,7 +51,8 @@ export function normalizeNavigationModelRoutes(navigationModel: NavigationModel)
   );
   const activeSubNavId = activeSubNavStillVisible
     ? navigationModel.activeSubNavId
-    : activeItems.find((item) => item.enabled)?.id ?? navigationModel.activeSubNavId;
+    : (activeItems.find((item) => item.enabled)?.id ??
+      navigationModel.activeSubNavId);
 
   if (!changed && activeSubNavId === navigationModel.activeSubNavId) {
     return navigationModel;
@@ -57,6 +65,13 @@ export function normalizeNavigationModelRoutes(navigationModel: NavigationModel)
   };
 }
 
-export function resolveAppRoute(navigationModel: NavigationModel, activeSubNavId: string): AppRouteId {
-  return implementedRoutes[`${navigationModel.activeHeaderTabId}.${activeSubNavId}`] ?? "under-construction";
+export function resolveAppRoute(
+  navigationModel: NavigationModel,
+  activeSubNavId: string,
+): AppRouteId {
+  return (
+    implementedRoutes[
+      `${navigationModel.activeHeaderTabId}.${activeSubNavId}`
+    ] ?? "under-construction"
+  );
 }

@@ -13,19 +13,33 @@ import {
   updateAppShortcuts,
   updateNavigationModel,
 } from "../../services/catalog";
-import type { AppOverview, AppShortcut, Asset, AssetKind, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppOverview,
+  AppShortcut,
+  Asset,
+  AssetKind,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 
 export function useCatalogData() {
   const [assets, setAssets] = useState<Asset[]>([]);
-  const [assetMountStatuses, setAssetMountStatuses] = useState<AssetMountStatus[]>([]);
+  const [assetMountStatuses, setAssetMountStatuses] = useState<
+    AssetMountStatus[]
+  >([]);
   const [overview, setOverview] = useState<AppOverview | null>(null);
   const [sources, setSources] = useState<Source[]>([]);
   const [profiles, setProfiles] = useState<TargetProfile[]>([]);
   const [appShortcuts, setAppShortcuts] = useState<AppShortcut[]>([]);
-  const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
+  const [navigationModel, setNavigationModel] = useState<NavigationModel>(
+    fallbackNavigationModel,
+  );
   const [loading, setLoading] = useState(true);
   const navigationSaveSequence = useRef(0);
-  const deferredNavigationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deferredNavigationSaveTimer = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const activeAssetKind = getActiveAssetKind(navigationModel);
 
   useEffect(() => {
@@ -47,15 +61,21 @@ export function useCatalogData() {
       const loadNavigationSequence = navigationSaveSequence.current;
       const appNavigationModel = await getNavigationModel();
       const activeKind = getActiveAssetKind(appNavigationModel);
-      const [assetList, sourceList, appOverview, profileList, shortcutList, mountStatusList] =
-        await Promise.all([
-          listAssets(activeKind),
-          listSources(),
-          getOverview(),
-          listProfiles(),
-          listAppShortcutSettings(),
-          listAssetMountStatuses(),
-        ]);
+      const [
+        assetList,
+        sourceList,
+        appOverview,
+        profileList,
+        shortcutList,
+        mountStatusList,
+      ] = await Promise.all([
+        listAssets(activeKind),
+        listSources(),
+        getOverview(),
+        listProfiles(),
+        listAppShortcutSettings(),
+        listAssetMountStatuses(),
+      ]);
       setAssets(assetList);
       setSources(sourceList);
       setAssetMountStatuses(mountStatusList);
@@ -71,12 +91,13 @@ export function useCatalogData() {
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
-    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
-      nextAssets ? Promise.resolve(nextAssets) : listAssets(activeAssetKind),
-      listSources(),
-      getOverview(),
-      listAssetMountStatuses(),
-    ]);
+    const [assetList, sourceList, appOverview, mountStatusList] =
+      await Promise.all([
+        nextAssets ? Promise.resolve(nextAssets) : listAssets(activeAssetKind),
+        listSources(),
+        getOverview(),
+        listAssetMountStatuses(),
+      ]);
     setAssets(assetList);
     setSources(sourceList);
     setAssetMountStatuses(mountStatusList);
@@ -90,12 +111,13 @@ export function useCatalogData() {
   }
 
   async function refreshCatalogAndMountState() {
-    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
-      listAssets(activeAssetKind),
-      listSources(),
-      getOverview(),
-      refreshAssetMountStatuses(),
-    ]);
+    const [assetList, sourceList, appOverview, mountStatusList] =
+      await Promise.all([
+        listAssets(activeAssetKind),
+        listSources(),
+        getOverview(),
+        refreshAssetMountStatuses(),
+      ]);
     setAssets(assetList);
     setSources(sourceList);
     setAssetMountStatuses(mountStatusList);
@@ -104,12 +126,13 @@ export function useCatalogData() {
   }
 
   async function refreshProfiles() {
-    const [profileList, shortcutList, appOverview, mountStatusList] = await Promise.all([
-      listProfiles(),
-      listAppShortcutSettings(),
-      getOverview(),
-      listAssetMountStatuses(),
-    ]);
+    const [profileList, shortcutList, appOverview, mountStatusList] =
+      await Promise.all([
+        listProfiles(),
+        listAppShortcutSettings(),
+        getOverview(),
+        listAssetMountStatuses(),
+      ]);
     setProfiles(profileList);
     setAppShortcuts(shortcutList);
     setAssetMountStatuses(mountStatusList);
@@ -119,21 +142,29 @@ export function useCatalogData() {
   function applyAssetMountStatus(nextStatus: AssetMountStatus) {
     setAssetMountStatuses((current) => [
       ...current.filter(
-        (status) => status.asset_id !== nextStatus.asset_id || status.profile_id !== nextStatus.profile_id,
+        (status) =>
+          status.asset_id !== nextStatus.asset_id ||
+          status.profile_id !== nextStatus.profile_id,
       ),
       nextStatus,
     ]);
   }
 
   function applyAssetUpdate(nextAsset: Asset) {
-    setAssets((current) => current.map((asset) => (asset.id === nextAsset.id ? nextAsset : asset)));
+    setAssets((current) =>
+      current.map((asset) => (asset.id === nextAsset.id ? nextAsset : asset)),
+    );
   }
 
   function removeAsset(assetId: string) {
     setAssets((current) => current.filter((asset) => asset.id !== assetId));
-    setAssetMountStatuses((current) => current.filter((status) => status.asset_id !== assetId));
+    setAssetMountStatuses((current) =>
+      current.filter((status) => status.asset_id !== assetId),
+    );
     setOverview((current) =>
-      current ? { ...current, asset_count: Math.max(0, current.asset_count - 1) } : current,
+      current
+        ? { ...current, asset_count: Math.max(0, current.asset_count - 1) }
+        : current,
     );
   }
 
@@ -149,7 +180,8 @@ export function useCatalogData() {
     const sequence = navigationSaveSequence.current + 1;
     navigationSaveSequence.current = sequence;
     setNavigationModel(nextNavigationModel);
-    const savedNavigationModel = await updateNavigationModel(nextNavigationModel);
+    const savedNavigationModel =
+      await updateNavigationModel(nextNavigationModel);
     if (navigationSaveSequence.current === sequence) {
       setNavigationModel(savedNavigationModel);
     }
@@ -205,5 +237,6 @@ export function useCatalogData() {
 }
 
 function getActiveAssetKind(model: NavigationModel): AssetKind | undefined {
-  return model.headerTabs.find((tab) => tab.id === model.activeHeaderTabId)?.assetKind;
+  return model.headerTabs.find((tab) => tab.id === model.activeHeaderTabId)
+    ?.assetKind;
 }

@@ -4,7 +4,10 @@ import { Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Panel } from "./Panel";
 
-export interface UnderConstructionStateProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
+export interface UnderConstructionStateProps extends Omit<
+  React.HTMLAttributes<HTMLElement>,
+  "title"
+> {
   actions?: React.ReactNode;
   description?: React.ReactNode;
   eyebrow?: React.ReactNode;
@@ -13,7 +16,10 @@ export interface UnderConstructionStateProps extends Omit<React.HTMLAttributes<H
   titleAction?: React.ReactNode;
 }
 
-const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionStateProps>(
+const UnderConstructionState = React.forwardRef<
+  HTMLElement,
+  UnderConstructionStateProps
+>(
   (
     {
       actions,
@@ -47,15 +53,27 @@ const UnderConstructionState = React.forwardRef<HTMLElement, UnderConstructionSt
               {icon}
             </div>
           )}
-          {eyebrow && <p className="text-label-caps uppercase text-primary">{eyebrow}</p>}
+          {eyebrow && (
+            <p className="text-label-caps uppercase text-primary">{eyebrow}</p>
+          )}
           <div className="mt-2 flex items-center justify-center gap-3">
             <h1 className="text-h2 text-on-surface" id={titleId}>
               {title}
             </h1>
-            {titleAction ? <span className="mt-1 shrink-0">{titleAction}</span> : null}
+            {titleAction ? (
+              <span className="mt-1 shrink-0">{titleAction}</span>
+            ) : null}
           </div>
-          {description && <p className="mt-3 max-w-lg text-body-sm text-on-surface-variant">{description}</p>}
-          {actions && <div className="mt-5 flex flex-wrap items-center justify-center gap-2">{actions}</div>}
+          {description && (
+            <p className="mt-3 max-w-lg text-body-sm text-on-surface-variant">
+              {description}
+            </p>
+          )}
+          {actions && (
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              {actions}
+            </div>
+          )}
         </Panel>
       </section>
     );

@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTenantController } from "./useTenantController";
 import type { Tenant } from "../../types";
@@ -47,7 +53,9 @@ describe("useTenantController", () => {
     await screen.findByText("Default Workspace");
     fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
 
-    await waitFor(() => expect(onTenantChanged).toHaveBeenCalledWith(clientTenant));
+    await waitFor(() =>
+      expect(onTenantChanged).toHaveBeenCalledWith(clientTenant),
+    );
     expect(screen.getByText("Client A")).toBeTruthy();
   });
 
@@ -60,20 +68,32 @@ describe("useTenantController", () => {
     await screen.findByText("Default Workspace");
     fireEvent.click(screen.getByRole("button", { name: "Create tenant" }));
 
-    await waitFor(() => expect(onTenantChanged).toHaveBeenCalledWith(createdTenant));
+    await waitFor(() =>
+      expect(onTenantChanged).toHaveBeenCalledWith(createdTenant),
+    );
     expect(screen.getByText("New Client")).toBeTruthy();
   });
 
-  function Fixture({ onTenantChanged = vi.fn() }: { onTenantChanged?: (tenant: Tenant) => void }) {
+  function Fixture({
+    onTenantChanged = vi.fn(),
+  }: {
+    onTenantChanged?: (tenant: Tenant) => void;
+  }) {
     const tenants = useTenantController({ onTenantChanged });
     return (
       <div>
         <div>{tenants.activeTenant?.name ?? "No tenant"}</div>
         <div>{tenants.tenants.length} tenants</div>
-        <button onClick={() => void tenants.switchActiveTenant("client-a")} type="button">
+        <button
+          onClick={() => void tenants.switchActiveTenant("client-a")}
+          type="button"
+        >
           Switch client
         </button>
-        <button onClick={() => void tenants.createLocalTenant({ name: "New Client" })} type="button">
+        <button
+          onClick={() => void tenants.createLocalTenant({ name: "New Client" })}
+          type="button"
+        >
           Create tenant
         </button>
       </div>

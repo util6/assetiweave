@@ -20,10 +20,20 @@ type InlineMarkdownToken =
   | { type: "math"; value: string };
 
 export function MarkdownContent({ value }: { value: string }) {
-  const normalizedValue = useMemo(() => normalizeMarkdownSource(value), [value]);
-  const blocks = useMemo(() => parseMarkdownBlocks(normalizedValue), [normalizedValue]);
+  const normalizedValue = useMemo(
+    () => normalizeMarkdownSource(value),
+    [value],
+  );
+  const blocks = useMemo(
+    () => parseMarkdownBlocks(normalizedValue),
+    [normalizedValue],
+  );
   if (blocks.length === 0) {
-    return <p className="text-body-sm text-on-surface-muted">{normalizedValue.trim() ? normalizedValue : ""}</p>;
+    return (
+      <p className="text-body-sm text-on-surface-muted">
+        {normalizedValue.trim() ? normalizedValue : ""}
+      </p>
+    );
   }
 
   return (
@@ -43,7 +53,10 @@ export function MarkdownContent({ value }: { value: string }) {
         }
         if (block.type === "quote") {
           return (
-            <blockquote className="border-l-2 border-primary/60 pl-3 text-on-surface-variant" key={index}>
+            <blockquote
+              className="border-l-2 border-primary/60 pl-3 text-on-surface-variant"
+              key={index}
+            >
               {renderInlineMarkdown(block.text)}
             </blockquote>
           );
@@ -56,22 +69,33 @@ export function MarkdownContent({ value }: { value: string }) {
             return <MermaidDiagram key={index} value={block.text} />;
           }
           return (
-            <pre className="overflow-auto rounded-lg bg-theme-control p-3 text-code-sm text-on-surface" key={index}>
+            <pre
+              className="overflow-auto rounded-lg bg-theme-control p-3 text-code-sm text-on-surface"
+              key={index}
+            >
               <code>{block.text}</code>
             </pre>
           );
         }
         if (block.type === "math") {
-          return <LatexMath display={block.display} key={index} value={block.text} />;
+          return (
+            <LatexMath display={block.display} key={index} value={block.text} />
+          );
         }
         if (block.type === "table") {
           return (
-            <div className="overflow-auto rounded-lg border border-theme-card-border bg-theme-card/70" key={index}>
+            <div
+              className="overflow-auto rounded-lg border border-theme-card-border bg-theme-card/70"
+              key={index}
+            >
               <table className="min-w-full border-collapse text-left text-body-sm">
                 <thead className="bg-theme-control/80 text-label-caps text-on-surface-variant">
                   <tr>
                     {block.headers.map((header, headerIndex) => (
-                      <th className="border-b border-theme-card-border px-3 py-2 font-semibold" key={headerIndex}>
+                      <th
+                        className="border-b border-theme-card-border px-3 py-2 font-semibold"
+                        key={headerIndex}
+                      >
                         {renderInlineMarkdown(header)}
                       </th>
                     ))}
@@ -81,7 +105,10 @@ export function MarkdownContent({ value }: { value: string }) {
                   {block.rows.map((row, rowIndex) => (
                     <tr key={rowIndex}>
                       {row.map((cell, cellIndex) => (
-                        <td className="px-3 py-2 align-top text-on-surface" key={cellIndex}>
+                        <td
+                          className="px-3 py-2 align-top text-on-surface"
+                          key={cellIndex}
+                        >
                           {renderInlineMarkdown(cell)}
                         </td>
                       ))}
@@ -98,7 +125,10 @@ export function MarkdownContent({ value }: { value: string }) {
   );
 }
 
-function renderMarkdownHeading(block: Extract<MarkdownBlock, { type: "heading" }>, key: number) {
+function renderMarkdownHeading(
+  block: Extract<MarkdownBlock, { type: "heading" }>,
+  key: number,
+) {
   const content = renderInlineMarkdown(block.text);
   if (block.level <= 1) {
     return (
@@ -155,7 +185,11 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
     const fence = line.match(/^```([^\s`]*)\s*$/);
     if (fence) {
       if (codeLanguage !== null) {
-        blocks.push({ type: "code", language: codeLanguage, text: codeLines.join("\n") });
+        blocks.push({
+          type: "code",
+          language: codeLanguage,
+          text: codeLines.join("\n"),
+        });
         codeLanguage = null;
         codeLines = [];
       } else {
@@ -199,7 +233,11 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
     if (heading) {
       flushParagraph();
       flushList();
-      blocks.push({ type: "heading", level: heading[1].length, text: heading[2].trim() });
+      blocks.push({
+        type: "heading",
+        level: heading[1].length,
+        text: heading[2].trim(),
+      });
       continue;
     }
 
@@ -224,7 +262,11 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
   flushParagraph();
   flushList();
   if (codeLanguage !== null) {
-    blocks.push({ type: "code", language: codeLanguage, text: codeLines.join("\n") });
+    blocks.push({
+      type: "code",
+      language: codeLanguage,
+      text: codeLines.join("\n"),
+    });
   }
 
   return blocks.filter((block) => {
@@ -240,7 +282,10 @@ function renderInlineMarkdown(text: string) {
     }
     if (token.type === "code") {
       return (
-        <code className="rounded bg-theme-control px-1 py-0.5 text-code-sm text-primary" key={`${index}-code`}>
+        <code
+          className="rounded bg-theme-control px-1 py-0.5 text-code-sm text-primary"
+          key={`${index}-code`}
+        >
           {token.value}
         </code>
       );
@@ -259,7 +304,9 @@ function renderInlineMarkdown(text: string) {
       );
     }
     if (token.type === "math") {
-      return <LatexMath display={false} key={`${index}-math`} value={token.value} />;
+      return (
+        <LatexMath display={false} key={`${index}-math`} value={token.value} />
+      );
     }
     return (
       <strong className="font-semibold text-on-surface" key={`${index}-strong`}>
@@ -333,11 +380,15 @@ function tokenizeInlineMarkdown(text: string) {
 function readInlineMarkdownLink(
   text: string,
   startIndex: number,
-): { token: Extract<InlineMarkdownToken, { type: "link" }>; nextIndex: number } | null {
+): {
+  token: Extract<InlineMarkdownToken, { type: "link" }>;
+  nextIndex: number;
+} | null {
   if (text[startIndex] !== "[") return null;
 
   const labelEndIndex = text.indexOf("]", startIndex + 1);
-  if (labelEndIndex <= startIndex + 1 || text[labelEndIndex + 1] !== "(") return null;
+  if (labelEndIndex <= startIndex + 1 || text[labelEndIndex + 1] !== "(")
+    return null;
 
   const hrefEndIndex = text.indexOf(")", labelEndIndex + 2);
   if (hrefEndIndex === -1) return null;
@@ -358,7 +409,10 @@ function readInlineMarkdownLink(
 function readParenInlineMath(
   text: string,
   startIndex: number,
-): { token: Extract<InlineMarkdownToken, { type: "math" }>; nextIndex: number } | null {
+): {
+  token: Extract<InlineMarkdownToken, { type: "math" }>;
+  nextIndex: number;
+} | null {
   if (!text.startsWith("\\(", startIndex)) return null;
 
   const endIndex = text.indexOf("\\)", startIndex + 2);
@@ -376,8 +430,15 @@ function readParenInlineMath(
 function readDollarInlineMath(
   text: string,
   startIndex: number,
-): { token: Extract<InlineMarkdownToken, { type: "math" }>; nextIndex: number } | null {
-  if (text[startIndex] !== "$" || text[startIndex + 1] === "$" || isEscapedAt(text, startIndex)) {
+): {
+  token: Extract<InlineMarkdownToken, { type: "math" }>;
+  nextIndex: number;
+} | null {
+  if (
+    text[startIndex] !== "$" ||
+    text[startIndex + 1] === "$" ||
+    isEscapedAt(text, startIndex)
+  ) {
     return null;
   }
   if (!text[startIndex + 1] || /\s/.test(text[startIndex + 1])) {
@@ -385,7 +446,11 @@ function readDollarInlineMath(
   }
 
   for (let endIndex = startIndex + 1; endIndex < text.length; endIndex += 1) {
-    if (text[endIndex] !== "$" || text[endIndex + 1] === "$" || isEscapedAt(text, endIndex)) {
+    if (
+      text[endIndex] !== "$" ||
+      text[endIndex + 1] === "$" ||
+      isEscapedAt(text, endIndex)
+    ) {
       continue;
     }
     if (/\s/.test(text[endIndex - 1] ?? "")) {
@@ -417,7 +482,11 @@ function normalizeMarkdownSource(value: string) {
 
 function shouldDecodeEscapedLineBreaks(value: string) {
   const escapedLineBreakCount = value.match(/\\n/g)?.length ?? 0;
-  return escapedLineBreakCount >= 2 || /\\n\s*(?:[#>|*-]|\|)/.test(value) || /\|\s*\\n\s*\|/.test(value);
+  return (
+    escapedLineBreakCount >= 2 ||
+    /\\n\s*(?:[#>|*-]|\|)/.test(value) ||
+    /\|\s*\\n\s*\|/.test(value)
+  );
 }
 
 function unescapeMarkdownPunctuation(text: string) {
@@ -431,9 +500,14 @@ function isMermaidLanguage(language: string | null) {
 function readMarkdownMathBlock(
   lines: string[],
   startIndex: number,
-): { block: Extract<MarkdownBlock, { type: "math" }>; nextIndex: number } | null {
-  return readDelimitedMathBlock(lines, startIndex, "$$", "$$")
-    ?? readDelimitedMathBlock(lines, startIndex, "\\[", "\\]");
+): {
+  block: Extract<MarkdownBlock, { type: "math" }>;
+  nextIndex: number;
+} | null {
+  return (
+    readDelimitedMathBlock(lines, startIndex, "$$", "$$") ??
+    readDelimitedMathBlock(lines, startIndex, "\\[", "\\]")
+  );
 }
 
 function readDelimitedMathBlock(
@@ -441,21 +515,32 @@ function readDelimitedMathBlock(
   startIndex: number,
   openDelimiter: string,
   closeDelimiter: string,
-): { block: Extract<MarkdownBlock, { type: "math" }>; nextIndex: number } | null {
+): {
+  block: Extract<MarkdownBlock, { type: "math" }>;
+  nextIndex: number;
+} | null {
   const firstLine = lines[startIndex].trim();
   if (!firstLine.startsWith(openDelimiter)) return null;
 
   const firstContent = firstLine.slice(openDelimiter.length);
   const sameLineCloseIndex = firstContent.indexOf(closeDelimiter);
   if (sameLineCloseIndex !== -1) {
-    if (firstContent.slice(sameLineCloseIndex + closeDelimiter.length).trim()) return null;
+    if (firstContent.slice(sameLineCloseIndex + closeDelimiter.length).trim())
+      return null;
     const text = firstContent.slice(0, sameLineCloseIndex).trim();
     if (!text) return null;
-    return { block: { display: true, text, type: "math" }, nextIndex: startIndex + 1 };
+    return {
+      block: { display: true, text, type: "math" },
+      nextIndex: startIndex + 1,
+    };
   }
 
   const mathLines = firstContent.trim() ? [firstContent] : [];
-  for (let lineIndex = startIndex + 1; lineIndex < lines.length; lineIndex += 1) {
+  for (
+    let lineIndex = startIndex + 1;
+    lineIndex < lines.length;
+    lineIndex += 1
+  ) {
     const line = lines[lineIndex];
     const closeIndex = line.indexOf(closeDelimiter);
     if (closeIndex === -1) {
@@ -471,7 +556,10 @@ function readDelimitedMathBlock(
 
     const text = mathLines.join("\n").trim();
     if (!text) return null;
-    return { block: { display: true, text, type: "math" }, nextIndex: lineIndex + 1 };
+    return {
+      block: { display: true, text, type: "math" },
+      nextIndex: lineIndex + 1,
+    };
   }
 
   return null;
@@ -480,7 +568,10 @@ function readDelimitedMathBlock(
 function readMarkdownTable(
   lines: string[],
   startIndex: number,
-): { block: Extract<MarkdownBlock, { type: "table" }>; nextIndex: number } | null {
+): {
+  block: Extract<MarkdownBlock, { type: "table" }>;
+  nextIndex: number;
+} | null {
   const headers = splitTableRow(lines[startIndex]);
   if (headers.length < 2) return null;
 
@@ -494,7 +585,9 @@ function readMarkdownTable(
   let nextIndex = hasSeparator ? startIndex + 2 : startIndex + 1;
   while (nextIndex < lines.length && isMarkdownTableRow(lines[nextIndex])) {
     if (!isTableSeparatorRow(lines[nextIndex])) {
-      rows.push(normalizeTableCells(splitTableRow(lines[nextIndex]), headers.length));
+      rows.push(
+        normalizeTableCells(splitTableRow(lines[nextIndex]), headers.length),
+      );
     }
     nextIndex += 1;
   }
@@ -511,9 +604,10 @@ function splitTableRow(line: string) {
   const trimmed = line.trim();
   if (!trimmed.includes("|")) return [];
   const start = trimmed.startsWith("|") ? 1 : 0;
-  const end = trimmed.endsWith("|") && !isEscapedAt(trimmed, trimmed.length - 1)
-    ? trimmed.length - 1
-    : trimmed.length;
+  const end =
+    trimmed.endsWith("|") && !isEscapedAt(trimmed, trimmed.length - 1)
+      ? trimmed.length - 1
+      : trimmed.length;
   const content = trimmed.slice(start, end);
   const cells: string[] = [];
   let cell = "";
@@ -532,7 +626,8 @@ function splitTableRow(line: string) {
 
 function isTableSeparatorRow(line: string, expectedCellCount?: number) {
   const cells = splitTableRow(line);
-  if (expectedCellCount != null && cells.length !== expectedCellCount) return false;
+  if (expectedCellCount != null && cells.length !== expectedCellCount)
+    return false;
   return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
@@ -543,7 +638,11 @@ function normalizeTableCells(cells: string[], cellCount: number) {
 
 function isEscapedAt(value: string, index: number) {
   let slashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+  for (
+    let cursor = index - 1;
+    cursor >= 0 && value[cursor] === "\\";
+    cursor -= 1
+  ) {
     slashCount += 1;
   }
   return slashCount % 2 === 1;

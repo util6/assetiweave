@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   cancelMemoryPublicTask,
   listMemoryPublicTasks,
@@ -27,9 +35,12 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    const refreshTasks = () => void listMemoryPublicTasks(true).then((nextTasks) => {
-      if (!cancelled) setTasks(nextTasks);
-    }).catch(() => undefined);
+    const refreshTasks = () =>
+      void listMemoryPublicTasks(true)
+        .then((nextTasks) => {
+          if (!cancelled) setTasks(nextTasks);
+        })
+        .catch(() => undefined);
     void refreshTasks();
     const interval = window.setInterval(refreshTasks, 1000);
     let unlisten: (() => void) | undefined;
@@ -56,24 +67,34 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
     return task;
   }, []);
 
-  const value = useMemo(() => ({
-    cancelTask,
-    refresh,
-    retryTask,
-    task: tasks[tasks.length - 1] ?? null,
-    tasks,
-    publicTasks: tasks,
-  }), [cancelTask, refresh, retryTask, tasks]);
+  const value = useMemo(
+    () => ({
+      cancelTask,
+      refresh,
+      retryTask,
+      task: tasks[tasks.length - 1] ?? null,
+      tasks,
+      publicTasks: tasks,
+    }),
+    [cancelTask, refresh, retryTask, tasks],
+  );
 
-  return <MemoryTaskContext.Provider value={value}>{children}</MemoryTaskContext.Provider>;
+  return (
+    <MemoryTaskContext.Provider value={value}>
+      {children}
+    </MemoryTaskContext.Provider>
+  );
 }
 
 export function useMemoryTasks() {
   const context = useContext(MemoryTaskContext);
-  if (!context) throw new Error("useMemoryTasks must be used inside MemoryTaskProvider");
+  if (!context)
+    throw new Error("useMemoryTasks must be used inside MemoryTaskProvider");
   return context;
 }
 
 function upsertTask(tasks: MemoryTaskView[], nextTask: MemoryTaskView) {
-  return [...tasks.filter((task) => task.id !== nextTask.id), nextTask].sort((left, right) => left.started_at.localeCompare(right.started_at));
+  return [...tasks.filter((task) => task.id !== nextTask.id), nextTask].sort(
+    (left, right) => left.started_at.localeCompare(right.started_at),
+  );
 }

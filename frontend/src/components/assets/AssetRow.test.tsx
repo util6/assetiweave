@@ -73,7 +73,8 @@ const asset: Asset = {
   repository: {
     root_path: "/Users/util6/fork-code/skills-fork/claude-skills",
     remote_url: "https://github.com/anthropics/skills.git",
-    web_url: "https://github.com/anthropics/skills/tree/main/packages/claude-skills",
+    web_url:
+      "https://github.com/anthropics/skills/tree/main/packages/claude-skills",
   },
 };
 

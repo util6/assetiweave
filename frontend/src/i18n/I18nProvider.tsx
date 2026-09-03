@@ -1,9 +1,24 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { messages, type Locale, type TranslationKey, type TranslationParams } from "./messages";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  messages,
+  type Locale,
+  type TranslationKey,
+  type TranslationParams,
+} from "./messages";
 
 const STORAGE_KEY = "assetiweave.locale";
 
-export type Translator = (key: TranslationKey, params?: TranslationParams) => string;
+export type Translator = (
+  key: TranslationKey,
+  params?: TranslationParams,
+) => string;
 
 interface I18nContextValue {
   locale: Locale;
@@ -22,7 +37,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => {
-    const t: Translator = (key, params) => interpolate(messages[locale][key] ?? messages.zh[key] ?? key, params);
+    const t: Translator = (key, params) =>
+      interpolate(messages[locale][key] ?? messages.zh[key] ?? key, params);
 
     return {
       locale,
@@ -84,5 +100,7 @@ function interpolate(template: string, params?: TranslationParams) {
     return template;
   }
 
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
+    String(params[key] ?? ""),
+  );
 }

@@ -1,5 +1,18 @@
-import { AlertTriangle, CheckCircle2, DownloadCloud, ExternalLink, Search } from "lucide-react";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  DownloadCloud,
+  ExternalLink,
+  Search,
+} from "lucide-react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { acquireSkill, searchSkills } from "../../services/catalog";
 import type { SkillAcquireResult, SkillSearchCandidate } from "../../types";
@@ -32,7 +45,9 @@ export function SkillAcquireDialog({
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [plan, setPlan] = useState<SkillAcquireResult | null>(null);
-  const [busy, setBusy] = useState<"search" | "preview" | "import" | null>(null);
+  const [busy, setBusy] = useState<"search" | "preview" | "import" | null>(
+    null,
+  );
   const [queryError, setQueryError] = useState(false);
   const [urlError, setUrlError] = useState(false);
 
@@ -79,7 +94,9 @@ export function SkillAcquireDialog({
     }
   }
 
-  async function handlePreview(next?: Partial<{ branch: string; name: string; path: string; url: string }>) {
+  async function handlePreview(
+    next?: Partial<{ branch: string; name: string; path: string; url: string }>,
+  ) {
     const nextUrl = (next?.url ?? url).trim();
     setUrlError(!nextUrl);
     if (!nextUrl) {
@@ -146,13 +163,26 @@ export function SkillAcquireDialog({
       description={t("skillAcquire.dialog.description")}
       footer={
         <>
-          <Button disabled={disabled} onClick={() => void handlePreview()} type="button" variant="outline">
+          <Button
+            disabled={disabled}
+            onClick={() => void handlePreview()}
+            type="button"
+            variant="outline"
+          >
             <Search size={16} />
-            {busy === "preview" ? t("skillAcquire.preview.loading") : t("skillAcquire.preview.submit")}
+            {busy === "preview"
+              ? t("skillAcquire.preview.loading")
+              : t("skillAcquire.preview.submit")}
           </Button>
-          <Button disabled={disabled || !plan} onClick={() => void handleImport()} type="button">
+          <Button
+            disabled={disabled || !plan}
+            onClick={() => void handleImport()}
+            type="button"
+          >
             <DownloadCloud size={16} />
-            {busy === "import" ? t("skillAcquire.import.importing") : t("skillAcquire.import.submit")}
+            {busy === "import"
+              ? t("skillAcquire.import.importing")
+              : t("skillAcquire.import.submit")}
           </Button>
         </>
       }
@@ -167,7 +197,10 @@ export function SkillAcquireDialog({
     >
       <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.85fr)]">
         <section className="min-w-0 border-b border-theme-card-border p-5 lg:border-b-0 lg:border-r">
-          <form className="flex gap-2" onSubmit={(event) => void handleSearch(event)}>
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => void handleSearch(event)}
+          >
             <Input
               aria-describedby={queryError ? queryErrorId : undefined}
               aria-invalid={queryError}
@@ -183,11 +216,16 @@ export function SkillAcquireDialog({
             />
             <Button disabled={disabled} type="submit">
               <Search size={16} />
-              {busy === "search" ? t("skillAcquire.search.searching") : t("skillAcquire.search.submit")}
+              {busy === "search"
+                ? t("skillAcquire.search.searching")
+                : t("skillAcquire.search.submit")}
             </Button>
           </form>
           {queryError && (
-            <span className="mt-1.5 block text-body-sm text-status-remove" id={queryErrorId}>
+            <span
+              className="mt-1.5 block text-body-sm text-status-remove"
+              id={queryErrorId}
+            >
               {t("skillAcquire.error.queryRequired")}
             </span>
           )}
@@ -250,7 +288,10 @@ export function SkillAcquireDialog({
                 value={url}
               />
               {urlError && (
-                <span className="text-body-sm text-status-remove" id={urlErrorId}>
+                <span
+                  className="text-body-sm text-status-remove"
+                  id={urlErrorId}
+                >
                   {t("skillAcquire.error.urlRequired")}
                 </span>
               )}
@@ -289,7 +330,9 @@ export function SkillAcquireDialog({
                 <AlertTriangle size={15} />
                 <span>{t("skillAcquire.security.title")}</span>
               </div>
-              <p className="mt-1">{plan?.security_notice ?? t("skillAcquire.security.message")}</p>
+              <p className="mt-1">
+                {plan?.security_notice ?? t("skillAcquire.security.message")}
+              </p>
             </div>
 
             <AcquirePlan plan={plan} />
@@ -321,7 +364,9 @@ function CandidateRow({
             {candidate.name}
           </h3>
           {candidate.description && (
-            <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">{candidate.description}</p>
+            <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">
+              {candidate.description}
+            </p>
           )}
           {candidate.match_reason && (
             <p className="mt-1 rounded-md border border-theme-card-border bg-theme-card px-2 py-1 text-body-sm text-on-surface-variant">
@@ -334,11 +379,23 @@ function CandidateRow({
         </div>
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        <Button disabled={busy} onClick={onOpen} size="sm" type="button" variant="ghost">
+        <Button
+          disabled={busy}
+          onClick={onOpen}
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
           <ExternalLink size={15} />
           {t("skillAcquire.candidate.open")}
         </Button>
-        <Button disabled={busy} onClick={onPreview} size="sm" type="button" variant="outline">
+        <Button
+          disabled={busy}
+          onClick={onPreview}
+          size="sm"
+          type="button"
+          variant="outline"
+        >
           <Search size={15} />
           {t("skillAcquire.candidate.preview")}
         </Button>
@@ -366,10 +423,20 @@ function AcquirePlan({ plan }: { plan: SkillAcquireResult | null }) {
       </div>
       <PlanRow label={t("skillAcquire.preview.name")} value={plan.name} />
       <PlanRow label={t("skillAcquire.preview.repo")} value={plan.repo_url} />
-      {plan.branch && <PlanRow label={t("skillAcquire.preview.branch")} value={plan.branch} />}
-      {plan.path && <PlanRow label={t("skillAcquire.preview.path")} value={plan.path} />}
-      <PlanRow label={t("skillAcquire.preview.staging")} value={plan.staging_path} />
-      <PlanRow label={t("skillAcquire.preview.skillPath")} value={plan.skill_path} />
+      {plan.branch && (
+        <PlanRow label={t("skillAcquire.preview.branch")} value={plan.branch} />
+      )}
+      {plan.path && (
+        <PlanRow label={t("skillAcquire.preview.path")} value={plan.path} />
+      )}
+      <PlanRow
+        label={t("skillAcquire.preview.staging")}
+        value={plan.staging_path}
+      />
+      <PlanRow
+        label={t("skillAcquire.preview.skillPath")}
+        value={plan.skill_path}
+      />
     </section>
   );
 }
@@ -378,12 +445,22 @@ function PlanRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1 rounded-md border border-theme-control-border bg-theme-control px-3 py-2">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div className="break-all font-mono text-body-sm text-on-surface">{value}</div>
+      <div className="break-all font-mono text-body-sm text-on-surface">
+        {value}
+      </div>
     </div>
   );
 }
 
-function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+function Field({
+  children,
+  label,
+  required = false,
+}: {
+  children: ReactNode;
+  label: string;
+  required?: boolean;
+}) {
   return (
     <label className="grid gap-1.5">
       <span className="text-body-sm font-medium text-on-surface-variant">

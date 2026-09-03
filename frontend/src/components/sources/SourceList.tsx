@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 import { groupMountStatusesByAssetId } from "../../utils/mountState";
 import { groupSourceDisplayAssets } from "../../utils/sourceAssets";
 import { SourceColumnView } from "./SourceColumnView";
@@ -36,7 +42,11 @@ export function SourceList({
   onEditAsset: (asset: Asset) => void;
   onAssetReveal: (path: string) => void;
   onReveal: (path: string) => void;
-  onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
+  onSetSourceMountProfile: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => void;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -44,10 +54,16 @@ export function SourceList({
   viewMode: "list" | "columns";
 }) {
   const { t } = useI18n();
-  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(new Set());
+  const [expandedSourceIds, setExpandedSourceIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const mountStatusesByAssetId = groupMountStatusesByAssetId(assetMountStatuses);
-  const assetsBySourceId = useMemo(() => groupSourceDisplayAssets(assets, sources), [assets, sources]);
+  const mountStatusesByAssetId =
+    groupMountStatusesByAssetId(assetMountStatuses);
+  const assetsBySourceId = useMemo(
+    () => groupSourceDisplayAssets(assets, sources),
+    [assets, sources],
+  );
 
   function toggleSourceExpanded(sourceId: string) {
     setExpandedSourceIds((current) => {
@@ -70,7 +86,8 @@ export function SourceList({
   }
 
   if (viewMode === "columns") {
-    const selectedSource = sources.find((source) => source.id === selectedSourceId) ?? sources[0]!;
+    const selectedSource =
+      sources.find((source) => source.id === selectedSourceId) ?? sources[0]!;
 
     return (
       <SourceColumnView
@@ -95,10 +112,7 @@ export function SourceList({
   }
 
   return (
-    <div
-      className="aurora-list-surface"
-      aria-label={t("source.page.title")}
-    >
+    <div className="aurora-list-surface" aria-label={t("source.page.title")}>
       {sources.map((source) => (
         <SourceRow
           appShortcuts={appShortcuts}

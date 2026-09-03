@@ -60,8 +60,13 @@ export function normalizeUpdaterError(error: unknown): string {
 }
 
 export function sanitizeUpdaterError(error: unknown, maxLength = 220): string {
-  const compact = normalizeUpdaterError(error).replace(URL_PATTERN, "[URL]").replace(/\s+/g, " ").trim();
-  return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
+  const compact = normalizeUpdaterError(error)
+    .replace(URL_PATTERN, "[URL]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return compact.length > maxLength
+    ? `${compact.slice(0, maxLength)}...`
+    : compact;
 }
 
 export function isRetryableUpdaterError(error: unknown): boolean {
@@ -86,7 +91,10 @@ export function isRetryableUpdaterError(error: unknown): boolean {
   return RETRYABLE_HINTS.some((hint) => message.includes(hint));
 }
 
-export async function retryWithBackoff<T>(operation: () => Promise<T>, options: RetryOptions): Promise<T> {
+export async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  options: RetryOptions,
+): Promise<T> {
   const maxAttempts = Math.max(1, options.delaysMs.length + 1);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -97,7 +105,9 @@ export async function retryWithBackoff<T>(operation: () => Promise<T>, options: 
         throw error;
       }
 
-      const delayMs = withJitter(options.delaysMs[Math.min(attempt - 1, options.delaysMs.length - 1)]);
+      const delayMs = withJitter(
+        options.delaysMs[Math.min(attempt - 1, options.delaysMs.length - 1)],
+      );
       options.onRetry?.({
         attempt,
         delayMs,
@@ -112,7 +122,9 @@ export async function retryWithBackoff<T>(operation: () => Promise<T>, options: 
 }
 
 function parseHttpStatusCode(message: string) {
-  const statusMatch = message.match(/\bstatus(?:\s+code)?[:=\s]+(\d{3})\b/i) ?? message.match(/\bhttp\s*(\d{3})\b/i);
+  const statusMatch =
+    message.match(/\bstatus(?:\s+code)?[:=\s]+(\d{3})\b/i) ??
+    message.match(/\bhttp\s*(\d{3})\b/i);
   return statusMatch?.[1] ? Number(statusMatch[1]) : null;
 }
 

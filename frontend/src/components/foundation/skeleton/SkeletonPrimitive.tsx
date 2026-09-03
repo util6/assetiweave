@@ -2,10 +2,22 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-export interface SkeletonProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "aria-hidden"> {}
+export interface SkeletonProps extends Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  "aria-hidden"
+> {}
 
-export function Skeleton({ className, ...props }: SkeletonProps): React.ReactElement {
-  return <div {...props} aria-hidden="true" className={cn("aurora-skeleton rounded-xl", className)} />;
+export function Skeleton({
+  className,
+  ...props
+}: SkeletonProps): React.ReactElement {
+  return (
+    <div
+      {...props}
+      aria-hidden="true"
+      className={cn("aurora-skeleton rounded-xl", className)}
+    />
+  );
 }
 
 export interface SkeletonTextProps {
@@ -13,7 +25,10 @@ export interface SkeletonTextProps {
   lines?: number;
 }
 
-export function SkeletonText({ className, lines = 3 }: SkeletonTextProps): React.ReactElement {
+export function SkeletonText({
+  className,
+  lines = 3,
+}: SkeletonTextProps): React.ReactElement {
   const lineCount = Math.max(1, Math.floor(lines));
 
   return (

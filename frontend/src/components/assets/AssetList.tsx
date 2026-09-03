@@ -1,5 +1,11 @@
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 import { groupMountStatusesByAssetId } from "../../utils/mountState";
 import type { AssetViewMode } from "./AssetToolbar";
 import { AssetGridView } from "./AssetGridView";
@@ -34,7 +40,8 @@ export function AssetList({
 }) {
   const { t } = useI18n();
   const sourceById = new Map(sources.map((source) => [source.id, source]));
-  const mountStatusesByAssetId = groupMountStatusesByAssetId(assetMountStatuses);
+  const mountStatusesByAssetId =
+    groupMountStatusesByAssetId(assetMountStatuses);
 
   if (viewMode === "grid") {
     return (

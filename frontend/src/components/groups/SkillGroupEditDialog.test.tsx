@@ -52,7 +52,10 @@ describe("SkillGroupEditDialog", () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "备份到目录 (1)" }).disabled).toBe(false);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", { name: "备份到目录 (1)" })
+        .disabled,
+    ).toBe(false);
 
     const skillBRow = screen.getByText("skill-b").closest("label");
     expect(skillBRow).not.toBeNull();

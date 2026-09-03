@@ -7,7 +7,10 @@ export function kindBadgeClass(kind: AssetKind) {
     kind === "skill" && "bg-primary-strong/15 text-primary",
     kind === "rule" && "bg-status-conflict/15 text-status-conflict",
     kind === "agent" && "bg-status-create/15 text-status-create",
-    kind !== "skill" && kind !== "rule" && kind !== "agent" && "bg-surface-highest text-on-surface-variant",
+    kind !== "skill" &&
+      kind !== "rule" &&
+      kind !== "agent" &&
+      "bg-surface-highest text-on-surface-variant",
   );
 }
 

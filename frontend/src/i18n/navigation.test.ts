@@ -15,9 +15,14 @@ describe("memory navigation labels", () => {
   it.each([
     ["recent", "Recent", "memory.recent", "nav.sub.memory.recent"],
     ["recall", "Recall", "memory.recall", "nav.sub.memory.recall"],
-  ])("uses a stable localized label for Memory %s", (id, label, routeKey, expected) => {
-    expect(subNavLabel({ id, label, routeKey, enabled: true }, t, "zh")).toBe(expected);
-  });
+  ])(
+    "uses a stable localized label for Memory %s",
+    (id, label, routeKey, expected) => {
+      expect(subNavLabel({ id, label, routeKey, enabled: true }, t, "zh")).toBe(
+        expected,
+      );
+    },
+  );
 
   it("preserves a user-defined Memory label", () => {
     expect(

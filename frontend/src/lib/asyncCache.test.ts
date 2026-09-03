@@ -29,7 +29,9 @@ describe("asyncCache", () => {
       resolveRefresh = resolve;
     });
 
-    const request = loadSharedResource("sources", () => refreshing, { force: true });
+    const request = loadSharedResource("sources", () => refreshing, {
+      force: true,
+    });
     expect(readSharedResource<string[]>("sources")).toEqual(["cached"]);
     resolveRefresh?.(["fresh"]);
     await expect(request).resolves.toEqual(["fresh"]);

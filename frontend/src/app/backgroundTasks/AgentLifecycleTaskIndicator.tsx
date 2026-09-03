@@ -1,7 +1,10 @@
 import { LoaderCircle, X } from "lucide-react";
 import { useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
-import { isActiveAgentLifecycleTask, useAgentLifecycleTasks } from "./AgentLifecycleTaskProvider";
+import {
+  isActiveAgentLifecycleTask,
+  useAgentLifecycleTasks,
+} from "./AgentLifecycleTaskProvider";
 
 export function AgentLifecycleTaskIndicator() {
   const { t } = useI18n();
@@ -9,7 +12,11 @@ export function AgentLifecycleTaskIndicator() {
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const activeTasks = tasks
     .filter(isActiveAgentLifecycleTask)
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
+    .sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) ||
+        right.id.localeCompare(left.id),
+    );
   const latestTask = activeTasks[0];
 
   if (!latestTask) return null;

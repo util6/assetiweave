@@ -1,6 +1,13 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { ConversationAdapterPackageCatalogEntry } from "../../services/conversations";
@@ -23,9 +30,9 @@ const serviceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../services/conversations", async () => {
-  const actual = await vi.importActual<typeof import("../../services/conversations")>(
-    "../../services/conversations",
-  );
+  const actual = await vi.importActual<
+    typeof import("../../services/conversations")
+  >("../../services/conversations");
   return {
     ...actual,
     checkConversationAdapterPackageUpdates: serviceMocks.checkUpdates,
@@ -45,7 +52,6 @@ vi.mock("../../services/conversations", async () => {
   };
 });
 
-
 describe("ConversationScriptResourcePanel", () => {
   beforeEach(() => {
     serviceMocks.checkUpdates.mockReset().mockResolvedValue([]);
@@ -56,16 +62,18 @@ describe("ConversationScriptResourcePanel", () => {
       origin: "managed_release",
       package: entries[1].installed_package,
       adapter: entries[1].installed_adapter,
-      affected_sources: [{
-        id: "codex-live",
-        adapter_id: "codex",
-        name: "Codex Live",
-        kind: "directory",
-        location: "/tmp/codex",
-        enabled: true,
-        created_at: "2026-07-15T00:00:00Z",
-        updated_at: "2026-07-15T00:00:00Z",
-      }],
+      affected_sources: [
+        {
+          id: "codex-live",
+          adapter_id: "codex",
+          name: "Codex Live",
+          kind: "directory",
+          location: "/tmp/codex",
+          enabled: true,
+          created_at: "2026-07-15T00:00:00Z",
+          updated_at: "2026-07-15T00:00:00Z",
+        },
+      ],
     });
     serviceMocks.listReleases.mockReset().mockResolvedValue([release]);
     serviceMocks.listVersions.mockReset().mockResolvedValue([]);
@@ -127,7 +135,9 @@ describe("ConversationScriptResourcePanel", () => {
       result: null,
       error: null,
     });
-    serviceMocks.unregister.mockReset().mockResolvedValue({ unregistered: true });
+    serviceMocks.unregister
+      .mockReset()
+      .mockResolvedValue({ unregistered: true });
   });
 
   afterEach(() => {
@@ -154,9 +164,13 @@ describe("ConversationScriptResourcePanel", () => {
     renderPanel();
 
     expect(
-      await screen.findByText("~/conversation-adapters/codex/conversation-adapter.json"),
+      await screen.findByText(
+        "~/conversation-adapters/codex/conversation-adapter.json",
+      ),
     ).toBeTruthy();
-    expect(screen.queryByText("/tmp/package/conversation-adapter.json")).toBeNull();
+    expect(
+      screen.queryByText("/tmp/package/conversation-adapter.json"),
+    ).toBeNull();
   });
 
   it("shows installed adapters that are ahead of the catalog without offering an update", async () => {
@@ -183,14 +197,20 @@ describe("ConversationScriptResourcePanel", () => {
   });
 
   it("shows an accessible loading indicator while the catalog is validated", async () => {
-    let resolveCatalog: (value: ConversationAdapterPackageCatalogEntry[]) => void = () => undefined;
-    serviceMocks.list.mockReturnValueOnce(new Promise((resolve) => {
-      resolveCatalog = resolve;
-    }));
+    let resolveCatalog: (
+      value: ConversationAdapterPackageCatalogEntry[],
+    ) => void = () => undefined;
+    serviceMocks.list.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCatalog = resolve;
+      }),
+    );
 
     renderPanel();
 
-    expect(screen.getByRole("status").textContent).toContain("Validating script directories");
+    expect(screen.getByRole("status").textContent).toContain(
+      "Validating script directories",
+    );
     resolveCatalog(entries);
     expect(await screen.findByText("Built-in Codex")).toBeTruthy();
   });
@@ -200,43 +220,60 @@ describe("ConversationScriptResourcePanel", () => {
     const details = await screen.findAllByRole("button", { name: "Details" });
     fireEvent.click(details[1]);
 
-    expect(await screen.findByText("io.github.util6.codex-session")).toBeTruthy();
+    expect(
+      await screen.findByText("io.github.util6.codex-session"),
+    ).toBeTruthy();
     expect(screen.getByText("Codex Live · codex-live")).toBeTruthy();
-    expect(screen.getByText(/Improve Codex session parsing compatibility/)).toBeTruthy();
-    expect((screen.getByRole("combobox", { name: "Select install version" }) as HTMLSelectElement).value)
-      .toBe("1.0.1");
+    expect(
+      screen.getByText(/Improve Codex session parsing compatibility/),
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("combobox", {
+          name: "Select install version",
+        }) as HTMLSelectElement
+      ).value,
+    ).toBe("1.0.1");
   });
 
   it("refreshes the open detail version after the market catalog reloads", async () => {
-    const refreshedEntries = entries.map((entry) => entry.item.id === "io.github.util6.codex-session"
-      ? {
-          ...entry,
-          installed_package: {
-            ...entry.installed_package!,
-            version: "1.0.1",
-          },
-          installed_adapter: {
-            ...entry.installed_adapter!,
-            version: "1.0.1",
-          },
-          status: "legacy_installed" as const,
-          update_available: false,
-        }
-      : entry);
-    serviceMocks.list.mockReset().mockResolvedValueOnce(entries).mockResolvedValueOnce(refreshedEntries);
+    const refreshedEntries = entries.map((entry) =>
+      entry.item.id === "io.github.util6.codex-session"
+        ? {
+            ...entry,
+            installed_package: {
+              ...entry.installed_package!,
+              version: "1.0.1",
+            },
+            installed_adapter: {
+              ...entry.installed_adapter!,
+              version: "1.0.1",
+            },
+            status: "legacy_installed" as const,
+            update_available: false,
+          }
+        : entry,
+    );
+    serviceMocks.list
+      .mockReset()
+      .mockResolvedValueOnce(entries)
+      .mockResolvedValueOnce(refreshedEntries);
     renderPanel();
 
     const details = await screen.findAllByRole("button", { name: "Details" });
     fireEvent.click(details[1]);
     expect(await screen.findByText("1.0.0")).toBeTruthy();
 
-    const checkUpdatesButton = Array.from(document.querySelectorAll("button"))
-      .find((button) => button.textContent?.includes("Check for updates"));
+    const checkUpdatesButton = Array.from(
+      document.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("Check for updates"));
     expect(checkUpdatesButton).toBeTruthy();
     fireEvent.click(checkUpdatesButton!);
 
     await waitFor(() => {
-      const currentVersion = screen.getByText("Current version").parentElement?.querySelector("p.font-mono");
+      const currentVersion = screen
+        .getByText("Current version")
+        .parentElement?.querySelector("p.font-mono");
       expect(currentVersion?.textContent).toBe("1.0.1");
     });
   });
@@ -248,7 +285,9 @@ describe("ConversationScriptResourcePanel", () => {
 
     await waitFor(() => expect(serviceMocks.prepare).toHaveBeenCalledTimes(1));
     expect(serviceMocks.update).not.toHaveBeenCalled();
-    const updateButtons = await screen.findAllByRole("button", { name: "Update" });
+    const updateButtons = await screen.findAllByRole("button", {
+      name: "Update",
+    });
     fireEvent.click(updateButtons[updateButtons.length - 1]);
 
     await waitFor(() => {
@@ -261,19 +300,29 @@ describe("ConversationScriptResourcePanel", () => {
   });
 
   it("checks for updates explicitly and opens the updates view", async () => {
-    serviceMocks.checkUpdates.mockResolvedValueOnce([{
-      package_id: "io.github.util6.codex-session",
-      current_version: "1.0.0",
-      latest_compatible_release: release,
-      update_available: true,
-    }]);
+    serviceMocks.checkUpdates.mockResolvedValueOnce([
+      {
+        package_id: "io.github.util6.codex-session",
+        current_version: "1.0.0",
+        latest_compatible_release: release,
+        update_available: true,
+      },
+    ]);
     renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Check for updates" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Check for updates" }),
+    );
 
-    await waitFor(() => expect(serviceMocks.checkUpdates).toHaveBeenCalledWith({ force: true }));
+    await waitFor(() =>
+      expect(serviceMocks.checkUpdates).toHaveBeenCalledWith({ force: true }),
+    );
     expect(serviceMocks.list).toHaveBeenCalledTimes(2);
-    expect(screen.getByRole("tab", { name: /Updates \(1\)/ }).getAttribute("aria-selected")).toBe("true");
+    expect(
+      screen
+        .getByRole("tab", { name: /Updates \(1\)/ })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
   });
 
   it("registers a discovered package only after explicit confirmation", async () => {
@@ -281,20 +330,24 @@ describe("ConversationScriptResourcePanel", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Discover \(1\)/ }));
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
 
-    await waitFor(() => expect(serviceMocks.prepare).toHaveBeenCalledWith({
-      action: "install",
-      packageId: "io.github.util6.qwen-session",
-      adapterId: "qwen",
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.prepare).toHaveBeenCalledWith({
+        action: "install",
+        packageId: "io.github.util6.qwen-session",
+        adapterId: "qwen",
+      }),
+    );
     expect(serviceMocks.install).not.toHaveBeenCalled();
     const registerButtons = screen.getAllByRole("button", { name: "Register" });
     fireEvent.click(registerButtons[registerButtons.length - 1]);
 
-    await waitFor(() => expect(serviceMocks.install).toHaveBeenCalledWith({
-      packageId: "io.github.util6.qwen-session",
-      version: undefined,
-      confirmed: true,
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.install).toHaveBeenCalledWith({
+        packageId: "io.github.util6.qwen-session",
+        version: undefined,
+        confirmed: true,
+      }),
+    );
   });
 
   it("registers a valid package discovered in the local adapter directory", async () => {
@@ -319,8 +372,10 @@ describe("ConversationScriptResourcePanel", () => {
       runtime_ready: false,
       status: "not_installed",
       install_path: "/tmp/conversation-adapters/local-session",
-      display_install_path: "~/.assetiweave/conversation-adapters/local-session",
-      display_manifest_path: "~/.assetiweave/conversation-adapters/local-session/conversation-adapter.json",
+      display_install_path:
+        "~/.assetiweave/conversation-adapters/local-session",
+      display_manifest_path:
+        "~/.assetiweave/conversation-adapters/local-session/conversation-adapter.json",
     };
     serviceMocks.list.mockResolvedValueOnce([localEntry]);
 
@@ -328,11 +383,13 @@ describe("ConversationScriptResourcePanel", () => {
     fireEvent.click(await screen.findByRole("tab", { name: /Discover \(1\)/ }));
     fireEvent.click(screen.getByRole("button", { name: "Register" }));
 
-    await waitFor(() => expect(serviceMocks.register).toHaveBeenCalledWith(
-      "/tmp/conversation-adapters/local-session/conversation-adapter.json",
-      false,
-      true,
-    ));
+    await waitFor(() =>
+      expect(serviceMocks.register).toHaveBeenCalledWith(
+        "/tmp/conversation-adapters/local-session/conversation-adapter.json",
+        false,
+        true,
+      ),
+    );
     expect(serviceMocks.prepare).not.toHaveBeenCalled();
     expect(serviceMocks.install).not.toHaveBeenCalled();
   });
@@ -340,25 +397,41 @@ describe("ConversationScriptResourcePanel", () => {
   it("uninstalls a managed runtime without using the delete action", async () => {
     serviceMocks.list.mockResolvedValueOnce([entries[1]]);
     renderPanel();
-    expect(await screen.findByRole("button", { name: "Manage / delete" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", { name: "Manage / delete" }),
+    ).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
-    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
-    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "Confirm plugin change",
+    });
+    fireEvent.click(
+      within(confirmDialog).getByRole("button", { name: "Uninstall" }),
+    );
 
-    await waitFor(() => expect(serviceMocks.uninstall).toHaveBeenCalledWith({
-      packageId: "io.github.util6.codex-session",
-      confirmed: true,
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.uninstall).toHaveBeenCalledWith({
+        packageId: "io.github.util6.codex-session",
+        confirmed: true,
+      }),
+    );
     expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
   });
 
   it("opens managed version deletion from the market row", async () => {
     renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Manage / delete" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Manage / delete" }),
+    );
 
-    expect(await screen.findByRole("heading", { name: "Installed offline versions" })).toBeTruthy();
-    expect(screen.getByText("Uninstall the running version before deleting it.")).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Installed offline versions",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Uninstall the running version before deleting it."),
+    ).toBeTruthy();
   });
 
   it("presents external runtime unregistering as uninstall while retaining its files", async () => {
@@ -381,15 +454,23 @@ describe("ConversationScriptResourcePanel", () => {
     serviceMocks.list.mockResolvedValueOnce([localEntry]);
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Manage / delete" }),
+    ).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
-    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
-    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "Confirm plugin change",
+    });
+    fireEvent.click(
+      within(confirmDialog).getByRole("button", { name: "Uninstall" }),
+    );
 
-    await waitFor(() => expect(serviceMocks.unregister).toHaveBeenCalledWith({
-      adapterId: "zcode",
-      confirmed: true,
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.unregister).toHaveBeenCalledWith({
+        adapterId: "zcode",
+        confirmed: true,
+      }),
+    );
     expect(serviceMocks.uninstall).not.toHaveBeenCalled();
     expect(serviceMocks.deleteVersion).not.toHaveBeenCalled();
   });
@@ -398,56 +479,74 @@ describe("ConversationScriptResourcePanel", () => {
     serviceMocks.list.mockResolvedValueOnce([entries[0]]);
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Manage / delete" }),
+    ).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
-    const confirmDialog = await screen.findByRole("dialog", { name: "Confirm plugin change" });
-    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Uninstall" }));
+    const confirmDialog = await screen.findByRole("dialog", {
+      name: "Confirm plugin change",
+    });
+    fireEvent.click(
+      within(confirmDialog).getByRole("button", { name: "Uninstall" }),
+    );
 
-    await waitFor(() => expect(serviceMocks.unregister).toHaveBeenCalledWith({
-      adapterId: "builtin-codex",
-      confirmed: true,
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.unregister).toHaveBeenCalledWith({
+        adapterId: "builtin-codex",
+        confirmed: true,
+      }),
+    );
   });
 
   it("shows a disabled built-in runtime as uninstalled without delete actions", async () => {
-    serviceMocks.list.mockResolvedValueOnce([{
-      ...entries[0],
-      runtime_ready: false,
-      status: "uninstalled",
-      installed_adapter: {
-        ...entries[0].installed_adapter!,
-        enabled: false,
-        manifest_path: "/tmp/builtin/conversation-adapter.json",
+    serviceMocks.list.mockResolvedValueOnce([
+      {
+        ...entries[0],
+        runtime_ready: false,
+        status: "uninstalled",
+        installed_adapter: {
+          ...entries[0].installed_adapter!,
+          enabled: false,
+          manifest_path: "/tmp/builtin/conversation-adapter.json",
+        },
       },
-    }]);
+    ]);
     renderPanel();
 
-    expect(await screen.findByText("Uninstalled (files and records retained)")).toBeTruthy();
+    expect(
+      await screen.findByText("Uninstalled (files and records retained)"),
+    ).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Uninstall" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Manage / delete" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Manage / delete" }),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete version" })).toBeNull();
   });
 
   it("keeps a register entry for an uninstalled built-in runtime", async () => {
-    serviceMocks.list.mockResolvedValueOnce([{
-      ...entries[0],
-      runtime_ready: false,
-      status: "uninstalled",
-      installed_adapter: {
-        ...entries[0].installed_adapter!,
-        enabled: false,
-        manifest_path: "/tmp/builtin/conversation-adapter.json",
+    serviceMocks.list.mockResolvedValueOnce([
+      {
+        ...entries[0],
+        runtime_ready: false,
+        status: "uninstalled",
+        installed_adapter: {
+          ...entries[0].installed_adapter!,
+          enabled: false,
+          manifest_path: "/tmp/builtin/conversation-adapter.json",
+        },
       },
-    }]);
+    ]);
     renderPanel();
 
     fireEvent.click(await screen.findByRole("button", { name: "Register" }));
 
-    await waitFor(() => expect(serviceMocks.register).toHaveBeenCalledWith(
-      "/tmp/builtin/conversation-adapter.json",
-      false,
-      true,
-    ));
+    await waitFor(() =>
+      expect(serviceMocks.register).toHaveBeenCalledWith(
+        "/tmp/builtin/conversation-adapter.json",
+        false,
+        true,
+      ),
+    );
   });
 
   it("allows deleting the last installed version after its runtime is uninstalled", async () => {
@@ -469,26 +568,33 @@ describe("ConversationScriptResourcePanel", () => {
       adapter: null,
       affected_sources: [],
     });
-    serviceMocks.listVersions.mockResolvedValueOnce([{
-      package_id: "io.github.util6.codex-session",
-      version: "1.0.0",
-      install_dir: "/tmp/packages/io.github.util6.codex-session/versions/1.0.0",
-      artifact_hash: "artifact-hash",
-      content_hash: "content-hash",
-      runtime_gate_status: "ready",
-      installed_at: "2026-07-15T00:00:00Z",
-    }]);
+    serviceMocks.listVersions.mockResolvedValueOnce([
+      {
+        package_id: "io.github.util6.codex-session",
+        version: "1.0.0",
+        install_dir:
+          "/tmp/packages/io.github.util6.codex-session/versions/1.0.0",
+        artifact_hash: "artifact-hash",
+        content_hash: "content-hash",
+        runtime_gate_status: "ready",
+        installed_at: "2026-07-15T00:00:00Z",
+      },
+    ]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPanel();
 
     fireEvent.click(await screen.findByRole("button", { name: "Details" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delete version" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Delete version" }),
+    );
 
-    await waitFor(() => expect(serviceMocks.deleteVersion).toHaveBeenCalledWith({
-      packageId: "io.github.util6.codex-session",
-      version: "1.0.0",
-      confirmed: true,
-    }));
+    await waitFor(() =>
+      expect(serviceMocks.deleteVersion).toHaveBeenCalledWith({
+        packageId: "io.github.util6.codex-session",
+        version: "1.0.0",
+        confirmed: true,
+      }),
+    );
   });
 });
 
@@ -553,7 +659,8 @@ const entries: ConversationAdapterPackageCatalogEntry[] = [
     runtime_ready: true,
     status: "update_available",
     display_install_path: "~/conversation-adapters/codex",
-    display_manifest_path: "~/conversation-adapters/codex/conversation-adapter.json",
+    display_manifest_path:
+      "~/conversation-adapters/codex/conversation-adapter.json",
     installed_package: {
       package_id: "io.github.util6.codex-session",
       adapter_id: "codex",
@@ -620,7 +727,8 @@ const release = {
   artifact_url: "https://example.test/codex.zip",
   artifact_size: 100,
   artifact_sha256: "a".repeat(64),
-  changelog_markdown: "## 1.0.1\n\n- Improve Codex session parsing compatibility.",
+  changelog_markdown:
+    "## 1.0.1\n\n- Improve Codex session parsing compatibility.",
   breaking_change: false,
   runtime_protocol: "stdio-ndjson-v1",
   record_kind: "session" as const,

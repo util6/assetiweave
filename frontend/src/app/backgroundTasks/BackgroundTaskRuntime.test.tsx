@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import {
+  useBackgroundTaskRuntime,
+  type BackgroundTaskRuntimeAdapter,
+} from "./BackgroundTaskRuntime";
 
 afterEach(() => {
   cleanup();
@@ -24,13 +33,17 @@ describe("useBackgroundTaskRuntime", () => {
       },
     };
 
-    render(
-      <RuntimeHarness adapter={adapter} />,
-    );
+    render(<RuntimeHarness adapter={adapter} />);
 
     await act(async () => {});
     expect(screen.getByTestId("state").textContent).toBe("1");
-    expect((screen.getByRole("button", { name: "Other feature" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Other feature",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
 
     act(() => listeners[0]?.(2));
     expect(screen.getByTestId("state").textContent).toBe("2");
@@ -39,9 +52,7 @@ describe("useBackgroundTaskRuntime", () => {
   it("polls active work and removes the subscription on unmount", async () => {
     vi.useFakeTimers();
     const unsubscribe = vi.fn();
-    const refresh = vi.fn()
-      .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(3);
+    const refresh = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(3);
     const adapter: BackgroundTaskRuntimeAdapter<number, number> = {
       initialState: 0,
       isRunning: (state) => state < 3,
@@ -65,7 +76,8 @@ describe("useBackgroundTaskRuntime", () => {
 
   it("reconnects the event subscription after a transport failure", async () => {
     vi.useFakeTimers();
-    const subscribe = vi.fn()
+    const subscribe = vi
+      .fn()
       .mockRejectedValueOnce(new Error("disconnected"))
       .mockResolvedValue(vi.fn());
     const adapter: BackgroundTaskRuntimeAdapter<number, number> = {
@@ -88,13 +100,22 @@ describe("useBackgroundTaskRuntime", () => {
   });
 });
 
-function RuntimeHarness({ adapter }: { adapter: BackgroundTaskRuntimeAdapter<number, number> }) {
+function RuntimeHarness({
+  adapter,
+}: {
+  adapter: BackgroundTaskRuntimeAdapter<number, number>;
+}) {
   const { state } = useBackgroundTaskRuntime(adapter);
   return (
     <>
       <output data-testid="state">{state}</output>
       <button type="button">Other feature</button>
-      <button onClick={() => fireEvent.click(screen.getByRole("button", { name: "Other feature" }))} type="button">
+      <button
+        onClick={() =>
+          fireEvent.click(screen.getByRole("button", { name: "Other feature" }))
+        }
+        type="button"
+      >
         Trigger
       </button>
     </>

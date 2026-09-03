@@ -18,7 +18,10 @@ export function CardsSkeletonRecipe({
       {customChildren
         ? children
         : Array.from({ length: cardCount }, (_, index) => (
-            <SkeletonSurface className="grid min-h-[10rem] content-start gap-3 p-4" key={index}>
+            <SkeletonSurface
+              className="grid min-h-[10rem] content-start gap-3 p-4"
+              key={index}
+            >
               <div className="flex items-center gap-3">
                 <Skeleton className="size-8 rounded-xl" />
                 <Skeleton className="h-4 w-36 rounded-md" />

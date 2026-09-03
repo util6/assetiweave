@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { createRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -34,7 +40,9 @@ describe("DialogFrame", () => {
     const descriptionId = dialog.getAttribute("aria-describedby");
 
     expect(descriptionId).toBeTruthy();
-    expect(document.getElementById(descriptionId as string)?.textContent).toBe("Edit source");
+    expect(document.getElementById(descriptionId as string)?.textContent).toBe(
+      "Edit source",
+    );
   });
 
   it("does not close from Escape or the backdrop while busy", () => {
@@ -57,13 +65,19 @@ describe("DialogFrame", () => {
     const initialFocusRef = createRef<HTMLInputElement>();
 
     render(
-      <DialogFrame initialFocusRef={initialFocusRef} onClose={() => undefined} title="Create group">
+      <DialogFrame
+        initialFocusRef={initialFocusRef}
+        onClose={() => undefined}
+        title="Create group"
+      >
         <input ref={initialFocusRef} aria-label="Group name" />
         <button type="button">Create</button>
       </DialogFrame>,
     );
 
-    await waitFor(() => expect(document.activeElement).toBe(initialFocusRef.current));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(initialFocusRef.current),
+    );
 
     const closeButton = screen.getByRole("button", { name: "Close" });
     const createButton = screen.getByRole("button", { name: "Create" });

@@ -13,9 +13,18 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
-import type { Asset, AssetGroup, AssetGroupDetail, AssetGroupIconSvg } from "../../types";
+import type {
+  Asset,
+  AssetGroup,
+  AssetGroupDetail,
+  AssetGroupIconSvg,
+} from "../../types";
 import { getBackupableSkillAssetsByIds } from "../../utils/skillBackup";
-import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
+import {
+  AssetPickerHeader,
+  AssetPickerText,
+  GroupField,
+} from "./SkillGroupFormPrimitives";
 
 interface SkillGroupEditDialogProps {
   assets: Asset[];
@@ -39,27 +48,51 @@ export function SkillGroupEditDialog({
   const { t } = useI18n();
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState(detail?.group.name ?? "");
-  const [description, setDescription] = useState(detail?.group.description ?? "");
-  const [color, setColor] = useState(detail?.group.color ?? DEFAULT_GROUP_COLOR_HEX);
-  const [draftColor, setDraftColor] = useState(detail?.group.color ?? DEFAULT_GROUP_COLOR_HEX);
-  const [displayIcon, setDisplayIcon] = useState(detail?.group.display_icon ?? "");
-  const [iconSvg, setIconSvg] = useState<AssetGroupIconSvg | null>(detail?.group.icon_svg ?? null);
+  const [description, setDescription] = useState(
+    detail?.group.description ?? "",
+  );
+  const [color, setColor] = useState(
+    detail?.group.color ?? DEFAULT_GROUP_COLOR_HEX,
+  );
+  const [draftColor, setDraftColor] = useState(
+    detail?.group.color ?? DEFAULT_GROUP_COLOR_HEX,
+  );
+  const [displayIcon, setDisplayIcon] = useState(
+    detail?.group.display_icon ?? "",
+  );
+  const [iconSvg, setIconSvg] = useState<AssetGroupIconSvg | null>(
+    detail?.group.icon_svg ?? null,
+  );
   const [enabled, setEnabled] = useState(detail?.group.enabled ?? true);
   const [query, setQuery] = useState("");
-  const [manualAssetIds, setManualAssetIds] = useState<Set<string>>(() => new Set(detail?.manual_asset_ids ?? []));
+  const [manualAssetIds, setManualAssetIds] = useState<Set<string>>(
+    () => new Set(detail?.manual_asset_ids ?? []),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [svgEditorOpen, setSvgEditorOpen] = useState(false);
   const [svgDraft, setSvgDraft] = useState("");
   const [svgError, setSvgError] = useState("");
 
-  const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
-  const skillAssetsById = useMemo(() => new Map(skillAssets.map((asset) => [asset.id, asset])), [skillAssets]);
-  const filteredAssets = useMemo(() => filterAssets(skillAssets, query), [query, skillAssets]);
+  const skillAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "skill"),
+    [assets],
+  );
+  const skillAssetsById = useMemo(
+    () => new Map(skillAssets.map((asset) => [asset.id, asset])),
+    [skillAssets],
+  );
+  const filteredAssets = useMemo(
+    () => filterAssets(skillAssets, query),
+    [query, skillAssets],
+  );
   const ruleAssetIds = useMemo(
     () =>
       new Set(
         detail?.members
-          .filter((member) => member.origin === "rule" || member.origin === "manual_and_rule")
+          .filter(
+            (member) =>
+              member.origin === "rule" || member.origin === "manual_and_rule",
+          )
           .map((member) => member.asset_id) ?? [],
       ),
     [detail],
@@ -101,9 +134,10 @@ export function SkillGroupEditDialog({
     return null;
   }
   const backupAssetCount = backupAssets.length;
-  const backupActionLabel = backupAssetCount > 0
-    ? t("backup.action.backupCount", { count: backupAssetCount })
-    : t("backup.action.allInDirectory");
+  const backupActionLabel =
+    backupAssetCount > 0
+      ? t("backup.action.backupCount", { count: backupAssetCount })
+      : t("backup.action.allInDirectory");
 
   function commitColor(nextColor: string) {
     const trimmed = nextColor.trim();
@@ -196,8 +230,14 @@ export function SkillGroupEditDialog({
           <>
             <Button
               className="max-[640px]:w-full"
-              disabled={busy || backupAssetCount === 0 || isSkillBackupRunning(backupTask ?? null)}
-              onClick={() => void onBackup(backupAssets.map((asset) => asset.id))}
+              disabled={
+                busy ||
+                backupAssetCount === 0 ||
+                isSkillBackupRunning(backupTask ?? null)
+              }
+              onClick={() =>
+                void onBackup(backupAssets.map((asset) => asset.id))
+              }
               type="button"
               variant="outline"
             >
@@ -217,10 +257,19 @@ export function SkillGroupEditDialog({
         )}
       </div>
       <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
-        <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+        <Button
+          disabled={busy}
+          onClick={onClose}
+          type="button"
+          variant="outline"
+        >
           {t("group.dialog.cancel")}
         </Button>
-        <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
+        <Button
+          disabled={busy}
+          onClick={() => void handleSubmit()}
+          type="button"
+        >
           <Save size={16} />
           {t("group.editDialog.submit")}
         </Button>
@@ -279,25 +328,44 @@ export function SkillGroupEditDialog({
                     )}
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-title-sm font-bold text-on-surface">{name.trim() || detail.group.name}</p>
+                    <p className="truncate text-title-sm font-bold text-on-surface">
+                      {name.trim() || detail.group.name}
+                    </p>
                     <p className="mt-1 truncate text-body-sm text-on-surface-variant">
-                      {description.trim() || detail.group.description || t("group.noDescription")}
+                      {description.trim() ||
+                        detail.group.description ||
+                        t("group.noDescription")}
                     </p>
                   </div>
                 </div>
                 <label className="flex h-10 w-full items-center justify-between gap-3 rounded-xl border border-theme-control-border bg-theme-control px-3">
-                  <Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} />
-                  <span className="whitespace-nowrap text-body-sm text-on-surface-variant">{t("group.field.enabled")}</span>
+                  <Switch
+                    checked={enabled}
+                    disabled={busy}
+                    onCheckedChange={setEnabled}
+                  />
+                  <span className="whitespace-nowrap text-body-sm text-on-surface-variant">
+                    {t("group.field.enabled")}
+                  </span>
                 </label>
               </div>
 
               <div className="grid min-w-0 gap-4">
                 <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3 max-[760px]:grid-cols-1">
                   <GroupField label={t("group.field.name")}>
-                    <Input disabled={busy} onChange={(event) => setName(event.target.value)} ref={nameInputRef} value={name} />
+                    <Input
+                      disabled={busy}
+                      onChange={(event) => setName(event.target.value)}
+                      ref={nameInputRef}
+                      value={name}
+                    />
                   </GroupField>
                   <GroupField label={t("group.field.description")}>
-                    <Input disabled={busy} onChange={(event) => setDescription(event.target.value)} value={description} />
+                    <Input
+                      disabled={busy}
+                      onChange={(event) => setDescription(event.target.value)}
+                      value={description}
+                    />
                   </GroupField>
                 </div>
 
@@ -321,8 +389,12 @@ export function SkillGroupEditDialog({
                         className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-code-md focus:border-transparent"
                         disabled={busy}
                         maxLength={7}
-                        onBlur={(event) => commitColor(event.currentTarget.value)}
-                        onChange={(event) => setDraftColor(event.target.value.slice(0, 7))}
+                        onBlur={(event) =>
+                          commitColor(event.currentTarget.value)
+                        }
+                        onChange={(event) =>
+                          setDraftColor(event.target.value.slice(0, 7))
+                        }
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
                             commitColor(event.currentTarget.value);
@@ -368,7 +440,9 @@ export function SkillGroupEditDialog({
               </div>
             </div>
 
-            {formError && <div className="text-body-sm text-status-remove">{formError}</div>}
+            {formError && (
+              <div className="text-body-sm text-status-remove">{formError}</div>
+            )}
           </section>
 
           <section className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
@@ -382,7 +456,9 @@ export function SkillGroupEditDialog({
 
             <div className="max-h-[360px] overflow-y-auto rounded-xl border border-theme-card-border bg-theme-card/45">
               {filteredAssets.length === 0 ? (
-                <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("group.assets.empty")}</div>
+                <div className="px-4 py-5 text-body-sm text-on-surface-variant">
+                  {t("group.assets.empty")}
+                </div>
               ) : (
                 filteredAssets.map((asset) => {
                   const ruleMatched = ruleAssetIds.has(asset.id);
@@ -418,7 +494,11 @@ export function SkillGroupEditDialog({
                 {t("group.icon.clearSvg")}
               </Button>
               <div className="flex items-center gap-2">
-                <Button onClick={closeSvgEditor} type="button" variant="outline">
+                <Button
+                  onClick={closeSvgEditor}
+                  type="button"
+                  variant="outline"
+                >
                   {t("group.icon.cancelSvg")}
                 </Button>
                 <Button onClick={saveIconSvg} type="button">
@@ -437,9 +517,13 @@ export function SkillGroupEditDialog({
           title={t("group.icon.svgEditorTitle")}
         >
           <div className="flex min-h-0 flex-col gap-3">
-            <p className="text-body-sm text-on-surface-variant">{t("group.icon.svgEditorDescription")}</p>
+            <p className="text-body-sm text-on-surface-variant">
+              {t("group.icon.svgEditorDescription")}
+            </p>
             <label className="flex min-h-0 flex-1 flex-col gap-2">
-              <span className="text-label-caps uppercase text-outline">{t("group.icon.svgInput")}</span>
+              <span className="text-label-caps uppercase text-outline">
+                {t("group.icon.svgInput")}
+              </span>
               <textarea
                 aria-label={t("group.icon.svgInput")}
                 className="min-h-80 resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60"
@@ -449,7 +533,9 @@ export function SkillGroupEditDialog({
                 value={svgDraft}
               />
             </label>
-            {svgError && <p className="text-body-sm text-status-remove">{svgError}</p>}
+            {svgError && (
+              <p className="text-body-sm text-status-remove">{svgError}</p>
+            )}
           </div>
         </DialogFrame>
       )}
@@ -464,7 +550,10 @@ function filterAssets(assets: Asset[], query: string) {
   }
 
   return assets.filter((asset) =>
-    [asset.name, asset.description ?? "", asset.relative_path].join(" ").toLowerCase().includes(normalizedQuery),
+    [asset.name, asset.description ?? "", asset.relative_path]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery),
   );
 }
 
@@ -484,7 +573,13 @@ function parseGroupIconSvgInput(value: string): AssetGroupIconSvg | null {
         if (!d) return [];
         const clipRule = normalizeSvgRule(path.clip_rule ?? path.clipRule);
         const fillRule = normalizeSvgRule(path.fill_rule ?? path.fillRule);
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
+        return [
+          {
+            d,
+            ...(clipRule ? { clip_rule: clipRule } : {}),
+            ...(fillRule ? { fill_rule: fillRule } : {}),
+          },
+        ];
       });
       if (paths.length === 0) return null;
       return {
@@ -517,7 +612,13 @@ function parseGroupIconSvgInput(value: string): AssetGroupIconSvg | null {
         const fillRule = normalizeSvgRule(
           path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"),
         );
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
+        return [
+          {
+            d,
+            ...(clipRule ? { clip_rule: clipRule } : {}),
+            ...(fillRule ? { fill_rule: fillRule } : {}),
+          },
+        ];
       });
       if (paths.length === 0) return null;
 

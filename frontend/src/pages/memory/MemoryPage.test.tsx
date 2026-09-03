@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { MemoryPage } from "./MemoryPage";
@@ -8,7 +14,12 @@ import { MemoryPage } from "./MemoryPage";
 const memoryService = vi.hoisted(() => ({
   cancelMemoryRecallTurn: vi.fn(),
   createMemoryRecallSession: vi.fn(),
-  emptyMemoryScope: vi.fn(() => ({ app_id: null, source_id: null, project_path: null, session_id: null })),
+  emptyMemoryScope: vi.fn(() => ({
+    app_id: null,
+    source_id: null,
+    project_path: null,
+    session_id: null,
+  })),
   getMemoryRecentEventTarget: vi.fn(),
   getMemoryRecallSession: vi.fn(),
   listMemoryRecent: vi.fn(),
@@ -21,7 +32,12 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", createMockLocalStorage());
   localStorage.setItem("assetiweave.locale", "zh");
   vi.clearAllMocks();
-  memoryService.emptyMemoryScope.mockReturnValue({ app_id: null, source_id: null, project_path: null, session_id: null });
+  memoryService.emptyMemoryScope.mockReturnValue({
+    app_id: null,
+    source_id: null,
+    project_path: null,
+    session_id: null,
+  });
   memoryService.listMemoryRecent.mockResolvedValue([]);
   memoryService.createMemoryRecallSession.mockResolvedValue(session());
 });
@@ -40,25 +56,43 @@ describe("MemoryPage", () => {
 
   it("opens one persistent Recall session and sends sequential turns", async () => {
     renderMemoryPage("recall");
-    expect(await screen.findByRole("heading", { level: 1, name: "深度回忆" })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "深度回忆" }),
+    ).toBeTruthy();
     expect(memoryService.createMemoryRecallSession).toHaveBeenCalledTimes(1);
-    fireEvent.change(screen.getByRole("textbox", { name: "回忆问题" }), { target: { value: "为什么？" } });
-    memoryService.sendMemoryRecallTurn.mockResolvedValue(session({ turnCount: 1, activeTurnId: "turn-1" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "回忆问题" }), {
+      target: { value: "为什么？" },
+    });
+    memoryService.sendMemoryRecallTurn.mockResolvedValue(
+      session({ turnCount: 1, activeTurnId: "turn-1" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     await act(async () => {});
-    expect(memoryService.sendMemoryRecallTurn).toHaveBeenCalledWith(expect.any(String), "为什么？");
+    expect(memoryService.sendMemoryRecallTurn).toHaveBeenCalledWith(
+      expect.any(String),
+      "为什么？",
+    );
   });
 });
 
 function renderMemoryPage(activeSubNavId: string) {
-  return render(<I18nProvider><MemoryPage activeSubNavId={activeSubNavId} /></I18nProvider>);
+  return render(
+    <I18nProvider>
+      <MemoryPage activeSubNavId={activeSubNavId} />
+    </I18nProvider>,
+  );
 }
 
 function session(overrides: Record<string, unknown> = {}) {
   return {
     id: "recall-1",
     status: "active",
-    scope: { app_id: null, source_id: null, project_path: null, session_id: null },
+    scope: {
+      app_id: null,
+      source_id: null,
+      project_path: null,
+      session_id: null,
+    },
     executionContextKey: "memory-recall:recall-1",
     agentId: "opencode",
     model: null,

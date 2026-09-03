@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Skeleton, SkeletonSurface, SkeletonText } from "../../foundation/skeleton";
+import {
+  Skeleton,
+  SkeletonSurface,
+  SkeletonText,
+} from "../../foundation/skeleton";
 import { cn } from "../../../lib/utils";
-import { useRenderActivity, useRenderVisibilityRegistry, useScrollActivitySnapshot } from "./RenderActivityProvider";
+import {
+  useRenderActivity,
+  useRenderVisibilityRegistry,
+  useScrollActivitySnapshot,
+} from "./RenderActivityProvider";
 import type { RenderPriority } from "./RenderScheduler";
 import {
   SKELETON_BLOCK_SIZE_PX,
@@ -23,7 +31,11 @@ export interface DeferredSkeletonBoundaryProps {
   size?: SkeletonBlockSize;
 }
 
-function DefaultDeferredSkeleton({ size }: { size: SkeletonBlockSize }): React.ReactElement {
+function DefaultDeferredSkeleton({
+  size,
+}: {
+  size: SkeletonBlockSize;
+}): React.ReactElement {
   return (
     <SkeletonSurface className="deferred-render-skeleton grid gap-3 p-3">
       <Skeleton className="h-4 w-2/5" />
@@ -51,7 +63,8 @@ export function DeferredSkeletonBoundary({
   const [state, setState] = useState<DeferredRenderState>(
     enabled && !forceReady ? "skeleton" : "ready",
   );
-  const [observedPriority, setObservedPriority] = useState<RenderPriority | null>(null);
+  const [observedPriority, setObservedPriority] =
+    useState<RenderPriority | null>(null);
   const boundaryRef = useRef<HTMLDivElement | null>(null);
   const itemKeyRef = useRef(itemKey);
   const stateRef = useRef(state);
@@ -71,7 +84,9 @@ export function DeferredSkeletonBoundary({
     stateRef.current = enabled && !forceReady ? "skeleton" : "ready";
   }
   const renderState = itemChanged
-    ? enabled && !forceReady ? "skeleton" : "ready"
+    ? enabled && !forceReady
+      ? "skeleton"
+      : "ready"
     : state;
 
   const cancelQueuedTask = () => {
@@ -96,7 +111,8 @@ export function DeferredSkeletonBoundary({
   }, [enabled, forceReady, itemKey, itemChanged]);
 
   useEffect(() => {
-    if (!enabled || forceReady || explicitPriority !== undefined) return undefined;
+    if (!enabled || forceReady || explicitPriority !== undefined)
+      return undefined;
     const element = boundaryRef.current;
     if (!element) return undefined;
     return visibility.register({
@@ -136,7 +152,16 @@ export function DeferredSkeletonBoundary({
       key: taskKey,
       priority,
     });
-  }, [enabled, forceReady, itemKey, phase, renderState, scheduler, observedPriority, explicitPriority]);
+  }, [
+    enabled,
+    forceReady,
+    itemKey,
+    phase,
+    renderState,
+    scheduler,
+    observedPriority,
+    explicitPriority,
+  ]);
 
   useEffect(() => {
     if (renderState !== "ready" || readyNotifiedRef.current) return;
@@ -154,7 +179,9 @@ export function DeferredSkeletonBoundary({
       aria-hidden={renderState === "ready" ? undefined : true}
       className={cn(
         "deferred-render-boundary",
-        renderState === "ready" && contentVisibilityContainment && "render-safe-content",
+        renderState === "ready" &&
+          contentVisibilityContainment &&
+          "render-safe-content",
         className,
       )}
       data-render-item-key={itemKey}
@@ -163,7 +190,9 @@ export function DeferredSkeletonBoundary({
       ref={boundaryRef}
       style={style}
     >
-      {renderState === "ready" ? children : fallback ?? <DefaultDeferredSkeleton size={size} />}
+      {renderState === "ready"
+        ? children
+        : (fallback ?? <DefaultDeferredSkeleton size={size} />)}
     </div>
   );
 }

@@ -3,7 +3,8 @@ import { normalizeThemeId } from "../../theme/themes";
 
 export type InterfaceDensity = "comfortable" | "compact";
 
-export type FontFamilyPresetId = "system" | "jetbrains" | "serif" | "mono" | "custom";
+export type FontFamilyPresetId =
+  "system" | "jetbrains" | "serif" | "mono" | "custom";
 export type BuiltInFontFamilyPresetId = Exclude<FontFamilyPresetId, "custom">;
 export type FontFamilyToken = BuiltInFontFamilyPresetId;
 export type FontFallbackKind = "sans" | "serif" | "mono";
@@ -20,7 +21,10 @@ export type AgentCapabilityServiceId =
   | "memory.recall"
   | "promptOptimization";
 
-export type AgentCapabilityAssignments = Record<AgentCapabilityServiceId, string>;
+export type AgentCapabilityAssignments = Record<
+  AgentCapabilityServiceId,
+  string
+>;
 export type AgentActionId =
   | "translation.card"
   | "memory.extraction"
@@ -80,10 +84,30 @@ export const fontFamilyCss: Record<BuiltInFontFamilyPresetId, string> = {
 };
 
 export const fontFamilyOptions: FontFamilyOption[] = [
-  { fallback: "sans", id: "system", labelKey: "settings.font.system", value: "System UI" },
-  { fallback: "sans", id: "jetbrains", labelKey: "settings.font.jetbrains", value: "JetBrains Mono" },
-  { fallback: "serif", id: "serif", labelKey: "settings.font.serif", value: "Georgia" },
-  { fallback: "mono", id: "mono", labelKey: "settings.font.mono", value: "JetBrains Mono" },
+  {
+    fallback: "sans",
+    id: "system",
+    labelKey: "settings.font.system",
+    value: "System UI",
+  },
+  {
+    fallback: "sans",
+    id: "jetbrains",
+    labelKey: "settings.font.jetbrains",
+    value: "JetBrains Mono",
+  },
+  {
+    fallback: "serif",
+    id: "serif",
+    labelKey: "settings.font.serif",
+    value: "Georgia",
+  },
+  {
+    fallback: "mono",
+    id: "mono",
+    labelKey: "settings.font.mono",
+    value: "JetBrains Mono",
+  },
 ];
 
 export const COLUMN_MIN_WIDTH_MIN = 220;
@@ -189,10 +213,11 @@ export interface PromptOptimizationSettings {
   promptTemplate: string;
 }
 
-export type ResolvedConversationTranslationSettings = ConversationTranslationSettings & {
-  agentId: string;
-  model: string;
-};
+export type ResolvedConversationTranslationSettings =
+  ConversationTranslationSettings & {
+    agentId: string;
+    model: string;
+  };
 
 export interface MemorySettings {
   generationEnabled: boolean;
@@ -213,13 +238,14 @@ export interface ConversationRuntimeOverrideSettings {
   python: string;
 }
 
-export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardColorSettings = {
-  answer: "#b99545",
-  code: "#4f8bd9",
-  command: "#d08a19",
-  result: "#2f9d78",
-  tool: "#46a4d5",
-};
+export const DEFAULT_CONVERSATION_CONTENT_CARD_COLORS: ConversationContentCardColorSettings =
+  {
+    answer: "#b99545",
+    code: "#4f8bd9",
+    command: "#d08a19",
+    result: "#2f9d78",
+    tool: "#46a4d5",
+  };
 
 export interface AppSettings {
   agentAssignments: AgentAssignments;
@@ -256,7 +282,9 @@ export function modelsByAgentFromAssignments(
 ): Record<string, string> {
   return Object.fromEntries(
     Object.values(assignments)
-      .filter((assignment): assignment is AgentAssignment => Boolean(assignment?.modelId))
+      .filter((assignment): assignment is AgentAssignment =>
+        Boolean(assignment?.modelId),
+      )
       .map((assignment) => [assignment.agentId, assignment.modelId as string]),
   );
 }
@@ -390,13 +418,20 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
 
   const stored = migrateLegacyStoredSettings(value as Record<string, unknown>);
   const typography = normalizeTypographySettings(stored.typography);
-  const conversations = normalizeConversationPageSettings(stored.conversations, typography);
+  const conversations = normalizeConversationPageSettings(
+    stored.conversations,
+    typography,
+  );
   const conversationTranslation = normalizeConversationTranslationSettings(
     stored.conversationTranslation,
     stored.conversations,
   );
-  const promptOptimization = normalizePromptOptimizationSettings(stored.promptOptimization);
-  const agentAssignments = normalizeCanonicalAgentAssignments(stored.agentAssignments);
+  const promptOptimization = normalizePromptOptimizationSettings(
+    stored.promptOptimization,
+  );
+  const agentAssignments = normalizeCanonicalAgentAssignments(
+    stored.agentAssignments,
+  );
 
   return {
     agentAssignments,
@@ -424,13 +459,15 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
 function migrateLegacyStoredSettings(
   value: Record<string, unknown>,
 ): Partial<AppSettings> {
-  const legacyTranslation = isRecord(value.conversationTranslation)
-    && ("cli" in value.conversationTranslation || "model" in value.conversationTranslation);
+  const legacyTranslation =
+    isRecord(value.conversationTranslation) &&
+    ("cli" in value.conversationTranslation ||
+      "model" in value.conversationTranslation);
   if (
-    !("agentCapabilityAssignments" in value)
-    && !("agentModels" in value)
-    && !("aiRuntime" in value)
-    && !legacyTranslation
+    !("agentCapabilityAssignments" in value) &&
+    !("agentModels" in value) &&
+    !("aiRuntime" in value) &&
+    !legacyTranslation
   ) {
     return value as Partial<AppSettings>;
   }
@@ -465,7 +502,10 @@ function normalizeLegacyAgentAssignments(
 ): AgentAssignments {
   const stored = isRecord(value) ? value : {};
   const legacy = isRecord(legacyValue) ? legacyValue : {};
-  const legacyMemory = normalizeAgentCapabilityAgentId(legacy.memory, aiRuntime.cli);
+  const legacyMemory = normalizeAgentCapabilityAgentId(
+    legacy.memory,
+    aiRuntime.cli,
+  );
   const specs: Array<[AgentActionId, string, string]> = [
     ["translation.card", "cardTranslation", aiRuntime.cli],
     ["memory.extraction", "memory.extraction", legacyMemory],
@@ -483,7 +523,8 @@ function normalizeLegacyAgentAssignments(
       );
       const modelId = normalizeAssignmentModel(
         assignment.modelId,
-        agentModels[agentId] ?? (agentId === aiRuntime.cli ? aiRuntime.model : ""),
+        agentModels[agentId] ??
+          (agentId === aiRuntime.cli ? aiRuntime.model : ""),
       );
       return [actionId, { agentId, modelId }] as const;
     }),
@@ -492,28 +533,38 @@ function normalizeLegacyAgentAssignments(
 
 function normalizeCanonicalAgentAssignments(value: unknown): AgentAssignments {
   const stored = isRecord(value) ? value : null;
-  const actionIds = (Object.keys(defaultSettings.agentAssignments) as AgentActionId[]).filter(
-    (actionId) => stored === null || isRecord(stored[actionId]),
-  );
+  const actionIds = (
+    Object.keys(defaultSettings.agentAssignments) as AgentActionId[]
+  ).filter((actionId) => stored === null || isRecord(stored[actionId]));
   return Object.fromEntries(
     actionIds.map((actionId) => {
       const fallback = defaultSettings.agentAssignments[actionId] ?? {
         agentId: "",
         modelId: null,
       };
-      const assignment = stored && isRecord(stored[actionId]) ? stored[actionId] : {};
+      const assignment =
+        stored && isRecord(stored[actionId]) ? stored[actionId] : {};
       return [
         actionId,
         {
-          agentId: normalizeAgentCapabilityAgentId(assignment.agentId, fallback.agentId),
-          modelId: normalizeAssignmentModel(assignment.modelId, fallback.modelId ?? ""),
+          agentId: normalizeAgentCapabilityAgentId(
+            assignment.agentId,
+            fallback.agentId,
+          ),
+          modelId: normalizeAssignmentModel(
+            assignment.modelId,
+            fallback.modelId ?? "",
+          ),
         },
       ] as const;
     }),
   ) as AgentAssignments;
 }
 
-function normalizeAssignmentModel(value: unknown, fallback: string): string | null {
+function normalizeAssignmentModel(
+  value: unknown,
+  fallback: string,
+): string | null {
   const candidate = typeof value === "string" ? value : fallback;
   const normalized = normalizeAiRuntimeModel(candidate);
   return normalized.length > 0 ? normalized : null;
@@ -526,13 +577,19 @@ function normalizeAgentModels(value: unknown): Record<string, string> {
 
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([agentId, model]) => typeof agentId === "string" && typeof model === "string")
+      .filter(
+        ([agentId, model]) =>
+          typeof agentId === "string" && typeof model === "string",
+      )
       .map(([agentId, model]) => [agentId, normalizeAiRuntimeModel(model)])
       .filter(([, model]) => model.length > 0),
   );
 }
 
-function normalizeAgentCapabilityAgentId(value: unknown, fallback: string): string {
+function normalizeAgentCapabilityAgentId(
+  value: unknown,
+  fallback: string,
+): string {
   if (typeof value !== "string") {
     return fallback;
   }
@@ -540,11 +597,17 @@ function normalizeAgentCapabilityAgentId(value: unknown, fallback: string): stri
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-  return normalized.length > 0 && normalized.length <= 128 ? normalized : fallback;
+  return normalized.length > 0 && normalized.length <= 128
+    ? normalized
+    : fallback;
 }
 
-function normalizeConversationRuntimeOverrides(value: unknown): ConversationRuntimeOverrideSettings {
-  const stored = isRecord(value) ? (value as Partial<ConversationRuntimeOverrideSettings>) : {};
+function normalizeConversationRuntimeOverrides(
+  value: unknown,
+): ConversationRuntimeOverrideSettings {
+  const stored = isRecord(value)
+    ? (value as Partial<ConversationRuntimeOverrideSettings>)
+    : {};
   return {
     bash: normalizeRuntimePathSetting(stored.bash),
     node: normalizeRuntimePathSetting(stored.node),
@@ -593,13 +656,18 @@ function normalizeConversationPageSettings(
   value: unknown,
   typography: TypographySettings,
 ): ConversationPageSettings {
-  const stored = isRecord(value) ? (value as Partial<ConversationPageSettings>) : {};
+  const stored = isRecord(value)
+    ? (value as Partial<ConversationPageSettings>)
+    : {};
   return {
     autoFullSyncOnStartup:
       typeof stored.autoFullSyncOnStartup === "boolean"
         ? stored.autoFullSyncOnStartup
         : defaultSettings.conversations.autoFullSyncOnStartup,
-    codeFontSize: normalizeFontSize(stored.codeFontSize, typography.codeFontSize),
+    codeFontSize: normalizeFontSize(
+      stored.codeFontSize,
+      typography.codeFontSize,
+    ),
     contentCardColors: normalizeContentCardColors(stored.contentCardColors),
     contentFontFamily: normalizeFontFamilySetting(
       stored.contentFontFamily,
@@ -616,7 +684,10 @@ function normalizeConversationPageSettings(
       stored.sessionBrowserFontFamily,
       typography.contentFontFamily,
     ),
-    sessionBrowserFontSize: normalizeFontSize(stored.sessionBrowserFontSize, 13),
+    sessionBrowserFontSize: normalizeFontSize(
+      stored.sessionBrowserFontSize,
+      13,
+    ),
     sessionToolbarCompact:
       typeof stored.sessionToolbarCompact === "boolean"
         ? stored.sessionToolbarCompact
@@ -628,12 +699,16 @@ function normalizeConversationTranslationSettings(
   value: unknown,
   legacyConversationSettings: unknown,
 ): ConversationTranslationSettings {
-  const stored = isRecord(value) ? (value as Partial<ConversationTranslationSettings>) : {};
+  const stored = isRecord(value)
+    ? (value as Partial<ConversationTranslationSettings>)
+    : {};
   const legacy = isRecord(legacyConversationSettings)
     ? (legacyConversationSettings as { translationTargetLanguage?: unknown })
     : {};
   return {
-    promptTemplate: normalizeConversationTranslationPromptTemplate(stored.promptTemplate),
+    promptTemplate: normalizeConversationTranslationPromptTemplate(
+      stored.promptTemplate,
+    ),
     provider: normalizeConversationTranslationProvider(stored.provider),
     targetLanguage: normalizeConversationTranslationTargetLanguage(
       stored.targetLanguage ?? legacy.translationTargetLanguage,
@@ -641,10 +716,16 @@ function normalizeConversationTranslationSettings(
   };
 }
 
-function normalizePromptOptimizationSettings(value: unknown): PromptOptimizationSettings {
-  const stored = isRecord(value) ? (value as Partial<PromptOptimizationSettings>) : {};
+function normalizePromptOptimizationSettings(
+  value: unknown,
+): PromptOptimizationSettings {
+  const stored = isRecord(value)
+    ? (value as Partial<PromptOptimizationSettings>)
+    : {};
   return {
-    promptTemplate: normalizePromptOptimizationPromptTemplate(stored.promptTemplate),
+    promptTemplate: normalizePromptOptimizationPromptTemplate(
+      stored.promptTemplate,
+    ),
   };
 }
 
@@ -653,7 +734,9 @@ function normalizeAiRuntimeSettings(
   legacyConversationTranslation: unknown,
 ): AiRuntimeSettings {
   const stored = isRecord(value) ? value : {};
-  const legacy = isRecord(legacyConversationTranslation) ? legacyConversationTranslation : {};
+  const legacy = isRecord(legacyConversationTranslation)
+    ? legacyConversationTranslation
+    : {};
   return {
     cli: normalizeAiRuntimeCli(stored.cli ?? legacy.cli),
     model: normalizeAiRuntimeModel(stored.model ?? legacy.model),
@@ -680,16 +763,22 @@ function normalizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return [...new Set(
-    value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  )].slice(0, 2_000);
+  return [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 2_000);
 }
 
-function normalizeConversationTranslationProvider(value: unknown): ConversationTranslationProvider {
-  return value === "google" || value === "apple" ? value : defaultSettings.conversationTranslation.provider;
+function normalizeConversationTranslationProvider(
+  value: unknown,
+): ConversationTranslationProvider {
+  return value === "google" || value === "apple"
+    ? value
+    : defaultSettings.conversationTranslation.provider;
 }
 
 function normalizeAiRuntimeCli(value: unknown): AiRuntimeCli {
@@ -704,17 +793,18 @@ function normalizeAiRuntimeModel(value: unknown): string {
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-  return normalized.length <= TRANSLATION_MODEL_MAX_LENGTH
-    ? normalized
-    : "";
+  return normalized.length <= TRANSLATION_MODEL_MAX_LENGTH ? normalized : "";
 }
 
-function normalizeConversationTranslationPromptTemplate(value: unknown): string {
+function normalizeConversationTranslationPromptTemplate(
+  value: unknown,
+): string {
   if (typeof value !== "string") {
     return defaultSettings.conversationTranslation.promptTemplate;
   }
   const normalized = value.replace(/\r\n?/g, "\n").trim();
-  return normalized && normalized.length <= TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH
+  return normalized &&
+    normalized.length <= TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH
     ? normalized
     : defaultSettings.conversationTranslation.promptTemplate;
 }
@@ -725,12 +815,13 @@ function normalizePromptOptimizationPromptTemplate(value: unknown): string {
   }
   const normalized = value.replace(/\r\n?/g, "\n").trim();
   if (
-    normalized === LEGACY_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE
-    || normalized === PREVIOUS_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE
+    normalized === LEGACY_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE ||
+    normalized === PREVIOUS_DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE
   ) {
     return defaultSettings.promptOptimization.promptTemplate;
   }
-  return normalized && normalized.length <= PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH
+  return normalized &&
+    normalized.length <= PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH
     ? normalized
     : defaultSettings.promptOptimization.promptTemplate;
 }
@@ -746,7 +837,10 @@ export function normalizeConversationTranslationTargetLanguage(
     .replace(/[\u0000-\u001f\u007f]/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-  if (!normalized || normalized.length > TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH) {
+  if (
+    !normalized ||
+    normalized.length > TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH
+  ) {
     return defaultSettings.conversationTranslation.targetLanguage;
   }
 
@@ -760,12 +854,15 @@ const legacyTranslationTargetLanguageNames: Record<string, string> = {
   ko: "한국어",
 };
 
-function normalizeContentCardColors(value: unknown): ConversationContentCardColorSettings {
+function normalizeContentCardColors(
+  value: unknown,
+): ConversationContentCardColorSettings {
   const normalized = { ...defaultSettings.conversations.contentCardColors };
   if (!isRecord(value)) return normalized;
   for (const [kind, color] of Object.entries(value)) {
     if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(kind)) continue;
-    if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color.trim())) continue;
+    if (typeof color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(color.trim()))
+      continue;
     normalized[kind] = color.trim().toLowerCase();
   }
   return normalized;
@@ -835,7 +932,9 @@ function normalizeRuntimePathSetting(value: unknown) {
   }
 
   const trimmed = value.trim();
-  return trimmed.length <= 4096 && isAbsoluteRuntimePath(trimmed) ? trimmed : "";
+  return trimmed.length <= 4096 && isAbsoluteRuntimePath(trimmed)
+    ? trimmed
+    : "";
 }
 
 function isAbsoluteRuntimePath(value: string) {
@@ -851,8 +950,14 @@ function isAbsoluteRuntimePath(value: string) {
   );
 }
 
-export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallbackKind = "sans") {
-  const setting = normalizeFontFamilySetting(value, defaultSettings.typography.contentFontFamily);
+export function resolveFontFamilyCss(
+  value: FontFamilyValue,
+  fallback: FontFallbackKind = "sans",
+) {
+  const setting = normalizeFontFamilySetting(
+    value,
+    defaultSettings.typography.contentFontFamily,
+  );
   if (setting.preset !== "custom") {
     return presetToFontFamilyCss(fontFamilyOptionForPreset(setting.preset));
   }
@@ -864,9 +969,14 @@ export function resolveFontFamilyCss(value: FontFamilyValue, fallback: FontFallb
   return `${quoteFontFamilyName(setting.customFontFamily)}, ${fontFallbackCss[fallback]}`;
 }
 
-function normalizeFontFamilySetting(value: unknown, fallback: FontFamilySetting): FontFamilySetting {
+function normalizeFontFamilySetting(
+  value: unknown,
+  fallback: FontFamilySetting,
+): FontFamilySetting {
   if (isRecord(value)) {
-    const preset = normalizeFontFamilyPreset((value as Partial<FontFamilySetting>).preset);
+    const preset = normalizeFontFamilyPreset(
+      (value as Partial<FontFamilySetting>).preset,
+    );
     const customFontFamily = normalizeCustomFontFamily(
       (value as Partial<FontFamilySetting>).customFontFamily,
     );
@@ -896,18 +1006,26 @@ function normalizeFontFamilySetting(value: unknown, fallback: FontFamilySetting)
   }
 
   const legacyOption =
-    fontFamilyOptions.find((option) => option.id === fallback.preset && option.value === trimmedValue) ??
-    fontFamilyOptions.find((option) => option.value === trimmedValue);
+    fontFamilyOptions.find(
+      (option) =>
+        option.id === fallback.preset && option.value === trimmedValue,
+    ) ?? fontFamilyOptions.find((option) => option.value === trimmedValue);
   if (legacyOption) {
     return createFontFamilySetting(legacyOption.id);
   }
 
   const legacyPresetCss =
     Object.entries(fontFamilyCss).find(
-      ([preset, cssValue]) => preset === fallback.preset && cssValue === trimmedValue,
-    ) ?? Object.entries(fontFamilyCss).find(([, cssValue]) => cssValue === trimmedValue);
+      ([preset, cssValue]) =>
+        preset === fallback.preset && cssValue === trimmedValue,
+    ) ??
+    Object.entries(fontFamilyCss).find(
+      ([, cssValue]) => cssValue === trimmedValue,
+    );
   if (legacyPresetCss) {
-    return createFontFamilySetting(legacyPresetCss[0] as BuiltInFontFamilyPresetId);
+    return createFontFamilySetting(
+      legacyPresetCss[0] as BuiltInFontFamilyPresetId,
+    );
   }
 
   const customFontFamily = normalizeCustomFontFamily(trimmedValue);
@@ -930,7 +1048,10 @@ function presetToFontFamilyCss(option: FontFamilyOption) {
   return `${quoteFontFamilyName(option.value)}, ${fontFallbackCss[option.fallback]}`;
 }
 
-export function createFontFamilySetting(preset: FontFamilyPresetId, customFontFamily = ""): FontFamilySetting {
+export function createFontFamilySetting(
+  preset: FontFamilyPresetId,
+  customFontFamily = "",
+): FontFamilySetting {
   return {
     customFontFamily,
     preset,
@@ -938,7 +1059,10 @@ export function createFontFamilySetting(preset: FontFamilyPresetId, customFontFa
 }
 
 export function fontFamilyOptionForPreset(preset: BuiltInFontFamilyPresetId) {
-  return fontFamilyOptions.find((option) => option.id === preset) ?? fontFamilyOptions[0];
+  return (
+    fontFamilyOptions.find((option) => option.id === preset) ??
+    fontFamilyOptions[0]
+  );
 }
 
 function normalizeFontFamilyPreset(value: unknown): FontFamilyPresetId | null {
@@ -974,7 +1098,10 @@ export function firstFontFamilyName(value: string) {
   let firstFamily = "";
 
   for (const character of trimmedValue) {
-    if ((character === '"' || character === "'") && (!quote || quote === character)) {
+    if (
+      (character === '"' || character === "'") &&
+      (!quote || quote === character)
+    ) {
       quote = quote ? null : character;
       firstFamily += character;
       continue;

@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type {
@@ -145,7 +152,9 @@ describe("TeamWorkspaceShell", () => {
     fireEvent.change(composer, { target: { value: "Keyboard message" } });
     fireEvent.keyDown(composer, { ctrlKey: true, key: "Enter" });
 
-    await waitFor(() => expect(startTurnMock).toHaveBeenCalledWith("leader", "Keyboard message"));
+    await waitFor(() =>
+      expect(startTurnMock).toHaveBeenCalledWith("leader", "Keyboard message"),
+    );
   });
 });
 
@@ -180,9 +189,18 @@ function shellProps() {
 function configureTimeline() {
   const timeline = screen.getByTestId("team-timeline");
   const scrollTo = vi.fn();
-  Object.defineProperty(timeline, "clientHeight", { configurable: true, value: 100 });
-  Object.defineProperty(timeline, "scrollHeight", { configurable: true, value: 500 });
-  Object.defineProperty(timeline, "scrollTo", { configurable: true, value: scrollTo });
+  Object.defineProperty(timeline, "clientHeight", {
+    configurable: true,
+    value: 100,
+  });
+  Object.defineProperty(timeline, "scrollHeight", {
+    configurable: true,
+    value: 500,
+  });
+  Object.defineProperty(timeline, "scrollTo", {
+    configurable: true,
+    value: scrollTo,
+  });
   return timeline;
 }
 
@@ -267,6 +285,10 @@ function streamSnapshot(text: string): TeamMemberStreamSnapshot {
       },
       result: null,
     },
-    stream: { revision: item.sequence, event_count: item.sequence, items: [item] },
+    stream: {
+      revision: item.sequence,
+      event_count: item.sequence,
+      items: [item],
+    },
   };
 }

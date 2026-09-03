@@ -2,13 +2,11 @@
 
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  RouteTransitionOverlay,
-  useRouteTransition,
-} from "./RouteTransition";
+import { RouteTransitionOverlay, useRouteTransition } from "./RouteTransition";
 
 function TransitionProbe() {
-  const { completeTransition, startTransition, transition } = useRouteTransition({ durationMs: 300 });
+  const { completeTransition, startTransition, transition } =
+    useRouteTransition({ durationMs: 300 });
 
   return (
     <>
@@ -37,15 +35,25 @@ describe("RouteTransition", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "切换分组" }));
 
-    expect(document.querySelector("[data-route-transition]")?.getAttribute("data-route-transition")).toBe("enter");
+    expect(
+      document
+        .querySelector("[data-route-transition]")
+        ?.getAttribute("data-route-transition"),
+    ).toBe("enter");
     expect(screen.getByText("正在加载分组管理")).toBeTruthy();
-    expect(document.querySelectorAll(".aurora-skeleton").length).toBeGreaterThan(0);
+    expect(
+      document.querySelectorAll(".aurora-skeleton").length,
+    ).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: "完成加载" }));
     act(() => {
       vi.advanceTimersByTime(300);
     });
-    expect(document.querySelector("[data-route-transition]")?.getAttribute("data-route-transition")).toBe("exit");
+    expect(
+      document
+        .querySelector("[data-route-transition]")
+        ?.getAttribute("data-route-transition"),
+    ).toBe("exit");
 
     act(() => {
       vi.advanceTimersByTime(140);
@@ -56,12 +64,22 @@ describe("RouteTransition", () => {
   it("replaces an in-flight transition when navigation changes again", () => {
     vi.useFakeTimers();
     function Probe() {
-      const { completeTransition, startTransition, transition } = useRouteTransition({ durationMs: 300 });
+      const { completeTransition, startTransition, transition } =
+        useRouteTransition({ durationMs: 300 });
       return (
         <>
-          <button onClick={() => startTransition("columns", "分组")} type="button">分组</button>
-          <button onClick={() => startTransition("list", "来源")} type="button">来源</button>
-          <button onClick={() => completeTransition()} type="button">完成</button>
+          <button
+            onClick={() => startTransition("columns", "分组")}
+            type="button"
+          >
+            分组
+          </button>
+          <button onClick={() => startTransition("list", "来源")} type="button">
+            来源
+          </button>
+          <button onClick={() => completeTransition()} type="button">
+            完成
+          </button>
           <RouteTransitionOverlay transition={transition} />
         </>
       );

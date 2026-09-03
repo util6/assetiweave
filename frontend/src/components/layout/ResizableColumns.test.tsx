@@ -57,12 +57,16 @@ describe("ResizableColumns", () => {
       weights: [1, 1, 1],
     });
 
-    expect(nextWeights.map((weight) => Number(weight.toFixed(3)))).toEqual([0.8, 1.2, 1]);
+    expect(nextWeights.map((weight) => Number(weight.toFixed(3)))).toEqual([
+      0.8, 1.2, 1,
+    ]);
   });
 
   it("keeps committed weights when measured minimum-width tracks cannot move", () => {
     const committedWeights = [0.72, 0.9, 1.45];
-    const measuredWeights = [0.8647887323943662, 0.951267605633803, 1.2539436619718312];
+    const measuredWeights = [
+      0.8647887323943662, 0.951267605633803, 1.2539436619718312,
+    ];
 
     expect(
       resizeColumnDragWeights({
@@ -77,19 +81,32 @@ describe("ResizableColumns", () => {
   });
 
   it("sanitizes persisted weights before using them", () => {
-    expect(sanitizeColumnWeights([2, 1, 1], [1, 1, 1])).toEqual([1.5, 0.75, 0.75]);
+    expect(sanitizeColumnWeights([2, 1, 1], [1, 1, 1])).toEqual([
+      1.5, 0.75, 0.75,
+    ]);
     expect(sanitizeColumnWeights([2, 0, 1], [1, 1, 1])).toEqual([1, 1, 1]);
     expect(sanitizeColumnWeights([2, 1], [1, 1, 1])).toEqual([1, 1, 1]);
   });
 
   it("rescales persisted weights to the default weight total", () => {
-    const sanitizedWeights = sanitizeColumnWeights([0.3244, 0.2351, 0.4405], [0.72, 0.9, 1.45]);
+    const sanitizedWeights = sanitizeColumnWeights(
+      [0.3244, 0.2351, 0.4405],
+      [0.72, 0.9, 1.45],
+    );
 
-    expect(Number(sanitizedWeights.reduce((sum, weight) => sum + weight, 0).toFixed(2))).toBe(3.07);
+    expect(
+      Number(
+        sanitizedWeights.reduce((sum, weight) => sum + weight, 0).toFixed(2),
+      ),
+    ).toBe(3.07);
   });
 
   it("converts weights into cumulative handle positions", () => {
-    expect(getColumnBoundaries([1, 2, 1]).map((boundary) => Number(boundary.toFixed(2)))).toEqual([0.25, 0.75]);
+    expect(
+      getColumnBoundaries([1, 2, 1]).map((boundary) =>
+        Number(boundary.toFixed(2)),
+      ),
+    ).toEqual([0.25, 0.75]);
   });
 
   it("scales each column minimum width from the global setting", () => {
@@ -103,7 +120,13 @@ describe("ResizableColumns", () => {
   });
 
   it("calculates a mac-style scrollbar thumb from viewport metrics", () => {
-    expect(calculateScrollThumb({ clientWidth: 900, scrollLeft: 300, scrollWidth: 1500 })).toEqual({
+    expect(
+      calculateScrollThumb({
+        clientWidth: 900,
+        scrollLeft: 300,
+        scrollWidth: 1500,
+      }),
+    ).toEqual({
       leftRatio: 0.5,
       widthRatio: 0.6,
     });

@@ -15,6 +15,8 @@ export async function getAppSettings(): Promise<AppSettingsFile> {
   return invoke<AppSettingsFile>("get_app_settings");
 }
 
-export async function saveAppSettings(settings: AppSettings): Promise<AppSettingsFile> {
+export async function saveAppSettings(
+  settings: AppSettings,
+): Promise<AppSettingsFile> {
   return invoke<AppSettingsFile>("save_app_settings", { settings });
 }

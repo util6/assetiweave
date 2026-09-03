@@ -24,7 +24,9 @@ export function AgentCapabilitySetting({
   return (
     <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
       <div className="min-w-0">
-        <p className="text-body-sm leading-5 text-on-surface-variant">{description}</p>
+        <p className="text-body-sm leading-5 text-on-surface-variant">
+          {description}
+        </p>
       </div>
       <Button
         className="max-w-[18rem] shrink-0"
@@ -34,7 +36,12 @@ export function AgentCapabilitySetting({
         variant="outline"
       >
         {selectedAgent ? (
-          <AgentCatalogIcon agent={selectedAgent} appShortcuts={appShortcuts} className="size-[15px]" fallbackSize={15} />
+          <AgentCatalogIcon
+            agent={selectedAgent}
+            appShortcuts={appShortcuts}
+            className="size-[15px]"
+            fallbackSize={15}
+          />
         ) : (
           <PlugZap size={15} />
         )}

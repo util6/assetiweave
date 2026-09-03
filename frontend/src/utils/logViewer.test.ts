@@ -21,10 +21,17 @@ describe("log viewer utilities", () => {
     ].join("\n");
 
     expect(filterLogContent(content, "WARN")).toBe(
-      ["2026-06-01T10:00:01+08:00 WARN disk almost full", "warn continuation"].join("\n"),
+      [
+        "2026-06-01T10:00:01+08:00 WARN disk almost full",
+        "warn continuation",
+      ].join("\n"),
     );
     expect(filterLogContent(content, "ERROR")).toBe(
-      ["2026-06-01T10:00:02+08:00 ERROR failed to sync", "stack line 1", "stack line 2"].join("\n"),
+      [
+        "2026-06-01T10:00:02+08:00 ERROR failed to sync",
+        "stack line 1",
+        "stack line 2",
+      ].join("\n"),
     );
   });
 });

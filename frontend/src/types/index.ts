@@ -84,7 +84,8 @@ export interface SkillSearchResult {
   warnings: string[];
 }
 
-export type SkillRemoteSourceStatus = "unknown" | "current" | "changed" | "error";
+export type SkillRemoteSourceStatus =
+  "unknown" | "current" | "changed" | "error";
 
 export interface SkillRemoteSource {
   asset_id: string;
@@ -129,11 +130,7 @@ export interface SkillAcquireResult {
 }
 
 export type RemoteSkillAcquireTaskStatus =
-  | "running"
-  | "cancelling"
-  | "completed"
-  | "failed"
-  | "cancelled";
+  "running" | "cancelling" | "completed" | "failed" | "cancelled";
 
 export interface RemoteSkillAcquireTaskSnapshot {
   id: string;
@@ -182,8 +179,16 @@ export interface TenantCreateParams {
 }
 
 export type SourceKind = "local" | "git_checkout" | "import" | "custom";
-export type SourceScannerKind = "skill" | "mcp" | "prompt" | "rule" | "mixed" | "custom";
-export type SourceOrigin = "git_repo" | "local_folder" | "app_target" | "app_local" | "assetiweave_library" | "assetiweave_system" | "custom";
+export type SourceScannerKind =
+  "skill" | "mcp" | "prompt" | "rule" | "mixed" | "custom";
+export type SourceOrigin =
+  | "git_repo"
+  | "local_folder"
+  | "app_target"
+  | "app_local"
+  | "assetiweave_library"
+  | "assetiweave_system"
+  | "custom";
 
 export interface Source {
   id: string;
@@ -236,8 +241,10 @@ export type AppKind =
   | "custom";
 
 export type ConversationAdapterKind = "external";
-export type ConversationSourceKind = "live" | "file" | "directory" | "sqlite" | "custom";
-export type ConversationAdapterTrustState = "built_in" | "trusted" | "changed" | "untrusted";
+export type ConversationSourceKind =
+  "live" | "file" | "directory" | "sqlite" | "custom";
+export type ConversationAdapterTrustState =
+  "built_in" | "trusted" | "changed" | "untrusted";
 export type ConversationAdapterPackageRecordKind = "session" | "web";
 export type ConversationAdapterPackageOrigin =
   | "built_in"
@@ -253,12 +260,16 @@ export type ConversationAdapterRuntimeGateStatus =
   | "manifest_invalid"
   | "core_incompatible";
 export type ConversationPackageUpdatePolicy =
-  | "manual"
-  | "follow_stable"
-  | "follow_beta"
-  | "pin_exact";
+  "manual" | "follow_stable" | "follow_beta" | "pin_exact";
 export type ConversationPartRole = "user" | "assistant" | "tool" | "system";
-export type ConversationPartKind = "text" | "code_block" | "command" | "tool" | "file_change" | "subagent" | "metadata";
+export type ConversationPartKind =
+  | "text"
+  | "code_block"
+  | "command"
+  | "tool"
+  | "file_change"
+  | "subagent"
+  | "metadata";
 export type ConversationGroupingOrigin = "imported" | "auto_merged" | "manual";
 
 export interface ConversationAdapter {
@@ -467,17 +478,22 @@ export type ConversationRecordKind = "session" | "web";
 
 export type ConversationContentType = string;
 
-export type ConversationContentVisibility = Record<ConversationContentType, boolean>;
+export type ConversationContentVisibility = Record<
+  ConversationContentType,
+  boolean
+>;
 
-export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibility = {
-  answer: true,
-  tool: true,
-  command: true,
-  code: true,
-  result: true,
-};
+export const DEFAULT_CONVERSATION_CONTENT_VISIBILITY: ConversationContentVisibility =
+  {
+    answer: true,
+    tool: true,
+    command: true,
+    code: true,
+    result: true,
+  };
 
-export type ConversationSyncPhase = "preparing" | "importing" | "refreshing" | "completed" | "failed";
+export type ConversationSyncPhase =
+  "preparing" | "importing" | "refreshing" | "completed" | "failed";
 
 export interface ConversationSyncFailureItem {
   message: string;
@@ -547,11 +563,7 @@ export interface ConversationMutationResult {
 }
 
 export type DeploymentStrategy =
-  | "symlink_to_source"
-  | "copy_to_target"
-  | "render"
-  | "append"
-  | "config_merge";
+  "symlink_to_source" | "copy_to_target" | "render" | "append" | "config_merge";
 
 export interface TargetProfileRuleSet {
   kinds: AssetKind[];
@@ -622,7 +634,8 @@ export interface AssetMount {
   updated_at: string;
 }
 
-export type PhysicalMountState = "mounted" | "not_mounted" | "conflict" | "broken";
+export type PhysicalMountState =
+  "mounted" | "not_mounted" | "conflict" | "broken";
 
 export interface AssetMountStatus {
   asset_id: string;
@@ -754,7 +767,8 @@ export interface ApplySkillGroupExclusiveMountResult extends SkillGroupExclusive
   errors: SkillGroupExclusiveMountError[];
 }
 
-export type DeploymentActionType = "create" | "update" | "remove" | "skip" | "conflict";
+export type DeploymentActionType =
+  "create" | "update" | "remove" | "skip" | "conflict";
 export type RiskLevel = "low" | "medium" | "high";
 
 export interface DeploymentAction {

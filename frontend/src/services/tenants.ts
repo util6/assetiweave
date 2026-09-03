@@ -33,7 +33,9 @@ export async function getActiveTenant(): Promise<Tenant> {
   }
 }
 
-export async function createTenant(params: TenantCreateParams): Promise<Tenant> {
+export async function createTenant(
+  params: TenantCreateParams,
+): Promise<Tenant> {
   const payload = {
     name: params.name.trim(),
     set_active: params.set_active ?? true,

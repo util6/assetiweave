@@ -5,7 +5,10 @@ import {
   useMemo,
   type ReactNode,
 } from "react";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import {
+  useBackgroundTaskRuntime,
+  type BackgroundTaskRuntimeAdapter,
+} from "./BackgroundTaskRuntime";
 import {
   listConversationSyncTasks,
   cancelConversationSync,
@@ -26,46 +29,76 @@ interface ConversationSyncContextValue {
   }) => Promise<ConversationSyncTaskSnapshot>;
   cancelSync: (taskId: string) => Promise<ConversationSyncTaskSnapshot>;
   task: ConversationSyncTaskSnapshot | null;
-  taskFor: (recordKind: ConversationRecordKind) => ConversationSyncTaskSnapshot | null;
+  taskFor: (
+    recordKind: ConversationRecordKind,
+  ) => ConversationSyncTaskSnapshot | null;
   tasks: ConversationSyncTaskSnapshot[];
 }
 
 type ConversationSyncTaskScope = ConversationRecordKind | "all";
-type ConversationSyncTaskMap = Record<ConversationSyncTaskScope, ConversationSyncTaskSnapshot | null>;
+type ConversationSyncTaskMap = Record<
+  ConversationSyncTaskScope,
+  ConversationSyncTaskSnapshot | null
+>;
 type ConversationSyncRuntimeEvent = {
   fallbackScope?: ConversationSyncTaskScope;
   snapshot?: ConversationSyncTaskSnapshot;
   snapshots?: ConversationSyncTaskSnapshot[];
 };
 
-const EMPTY_TASKS: ConversationSyncTaskMap = { all: null, session: null, web: null };
+const EMPTY_TASKS: ConversationSyncTaskMap = {
+  all: null,
+  session: null,
+  web: null,
+};
 
-const ConversationSyncContext = createContext<ConversationSyncContextValue | null>(null);
+const ConversationSyncContext =
+  createContext<ConversationSyncContextValue | null>(null);
 
-export function ConversationSyncProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<ConversationSyncTaskMap, ConversationSyncRuntimeEvent>>(
+export function ConversationSyncProvider({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const adapter = useMemo<
+    BackgroundTaskRuntimeAdapter<
+      ConversationSyncTaskMap,
+      ConversationSyncRuntimeEvent
+    >
+  >(
     () => ({
       initialState: EMPTY_TASKS,
-      isRunning: (state) => Object.values(state).some(
-        (task) => task?.status === "running" || task?.status === "cancelling",
-      ),
+      isRunning: (state) =>
+        Object.values(state).some(
+          (task) => task?.status === "running" || task?.status === "cancelling",
+        ),
       merge: (current, incoming) => {
         if (isConversationSyncRuntimeEvent(incoming)) {
           if (incoming.snapshots) {
             return mergeConversationTaskSnapshots(incoming.snapshots, current);
           }
           return incoming.snapshot
-            ? mergeConversationTaskIntoMap(incoming.snapshot, current, incoming.fallbackScope)
+            ? mergeConversationTaskIntoMap(
+                incoming.snapshot,
+                current,
+                incoming.fallbackScope,
+              )
             : current;
         }
 
         return Object.values(incoming).reduce(
-          (next, snapshot) => snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
+          (next, snapshot) =>
+            snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
           current,
         );
       },
-      refresh: async () => mergeConversationTaskSnapshots(await listConversationSyncTasks(), EMPTY_TASKS),
-      subscribe: (listener) => subscribeConversationSyncTasks((snapshot) => listener({ snapshot })),
+      refresh: async () =>
+        mergeConversationTaskSnapshots(
+          await listConversationSyncTasks(),
+          EMPTY_TASKS,
+        ),
+      subscribe: (listener) =>
+        subscribeConversationSyncTasks((snapshot) => listener({ snapshot })),
     }),
     [],
   );
@@ -80,14 +113,16 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       dry_run?: boolean;
     }) => {
       const snapshot = await syncConversations(params);
-      const nextSnapshot = mergeConversationTaskSnapshot(
-        snapshot,
-        null,
-        params.record_kind ?? (params.mode === "full" ? "all" : "session"),
-      ) ?? snapshot;
+      const nextSnapshot =
+        mergeConversationTaskSnapshot(
+          snapshot,
+          null,
+          params.record_kind ?? (params.mode === "full" ? "all" : "session"),
+        ) ?? snapshot;
       merge({
         snapshot: nextSnapshot,
-        fallbackScope: params.record_kind ?? (params.mode === "full" ? "all" : "session"),
+        fallbackScope:
+          params.record_kind ?? (params.mode === "full" ? "all" : "session"),
       });
       return nextSnapshot;
     },
@@ -95,19 +130,23 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
   );
 
   const taskFor = useCallback(
-    (recordKind: ConversationRecordKind) => latestConversationTask(
-      taskMap[recordKind],
-      taskMap.all,
-    ),
+    (recordKind: ConversationRecordKind) =>
+      latestConversationTask(taskMap[recordKind], taskMap.all),
     [taskMap],
   );
-  const cancelSync = useCallback(async (taskId: string) => {
-    const snapshot = await cancelConversationSync(taskId);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  const cancelSync = useCallback(
+    async (taskId: string) => {
+      const snapshot = await cancelConversationSync(taskId);
+      merge({ snapshot });
+      return snapshot;
+    },
+    [merge],
+  );
   const tasks = useMemo(
-    () => Object.values(taskMap).filter((task): task is ConversationSyncTaskSnapshot => Boolean(task)),
+    () =>
+      Object.values(taskMap).filter(
+        (task): task is ConversationSyncTaskSnapshot => Boolean(task),
+      ),
     [taskMap],
   );
   const task = tasks[tasks.length - 1] ?? null;
@@ -150,10 +189,16 @@ function mergeConversationTaskIntoMap(
   current: ConversationSyncTaskMap,
   fallbackScope: ConversationSyncTaskScope | null = null,
 ): ConversationSyncTaskMap {
-  const currentSnapshot = Object.values(current).find((task) => task?.id === snapshot.id) ?? null;
-  const merged = mergeConversationTaskSnapshot(snapshot, currentSnapshot, fallbackScope);
+  const currentSnapshot =
+    Object.values(current).find((task) => task?.id === snapshot.id) ?? null;
+  const merged = mergeConversationTaskSnapshot(
+    snapshot,
+    currentSnapshot,
+    fallbackScope,
+  );
   const recordKind = normalizeConversationRecordKind(merged?.record_kind);
-  const scope = recordKind ?? (merged?.record_kind === null ? "all" : fallbackScope);
+  const scope =
+    recordKind ?? (merged?.record_kind === null ? "all" : fallbackScope);
   if (!merged || !scope) {
     return current;
   }
@@ -163,7 +208,9 @@ function mergeConversationTaskIntoMap(
 export function useConversationSync() {
   const context = useContext(ConversationSyncContext);
   if (!context) {
-    throw new Error("useConversationSync must be used inside ConversationSyncProvider");
+    throw new Error(
+      "useConversationSync must be used inside ConversationSyncProvider",
+    );
   }
   return context;
 }
@@ -180,13 +227,17 @@ function mergeConversationTaskSnapshot(
   const recordKind =
     normalizeConversationRecordKind(snapshot.record_kind) ??
     inferConversationRecordKindFromResult(snapshot.result) ??
-    (current?.id === snapshot.id ? normalizeConversationRecordKind(current.record_kind) : null) ??
+    (current?.id === snapshot.id
+      ? normalizeConversationRecordKind(current.record_kind)
+      : null) ??
     (fallbackScope === "all" ? null : fallbackScope);
 
   return recordKind ? { ...snapshot, record_kind: recordKind } : snapshot;
 }
 
-function inferConversationRecordKindFromResult(result: unknown): ConversationRecordKind | null {
+function inferConversationRecordKindFromResult(
+  result: unknown,
+): ConversationRecordKind | null {
   if (!isRecord(result) || !Array.isArray(result.results)) {
     return null;
   }
@@ -204,7 +255,9 @@ function inferConversationRecordKindFromResult(result: unknown): ConversationRec
   return null;
 }
 
-function normalizeConversationRecordKind(value: unknown): ConversationRecordKind | null {
+function normalizeConversationRecordKind(
+  value: unknown,
+): ConversationRecordKind | null {
   return value === "session" || value === "web" ? value : null;
 }
 

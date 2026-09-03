@@ -20,11 +20,7 @@ export interface OpencodeTranslationResult {
 }
 
 export type AiExecutionTaskState =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
+  "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 const AI_EXECUTION_TASK_UPDATED_EVENT = "ai-execution://task-updated";
 
@@ -58,7 +54,11 @@ export interface AiExecutionCleanupReport {
 
 export interface AiExecutionTaskSnapshot {
   id: string;
-  purpose: "translation" | "prompt_optimization" | "connection_test" | "model_discovery";
+  purpose:
+    | "translation"
+    | "prompt_optimization"
+    | "connection_test"
+    | "model_discovery";
   agent_id: string;
   state: AiExecutionTaskState;
   phase: AiExecutionPhase;
@@ -127,14 +127,21 @@ export function buildConversationCardTranslationPrompt({
   targetLanguage,
   text,
 }: ConversationCardTranslationPromptRequest) {
-  const normalizedTargetLanguage = normalizeConversationTranslationTargetLanguage(targetLanguage);
-  const template = promptTemplate?.trim() || DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE;
+  const normalizedTargetLanguage =
+    normalizeConversationTranslationTargetLanguage(targetLanguage);
+  const template =
+    promptTemplate?.trim() || DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE;
   const rendered = template
-    .split("{targetLanguageJson}").join(JSON.stringify(normalizedTargetLanguage))
-    .split("{targetLanguage}").join(normalizedTargetLanguage)
-    .split("{content}").join(text);
+    .split("{targetLanguageJson}")
+    .join(JSON.stringify(normalizedTargetLanguage))
+    .split("{targetLanguage}")
+    .join(normalizedTargetLanguage)
+    .split("{content}")
+    .join(text);
 
-  return rendered.includes(text) ? rendered : `${rendered}\n\n<content>\n${text}\n</content>`;
+  return rendered.includes(text)
+    ? rendered
+    : `${rendered}\n\n<content>\n${text}\n</content>`;
 }
 
 export async function checkOpencodeTranslationAvailability(): Promise<OpencodeTranslationAvailability> {
@@ -146,7 +153,9 @@ export async function checkOpencodeTranslationAvailability(): Promise<OpencodeTr
     };
   }
 
-  return invoke<OpencodeTranslationAvailability>("check_opencode_translation_availability");
+  return invoke<OpencodeTranslationAvailability>(
+    "check_opencode_translation_availability",
+  );
 }
 
 export async function checkConversationTranslationAvailability(
@@ -187,14 +196,17 @@ export async function startConversationCardTranslation(
 ): Promise<AiExecutionTaskSnapshot> {
   assertDesktopTranslationRuntime();
   const prompt = buildConversationCardTranslationPrompt(request);
-  return invoke<AiExecutionTaskSnapshot>("start_conversation_card_translation", {
-    params: {
-      agent_id: request.agentId,
-      model: request.model,
-      prompt,
-      provider: request.provider,
-    } satisfies ConversationTranslationCommandParams,
-  });
+  return invoke<AiExecutionTaskSnapshot>(
+    "start_conversation_card_translation",
+    {
+      params: {
+        agent_id: request.agentId,
+        model: request.model,
+        prompt,
+        provider: request.provider,
+      } satisfies ConversationTranslationCommandParams,
+    },
+  );
 }
 
 export async function getAiExecutionTask(
@@ -206,18 +218,25 @@ export async function getAiExecutionTask(
   });
 }
 
-export async function listAiExecutionTasks(): Promise<AiExecutionTaskSnapshot[]> {
+export async function listAiExecutionTasks(): Promise<
+  AiExecutionTaskSnapshot[]
+> {
   assertDesktopTranslationRuntime();
   return invoke<AiExecutionTaskSnapshot[]>("list_ai_execution_tasks");
 }
 
-export function subscribeAiExecutionTasks(listener: (snapshot: AiExecutionTaskSnapshot) => void) {
+export function subscribeAiExecutionTasks(
+  listener: (snapshot: AiExecutionTaskSnapshot) => void,
+) {
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<AiExecutionTaskSnapshot>(AI_EXECUTION_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+  return listen<AiExecutionTaskSnapshot>(
+    AI_EXECUTION_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
 export async function cancelAiExecutionTask(
@@ -240,15 +259,18 @@ export async function testConversationTranslationConnection(
     };
   }
 
-  return invoke<OpencodeTranslationAvailability>("test_conversation_translation_connection", {
-    params: {
-      agent_id: request.agentId,
-      cli: request.cli,
-      model: request.model,
-      prompt: request.prompt,
-      provider: request.provider,
+  return invoke<OpencodeTranslationAvailability>(
+    "test_conversation_translation_connection",
+    {
+      params: {
+        agent_id: request.agentId,
+        cli: request.cli,
+        model: request.model,
+        prompt: request.prompt,
+        provider: request.provider,
+      },
     },
-  });
+  );
 }
 
 export async function listConversationTranslationModels(
@@ -261,9 +283,12 @@ export async function listConversationTranslationModels(
     };
   }
 
-  return invoke<ConversationTranslationModelsResult>("list_conversation_translation_models", {
-    params: request,
-  });
+  return invoke<ConversationTranslationModelsResult>(
+    "list_conversation_translation_models",
+    {
+      params: request,
+    },
+  );
 }
 
 export async function updateConversationPartTranslation(

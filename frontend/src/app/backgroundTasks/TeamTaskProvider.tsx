@@ -19,11 +19,20 @@ const TeamTaskContext = createContext<TeamTaskContextValue | null>(null);
 
 export function TeamTaskProvider({ children }: { children: ReactNode }) {
   const adapter = useMemo<
-    BackgroundTaskRuntimeAdapter<TeamRuntimeTaskSnapshot[], TeamRuntimeTaskSnapshot>
+    BackgroundTaskRuntimeAdapter<
+      TeamRuntimeTaskSnapshot[],
+      TeamRuntimeTaskSnapshot
+    >
   >(
     () => ({
       initialState: [],
-      isRunning: (tasks) => tasks.some((task) => task.state === "Pending" || task.state === "Running" || task.state === "Cancelling"),
+      isRunning: (tasks) =>
+        tasks.some(
+          (task) =>
+            task.state === "Pending" ||
+            task.state === "Running" ||
+            task.state === "Cancelling",
+        ),
       merge: (current, incoming) => {
         const snapshots = Array.isArray(incoming) ? incoming : [incoming];
         const byId = new Map(current.map((task) => [task.task_id, task]));
@@ -37,19 +46,28 @@ export function TeamTaskProvider({ children }: { children: ReactNode }) {
     [],
   );
   const runtime = useBackgroundTaskRuntime(adapter);
-  const value = useMemo<TeamTaskContextValue>(() => ({
-    tasks: runtime.state,
-    refresh: async () => {
-      await runtime.refresh();
-    },
-    getTask: (taskId) => runtime.state.find((task) => task.task_id === taskId),
-  }), [runtime.refresh, runtime.state]);
-  return <TeamTaskContext.Provider value={value}>{children}</TeamTaskContext.Provider>;
+  const value = useMemo<TeamTaskContextValue>(
+    () => ({
+      tasks: runtime.state,
+      refresh: async () => {
+        await runtime.refresh();
+      },
+      getTask: (taskId) =>
+        runtime.state.find((task) => task.task_id === taskId),
+    }),
+    [runtime.refresh, runtime.state],
+  );
+  return (
+    <TeamTaskContext.Provider value={value}>
+      {children}
+    </TeamTaskContext.Provider>
+  );
 }
 
 export function useTeamTasks() {
   const context = useContext(TeamTaskContext);
-  if (!context) throw new Error("useTeamTasks must be used inside TeamTaskProvider");
+  if (!context)
+    throw new Error("useTeamTasks must be used inside TeamTaskProvider");
   return context;
 }
 

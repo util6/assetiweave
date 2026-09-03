@@ -34,17 +34,25 @@ describe("team member workflow service", () => {
       .mockResolvedValueOnce([snapshot.task])
       .mockResolvedValueOnce(snapshot);
 
-    await expect(startTeamMemberTurn({
-      team_id: "team-1",
-      member_id: "member-1",
-      message: "hello",
-      replay: false,
-    })).resolves.toEqual(snapshot);
-    await expect(startTeamMemberReplay(" team-1 ", " member-1 ")).resolves.toEqual(snapshot);
-    await expect(getTeamMemberStreamSnapshot("team-1", "member-1", "execution-1")).resolves.toEqual(snapshot);
+    await expect(
+      startTeamMemberTurn({
+        team_id: "team-1",
+        member_id: "member-1",
+        message: "hello",
+        replay: false,
+      }),
+    ).resolves.toEqual(snapshot);
+    await expect(
+      startTeamMemberReplay(" team-1 ", " member-1 "),
+    ).resolves.toEqual(snapshot);
+    await expect(
+      getTeamMemberStreamSnapshot("team-1", "member-1", "execution-1"),
+    ).resolves.toEqual(snapshot);
     await expect(getTeamMemberTask(" task-1 ")).resolves.toEqual(snapshot.task);
     await expect(listTeamMemberTasks()).resolves.toEqual([snapshot.task]);
-    await expect(cancelTeamMemberTurn("team-1", "member-1", "execution-1")).resolves.toEqual(snapshot);
+    await expect(
+      cancelTeamMemberTurn("team-1", "member-1", "execution-1"),
+    ).resolves.toEqual(snapshot);
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "team_member_turn_start", {
       input: {
@@ -58,11 +66,15 @@ describe("team member workflow service", () => {
       teamId: "team-1",
       memberId: "member-1",
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "team_member_stream_snapshot", {
-      teamId: "team-1",
-      memberId: "member-1",
-      executionId: "execution-1",
-    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      3,
+      "team_member_stream_snapshot",
+      {
+        teamId: "team-1",
+        memberId: "member-1",
+        executionId: "execution-1",
+      },
+    );
     expect(invokeMock).toHaveBeenNthCalledWith(6, "team_member_turn_cancel", {
       teamId: "team-1",
       memberId: "member-1",
@@ -73,16 +85,21 @@ describe("team member workflow service", () => {
   it("parses member session events in the service and ignores malformed payloads", async () => {
     const listener = vi.fn();
     let eventListener: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(async (_name: string, callback: typeof eventListener) => {
-      eventListener = callback;
-      return vi.fn();
-    });
+    listenMock.mockImplementation(
+      async (_name: string, callback: typeof eventListener) => {
+        eventListener = callback;
+        return vi.fn();
+      },
+    );
 
     await subscribeTeamMemberSessions(listener);
     eventListener?.({ payload: streamSnapshot() });
     eventListener?.({ payload: { malformed: true } });
 
-    expect(listenMock).toHaveBeenCalledWith("team-member-session://updated", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith(
+      "team-member-session://updated",
+      expect.any(Function),
+    );
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(streamSnapshot());
   });
@@ -119,22 +136,24 @@ function streamSnapshot() {
     stream: {
       revision: 1,
       event_count: 1,
-      items: [{
-        identity: {
-          session_id: "session-1",
-          member_id: "member-1",
-          execution_id: "execution-1",
-          turn_id: "turn-1",
-          item_id: "item-1",
+      items: [
+        {
+          identity: {
+            session_id: "session-1",
+            member_id: "member-1",
+            execution_id: "execution-1",
+            turn_id: "turn-1",
+            item_id: "item-1",
+          },
+          kind: "assistant_text" as const,
+          sequence: 1,
+          delivery: "live" as const,
+          state: "streaming" as const,
+          text: "hello",
+          status: null,
+          code: null,
         },
-        kind: "assistant_text" as const,
-        sequence: 1,
-        delivery: "live" as const,
-        state: "streaming" as const,
-        text: "hello",
-        status: null,
-        code: null,
-      }],
+      ],
     },
   };
 }

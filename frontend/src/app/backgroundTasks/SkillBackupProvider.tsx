@@ -11,7 +11,10 @@ import {
   subscribeSkillBackupTasks,
   type SkillBackupTaskSnapshot,
 } from "../../services/catalog";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import {
+  useBackgroundTaskRuntime,
+  type BackgroundTaskRuntimeAdapter,
+} from "./BackgroundTaskRuntime";
 
 interface SkillBackupRuntimeEvent {
   snapshot: SkillBackupTaskSnapshot;
@@ -25,7 +28,12 @@ interface SkillBackupContextValue {
 const SkillBackupContext = createContext<SkillBackupContextValue | null>(null);
 
 export function SkillBackupProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<SkillBackupTaskSnapshot | null, SkillBackupRuntimeEvent>>(
+  const adapter = useMemo<
+    BackgroundTaskRuntimeAdapter<
+      SkillBackupTaskSnapshot | null,
+      SkillBackupRuntimeEvent
+    >
+  >(
     () => ({
       initialState: null,
       isRunning: (state) => state?.status === "running",
@@ -36,24 +44,32 @@ export function SkillBackupProvider({ children }: { children: ReactNode }) {
         return current?.status === "running" && !incoming ? current : incoming;
       },
       refresh: () => getSkillBackupTask(),
-      subscribe: (listener) => subscribeSkillBackupTasks((snapshot) => listener({ snapshot })),
+      subscribe: (listener) =>
+        subscribeSkillBackupTasks((snapshot) => listener({ snapshot })),
     }),
     [],
   );
   const { merge, state: task } = useBackgroundTaskRuntime(adapter);
 
-  const startBackup = useCallback(async (assetIds: string[]) => {
-    const snapshot = await startSkillBackupTask(assetIds);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  const startBackup = useCallback(
+    async (assetIds: string[]) => {
+      const snapshot = await startSkillBackupTask(assetIds);
+      merge({ snapshot });
+      return snapshot;
+    },
+    [merge],
+  );
 
   const value = useMemo<SkillBackupContextValue>(
     () => ({ startBackup, task }),
     [startBackup, task],
   );
 
-  return <SkillBackupContext.Provider value={value}>{children}</SkillBackupContext.Provider>;
+  return (
+    <SkillBackupContext.Provider value={value}>
+      {children}
+    </SkillBackupContext.Provider>
+  );
 }
 
 export function useSkillBackup() {

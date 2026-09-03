@@ -1,5 +1,12 @@
 import { FolderCog, Save } from "lucide-react";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import type { Source } from "../../types";
@@ -50,7 +57,9 @@ export function SourceEditDialog({
   const priorityErrorId = useId();
   const formId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
-  const [values, setValues] = useState<SourceImportFormValues>(() => sourceToFormValues(source));
+  const [values, setValues] = useState<SourceImportFormValues>(() =>
+    sourceToFormValues(source),
+  );
   const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
   const [pickingRootPath, setPickingRootPath] = useState(false);
 
@@ -64,14 +73,21 @@ export function SourceEditDialog({
     return null;
   }
   const currentSource = source;
-  const backupActionLabel = backupAssetCount > 0
-    ? t("backup.action.backupCount", { count: backupAssetCount })
-    : t("backup.action.allInDirectory");
+  const backupActionLabel =
+    backupAssetCount > 0
+      ? t("backup.action.backupCount", { count: backupAssetCount })
+      : t("backup.action.allInDirectory");
 
-  function updateValue<Key extends keyof SourceImportFormValues>(key: Key, value: SourceImportFormValues[Key]) {
+  function updateValue<Key extends keyof SourceImportFormValues>(
+    key: Key,
+    value: SourceImportFormValues[Key],
+  ) {
     setValues((currentValues) => ({ ...currentValues, [key]: value }));
     if (key === "rootPath" || key === "priority") {
-      setFieldErrors((currentErrors) => ({ ...currentErrors, [key]: undefined }));
+      setFieldErrors((currentErrors) => ({
+        ...currentErrors,
+        [key]: undefined,
+      }));
     }
   }
 
@@ -102,7 +118,11 @@ export function SourceEditDialog({
         updateValue("rootPath", abbreviateHomePath(selectedPath));
       }
     } catch (error) {
-      onNotifyError(error instanceof Error ? error.message : t("source.import.error.pickDirectory"));
+      onNotifyError(
+        error instanceof Error
+          ? error.message
+          : t("source.import.error.pickDirectory"),
+      );
     } finally {
       setPickingRootPath(false);
     }
@@ -115,7 +135,11 @@ export function SourceEditDialog({
           <>
             <Button
               className="max-[640px]:w-full"
-              disabled={busy || backupAssetCount === 0 || isSkillBackupRunning(backupTask ?? null)}
+              disabled={
+                busy ||
+                backupAssetCount === 0 ||
+                isSkillBackupRunning(backupTask ?? null)
+              }
               onClick={() => void onBackup()}
               type="button"
               variant="outline"
@@ -127,12 +151,21 @@ export function SourceEditDialog({
                 t={t}
               />
             </Button>
-            <SkillBackupInlineProgress assetIds={backupAssetIds} task={backupTask ?? null} t={t} />
+            <SkillBackupInlineProgress
+              assetIds={backupAssetIds}
+              task={backupTask ?? null}
+              t={t}
+            />
           </>
         )}
       </div>
       <div className="flex items-center justify-end gap-2 max-[640px]:grid max-[640px]:grid-cols-2">
-        <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+        <Button
+          disabled={busy}
+          onClick={onClose}
+          type="button"
+          variant="outline"
+        >
           {t("common.cancel")}
         </Button>
         <Button disabled={busy} form={formId} type="submit">
@@ -158,75 +191,98 @@ export function SourceEditDialog({
       size="lg"
       title={t("source.edit.title")}
     >
-        <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
-          <div className="grid gap-4">
-            <Field label={t("source.field.rootPath")} required>
-              <PathPickerInput
-                aria-describedby={fieldErrors.rootPath ? rootPathErrorId : undefined}
-                aria-invalid={Boolean(fieldErrors.rootPath)}
+      <form
+        className="px-5 py-5"
+        id={formId}
+        onSubmit={(event) => void handleSubmit(event)}
+      >
+        <div className="grid gap-4">
+          <Field label={t("source.field.rootPath")} required>
+            <PathPickerInput
+              aria-describedby={
+                fieldErrors.rootPath ? rootPathErrorId : undefined
+              }
+              aria-invalid={Boolean(fieldErrors.rootPath)}
+              disabled={busy}
+              onChange={(event) => updateValue("rootPath", event.target.value)}
+              onPick={() => void handlePickRootPath()}
+              pickLabel={t("source.import.pickDirectory")}
+              picking={pickingRootPath}
+              ref={rootPathInputRef}
+              value={values.rootPath}
+            />
+            {fieldErrors.rootPath && (
+              <FieldError id={rootPathErrorId}>
+                {t("source.import.error.rootPathRequired")}
+              </FieldError>
+            )}
+          </Field>
+
+          <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3 max-[720px]:grid-cols-1">
+            <Field label={t("source.field.name")}>
+              <Input
                 disabled={busy}
-                onChange={(event) => updateValue("rootPath", event.target.value)}
-                onPick={() => void handlePickRootPath()}
-                pickLabel={t("source.import.pickDirectory")}
-                picking={pickingRootPath}
-                ref={rootPathInputRef}
-                value={values.rootPath}
+                onChange={(event) => updateValue("name", event.target.value)}
+                value={values.name}
               />
-              {fieldErrors.rootPath && (
-                <FieldError id={rootPathErrorId}>{t("source.import.error.rootPathRequired")}</FieldError>
+            </Field>
+            <Field label={t("source.field.priority")}>
+              <Input
+                aria-describedby={
+                  fieldErrors.priority ? priorityErrorId : undefined
+                }
+                aria-invalid={Boolean(fieldErrors.priority)}
+                disabled={busy}
+                inputMode="numeric"
+                onChange={(event) =>
+                  updateValue("priority", event.target.value)
+                }
+                value={values.priority}
+              />
+              {fieldErrors.priority && (
+                <FieldError id={priorityErrorId}>
+                  {t("source.import.error.priorityInvalid")}
+                </FieldError>
               )}
             </Field>
-
-            <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3 max-[720px]:grid-cols-1">
-              <Field label={t("source.field.name")}>
-                <Input disabled={busy} onChange={(event) => updateValue("name", event.target.value)} value={values.name} />
-              </Field>
-              <Field label={t("source.field.priority")}>
-                <Input
-                  aria-describedby={fieldErrors.priority ? priorityErrorId : undefined}
-                  aria-invalid={Boolean(fieldErrors.priority)}
-                  disabled={busy}
-                  inputMode="numeric"
-                  onChange={(event) => updateValue("priority", event.target.value)}
-                  value={values.priority}
-                />
-                {fieldErrors.priority && (
-                  <FieldError id={priorityErrorId}>{t("source.import.error.priorityInvalid")}</FieldError>
-                )}
-              </Field>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
-              <Field label={t("source.field.includeGlobs")}>
-                <textarea
-                  className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={busy}
-                  onChange={(event) => updateValue("includeGlobsText", event.target.value)}
-                  value={values.includeGlobsText}
-                />
-              </Field>
-              <Field label={t("source.field.excludeGlobs")}>
-                <textarea
-                  className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={busy}
-                  onChange={(event) => updateValue("excludeGlobsText", event.target.value)}
-                  value={values.excludeGlobsText}
-                />
-              </Field>
-            </div>
-
-            <div className="flex items-center justify-between gap-4 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-3">
-              <span className="text-body-sm text-on-surface">{t("source.field.enabled")}</span>
-              <Switch
-                aria-label={t("source.field.enabled")}
-                checked={values.enabled}
-                disabled={busy}
-                onCheckedChange={(checked) => updateValue("enabled", checked)}
-              />
-            </div>
           </div>
 
-        </form>
+          <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">
+            <Field label={t("source.field.includeGlobs")}>
+              <textarea
+                className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onChange={(event) =>
+                  updateValue("includeGlobsText", event.target.value)
+                }
+                value={values.includeGlobsText}
+              />
+            </Field>
+            <Field label={t("source.field.excludeGlobs")}>
+              <textarea
+                className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={busy}
+                onChange={(event) =>
+                  updateValue("excludeGlobsText", event.target.value)
+                }
+                value={values.excludeGlobsText}
+              />
+            </Field>
+          </div>
+
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-3">
+            <span className="text-body-sm text-on-surface">
+              {t("source.field.enabled")}
+            </span>
+            <Switch
+              aria-label={t("source.field.enabled")}
+              checked={values.enabled}
+              disabled={busy}
+              onCheckedChange={(checked) => updateValue("enabled", checked)}
+            />
+          </div>
+        </div>
+      </form>
     </DialogFrame>
   );
 }
@@ -254,7 +310,15 @@ function parsePriority(value: string, fallback: number) {
   return Number.isInteger(priority) ? priority : fallback;
 }
 
-function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+function Field({
+  children,
+  label,
+  required = false,
+}: {
+  children: ReactNode;
+  label: string;
+  required?: boolean;
+}) {
   return (
     <label className="grid gap-1.5">
       <span className="text-body-sm font-medium text-on-surface-variant">

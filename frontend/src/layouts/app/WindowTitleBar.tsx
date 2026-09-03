@@ -6,7 +6,10 @@ import {
   observeAppWindowIconState,
   type AppWindowIconState,
 } from "../../services/appWindowIcon";
-import { runWindowAction, type WindowAction } from "../../services/windowChrome";
+import {
+  runWindowAction,
+  type WindowAction,
+} from "../../services/windowChrome";
 
 export type WindowChromeMode = "native" | "windows-frameless";
 type WindowControlIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -23,14 +26,37 @@ const windowControls: Array<{
   title: string;
   variant?: "danger";
 }> = [
-  { action: "minimize", ariaLabel: "Minimize window", Icon: Minus, title: "Minimize" },
-  { action: "toggleMaximize", ariaLabel: "Toggle maximize window", Icon: Square, title: "Maximize" },
-  { action: "close", ariaLabel: "Close window", Icon: X, title: "Close", variant: "danger" },
+  {
+    action: "minimize",
+    ariaLabel: "Minimize window",
+    Icon: Minus,
+    title: "Minimize",
+  },
+  {
+    action: "toggleMaximize",
+    ariaLabel: "Toggle maximize window",
+    Icon: Square,
+    title: "Maximize",
+  },
+  {
+    action: "close",
+    ariaLabel: "Close window",
+    Icon: X,
+    title: "Close",
+    variant: "danger",
+  },
 ];
 
-export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMode }) {
-  const [detectedMode, setDetectedMode] = useState<WindowChromeMode>(() => controlledMode ?? detectWindowChromeMode());
-  const [windowIconState, setWindowIconState] = useState<AppWindowIconState>("display");
+export function WindowTitleBar({
+  mode: controlledMode,
+}: {
+  mode?: WindowChromeMode;
+}) {
+  const [detectedMode, setDetectedMode] = useState<WindowChromeMode>(
+    () => controlledMode ?? detectWindowChromeMode(),
+  );
+  const [windowIconState, setWindowIconState] =
+    useState<AppWindowIconState>("display");
   const mode = controlledMode ?? detectedMode;
   const customControls = mode === "windows-frameless";
 
@@ -72,7 +98,10 @@ export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMo
       data-window-chrome={mode}
     >
       <div
-        className={clsx("absolute inset-y-0 left-0", customControls ? "right-[8.25rem]" : "right-0")}
+        className={clsx(
+          "absolute inset-y-0 left-0",
+          customControls ? "right-[8.25rem]" : "right-0",
+        )}
         data-tauri-drag-region="true"
       />
       <div className="pointer-events-none relative z-10 flex min-w-0 items-center gap-2 px-3 text-label-caps font-semibold">
@@ -85,7 +114,11 @@ export function WindowTitleBar({ mode: controlledMode }: { mode?: WindowChromeMo
         <span className="truncate">AssetIWeave</span>
       </div>
       {customControls ? (
-        <div className="relative z-20 ml-auto flex h-full" aria-label="Window controls" role="group">
+        <div
+          className="relative z-20 ml-auto flex h-full"
+          aria-label="Window controls"
+          role="group"
+        >
           {windowControls.map(({ action, ariaLabel, Icon, title, variant }) => (
             <button
               aria-label={ariaLabel}
@@ -135,7 +168,8 @@ function detectPlatform(): "linux" | "macos" | "unknown" | "windows" {
 
   const runtimeNavigator = navigator as NavigatorWithUserAgentData;
   const userAgentPlatform = runtimeNavigator.userAgentData?.platform;
-  const platform = `${userAgentPlatform ?? runtimeNavigator.platform ?? ""} ${runtimeNavigator.userAgent ?? ""}`.toLowerCase();
+  const platform =
+    `${userAgentPlatform ?? runtimeNavigator.platform ?? ""} ${runtimeNavigator.userAgent ?? ""}`.toLowerCase();
 
   if (platform.includes("win")) {
     return "windows";

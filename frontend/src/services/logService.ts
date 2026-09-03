@@ -50,12 +50,18 @@ const fallbackLogContent: Record<string, string> = {
   ].join("\n"),
 };
 
-export async function getLogSnapshot(fileName?: string, lineLimit?: number): Promise<LogSnapshot> {
+export async function getLogSnapshot(
+  fileName?: string,
+  lineLimit?: number,
+): Promise<LogSnapshot> {
   if (!isTauriRuntime()) {
     return getFallbackLogSnapshot(fileName, lineLimit);
   }
 
-  return await invoke<LogSnapshot>("logs_get_snapshot", { fileName: fileName ?? null, lineLimit });
+  return await invoke<LogSnapshot>("logs_get_snapshot", {
+    fileName: fileName ?? null,
+    lineLimit,
+  });
 }
 
 export async function openLogDirectory(): Promise<void> {
@@ -88,23 +94,35 @@ function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-function normalizeLogFields(fields?: Record<string, string | number | boolean | null | undefined>) {
+function normalizeLogFields(
+  fields?: Record<string, string | number | boolean | null | undefined>,
+) {
   if (!fields) {
     return null;
   }
 
   return Object.fromEntries(
     Object.entries(fields)
-      .filter((entry): entry is [string, string | number | boolean] => entry[1] !== null && entry[1] !== undefined)
+      .filter(
+        (entry): entry is [string, string | number | boolean] =>
+          entry[1] !== null && entry[1] !== undefined,
+      )
       .map(([key, value]) => [key, String(value)]),
   );
 }
 
-function getFallbackLogSnapshot(fileName?: string, lineLimit = 200): LogSnapshot {
-  const selectedFile = fallbackLogFiles.find((file) => file.log_file_name === fileName) ?? fallbackLogFiles[0];
+function getFallbackLogSnapshot(
+  fileName?: string,
+  lineLimit = 200,
+): LogSnapshot {
+  const selectedFile =
+    fallbackLogFiles.find((file) => file.log_file_name === fileName) ??
+    fallbackLogFiles[0];
   const content = fallbackLogContent[selectedFile.log_file_name] ?? "";
   const lines = content.split("\n");
-  const limitedContent = lines.slice(Math.max(0, lines.length - lineLimit)).join("\n");
+  const limitedContent = lines
+    .slice(Math.max(0, lines.length - lineLimit))
+    .join("\n");
 
   return {
     log_dir_path: "/preview/AssetIWeave/logs",

@@ -22,7 +22,9 @@ export interface AssetToolbarAction {
   text?: string;
 }
 
-export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarViewMode>({
+export function AssetToolbar<
+  Value extends AssetToolbarViewMode = AssetToolbarViewMode,
+>({
   actionGroups = [],
   ariaLabel,
   filterControls,
@@ -55,14 +57,19 @@ export function AssetToolbar<Value extends AssetToolbarViewMode = AssetToolbarVi
   viewMode?: Value;
   viewOptions?: ToolbarViewOption<Value>[];
 }) {
-  const showViewToggle = viewMode !== undefined && onViewModeChange && viewOptions.length > 0;
+  const showViewToggle =
+    viewMode !== undefined && onViewModeChange && viewOptions.length > 0;
 
   return (
     <DataToolbar
       actions={
         <>
           {actionGroups.map((group, groupIndex) => (
-            <ToolbarActionGroup group={group} key={groupIndex} showSeparator={groupIndex > 0} />
+            <ToolbarActionGroup
+              group={group}
+              key={groupIndex}
+              showSeparator={groupIndex > 0}
+            />
           ))}
         </>
       }

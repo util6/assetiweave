@@ -23,7 +23,10 @@ const dialogLayerClasses: Record<DialogLayer, string> = {
   top: "z-[70]",
 };
 
-export interface DialogFrameProps extends Omit<React.HTMLAttributes<HTMLElement>, "title"> {
+export interface DialogFrameProps extends Omit<
+  React.HTMLAttributes<HTMLElement>,
+  "title"
+> {
   busy?: boolean;
   closeButtonRef?: React.Ref<HTMLButtonElement>;
   closeLabel?: string;
@@ -79,9 +82,14 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
     },
     ref,
   ) => {
-    const hasHeader = !hideHeader && Boolean(title || description || icon || headerActions || onClose);
+    const hasHeader =
+      !hideHeader &&
+      Boolean(title || description || icon || headerActions || onClose);
     const previouslyFocusedElementRef = React.useRef<HTMLElement | null>(
-      typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      typeof document !== "undefined" &&
+        document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null,
     );
 
     const [mounted, setMounted] = React.useState(false);
@@ -156,24 +164,42 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
               {...props}
             >
               {hasHeader && (
-                <header className={cn("aurora-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3", headerClassName)}>
+                <header
+                  className={cn(
+                    "aurora-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3",
+                    headerClassName,
+                  )}
+                >
                   {icon && (
-                    <span className={cn("grid size-10 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary", iconClassName)}>
+                    <span
+                      className={cn(
+                        "grid size-10 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary",
+                        iconClassName,
+                      )}
+                    >
                       {icon}
                     </span>
                   )}
                   <div className="min-w-0 flex-1">
                     {title && (
                       <DialogPrimitive.Title asChild>
-                        <h2 className="text-title-sm font-bold text-on-surface">{title}</h2>
+                        <h2 className="text-title-sm font-bold text-on-surface">
+                          {title}
+                        </h2>
                       </DialogPrimitive.Title>
                     )}
                     {description && (
                       <DialogPrimitive.Description asChild>
-                        <p className="mt-1 text-body-sm text-on-surface-variant">{description}</p>
+                        <p className="mt-1 text-body-sm text-on-surface-variant">
+                          {description}
+                        </p>
                       </DialogPrimitive.Description>
                     )}
-                    {!description && <DialogPrimitive.Description className="sr-only">{title ?? closeLabel}</DialogPrimitive.Description>}
+                    {!description && (
+                      <DialogPrimitive.Description className="sr-only">
+                        {title ?? closeLabel}
+                      </DialogPrimitive.Description>
+                    )}
                   </div>
                   {headerActions}
                   {onClose && (
@@ -194,13 +220,22 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
               )}
               {hideHeader && title && (
                 <>
-                  <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+                  <DialogPrimitive.Title className="sr-only">
+                    {title}
+                  </DialogPrimitive.Title>
                   <DialogPrimitive.Description className="sr-only">
                     {description ?? title}
                   </DialogPrimitive.Description>
                 </>
               )}
-              <div className={cn("min-h-0 flex-1 overflow-y-auto px-5 py-4", contentClassName)}>{children}</div>
+              <div
+                className={cn(
+                  "min-h-0 flex-1 overflow-y-auto px-5 py-4",
+                  contentClassName,
+                )}
+              >
+                {children}
+              </div>
               {footer && (
                 <footer
                   className={cn(

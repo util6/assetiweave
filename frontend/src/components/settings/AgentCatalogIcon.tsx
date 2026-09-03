@@ -8,7 +8,10 @@ import {
 import type { AppShortcut } from "../../types";
 import type { AgentCatalogItem } from "./agentCatalog";
 
-export function resolveAgentIconAccentColor(agent: AgentCatalogItem, appShortcuts: AppShortcut[] = []) {
+export function resolveAgentIconAccentColor(
+  agent: AgentCatalogItem,
+  appShortcuts: AppShortcut[] = [],
+) {
   return resolveAppShortcutAccentColor(
     { appKind: agent.id, profileName: agent.name },
     appShortcuts,
@@ -46,5 +49,12 @@ export function AgentCatalogIcon({
   }
 
   const FallbackIcon = agent.icon;
-  return <FallbackIcon aria-hidden="true" className={iconClassName} size={fallbackSize} style={style} />;
+  return (
+    <FallbackIcon
+      aria-hidden="true"
+      className={iconClassName}
+      size={fallbackSize}
+      style={style}
+    />
+  );
 }

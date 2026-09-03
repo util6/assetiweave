@@ -29,12 +29,14 @@ describe("promptOptimization", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     vi.mocked(invoke).mockResolvedValueOnce({ optimized_text: "明确验收标准" });
 
-    await expect(optimizePromptContent({
-      agentId: "opencode",
-      model: "model/a",
-      provider: "cli",
-      text: "完善任务",
-    })).resolves.toEqual({ optimized_text: "明确验收标准" });
+    await expect(
+      optimizePromptContent({
+        agentId: "opencode",
+        model: "model/a",
+        provider: "cli",
+        text: "完善任务",
+      }),
+    ).resolves.toEqual({ optimized_text: "明确验收标准" });
 
     expect(invoke).toHaveBeenCalledWith("optimize_prompt", {
       params: {
@@ -48,13 +50,19 @@ describe("promptOptimization", () => {
 
   it("checks the dedicated prompt optimization assignment", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    vi.mocked(invoke).mockResolvedValueOnce({ available: true, error: null, version: "1.0.0" });
+    vi.mocked(invoke).mockResolvedValueOnce({
+      available: true,
+      error: null,
+      version: "1.0.0",
+    });
 
     await expect(checkPromptOptimizationAvailability()).resolves.toEqual({
       available: true,
       error: null,
       version: "1.0.0",
     });
-    expect(invoke).toHaveBeenCalledWith("check_prompt_optimization_availability");
+    expect(invoke).toHaveBeenCalledWith(
+      "check_prompt_optimization_availability",
+    );
   });
 });

@@ -15,7 +15,8 @@ const zh = {
   "tenant.creating": "创建中...",
   "tenant.error.nameRequired": "请输入租户名称。",
 
-  "notification.ready": "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
+  "notification.ready":
+    "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
   "notification.aria": "通知消息",
   "notification.close": "关闭通知",
 
@@ -96,16 +97,21 @@ const zh = {
   "update.button.ready": "更新已就绪，重启应用",
   "update.button.error": "更新失败",
   "update.dialog.title": "应用更新",
-  "update.dialog.description": "自动检测 GitHub Release 上的新版本，并在应用内下载、安装和重启。",
+  "update.dialog.description":
+    "自动检测 GitHub Release 上的新版本，并在应用内下载、安装和重启。",
   "update.intro.open": "查看当前版本功能介绍",
   "update.intro.title": "当前版本功能介绍",
   "update.intro.description": "了解当前版本新增和优化的核心能力。",
   "update.intro.currentTitle": "当前新版本",
-  "update.intro.currentDescription": "这个版本继续完善桌面端资产管理、更新入口和后台任务体验。",
+  "update.intro.currentDescription":
+    "这个版本继续完善桌面端资产管理、更新入口和后台任务体验。",
   "update.intro.highlights": "功能亮点",
-  "update.intro.highlight.navigation": "左侧工作区导航整合品牌入口，常规信息和更新状态都能从同一位置进入。",
-  "update.intro.highlight.updater": "应用内更新流程支持发现版本、展示说明、下载安装和重启。",
-  "update.intro.highlight.backgroundTasks": "后台同步和备份任务保留进度提示，减少长任务对日常浏览的打断。",
+  "update.intro.highlight.navigation":
+    "左侧工作区导航整合品牌入口，常规信息和更新状态都能从同一位置进入。",
+  "update.intro.highlight.updater":
+    "应用内更新流程支持发现版本、展示说明、下载安装和重启。",
+  "update.intro.highlight.backgroundTasks":
+    "后台同步和备份任务保留进度提示，减少长任务对日常浏览的打断。",
   "update.status.checking": "正在检查更新",
   "update.status.available": "发现新版本",
   "update.status.upToDate": "当前已是最新版本",
@@ -116,7 +122,8 @@ const zh = {
   "update.description.checking": "正在连接发布端点并验证是否有可用版本。",
   "update.description.available": "可以直接在应用内下载并安装这个版本。",
   "update.description.upToDate": "本机版本和发布端点返回的最新版本一致。",
-  "update.description.downloading": "请保持应用开启，下载完成后会自动执行安装步骤。",
+  "update.description.downloading":
+    "请保持应用开启，下载完成后会自动执行安装步骤。",
   "update.description.installing": "安装器正在写入更新，请暂时不要关闭应用。",
   "update.description.ready": "重启后将运行刚安装的新版本。",
   "update.description.error": "可以重试自动更新，或打开发布页手动下载安装包。",
@@ -144,7 +151,8 @@ const zh = {
   "status.previewData": "浏览器预览模式：使用内置示例数据",
   "status.scanOk": "扫描完成：{{count}} 个资产",
   "status.scanError": "扫描失败：{{message}}",
-  "status.validatedAssets": "状态刷新：{{count}} 个资产，移除 {{removed}}，更新 {{updated}}",
+  "status.validatedAssets":
+    "状态刷新：{{count}} 个资产，移除 {{removed}}，更新 {{updated}}",
 
   "nav.aria.main": "主导航",
   "nav.aria.assetTypes": "资产类型",
@@ -197,7 +205,8 @@ const zh = {
 
   "team.page.eyebrow": "团队协作",
   "team.page.title": "团队与花名册",
-  "team.page.description": "管理固定成员顺序、Leader 和 Teammate 的 Agent/模型绑定。",
+  "team.page.description":
+    "管理固定成员顺序、Leader 和 Teammate 的 Agent/模型绑定。",
   "team.action.create": "新建团队",
   "team.action.edit": "编辑",
   "team.action.delete": "删除",
@@ -267,7 +276,8 @@ const zh = {
   "team.workflow.unavailable": "不可恢复",
   "team.workflow.error": "Team 工作流失败：{{message}}",
   "team.workflow.plan": "任务计划",
-  "team.workflow.planDescription": "Leader 推荐的任务拆解；确认前不会启动 Teammate。",
+  "team.workflow.planDescription":
+    "Leader 推荐的任务拆解；确认前不会启动 Teammate。",
   "team.workflow.drafting": "正在生成任务草案...",
   "team.workflow.taskNumber": "任务 {{number}}",
   "team.workflow.taskTitle": "任务标题",
@@ -332,7 +342,8 @@ const zh = {
   "team.chat.collapseNavigation": "收起列表",
   "team.chat.expandNavigation": "展开列表",
   "team.chat.noEligibleTitle": "没有可用成员",
-  "team.chat.noEligibleDescription": "为团队配置至少一个可恢复且支持实时事件的成员。",
+  "team.chat.noEligibleDescription":
+    "为团队配置至少一个可恢复且支持实时事件的成员。",
   "team.chat.item.user": "用户消息",
   "team.chat.item.assistant": "Agent 回复",
   "team.chat.item.processing": "处理中",
@@ -352,7 +363,8 @@ const zh = {
 
   "memory.page.eyebrow": "渐进式回忆",
   "memory.recent.title": "近期",
-  "memory.recent.description": "查看最近 72 小时的工作轨迹，并从事件返回 Conversation 现场。",
+  "memory.recent.description":
+    "查看最近 72 小时的工作轨迹，并从事件返回 Conversation 现场。",
   "memory.recent.projectView": "按项目",
   "memory.recent.timeView": "按时间",
   "memory.recent.refresh": "刷新",
@@ -360,10 +372,12 @@ const zh = {
   "memory.recent.questions": "个问题",
   "memory.recent.noEvents": "暂无可见事件。",
   "memory.recent.emptyTitle": "最近 72 小时没有工作记录",
-  "memory.recent.emptyDescription": "Conversation 同步后，近期工作会在这里按项目或时间展示。",
+  "memory.recent.emptyDescription":
+    "Conversation 同步后，近期工作会在这里按项目或时间展示。",
   "memory.task.running": "Memory 后台任务运行中",
   "memory.recall.title": "深度回忆",
-  "memory.recall.description": "在同一条持久会话中，用本地来源内容回答具体问题。",
+  "memory.recall.description":
+    "在同一条持久会话中，用本地来源内容回答具体问题。",
   "memory.recall.session": "Recall 会话",
   "memory.recall.newSession": "新建会话",
   "memory.recall.turnCount": "轮次",
@@ -390,35 +404,43 @@ const zh = {
   "memory.recall.emptyTitle": "等待第一轮回忆",
   "memory.recall.emptyDescription": "发送问题后会在同一条持久会话中连续追问。",
   "memory.recall.browserTitle": "浏览器预览不提供 Recall 数据",
-  "memory.recall.browserDescription": "请在桌面应用中检索本地 Conversation 记录。",
-  "conversation.navigation.sessionMissing": "无法定位这条 Memory 记录对应的 Session。",
-  "conversation.navigation.questionMissing": "Session 已打开，但对应 Question 不存在。",
-  "conversation.navigation.blockMissing": "Question 已打开，但对应 Card 已变化或不可用。",
+  "memory.recall.browserDescription":
+    "请在桌面应用中检索本地 Conversation 记录。",
+  "conversation.navigation.sessionMissing":
+    "无法定位这条 Memory 记录对应的 Session。",
+  "conversation.navigation.questionMissing":
+    "Session 已打开，但对应 Question 不存在。",
+  "conversation.navigation.blockMissing":
+    "Question 已打开，但对应 Card 已变化或不可用。",
 
   "catalog.page.title": "目录总览",
   "catalog.page.subtitle": "资产目录",
 
   "underConstruction.eyebrow": "功能建设中",
   "underConstruction.title": "{{feature}} 正在建设中",
-  "underConstruction.description": "这个界面已经接入导航框架，但功能还没有开发完成。先用占位状态保留入口，避免误展示其他页面。",
+  "underConstruction.description":
+    "这个界面已经接入导航框架，但功能还没有开发完成。先用占位状态保留入口，避免误展示其他页面。",
   "underConstruction.routeKey": "路由：{{routeKey}}",
   "underConstruction.defaultFeature": "此功能",
 
   "prompt.page.eyebrow": "提示词工作台",
   "prompt.page.title": "提示词总览",
-  "prompt.page.description": "像剪贴板一样快速记录灵感、Feature 想法和 Prompt 草稿，并在卡片上直接复制、翻译和优化。",
+  "prompt.page.description":
+    "像剪贴板一样快速记录灵感、Feature 想法和 Prompt 草稿，并在卡片上直接复制、翻译和优化。",
   "prompt.project.pickDirectory": "选择项目目录",
   "prompt.composer.eyebrow": "快速记录",
   "prompt.composer.title": "新建灵感 / Prompt",
   "prompt.composer.titlePlaceholder": "标题，可留空",
-  "prompt.composer.contentPlaceholder": "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+  "prompt.composer.contentPlaceholder":
+    "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
   "prompt.composer.projectPathPlaceholder": "项目目录路径，例如 ~/project",
   "prompt.composer.sessionPlaceholder": "Session 名称或 ID",
   "prompt.composer.tagsPlaceholder": "标签，用空格或逗号分隔",
   "prompt.composer.create": "保存卡片",
   "prompt.original.label": "原始提示词",
   "prompt.optimized.label": "优化稿",
-  "prompt.optimized.empty": "还没有优化稿。点击正面的优化按钮后，会在这里保留优化后的版本。",
+  "prompt.optimized.empty":
+    "还没有优化稿。点击正面的优化按钮后，会在这里保留优化后的版本。",
   "prompt.note.untitled": "未命名提示词",
   "prompt.metric.notes": "卡片",
   "prompt.metric.filtered": "当前结果",
@@ -443,7 +465,8 @@ const zh = {
   "prompt.tags.library": "已创建标签",
   "prompt.tags.libraryEmpty": "暂无已创建标签",
   "prompt.tags.remove": "移除标签 {{tag}}",
-  "prompt.tags.rule": "最多 {{count}} 个标签，单个标签长度不超过 {{length}} 个字符。",
+  "prompt.tags.rule":
+    "最多 {{count}} 个标签，单个标签长度不超过 {{length}} 个字符。",
   "prompt.sort.label": "排序",
   "prompt.sort.aria": "提示词排序",
   "prompt.sort.updated": "最近更新",
@@ -467,9 +490,11 @@ const zh = {
   "prompt.search.submit": "搜索提示词",
   "prompt.toolbar.sort.copyCount": "按复制次数",
   "prompt.empty.title": "还没有提示词卡片",
-  "prompt.empty.description": "先在上方记录一段灵感或 Prompt，后续可以直接复制、翻译或优化。",
+  "prompt.empty.description":
+    "先在上方记录一段灵感或 Prompt，后续可以直接复制、翻译或优化。",
   "prompt.empty.filteredTitle": "没有匹配结果",
-  "prompt.empty.filteredDescription": "换一个关键词，或清空搜索条件后查看全部卡片。",
+  "prompt.empty.filteredDescription":
+    "换一个关键词，或清空搜索条件后查看全部卡片。",
   "prompt.action.copy": "复制",
   "prompt.action.copyNamed": "复制 {{title}}",
   "prompt.action.copyImages": "复制图片",
@@ -547,7 +572,8 @@ const zh = {
   "settings.scope.conversations": "页面级 / 对话记录",
   "settings.reset": "恢复应用设置默认值",
   "settings.resetConfirmTitle": "确认恢复应用设置默认值？",
-  "settings.resetConfirmMessage": "应用设置中的自定义项将恢复为默认值；导航菜单、快捷方式、资产源和备份库等独立数据不会受影响。",
+  "settings.resetConfirmMessage":
+    "应用设置中的自定义项将恢复为默认值；导航菜单、快捷方式、资产源和备份库等独立数据不会受影响。",
   "settings.resetConfirmAction": "恢复应用设置",
   "settings.section.appearance": "外观",
   "settings.section.agents": "Agents",
@@ -594,17 +620,20 @@ const zh = {
   "settings.memory.project": "项目记忆 Agent",
   "settings.memory.global": "全局记忆 Agent",
   "settings.memory.recall": "Recall Agent",
-  "settings.memory.assignmentHint": "为此 Memory 工作流选择独立的 Agent 与模型。",
+  "settings.memory.assignmentHint":
+    "为此 Memory 工作流选择独立的 Agent 与模型。",
   "settings.memory.generationEnabled": "启用 Memory 生成",
   "settings.memory.usageEnabled": "启用 Memory 使用记录",
   "settings.memory.excludedSessionIds": "排除 Session ID",
   "settings.memory.excludedSourceIds": "排除来源 ID",
   "settings.memory.excludedPlaceholder": "使用逗号或换行分隔多个 ID",
   "settings.ai.executionBoundary": "外部 AI 边界",
-  "settings.ai.externalWarning": "OpenCode / Gemini CLI 可能访问网络并具备本机能力。Memory 会在发送前和写入前执行确定性脱敏。",
+  "settings.ai.externalWarning":
+    "OpenCode / Gemini CLI 可能访问网络并具备本机能力。Memory 会在发送前和写入前执行确定性脱敏。",
   "settings.agentCapabilities.label": "模型能力",
   "settings.agentCapabilities.dialogTitle": "选择 Agent 能力",
-  "settings.agentCapabilities.dialogDescription": "选择为当前服务提供模型能力的 Agent；模型和连接测试请在 Agent 设置中完成。",
+  "settings.agentCapabilities.dialogDescription":
+    "选择为当前服务提供模型能力的 Agent；模型和连接测试请在 Agent 设置中完成。",
   "settings.agentCapabilities.dialogCount": "{{available}} / {{total}} 个可用",
   "settings.agentCapabilities.dialogChecking": "正在检测 {{count}} 个 Agent",
   "settings.agentCapabilities.selectedLabel": "当前服务使用",
@@ -613,24 +642,34 @@ const zh = {
   "settings.agentCapabilities.current": "当前使用",
   "settings.agentCapabilities.empty": "暂无可用的 Agent 能力。",
   "settings.agentCapabilities.openAgentSettings": "打开 Agent 设置",
-  "settings.agentCapabilities.cardTranslationDescription": "使用所选 Agent 为卡片翻译提供模型能力。",
-  "settings.agentCapabilities.memoryDescription": "使用所选 Agent 为 Memory 提取、整理和 Recall 提供模型能力。",
-  "settings.agentCapabilities.promptOptimizationDescription": "使用所选 Agent 为提示词优化提供模型能力。",
+  "settings.agentCapabilities.cardTranslationDescription":
+    "使用所选 Agent 为卡片翻译提供模型能力。",
+  "settings.agentCapabilities.memoryDescription":
+    "使用所选 Agent 为 Memory 提取、整理和 Recall 提供模型能力。",
+  "settings.agentCapabilities.promptOptimizationDescription":
+    "使用所选 Agent 为提示词优化提供模型能力。",
   "settings.promptOptimization.descriptionLabel": "功能说明",
-  "settings.promptOptimization.description": "提示词优化会调用所选 Agent，将原始提示词改写为更清晰、可执行的版本。",
+  "settings.promptOptimization.description":
+    "提示词优化会调用所选 Agent，将原始提示词改写为更清晰、可执行的版本。",
   "settings.promptOptimization.systemPrompt": "系统提示词",
-  "settings.promptOptimization.systemPromptPlaceholder": "可使用 {content} 占位符。",
+  "settings.promptOptimization.systemPromptPlaceholder":
+    "可使用 {content} 占位符。",
   "settings.agents.title": "Agents",
-  "settings.agents.description": "管理本机可用的 AI 编程 Agent。AssetIWeave 通过 Agent Registry 统一描述命令、协议和连接状态。",
-  "settings.agents.registryHint": "当前运行时定义由内置 Registry 提供；自定义 Agent 的持久化编辑将在后续阶段接入。",
+  "settings.agents.description":
+    "管理本机可用的 AI 编程 Agent。AssetIWeave 通过 Agent Registry 统一描述命令、协议和连接状态。",
+  "settings.agents.registryHint":
+    "当前运行时定义由内置 Registry 提供；自定义 Agent 的持久化编辑将在后续阶段接入。",
   "settings.agents.marketTab": "市场",
   "settings.agents.installedTab": "已安装",
   "settings.agents.addCustom": "添加自定义 Agent",
   "settings.agents.customDefinition": "查看定义模板",
-  "settings.agents.customDefinitionHint": "使用 Agent Registry 的字段描述启动命令和协议。",
+  "settings.agents.customDefinitionHint":
+    "使用 Agent Registry 的字段描述启动命令和协议。",
   "settings.agents.customDialogTitle": "自定义 Agent 定义模板",
-  "settings.agents.customDialogDescription": "先查看 Agent Registry 所需字段；当前版本暂不把自定义定义写入运行时 Registry。",
-  "settings.agents.customDialogNotice": "后续接入持久化自定义 Agent 后，这些字段将由表单编辑并保存到 App-owned 配置。",
+  "settings.agents.customDialogDescription":
+    "先查看 Agent Registry 所需字段；当前版本暂不把自定义定义写入运行时 Registry。",
+  "settings.agents.customDialogNotice":
+    "后续接入持久化自定义 Agent 后，这些字段将由表单编辑并保存到 App-owned 配置。",
   "settings.agents.field.agentId": "Agent ID",
   "settings.agents.field.displayName": "显示名称",
   "settings.agents.field.arguments": "启动参数",
@@ -648,7 +687,8 @@ const zh = {
   "settings.agents.statusNotInstalled": "未安装",
   "settings.agents.statusNotTested": "未检测",
   "settings.agents.coreIncompatible": "当前版本不兼容",
-  "settings.agents.coreIncompatibleRange": "当前版本不兼容（要求 {min} ≤ core < {maxExclusive}）",
+  "settings.agents.coreIncompatibleRange":
+    "当前版本不兼容（要求 {min} ≤ core < {maxExclusive}）",
   "settings.agents.install": "安装",
   "settings.agents.update": "更新",
   "settings.agents.reinstall": "重装",
@@ -658,14 +698,17 @@ const zh = {
   "settings.agents.enabled": "已启用",
   "settings.agents.disabled": "已停用",
   "settings.agents.installing": "处理中...",
-  "settings.agents.installPreviewDescription": "确认固定版本、分发方式和本地写入范围后再开始生命周期任务。",
+  "settings.agents.installPreviewDescription":
+    "确认固定版本、分发方式和本地写入范围后再开始生命周期任务。",
   "settings.agents.confirmInstall": "确认并开始",
   "settings.agents.confirmUninstall": "确认卸载",
-  "settings.agents.uninstallPreviewDescription": "确认安装归属、路径和能力分配清理范围后再卸载 Agent。",
+  "settings.agents.uninstallPreviewDescription":
+    "确认安装归属、路径和能力分配清理范围后再卸载 Agent。",
   "settings.agents.installPath": "安装路径",
   "settings.agents.externalRuntime": "外部 System runtime（只解除绑定）",
   "settings.agents.assignmentsToClear": "需要清理的能力分配",
-  "settings.agents.assignmentsToClearDescription": "卸载前必须确认移除所有仍指向该 Agent 的能力分配。",
+  "settings.agents.assignmentsToClearDescription":
+    "卸载前必须确认移除所有仍指向该 Agent 的能力分配。",
   "settings.agents.uninstallFailed": "Agent 卸载失败",
   "settings.agents.distributionOptions": "分发方式",
   "settings.agents.recommended": "推荐",
@@ -681,7 +724,8 @@ const zh = {
   "settings.agents.model": "模型",
   "settings.agents.modelDefault": "使用 Agent 默认模型",
   "settings.agents.modelDialogTitle": "选择模型",
-  "settings.agents.modelDialogDescription": "从当前 Agent 的 ACP session/new 响应中加载可选模型。",
+  "settings.agents.modelDialogDescription":
+    "从当前 Agent 的 ACP session/new 响应中加载可选模型。",
   "settings.agents.modelLoading": "正在加载模型...",
   "settings.agents.modelSearch": "搜索模型",
   "settings.agents.modelSearchPlaceholder": "搜索模型...",
@@ -697,10 +741,14 @@ const zh = {
   "settings.agents.edit": "编辑",
   "settings.agents.command": "启动命令",
   "settings.agents.protocol": "协议",
-  "settings.agents.definitionDialogDescription": "查看当前 Agent 的运行时定义和接入状态。",
-  "settings.agents.editHint": "当前 Agent 的命令、协议和连接状态由 Agents 页面统一管理。",
-  "settings.agents.definitionEditingHint": "当前版本在 Agents 页面统一展示命令、协议和连接状态；详细定义编辑将在后续接入。",
-  "settings.agents.registryDefinitionHint": "该 Agent 已接入内置 Registry；连接测试只有在 ACP 返回可用模型列表后才会成功。当前版本的定义编辑入口暂未开放。",
+  "settings.agents.definitionDialogDescription":
+    "查看当前 Agent 的运行时定义和接入状态。",
+  "settings.agents.editHint":
+    "当前 Agent 的命令、协议和连接状态由 Agents 页面统一管理。",
+  "settings.agents.definitionEditingHint":
+    "当前版本在 Agents 页面统一展示命令、协议和连接状态；详细定义编辑将在后续接入。",
+  "settings.agents.registryDefinitionHint":
+    "该 Agent 已接入内置 Registry；连接测试只有在 ACP 返回可用模型列表后才会成功。当前版本的定义编辑入口暂未开放。",
   "settings.storage.configFile": "旧版设置导入文件",
   "settings.storage.configDir": "用户配置目录",
   "settings.storage.defaultDataBackupDir": "默认数据库备份目录",
@@ -723,24 +771,30 @@ const zh = {
   "settings.cli.installing": "安装中...",
   "settings.conversation.sessionBrowserFont": "Session 浏览字体",
   "settings.conversation.autoFullSyncOnStartup": "启动时自动全量同步",
-  "settings.conversation.autoFullSyncOnStartupHint": "应用启动时自动重新解析可发现的对话记录；关闭后仍可在此处手动执行全量同步。",
+  "settings.conversation.autoFullSyncOnStartupHint":
+    "应用启动时自动重新解析可发现的对话记录；关闭后仍可在此处手动执行全量同步。",
   "settings.conversation.fullSyncTitle": "全量重新解析",
-  "settings.conversation.fullSyncDescription": "使用当前解析器重新读取所有来源中仍可发现的 Session 与网页记录。来源已删除或归档的本地历史不会被清除。日常同步仍使用增量模式。",
+  "settings.conversation.fullSyncDescription":
+    "使用当前解析器重新读取所有来源中仍可发现的 Session 与网页记录。来源已删除或归档的本地历史不会被清除。日常同步仍使用增量模式。",
   "settings.conversation.fullSyncAction": "开始全量同步",
   "settings.conversation.fullSyncButtonRunning": "全量同步中",
-  "settings.conversation.fullSyncButtonRunningWithProgress": "全量同步中 · {{percent}}%",
+  "settings.conversation.fullSyncButtonRunningWithProgress":
+    "全量同步中 · {{percent}}%",
   "settings.conversation.fullSyncConfirmTitle": "确认全量重新解析",
-  "settings.conversation.fullSyncConfirmMessage": "此操作会重新读取所有当前可发现的对话，耗时和资源占用通常高于增量同步。已沉淀但来源不可见的历史记录会继续保留。",
+  "settings.conversation.fullSyncConfirmMessage":
+    "此操作会重新读取所有当前可发现的对话，耗时和资源占用通常高于增量同步。已沉淀但来源不可见的历史记录会继续保留。",
   "settings.conversation.fullSyncConfirmAction": "开始重新解析",
   "settings.conversation.fullSyncIdle": "尚未执行全量同步",
   "settings.conversation.fullSyncRunning": "正在后台重新解析全部可发现记录",
   "settings.conversation.fullSyncCompleted": "最近一次全量同步已完成",
   "settings.conversation.fullSyncFailed": "最近一次全量同步失败",
-  "settings.conversation.fullSyncConflict": "已有其他对话同步任务正在运行，请等待完成后重试。",
+  "settings.conversation.fullSyncConflict":
+    "已有其他对话同步任务正在运行，请等待完成后重试。",
   "settings.conversation.fullSyncProgressLabel": "全量同步进度",
   "settings.conversation.fullSyncPreparing": "正在准备来源列表…",
   "settings.conversation.fullSyncCurrentSource": "正在处理：",
-  "settings.conversation.fullSyncProgressCount": "已完成 {{completed}}/{{total}} 个来源",
+  "settings.conversation.fullSyncProgressCount":
+    "已完成 {{completed}}/{{total}} 个来源",
   "settings.conversation.fullSyncProgressPercent": "已完成 {{percent}}%",
   "settings.conversation.sessionBrowserSize": "Session 浏览字号",
   "settings.conversation.contentCardColors": "内容卡片颜色",
@@ -754,12 +808,14 @@ const zh = {
   "settings.conversation.translationProvider.cli": "宿主机 CLI",
   "settings.conversation.translationProvider.google": "谷歌翻译",
   "settings.conversation.translationProvider.apple": "苹果翻译",
-  "settings.conversation.translationProviderReserved": "该翻译方式已预留设置入口，当前版本尚未实现连接。",
+  "settings.conversation.translationProviderReserved":
+    "该翻译方式已预留设置入口，当前版本尚未实现连接。",
   "settings.conversation.translationCli": "CLI 工具",
   "settings.conversation.translationCli.opencode": "OpenCode",
   "settings.conversation.translationCli.gemini": "Gemini",
   "settings.conversation.translationModel": "模型",
-  "settings.conversation.translationModelPlaceholder": "留空使用 CLI 默认模型，或输入模型 ID",
+  "settings.conversation.translationModelPlaceholder":
+    "留空使用 CLI 默认模型，或输入模型 ID",
   "settings.conversation.translationConnection": "连接检测",
   "settings.conversation.translationConnect": "检测连接",
   "settings.conversation.translationConnecting": "检测中...",
@@ -767,11 +823,14 @@ const zh = {
   "settings.conversation.translationConnectionFailed": "连接失败",
   "settings.conversation.translationConnectionIdle": "尚未检测",
   "settings.conversation.translationRefreshModels": "刷新模型",
-  "settings.conversation.translationModelsUnavailable": "当前 CLI 未返回可用模型列表，可手动输入模型 ID。",
+  "settings.conversation.translationModelsUnavailable":
+    "当前 CLI 未返回可用模型列表，可手动输入模型 ID。",
   "settings.conversation.translationPrompt": "提示词模板",
-  "settings.conversation.translationPromptPlaceholder": "可使用 {targetLanguage}、{targetLanguageJson}、{content} 占位符。",
+  "settings.conversation.translationPromptPlaceholder":
+    "可使用 {targetLanguage}、{targetLanguageJson}、{content} 占位符。",
   "settings.conversation.translationTarget": "卡片翻译目标语言",
-  "settings.conversation.translationTargetPlaceholder": "例如：简体中文、French、Spanish (Latin America)",
+  "settings.conversation.translationTargetPlaceholder":
+    "例如：简体中文、French、Spanish (Latin America)",
   "settings.conversation.translationTarget.zhCN": "简体中文",
   "settings.conversation.translationTarget.en": "英文",
   "settings.conversation.translationTarget.ja": "日文",
@@ -790,8 +849,8 @@ const zh = {
   "settings.conversation.runtimeOverrides": "运行时路径",
   "settings.conversation.runtimePath": "运行时路径",
   "settings.conversation.runtimeClear": "清空",
-  "settings.conversation.runtimeOverridesHint": "留空时使用系统 PATH。可填写绝对路径，适合运行时已安装但桌面 App 进程无法从 PATH 发现的情况。",
-
+  "settings.conversation.runtimeOverridesHint":
+    "留空时使用系统 PATH。可填写绝对路径，适合运行时已安装但桌面 App 进程无法从 PATH 发现的情况。",
 
   "settings.showStartupNotification": "显示启动通知",
   "settings.menu.sideRail": "全局入口",
@@ -813,11 +872,15 @@ const zh = {
   "settings.shortcuts.customIcon": "自定义符号",
   "settings.shortcuts.editSvg": "编辑图标代码",
   "settings.shortcuts.svgEditorTitle": "图标代码",
-  "settings.shortcuts.svgEditorDescription": "输入 1-4 个自定义符号，或粘贴 iconfont 导出的 SVG、包含 viewBox 与 paths 的 JSON。保存后作为图标设置中的自定义图标资源。",
+  "settings.shortcuts.svgEditorDescription":
+    "输入 1-4 个自定义符号，或粘贴 iconfont 导出的 SVG、包含 viewBox 与 paths 的 JSON。保存后作为图标设置中的自定义图标资源。",
   "settings.shortcuts.svgInput": "符号 / SVG / JSON",
-  "settings.shortcuts.svgPlaceholder": "+ 或 <svg viewBox=\"0 0 1024 1024\"><path d=\"...\" /></svg>",
-  "settings.shortcuts.svgError": "无法解析图标资源，请确认包含有效的 <svg><path d=\"...\" /></svg> 或 JSON paths。",
-  "settings.shortcuts.iconCodeEmptyError": "请输入自定义符号，或粘贴有效的 SVG / JSON 图标资源。",
+  "settings.shortcuts.svgPlaceholder":
+    '+ 或 <svg viewBox="0 0 1024 1024"><path d="..." /></svg>',
+  "settings.shortcuts.svgError":
+    '无法解析图标资源，请确认包含有效的 <svg><path d="..." /></svg> 或 JSON paths。',
+  "settings.shortcuts.iconCodeEmptyError":
+    "请输入自定义符号，或粘贴有效的 SVG / JSON 图标资源。",
   "settings.shortcuts.clearSvg": "清除自定义图标",
   "settings.shortcuts.cancelSvg": "取消",
   "settings.shortcuts.closeSvg": "关闭图标代码编辑器",
@@ -845,8 +908,10 @@ const zh = {
   "plan.title": "部署计划",
   "plan.actions": "{{count}} 个动作",
   "plan.reason.unsupported": "{{profile}} 不支持 {{kind}} 或未命中包含规则",
-  "plan.reason.conflictExisting": "目标路径已存在，当前版本默认不覆盖非本应用管理的文件",
-  "plan.reason.project": "{{profile}} 支持 {{kind}}，将以 {{strategy}} 投影到目标目录",
+  "plan.reason.conflictExisting":
+    "目标路径已存在，当前版本默认不覆盖非本应用管理的文件",
+  "plan.reason.project":
+    "{{profile}} 支持 {{kind}}，将以 {{strategy}} 投影到目标目录",
 
   "asset.list.aria": "资产列表",
   "asset.origin.local": "本地",
@@ -859,11 +924,14 @@ const zh = {
   "asset.edit": "编辑资产",
   "asset.delete": "删除资产",
   "asset.editDialog.title": "编辑资产说明",
-  "asset.editDialog.readonlyMeta": "资产名称、类型和路径来自扫描结果；这里仅保存目录中的补充说明。",
-  "asset.editDialog.descriptionPlaceholder": "记录这个资产的用途、适用场景或维护说明",
+  "asset.editDialog.readonlyMeta":
+    "资产名称、类型和路径来自扫描结果；这里仅保存目录中的补充说明。",
+  "asset.editDialog.descriptionPlaceholder":
+    "记录这个资产的用途、适用场景或维护说明",
   "asset.editDialog.submit": "保存说明",
   "asset.editDialog.groups": "所属分组",
-  "asset.editDialog.groupsHelp": "手动加入可以在这里增删；规则命中的分组需要到分组规则中调整。",
+  "asset.editDialog.groupsHelp":
+    "手动加入可以在这里增删；规则命中的分组需要到分组规则中调整。",
   "asset.editDialog.noGroups": "暂无分组。",
   "asset.editDialog.inGroup": "已在组内",
   "asset.editDialog.ruleMatched": "规则命中",
@@ -871,10 +939,12 @@ const zh = {
   "asset.editDialog.addToGroup": "加入分组",
   "asset.editDialog.removeManualGroup": "移除手动加入",
   "asset.editDialog.mounts": "App 挂载",
-  "asset.editDialog.mountsHelp": "这里显示真实文件系统扫描后的挂载状态，可以直接挂载或卸载这个 Skill。",
+  "asset.editDialog.mountsHelp":
+    "这里显示真实文件系统扫描后的挂载状态，可以直接挂载或卸载这个 Skill。",
   "asset.editDialog.noProfiles": "暂无可挂载 App/Profile。",
   "asset.deleteDialog.title": "删除资产",
-  "asset.deleteDialog.message": "确认删除资产 {{name}}？只有 AssetIWeave 备份库里的 Skill 会被实际删除；外部来源资产会被后端拒绝。",
+  "asset.deleteDialog.message":
+    "确认删除资产 {{name}}？只有 AssetIWeave 备份库里的 Skill 会被实际删除；外部来源资产会被后端拒绝。",
   "asset.deleteDialog.path": "源路径",
   "asset.deleteDialog.mountedCount": "当前检测到 {{count}} 个挂载目标。",
   "asset.deleteDialog.unmount": "删除前先卸载受管挂载",
@@ -898,8 +968,10 @@ const zh = {
   "group.action.removeMember": "移除 {{name}}",
   "group.confirmDelete": "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
   "group.deleteDialog.title": "删除分组",
-  "group.deleteDialog.message": "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
-  "group.deleteDialog.detail": "后端会确认分组仍然存在，然后删除分组记录和手动成员关系。",
+  "group.deleteDialog.message":
+    "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
+  "group.deleteDialog.detail":
+    "后端会确认分组仍然存在，然后删除分组记录和手动成员关系。",
   "group.column.groups": "分组",
   "group.column.members": "成员 Skill",
   "group.column.controls": "规则与挂载",
@@ -952,7 +1024,8 @@ const zh = {
   "group.icon.cancelSvg": "取消",
   "group.icon.saveSvg": "保存图标",
   "group.icon.svgEditorTitle": "编辑分组图标",
-  "group.icon.svgEditorDescription": "输入 SVG JSON 或 SVG 标记以自定义分组图标。",
+  "group.icon.svgEditorDescription":
+    "输入 SVG JSON 或 SVG 标记以自定义分组图标。",
   "group.icon.svgInput": "SVG 代码",
   "group.icon.svgPlaceholder": "粘贴 SVG 标记或 JSON...",
   "group.icon.svgError": "无法解析 SVG，请检查格式。",
@@ -976,9 +1049,12 @@ const zh = {
   "group.mount.empty": "本组暂无可批量挂载的 Skill。",
   "group.mount.noApps": "暂无可用 App 快捷入口。",
   "group.mount.disabled": "分组已停用，启用后才能批量挂载。",
-  "group.mount.result": "已更新 {{updated}}/{{total}} 个成员，失败 {{errors}} 个。",
-  "group.mount.resultMounted": "已挂载本组 {{updated}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
-  "group.mount.resultUnmounted": "已从 {{profile}} 卸载本组 {{updated}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
+  "group.mount.result":
+    "已更新 {{updated}}/{{total}} 个成员，失败 {{errors}} 个。",
+  "group.mount.resultMounted":
+    "已挂载本组 {{updated}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
+  "group.mount.resultUnmounted":
+    "已从 {{profile}} 卸载本组 {{updated}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
   "group.exclusive.selectedGroups": "已选择 {{count}} 个分组",
   "group.exclusive.selectedSkills": "并集 {{count}} 个 Skill",
   "group.exclusive.selectAll": "全选当前启用分组",
@@ -1006,7 +1082,8 @@ const zh = {
   "group.exclusive.skippedSection": "跳过 / 风险项",
   "group.exclusive.emptySection": "没有条目",
   "group.exclusive.confirm": "确认执行",
-  "group.exclusive.result": "已更新 {{profile}}：保持 {{keep}}，新增 {{mount}}，卸载 {{unmount}}，当前共挂载 {{mounted}} 个；跳过/失败 {{skipped}} 个。",
+  "group.exclusive.result":
+    "已更新 {{profile}}：保持 {{keep}}，新增 {{mount}}，卸载 {{unmount}}，当前共挂载 {{mounted}} 个；跳过/失败 {{skipped}} 个。",
 
   "appMount.page.title": "应用挂载",
   "appMount.page.subtitle": "App 挂载",
@@ -1058,15 +1135,21 @@ const zh = {
   "appMount.field.accentColor": "强调色",
   "appMount.field.enabled": "启用 Profile",
   "appMount.field.shortcutEnabled": "显示快捷入口",
-  "appMount.confirmDelete": "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
+  "appMount.confirmDelete":
+    "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
   "appMount.deleteDialog.title": "删除 App",
-  "appMount.deleteDialog.message": "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
-  "appMount.deleteDialog.detail": "后端会检查受管部署和真实挂载状态；仍在使用时会拒绝删除。",
+  "appMount.deleteDialog.message":
+    "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
+  "appMount.deleteDialog.detail":
+    "后端会检查受管部署和真实挂载状态；仍在使用时会拒绝删除。",
   "appMount.deleteDialog.defaultBlocked": "{{name}} 是官方默认 App，不能删除。",
-  "appMount.deleteDialog.defaultDetail": "官方默认 App 由 AssetIWeave 内置维护，只能调整配置，不能删除。",
+  "appMount.deleteDialog.defaultDetail":
+    "官方默认 App 由 AssetIWeave 内置维护，只能调整配置，不能删除。",
   "appMount.pathChangeDialog.title": "确认修改默认 App 路径",
-  "appMount.pathChangeDialog.message": "{{name}} 是官方默认 App。确认修改它的 Skill 目录？",
-  "appMount.pathChangeDialog.detail": "当前路径：{{previousPath}}\n新路径：{{nextPath}}",
+  "appMount.pathChangeDialog.message":
+    "{{name}} 是官方默认 App。确认修改它的 Skill 目录？",
+  "appMount.pathChangeDialog.detail":
+    "当前路径：{{previousPath}}\n新路径：{{nextPath}}",
   "appMount.toolbar.appKindAll": "全部 App ({{count}})",
   "appMount.toolbar.appKindFilter": "App 类型",
   "appMount.toolbar.statusFilter": "App 状态",
@@ -1157,19 +1240,24 @@ const zh = {
   "source.rules.include": "Include",
   "source.rules.exclude": "Exclude",
   "source.rules.empty": "未设置",
-  "source.confirmDelete": "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
+  "source.confirmDelete":
+    "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
   "source.edit.title": "编辑技能源",
   "source.edit.submit": "保存来源",
   "source.edit.submitting": "保存中...",
   "source.deleteDialog.title": "删除来源",
-  "source.deleteDialog.message": "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
-  "source.deleteDialog.detail": "后端会确认来源仍然存在，并清理关联资产、挂载观察和分组成员索引。",
+  "source.deleteDialog.message":
+    "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
+  "source.deleteDialog.detail":
+    "后端会确认来源仍然存在，并清理关联资产、挂载观察和分组成员索引。",
   "source.delete.protected": "默认 Skill 来源由软件维护，不可删除。",
 
   "skillAcquire.dialog.title": "搜索并导入 Skill",
-  "skillAcquire.dialog.description": "从 GitHub 搜索候选 Skill，预览下载计划后导入 AssetIWeave 备份库。",
+  "skillAcquire.dialog.description":
+    "从 GitHub 搜索候选 Skill，预览下载计划后导入 AssetIWeave 备份库。",
   "skillAcquire.close": "关闭 Skill 搜索",
-  "skillAcquire.search.placeholder": "例如 browser testing、kicad、pdf workflow",
+  "skillAcquire.search.placeholder":
+    "例如 browser testing、kicad、pdf workflow",
   "skillAcquire.search.submit": "搜索",
   "skillAcquire.search.searching": "搜索中...",
   "skillAcquire.warning.title": "搜索提示",
@@ -1178,7 +1266,8 @@ const zh = {
   "skillAcquire.candidate.open": "打开",
   "skillAcquire.candidate.preview": "预览",
   "skillAcquire.field.url": "GitHub URL",
-  "skillAcquire.field.urlPlaceholder": "https://github.com/owner/repo/tree/main/skills/name",
+  "skillAcquire.field.urlPlaceholder":
+    "https://github.com/owner/repo/tree/main/skills/name",
   "skillAcquire.field.branch": "分支",
   "skillAcquire.field.branchPlaceholder": "main",
   "skillAcquire.field.path": "Skill 路径",
@@ -1196,7 +1285,8 @@ const zh = {
   "skillAcquire.preview.staging": "暂存目录",
   "skillAcquire.preview.skillPath": "Skill 目录",
   "skillAcquire.security.title": "远程 Skill 安全提示",
-  "skillAcquire.security.message": "导入前请审查远程 Skill 内容；AssetIWeave 不会自动执行或信任远程代码。",
+  "skillAcquire.security.message":
+    "导入前请审查远程 Skill 内容；AssetIWeave 不会自动执行或信任远程代码。",
   "skillAcquire.import.submit": "导入",
   "skillAcquire.import.importing": "导入中...",
   "skillAcquire.error.queryRequired": "请输入搜索关键词。",
@@ -1207,13 +1297,17 @@ const zh = {
 
   "conversation.eyebrow": "对话记录",
   "conversation.sessions.title": "对话记录浏览",
-  "conversation.sessions.subtitle": "先从 APP 进入 Session，再在独立工作区中浏览问题与完整回答详情。",
+  "conversation.sessions.subtitle":
+    "先从 APP 进入 Session，再在独立工作区中浏览问题与完整回答详情。",
   "conversation.webRecords.title": "网页记录浏览",
-  "conversation.webRecords.subtitle": "浏览由用户目录下网页采集脚本导入并独立持久化的 AI 网页对话。",
+  "conversation.webRecords.subtitle":
+    "浏览由用户目录下网页采集脚本导入并独立持久化的 AI 网页对话。",
   "conversation.webRecords.status.syncedAll": "已同步网页对话来源",
   "conversation.scriptMarket.inlineTitle": "脚本市场榜单",
-  "conversation.scriptMarket.inlineDescription": "需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。",
-  "conversation.scriptMarket.loading": "正在后台校验脚本目录与运行状态，界面仍可继续操作…",
+  "conversation.scriptMarket.inlineDescription":
+    "需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。",
+  "conversation.scriptMarket.loading":
+    "正在后台校验脚本目录与运行状态，界面仍可继续操作…",
   "conversation.scriptMarket.install": "安装",
   "conversation.scriptMarket.registerPackage": "注册",
   "conversation.scriptMarket.update": "更新",
@@ -1230,21 +1324,27 @@ const zh = {
   "conversation.scriptMarket.uninstalling": "正在后台停止插件 runtime",
   "conversation.scriptMarket.installStarted": "脚本安装已开始。",
   "conversation.scriptMarket.installCompleted": "脚本安装完成。",
-  "conversation.scriptMarket.registerCompleted": "脚本已重新注册，runtime 与关联 Source 已恢复。",
-  "conversation.scriptMarket.builtInManifestMissing": "内置脚本缺少 manifest 路径，无法重新注册。",
-  "conversation.scriptMarket.localManifestMissing": "本地插件缺少 manifest 路径，无法注册。",
+  "conversation.scriptMarket.registerCompleted":
+    "脚本已重新注册，runtime 与关联 Source 已恢复。",
+  "conversation.scriptMarket.builtInManifestMissing":
+    "内置脚本缺少 manifest 路径，无法重新注册。",
+  "conversation.scriptMarket.localManifestMissing":
+    "本地插件缺少 manifest 路径，无法注册。",
   "conversation.scriptMarket.installFailed": "脚本安装失败。",
   "conversation.scriptMarket.updateCompleted": "插件更新完成。",
   "conversation.scriptMarket.updateFailed": "插件更新失败。",
-  "conversation.scriptMarket.uninstallCompleted": "插件卸载完成；不再参与同步，插件文件、对话记录与 Source 配置均已保留。",
+  "conversation.scriptMarket.uninstallCompleted":
+    "插件卸载完成；不再参与同步，插件文件、对话记录与 Source 配置均已保留。",
   "conversation.scriptMarket.uninstallFailed": "插件卸载失败。",
   "conversation.scriptMarket.emptyForKind": "当前记录类型暂无可安装脚本资源。",
   "conversation.scriptMarket.repository": "仓库",
   "conversation.scriptMarket.confirmTitle": "确认插件变更",
-  "conversation.scriptMarket.confirmMessage": "确认要为“{name}”执行{action}吗？",
+  "conversation.scriptMarket.confirmMessage":
+    "确认要为“{name}”执行{action}吗？",
   "conversation.scriptMarket.recordsPreserved": "已有对话记录会保留。",
   "conversation.scriptMarket.affectedSources": "受影响的 Source",
-  "conversation.scriptMarket.managedPaths": "相关托管目录（卸载会保留，删除版本才移除）",
+  "conversation.scriptMarket.managedPaths":
+    "相关托管目录（卸载会保留，删除版本才移除）",
   "conversation.scriptMarket.taskConflict": "插件正在被任务使用：{tasks}",
   "conversation.scriptMarket.view.connected": "已接入",
   "conversation.scriptMarket.view.updates": "更新",
@@ -1262,7 +1362,8 @@ const zh = {
   "conversation.scriptMarket.uninstall": "卸载",
   "conversation.scriptMarket.checkUpdates": "检查更新",
   "conversation.scriptMarket.checkingUpdates": "正在检查更新…",
-  "conversation.scriptMarket.checkUpdatesCompleted": "更新检查完成，发现 {{count}} 个可更新插件。",
+  "conversation.scriptMarket.checkUpdatesCompleted":
+    "更新检查完成，发现 {{count}} 个可更新插件。",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "来源类型",
@@ -1275,7 +1376,8 @@ const zh = {
   "conversation.scriptMarket.manifest": "Adapter Manifest",
   "conversation.scriptMarket.contentHash": "Content Hash",
   "conversation.scriptMarket.trustedHash": "Trusted Hash",
-  "conversation.scriptMarket.devOverrideNotice": "本地覆盖处于调试模式，市场更新不会替换当前运行版本。",
+  "conversation.scriptMarket.devOverrideNotice":
+    "本地覆盖处于调试模式，市场更新不会替换当前运行版本。",
   "conversation.scriptMarket.versionHistory": "版本历史与 Changelog",
   "conversation.scriptMarket.selectVersion": "选择安装版本",
   "conversation.scriptMarket.noVersionHistory": "暂无可用的版本历史。",
@@ -1285,11 +1387,16 @@ const zh = {
   "conversation.scriptMarket.registerVersion": "注册此版本",
   "conversation.scriptMarket.rollback": "一键回退",
   "conversation.scriptMarket.deleteVersion": "删除版本",
-  "conversation.scriptMarket.deleteRunningVersionHelp": "删除前必须先卸载正在运行的版本，或切换到其他版本。",
-  "conversation.scriptMarket.deleteVersionHelp": "卸载后的托管版本可在此真实删除文件；Source 配置与历史对话仍会保留。",
-  "conversation.scriptMarket.externalDeleteUnavailable": "此插件是本地或旧版注册，文件不受版本库托管，因此只能卸载，不能由 AssetIWeave 删除。重新从市场注册后即可按版本管理与删除。",
-  "conversation.scriptMarket.builtInDeleteUnavailable": "内置或开发态脚本可以卸载停用，扫描器会跳过它；脚本文件随应用保留，不提供删除。",
-  "conversation.scriptMarket.deleteVersionConfirm": "确定真实删除版本 {{version}} 的托管文件？正在运行的版本必须先卸载或切换。",
+  "conversation.scriptMarket.deleteRunningVersionHelp":
+    "删除前必须先卸载正在运行的版本，或切换到其他版本。",
+  "conversation.scriptMarket.deleteVersionHelp":
+    "卸载后的托管版本可在此真实删除文件；Source 配置与历史对话仍会保留。",
+  "conversation.scriptMarket.externalDeleteUnavailable":
+    "此插件是本地或旧版注册，文件不受版本库托管，因此只能卸载，不能由 AssetIWeave 删除。重新从市场注册后即可按版本管理与删除。",
+  "conversation.scriptMarket.builtInDeleteUnavailable":
+    "内置或开发态脚本可以卸载停用，扫描器会跳过它；脚本文件随应用保留，不提供删除。",
+  "conversation.scriptMarket.deleteVersionConfirm":
+    "确定真实删除版本 {{version}} 的托管文件？正在运行的版本必须先卸载或切换。",
   "conversation.scriptMarket.versionActionCompleted": "本地版本操作已完成。",
   "conversation.scriptMarket.updatePolicy": "更新跟随策略",
   "conversation.scriptMarket.policy.manual": "手动提示（稳定版）",
@@ -1333,14 +1440,16 @@ const zh = {
   "conversation.toolbar.sort.questionCount": "按问题数",
   "conversation.toolbar.sort.turnCount": "按轮次数",
   "conversation.status.syncedAll": "已同步对话来源",
-  "conversation.status.importStarted": "已添加来源“{{source}}”，后台导入已开始。",
+  "conversation.status.importStarted":
+    "已添加来源“{{source}}”，后台导入已开始。",
   "conversation.status.merged": "已合并相邻问题",
   "conversation.status.split": "已拆分问题",
   "conversation.status.exported": "已导出 Session Markdown",
   "conversation.status.exportedSelected": "已导出 {{count}} 个问题 Markdown",
   "conversation.add.title.session": "添加对话来源",
   "conversation.add.title.web": "添加网页记录来源",
-  "conversation.add.description.session": "安装外部解析器插件并添加 Session 来源。",
+  "conversation.add.description.session":
+    "安装外部解析器插件并添加 Session 来源。",
   "conversation.add.description.web": "安装外部解析器插件并添加网页记录来源。",
   "conversation.add.close": "关闭添加来源弹窗",
   "conversation.add.submit": "添加来源",
@@ -1369,8 +1478,10 @@ const zh = {
   "conversation.export.exporting": "导出中...",
   "conversation.import.sessionTitle": "导入对话记录",
   "conversation.import.webTitle": "导入网页记录",
-  "conversation.import.sessionDescription": "选择外部解析器 manifest 和本地记录来源，导入会在后台同步完成。",
-  "conversation.import.webDescription": "选择带 web_records 能力的解析器和网页记录目录，导入完成后刷新网页记录浏览页。",
+  "conversation.import.sessionDescription":
+    "选择外部解析器 manifest 和本地记录来源，导入会在后台同步完成。",
+  "conversation.import.webDescription":
+    "选择带 web_records 能力的解析器和网页记录目录，导入完成后刷新网页记录浏览页。",
   "conversation.import.close": "关闭导入弹窗",
   "conversation.import.pageSwitchAria": "导入页面切换",
   "conversation.import.page.form": "导入表单",
@@ -1396,7 +1507,8 @@ const zh = {
   "conversation.import.step.source": "添加来源",
   "conversation.import.step.sync": "启动同步",
   "conversation.import.step.done": "刷新浏览页",
-  "conversation.import.error.manifestRequired": "请选择或输入插件 manifest 路径。",
+  "conversation.import.error.manifestRequired":
+    "请选择或输入插件 manifest 路径。",
   "conversation.import.error.locationRequired": "请选择或输入来源位置。",
   "conversation.column.apps": "APP",
   "conversation.column.projects": "项目文件夹",
@@ -1406,11 +1518,13 @@ const zh = {
   "conversation.app.select": "选择一个 APP 查看 Session。",
   "conversation.app.selectNamed": "选择 APP {{name}}",
   "conversation.app.sessionCount": "{{count}} 个 Session",
-  "conversation.app.summary": "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
+  "conversation.app.summary":
+    "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.project.select": "选择项目文件夹查看 Session。",
   "conversation.project.selectNamed": "选择项目文件夹 {{path}}",
   "conversation.project.sessionCount": "{{count}} 个 Session",
-  "conversation.project.summary": "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
+  "conversation.project.summary":
+    "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.session.open": "打开 Session {{title}}",
   "conversation.session.backToBrowser": "返回 APP / Session",
   "conversation.session.loading": "正在加载 Session...",
@@ -1457,14 +1571,16 @@ const zh = {
   "conversation.content.resultFailed": "失败",
   "conversation.content.changedFiles": "Changed files · {{count}} 个文件",
   "conversation.content.diffSummaryFiles": "{{count}} 个文件变更",
-  "conversation.content.diffSummaryUnavailable": "Diff 文件列表暂时无法解析，可展开查看原始 Diff。",
+  "conversation.content.diffSummaryUnavailable":
+    "Diff 文件列表暂时无法解析，可展开查看原始 Diff。",
   "conversation.content.viewDiff": "查看 Diff",
   "conversation.content.expandCommands": "展开其余 {{count}} 条命令",
   "conversation.content.collapseCommands": "折叠命令",
   "conversation.content.loadMoreCommands": "继续加载命令",
   "conversation.content.loadMoreResults": "继续加载执行结果",
   "conversation.content.loadMoreActivities": "继续加载活动记录",
-  "conversation.content.projectionFailed": "命令展示解析失败，已保留原始命令：{{message}}",
+  "conversation.content.projectionFailed":
+    "命令展示解析失败，已保留原始命令：{{message}}",
   "conversation.content.hidden": "当前回答板块已全部隐藏。",
   "conversation.content.exitCode": "退出码 {{code}}",
   "conversation.content.copy": "复制{{type}}",
@@ -1502,20 +1618,29 @@ const zh = {
   "conversation.sync.phase.refreshing": "正在刷新会话列表",
   "conversation.sync.phase.completed": "同步完成",
   "conversation.sync.phase.failed": "同步失败",
-  "conversation.sync.description.preparing": "正在整理来源与同步参数，任务即将开始。",
-  "conversation.sync.description.importing": "正在解析本地对话记录并写入标准化 Session、问题和内容板块。",
-  "conversation.sync.description.refreshing": "导入已经结束，正在重新读取 APP、Session 和问题统计。",
+  "conversation.sync.description.preparing":
+    "正在整理来源与同步参数，任务即将开始。",
+  "conversation.sync.description.importing":
+    "正在解析本地对话记录并写入标准化 Session、问题和内容板块。",
+  "conversation.sync.description.refreshing":
+    "导入已经结束，正在重新读取 APP、Session 和问题统计。",
   "conversation.sync.description.completed": "对话记录和浏览列表已更新。",
-  "conversation.sync.description.failed": "同步未能完成，请查看错误通知后重试。",
+  "conversation.sync.description.failed":
+    "同步未能完成，请查看错误通知后重试。",
   "conversation.sync.stage": "第 {{current}}/{{total}} 阶段",
   "conversation.sync.scope": "范围：{{source}}",
   "conversation.sync.dismiss": "关闭同步进度",
-  "conversation.sync.incrementalSummary": "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
-  "conversation.sync.incrementalSummaryWithErrors": "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.summary": "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源。",
-  "conversation.sync.summaryWithErrors": "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.incrementalSummary":
+    "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
+  "conversation.sync.incrementalSummaryWithErrors":
+    "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.summary":
+    "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源。",
+  "conversation.sync.summaryWithErrors":
+    "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
   "conversation.sync.summaryUnavailable": "同步完成，暂无详细统计。",
-  "conversation.sync.partialFailureAdvice": "可用来源已成功导入。请修复下方失败来源后，再单独同步该来源。",
+  "conversation.sync.partialFailureAdvice":
+    "可用来源已成功导入。请修复下方失败来源后，再单独同步该来源。",
   "conversation.sync.failedSourcesTitle": "失败来源",
   "conversation.sync.failureMessageUnavailable": "未提供错误信息。",
   "conversation.sync.unknownFailedSource": "未知来源",
@@ -1524,22 +1649,33 @@ const zh = {
   "conversation.sync.web.phase.refreshing": "正在刷新网页记录列表",
   "conversation.sync.web.phase.completed": "网页记录同步完成",
   "conversation.sync.web.phase.failed": "网页记录同步失败",
-  "conversation.sync.web.description.preparing": "正在整理网页来源与同步参数，任务即将开始。",
-  "conversation.sync.web.description.importing": "正在解析网页采集记录并写入独立的网页对话、问题和内容板块。",
-  "conversation.sync.web.description.refreshing": "导入已经结束，正在重新读取站点、网页对话和问题统计。",
+  "conversation.sync.web.description.preparing":
+    "正在整理网页来源与同步参数，任务即将开始。",
+  "conversation.sync.web.description.importing":
+    "正在解析网页采集记录并写入独立的网页对话、问题和内容板块。",
+  "conversation.sync.web.description.refreshing":
+    "导入已经结束，正在重新读取站点、网页对话和问题统计。",
   "conversation.sync.web.description.completed": "网页记录和浏览列表已更新。",
-  "conversation.sync.web.description.failed": "网页记录同步未能完成，请查看错误通知后重试。",
+  "conversation.sync.web.description.failed":
+    "网页记录同步未能完成，请查看错误通知后重试。",
   "conversation.sync.web.scope": "网页来源：{{source}}",
-  "conversation.sync.web.summary": "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源。",
-  "conversation.sync.web.summaryWithErrors": "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.web.incrementalSummary": "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
-  "conversation.sync.web.incrementalSummaryWithErrors": "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.web.summaryUnavailable": "网页记录同步完成，暂无详细统计。",
-  "conversation.sync.web.partialFailureAdvice": "可用来源已成功导入。请修复下方失败网页来源后，再单独同步该来源。",
+  "conversation.sync.web.summary":
+    "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源。",
+  "conversation.sync.web.summaryWithErrors":
+    "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.web.incrementalSummary":
+    "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
+  "conversation.sync.web.incrementalSummaryWithErrors":
+    "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.web.summaryUnavailable":
+    "网页记录同步完成，暂无详细统计。",
+  "conversation.sync.web.partialFailureAdvice":
+    "可用来源已成功导入。请修复下方失败网页来源后，再单独同步该来源。",
   "conversation.sync.web.failedSourcesTitle": "失败网页来源",
   "conversation.sync.background.title": "后台同步对话记录",
   "conversation.sync.background.webTitle": "后台同步网页记录",
-  "conversation.sync.background.description": "可继续使用其他功能，完成后会自动刷新。",
+  "conversation.sync.background.description":
+    "可继续使用其他功能，完成后会自动刷新。",
   "conversation.markdown.untitledQuestion": "未命名问题",
   "conversation.markdown.empty": "暂无可预览内容。",
 
@@ -1552,7 +1688,8 @@ const zh = {
   "mount.supported": "支持此资产类型",
   "mount.unsupported": "当前类型未声明支持",
   "mount.blocked": "禁止挂载",
-  "mount.blockedAppSource": "App 专属或 App 本地目录中的 Skill 需要先备份到 AssetIWeave 备份库，再作为挂载源。",
+  "mount.blockedAppSource":
+    "App 专属或 App 本地目录中的 Skill 需要先备份到 AssetIWeave 备份库，再作为挂载源。",
   "mount.status.mounted": "已挂载",
   "mount.status.not_mounted": "未挂载",
   "mount.status.conflict": "目标冲突",
@@ -1564,31 +1701,46 @@ const zh = {
   "mount.stateHelp.open": "查看挂载状态说明",
   "mount.stateHelp.openAria": "查看 {{status}} 的挂载状态说明",
   "mount.stateHelp.title": "挂载状态说明",
-  "mount.stateHelp.description": "挂载状态只来自真实文件系统扫描，用来判断当前资产是否真的可被目标应用读取。",
+  "mount.stateHelp.description":
+    "挂载状态只来自真实文件系统扫描，用来判断当前资产是否真的可被目标应用读取。",
   "mount.stateHelp.close": "关闭挂载状态说明",
   "mount.stateHelp.current": "当前状态",
   "mount.stateHelp.meaning": "含义",
   "mount.stateHelp.action": "建议",
-  "mount.stateHelp.mounted.meaning": "目标目录中存在指向这个资产源路径的正确软链接。",
-  "mount.stateHelp.mounted.action": "这是正常状态。无需处理；如果不再需要，可以点击亮起的挂载按钮取消挂载。",
+  "mount.stateHelp.mounted.meaning":
+    "目标目录中存在指向这个资产源路径的正确软链接。",
+  "mount.stateHelp.mounted.action":
+    "这是正常状态。无需处理；如果不再需要，可以点击亮起的挂载按钮取消挂载。",
   "mount.stateHelp.not_mounted.meaning": "目标目录中没有这个资产的软链接。",
-  "mount.stateHelp.not_mounted.action": "需要让目标应用读取该资产时，点击挂载按钮创建并验证软链接。",
-  "mount.stateHelp.conflict.meaning": "目标路径已被其他文件、目录或指向其他来源的链接占用。",
-  "mount.stateHelp.conflict.action": "先检查目标路径，确认是否可以移动、重命名或删除占用项，然后再尝试挂载。",
-  "mount.stateHelp.broken.meaning": "目标路径是软链接，但它指向的来源已经不存在。",
-  "mount.stateHelp.broken.action": "检查源资产是否被移动或删除；确认后清理断链，再重新挂载。",
+  "mount.stateHelp.not_mounted.action":
+    "需要让目标应用读取该资产时，点击挂载按钮创建并验证软链接。",
+  "mount.stateHelp.conflict.meaning":
+    "目标路径已被其他文件、目录或指向其他来源的链接占用。",
+  "mount.stateHelp.conflict.action":
+    "先检查目标路径，确认是否可以移动、重命名或删除占用项，然后再尝试挂载。",
+  "mount.stateHelp.broken.meaning":
+    "目标路径是软链接，但它指向的来源已经不存在。",
+  "mount.stateHelp.broken.action":
+    "检查源资产是否被移动或删除；确认后清理断链，再重新挂载。",
   "mount.action.repair": "修复 {{profile}} 挂载",
   "mount.notification.refreshingStatus": "正在扫描真实文件系统链接状态...",
-  "mount.notification.statusRefreshed": "链接状态已刷新：{{count}} 个目标，已挂载 {{mounted}}，异常 {{issues}}。",
+  "mount.notification.statusRefreshed":
+    "链接状态已刷新：{{count}} 个目标，已挂载 {{mounted}}，异常 {{issues}}。",
   "mount.notification.statusRefreshFailed": "链接状态刷新失败：{{message}}",
   "mount.notification.synced": "挂载状态已同步：{{name}}",
-  "mount.notification.assetMountedProfile": "{{name}} 已挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetUnmountedProfile": "{{name}} 未挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetConflictProfile": "{{name}} 在 {{profile}} 存在挂载冲突，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetBrokenProfile": "{{name}} 在 {{profile}} 的挂载已断链，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetMountedProfile":
+    "{{name}} 已挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetUnmountedProfile":
+    "{{name}} 未挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetConflictProfile":
+    "{{name}} 在 {{profile}} 存在挂载冲突，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetBrokenProfile":
+    "{{name}} 在 {{profile}} 的挂载已断链，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
   "mount.notification.batchSynced": "批量挂载状态已同步：{{count}} 个资产",
-  "mount.notification.batchMountedProfile": "已挂载 {{count}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个。",
-  "mount.notification.batchUnmountedProfile": "已从 {{profile}} 卸载 {{count}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个。",
+  "mount.notification.batchMountedProfile":
+    "已挂载 {{count}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个。",
+  "mount.notification.batchUnmountedProfile":
+    "已从 {{profile}} 卸载 {{count}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个。",
   "mount.notification.failed": "挂载操作失败：{{message}}",
 
   "assetKind.prompt": "提示词",
@@ -1652,7 +1804,8 @@ const en: Record<TranslationKey, string> = {
   "tenant.creating": "Creating...",
   "tenant.error.nameRequired": "Enter a tenant name.",
 
-  "notification.ready": "The notification outlet is ready for account changes, scan completion, and deployment results.",
+  "notification.ready":
+    "The notification outlet is ready for account changes, scan completion, and deployment results.",
   "notification.aria": "Notifications",
   "notification.close": "Close notification",
 
@@ -1670,7 +1823,8 @@ const en: Record<TranslationKey, string> = {
   "common.saving": "Saving...",
 
   "app.close.title": "Close AssetIWeave",
-  "app.close.message": "Choose whether to close the app or minimize it to the background.",
+  "app.close.message":
+    "Choose whether to close the app or minimize it to the background.",
   "app.close.backupDatabase": "Back up the database before closing",
   "app.close.minimize": "Minimize",
   "app.close.confirm": "Confirm close",
@@ -1688,7 +1842,8 @@ const en: Record<TranslationKey, string> = {
   "ai.execution.phase.cancelling": "Cancelling",
   "ai.execution.phase.closing": "Closing Agent",
   "ai.execution.phase.cleaning_up": "Cleaning up",
-  "agent.lifecycle.global.title": "Agent installation tasks running · {{count}}",
+  "agent.lifecycle.global.title":
+    "Agent installation tasks running · {{count}}",
   "agent.lifecycle.cancel": "Cancel Agent installation task",
 
   "layout.resizeColumns": "Resize columns",
@@ -1719,7 +1874,8 @@ const en: Record<TranslationKey, string> = {
   "backup.mode.default": "Default",
   "backup.mode.custom": "Custom",
   "backup.setting.directory": "Skill backup directory",
-  "backup.notification.batchCompleted": "Background backup completed for {{count}} items.",
+  "backup.notification.batchCompleted":
+    "Background backup completed for {{count}} items.",
   "backup.notification.failed": "Background backup failed: {{message}}",
   "backup.background.title": "Backing up in background",
   "backup.background.description": "Completed {{completed}} / {{total}}",
@@ -1733,16 +1889,22 @@ const en: Record<TranslationKey, string> = {
   "update.button.ready": "Update ready, restart app",
   "update.button.error": "Update failed",
   "update.dialog.title": "App Update",
-  "update.dialog.description": "Checks GitHub Releases for new versions, then downloads, installs, and restarts from inside the app.",
+  "update.dialog.description":
+    "Checks GitHub Releases for new versions, then downloads, installs, and restarts from inside the app.",
   "update.intro.open": "View current version highlights",
   "update.intro.title": "Current Version Highlights",
-  "update.intro.description": "Review the core additions and refinements in the current version.",
+  "update.intro.description":
+    "Review the core additions and refinements in the current version.",
   "update.intro.currentTitle": "Current release",
-  "update.intro.currentDescription": "This version continues refining desktop asset management, the update entry point, and background task visibility.",
+  "update.intro.currentDescription":
+    "This version continues refining desktop asset management, the update entry point, and background task visibility.",
   "update.intro.highlights": "Highlights",
-  "update.intro.highlight.navigation": "The workspace rail now folds brand information and update state into one predictable entry point.",
-  "update.intro.highlight.updater": "In-app updates can discover versions, show notes, download and install, then restart from inside the app.",
-  "update.intro.highlight.backgroundTasks": "Background sync and backup tasks keep visible progress without blocking routine browsing.",
+  "update.intro.highlight.navigation":
+    "The workspace rail now folds brand information and update state into one predictable entry point.",
+  "update.intro.highlight.updater":
+    "In-app updates can discover versions, show notes, download and install, then restart from inside the app.",
+  "update.intro.highlight.backgroundTasks":
+    "Background sync and backup tasks keep visible progress without blocking routine browsing.",
   "update.status.checking": "Checking for updates",
   "update.status.available": "New version available",
   "update.status.upToDate": "You are up to date",
@@ -1750,13 +1912,19 @@ const en: Record<TranslationKey, string> = {
   "update.status.installing": "Installing update",
   "update.status.ready": "Update installed, restart required",
   "update.status.error": "Update failed",
-  "update.description.checking": "Connecting to the release endpoint and verifying whether a newer version is available.",
-  "update.description.available": "You can download and install this version directly in the app.",
-  "update.description.upToDate": "The installed version matches the latest version returned by the release endpoint.",
-  "update.description.downloading": "Keep the app open. Installation will start after the download finishes.",
-  "update.description.installing": "The installer is applying the update. Do not close the app yet.",
+  "update.description.checking":
+    "Connecting to the release endpoint and verifying whether a newer version is available.",
+  "update.description.available":
+    "You can download and install this version directly in the app.",
+  "update.description.upToDate":
+    "The installed version matches the latest version returned by the release endpoint.",
+  "update.description.downloading":
+    "Keep the app open. Installation will start after the download finishes.",
+  "update.description.installing":
+    "The installer is applying the update. Do not close the app yet.",
   "update.description.ready": "Restart to run the newly installed version.",
-  "update.description.error": "Retry automatic update, or open the release page and install manually.",
+  "update.description.error":
+    "Retry automatic update, or open the release page and install manually.",
   "update.retrying": "Retry {{attempt}} / {{total}}",
   "update.currentVersion": "Current version",
   "update.latestVersion": "Latest version",
@@ -1781,7 +1949,8 @@ const en: Record<TranslationKey, string> = {
   "status.previewData": "Browser preview mode: using bundled sample data",
   "status.scanOk": "Scan complete: {{count}} assets",
   "status.scanError": "Scan failed: {{message}}",
-  "status.validatedAssets": "State refreshed: {{count}} assets, {{removed}} removed, {{updated}} updated",
+  "status.validatedAssets":
+    "State refreshed: {{count}} assets, {{removed}} removed, {{updated}} updated",
 
   "nav.aria.main": "Main navigation",
   "nav.aria.assetTypes": "Asset types",
@@ -1834,7 +2003,8 @@ const en: Record<TranslationKey, string> = {
 
   "team.page.eyebrow": "Team collaboration",
   "team.page.title": "Teams & Rosters",
-  "team.page.description": "Manage fixed member order and Agent/model bindings for Leaders and Teammates.",
+  "team.page.description":
+    "Manage fixed member order and Agent/model bindings for Leaders and Teammates.",
   "team.action.create": "Create team",
   "team.action.edit": "Edit",
   "team.action.delete": "Delete",
@@ -1848,7 +2018,8 @@ const en: Record<TranslationKey, string> = {
   "team.list.count": "{{count}} teams",
   "team.list.loading": "Loading teams...",
   "team.list.empty": "No teams configured",
-  "team.list.emptyDescription": "Create a fixed roster in the desktop application.",
+  "team.list.emptyDescription":
+    "Create a fixed roster in the desktop application.",
   "team.detail.select": "Select a team to view its roster",
   "team.detail.roster": "Member roster",
   "team.detail.memberCount": "{{count}} members",
@@ -1861,7 +2032,8 @@ const en: Record<TranslationKey, string> = {
   "team.dialog.name": "Team name",
   "team.dialog.namePlaceholder": "For example: Autonomous Refactor Crew",
   "team.dialog.description": "Team description",
-  "team.dialog.descriptionPlaceholder": "Briefly describe the team's responsibility...",
+  "team.dialog.descriptionPlaceholder":
+    "Briefly describe the team's responsibility...",
   "team.dialog.members": "Members (1 Leader + at least 1 Teammate)",
   "team.dialog.agent": "Agent",
   "team.dialog.model": "Model",
@@ -1881,10 +2053,12 @@ const en: Record<TranslationKey, string> = {
   "team.error.catalog": "Failed to load Agent Market: {{message}}",
   "team.error.models": "Failed to load models: {{message}}",
   "team.preview.title": "Browser preview is read-only",
-  "team.preview.description": "Team roster validation and persistence run only in the desktop application.",
+  "team.preview.description":
+    "Team roster validation and persistence run only in the desktop application.",
   "team.workflow.title": "Run Team workflow",
   "team.workflow.message": "Work brief for the Leader",
-  "team.workflow.messagePlaceholder": "Describe the work to decompose and execute...",
+  "team.workflow.messagePlaceholder":
+    "Describe the work to decompose and execute...",
   "team.workflow.draft": "Generate draft",
   "team.workflow.review": "Save review",
   "team.workflow.confirm": "Confirm execution",
@@ -1904,14 +2078,17 @@ const en: Record<TranslationKey, string> = {
   "team.workflow.unavailable": "Unavailable",
   "team.workflow.error": "Team workflow failed: {{message}}",
   "team.workflow.plan": "Task plan",
-  "team.workflow.planDescription": "The Leader's recommended breakdown; Teammates do not start before confirmation.",
+  "team.workflow.planDescription":
+    "The Leader's recommended breakdown; Teammates do not start before confirmation.",
   "team.workflow.drafting": "Generating task draft...",
   "team.workflow.taskNumber": "Task {{number}}",
   "team.workflow.taskTitle": "Task title",
   "team.workflow.taskDescription": "Task description",
   "team.workflow.recommended": "Recommended owner: {{owner}}",
-  "team.workflow.taskFieldsRequired": "Task title and description are required.",
-  "team.workflow.ownerRequired": "Choose an owner from the frozen Teammate roster.",
+  "team.workflow.taskFieldsRequired":
+    "Task title and description are required.",
+  "team.workflow.ownerRequired":
+    "Choose an owner from the frozen Teammate roster.",
   "team.workflow.taskProjection": "Assigned task",
   "team.workflow.taskProjectionLabel": "Task: {{title}}",
   "team.workflow.ownerValue": "Owner: {{owner}}",
@@ -1932,7 +2109,8 @@ const en: Record<TranslationKey, string> = {
   "team.leader.replay": "Replay history",
   "team.chat.eyebrow": "Team chat",
   "team.chat.pageTitle": "Team workspace",
-  "team.chat.pageDescription": "Collaborate with one active member timeline at a time.",
+  "team.chat.pageDescription":
+    "Collaborate with one active member timeline at a time.",
   "team.chat.description": "View an independent Session for each member.",
   "team.chat.members": "Members",
   "team.chat.memberNavigation": "Member Session navigation",
@@ -1951,7 +2129,8 @@ const en: Record<TranslationKey, string> = {
   "team.chat.composerInput": "Message content",
   "team.chat.composerPlaceholder": "Message {{name}}...",
   "team.chat.composerPlaceholderFallback": "Select a member first...",
-  "team.chat.taskPlaceholder": "Describe work for the Leader to decompose and run...",
+  "team.chat.taskPlaceholder":
+    "Describe work for the Leader to decompose and run...",
   "team.chat.composerPending": "Messages will be sent to the active member",
   "team.chat.send": "Send",
   "team.chat.replay": "Replay",
@@ -1964,12 +2143,14 @@ const en: Record<TranslationKey, string> = {
   "team.chat.status.unread": "New activity",
   "team.chat.status.ready": "Ready",
   "team.chat.emptyTitle": "No Session activity yet",
-  "team.chat.emptyDescription": "Messages and activity from {{name}} will appear here.",
+  "team.chat.emptyDescription":
+    "Messages and activity from {{name}} will appear here.",
   "team.chat.newActivity": "View new activity",
   "team.chat.collapseNavigation": "Collapse list",
   "team.chat.expandNavigation": "Expand list",
   "team.chat.noEligibleTitle": "No available members",
-  "team.chat.noEligibleDescription": "Configure at least one member with resume and live event capabilities.",
+  "team.chat.noEligibleDescription":
+    "Configure at least one member with resume and live event capabilities.",
   "team.chat.item.user": "User message",
   "team.chat.item.assistant": "Agent reply",
   "team.chat.item.processing": "Processing",
@@ -1989,7 +2170,8 @@ const en: Record<TranslationKey, string> = {
 
   "memory.page.eyebrow": "Progressive Recall",
   "memory.recent.title": "Recent",
-  "memory.recent.description": "Review work from the last 72 hours and return to the Conversation source.",
+  "memory.recent.description":
+    "Review work from the last 72 hours and return to the Conversation source.",
   "memory.recent.projectView": "By project",
   "memory.recent.timeView": "By time",
   "memory.recent.refresh": "Refresh",
@@ -1997,10 +2179,12 @@ const en: Record<TranslationKey, string> = {
   "memory.recent.questions": "questions",
   "memory.recent.noEvents": "No visible events.",
   "memory.recent.emptyTitle": "No work in the last 72 hours",
-  "memory.recent.emptyDescription": "Recent work appears here after Conversation sources are synced.",
+  "memory.recent.emptyDescription":
+    "Recent work appears here after Conversation sources are synced.",
   "memory.task.running": "Memory background task running",
   "memory.recall.title": "Recall",
-  "memory.recall.description": "Answer focused questions with local source content in one persistent session.",
+  "memory.recall.description":
+    "Answer focused questions with local source content in one persistent session.",
   "memory.recall.session": "Recall session",
   "memory.recall.newSession": "New session",
   "memory.recall.turnCount": "Turns",
@@ -2021,41 +2205,53 @@ const en: Record<TranslationKey, string> = {
   "memory.recall.status.queued": "Queued",
   "memory.recall.status.running": "Running",
   "memory.recall.query": "Recall question",
-  "memory.recall.queryPlaceholder": "For example: Why did we choose the AppService boundary?",
+  "memory.recall.queryPlaceholder":
+    "For example: Why did we choose the AppService boundary?",
   "memory.recall.projectPath": "Project path",
-  "memory.recall.projectPlaceholder": "Optional; limit this Recall session to a project",
+  "memory.recall.projectPlaceholder":
+    "Optional; limit this Recall session to a project",
   "memory.recall.emptyTitle": "等待第一轮回忆",
-  "memory.recall.emptyDescription": "Send a question to continue a persistent Recall session.",
+  "memory.recall.emptyDescription":
+    "Send a question to continue a persistent Recall session.",
   "memory.recall.browserTitle": "Recall data is unavailable in browser preview",
-  "memory.recall.browserDescription": "Use the desktop app to search local Conversation records.",
-  "conversation.navigation.sessionMissing": "The Session referenced by this Memory record could not be located.",
-  "conversation.navigation.questionMissing": "The Session opened, but the referenced Question is missing.",
-  "conversation.navigation.blockMissing": "The Question opened, but the referenced Card changed or is unavailable.",
+  "memory.recall.browserDescription":
+    "Use the desktop app to search local Conversation records.",
+  "conversation.navigation.sessionMissing":
+    "The Session referenced by this Memory record could not be located.",
+  "conversation.navigation.questionMissing":
+    "The Session opened, but the referenced Question is missing.",
+  "conversation.navigation.blockMissing":
+    "The Question opened, but the referenced Card changed or is unavailable.",
 
   "catalog.page.title": "Catalog Overview",
   "catalog.page.subtitle": "Asset catalog",
 
   "underConstruction.eyebrow": "Feature in progress",
   "underConstruction.title": "{{feature}} is under construction",
-  "underConstruction.description": "This view is wired into the navigation shell, but the feature is not finished yet. The placeholder keeps the entry visible without showing the wrong page.",
+  "underConstruction.description":
+    "This view is wired into the navigation shell, but the feature is not finished yet. The placeholder keeps the entry visible without showing the wrong page.",
   "underConstruction.routeKey": "Route: {{routeKey}}",
   "underConstruction.defaultFeature": "This feature",
 
   "prompt.page.eyebrow": "Prompt Workspace",
   "prompt.page.title": "Prompt Overview",
-  "prompt.page.description": "Capture ideas, feature notes, and prompt drafts like a clipboard notebook, then copy, translate, or optimize directly from each card.",
+  "prompt.page.description":
+    "Capture ideas, feature notes, and prompt drafts like a clipboard notebook, then copy, translate, or optimize directly from each card.",
   "prompt.project.pickDirectory": "Choose project directory",
   "prompt.composer.eyebrow": "Quick Capture",
   "prompt.composer.title": "New Idea / Prompt",
   "prompt.composer.titlePlaceholder": "Title, optional",
-  "prompt.composer.contentPlaceholder": "Paste a prompt, capture a feature idea, or write an unfinished note.",
-  "prompt.composer.projectPathPlaceholder": "Project directory path, e.g. ~/project",
+  "prompt.composer.contentPlaceholder":
+    "Paste a prompt, capture a feature idea, or write an unfinished note.",
+  "prompt.composer.projectPathPlaceholder":
+    "Project directory path, e.g. ~/project",
   "prompt.composer.sessionPlaceholder": "Session name or ID",
   "prompt.composer.tagsPlaceholder": "Tags, separated by spaces or commas",
   "prompt.composer.create": "Save card",
   "prompt.original.label": "Original prompt",
   "prompt.optimized.label": "Optimized draft",
-  "prompt.optimized.empty": "No optimized draft yet. Use Optimize on the front side to keep the improved version here.",
+  "prompt.optimized.empty":
+    "No optimized draft yet. Use Optimize on the front side to keep the improved version here.",
   "prompt.note.untitled": "Untitled prompt",
   "prompt.metric.notes": "Cards",
   "prompt.metric.filtered": "Current results",
@@ -2080,7 +2276,8 @@ const en: Record<TranslationKey, string> = {
   "prompt.tags.library": "Created tags",
   "prompt.tags.libraryEmpty": "No created tags",
   "prompt.tags.remove": "Remove tag {{tag}}",
-  "prompt.tags.rule": "Up to {{count}} tags. Each tag must be {{length}} characters or fewer.",
+  "prompt.tags.rule":
+    "Up to {{count}} tags. Each tag must be {{length}} characters or fewer.",
   "prompt.sort.label": "Sort",
   "prompt.sort.aria": "Prompt sort",
   "prompt.sort.updated": "Recently updated",
@@ -2097,16 +2294,19 @@ const en: Record<TranslationKey, string> = {
   "prompt.translation.status": "CLI service",
   "prompt.translation.available": "Available for translation and optimization",
   "prompt.translation.checking": "Checking translation service",
-  "prompt.translation.unavailable": "Unavailable. Check CLI translation settings.",
+  "prompt.translation.unavailable":
+    "Unavailable. Check CLI translation settings.",
   "prompt.translation.result": "Translation · {{language}}",
   "prompt.search.label": "Search prompt cards",
   "prompt.search.placeholder": "Search content, tags, or translations...",
   "prompt.search.submit": "Search prompts",
   "prompt.toolbar.sort.copyCount": "By copy count",
   "prompt.empty.title": "No prompt cards yet",
-  "prompt.empty.description": "Capture an idea or prompt above, then copy, translate, or optimize it later.",
+  "prompt.empty.description":
+    "Capture an idea or prompt above, then copy, translate, or optimize it later.",
   "prompt.empty.filteredTitle": "No matching results",
-  "prompt.empty.filteredDescription": "Try another keyword, or clear search to see all cards.",
+  "prompt.empty.filteredDescription":
+    "Try another keyword, or clear search to see all cards.",
   "prompt.action.copy": "Copy",
   "prompt.action.copyNamed": "Copy {{title}}",
   "prompt.action.copyImages": "Copy images",
@@ -2156,8 +2356,10 @@ const en: Record<TranslationKey, string> = {
   "toolbar.sort.name": "By name",
   "toolbar.sort.kind": "By kind",
   "toolbar.sort.direction.label": "Toggle sort direction",
-  "toolbar.sort.direction.descTitle": "Current: descending. Click to switch to ascending.",
-  "toolbar.sort.direction.ascTitle": "Current: ascending. Click to switch to descending.",
+  "toolbar.sort.direction.descTitle":
+    "Current: descending. Click to switch to ascending.",
+  "toolbar.sort.direction.ascTitle":
+    "Current: ascending. Click to switch to descending.",
   "toolbar.export": "Export",
   "toolbar.cancel": "Cancel",
   "toolbar.createDeploymentPlan": "Create deployment plan",
@@ -2184,7 +2386,8 @@ const en: Record<TranslationKey, string> = {
   "settings.scope.conversations": "Page-level / Conversations",
   "settings.reset": "Reset app settings",
   "settings.resetConfirmTitle": "Reset app settings to defaults?",
-  "settings.resetConfirmMessage": "Custom values in app settings will be restored to their defaults. Navigation, shortcuts, sources, and backup libraries are not affected.",
+  "settings.resetConfirmMessage":
+    "Custom values in app settings will be restored to their defaults. Navigation, shortcuts, sources, and backup libraries are not affected.",
   "settings.resetConfirmAction": "Reset app settings",
   "settings.section.appearance": "Appearance",
   "settings.section.agents": "Agents",
@@ -2231,43 +2434,59 @@ const en: Record<TranslationKey, string> = {
   "settings.memory.project": "Project Memory Agent",
   "settings.memory.global": "Global Memory Agent",
   "settings.memory.recall": "Recall Agent",
-  "settings.memory.assignmentHint": "Choose an independent Agent and model for this Memory workflow.",
+  "settings.memory.assignmentHint":
+    "Choose an independent Agent and model for this Memory workflow.",
   "settings.memory.generationEnabled": "Enable Memory generation",
   "settings.memory.usageEnabled": "Enable Memory usage records",
   "settings.memory.excludedSessionIds": "Excluded Session IDs",
   "settings.memory.excludedSourceIds": "Excluded source IDs",
-  "settings.memory.excludedPlaceholder": "Separate multiple IDs with commas or new lines",
+  "settings.memory.excludedPlaceholder":
+    "Separate multiple IDs with commas or new lines",
   "settings.ai.executionBoundary": "External AI boundary",
-  "settings.ai.externalWarning": "OpenCode or Gemini CLI may access the network and may have local machine capabilities. Memory applies deterministic redaction before sending and before persistence.",
+  "settings.ai.externalWarning":
+    "OpenCode or Gemini CLI may access the network and may have local machine capabilities. Memory applies deterministic redaction before sending and before persistence.",
   "settings.agentCapabilities.label": "Model capability",
   "settings.agentCapabilities.dialogTitle": "Choose Agent capability",
-  "settings.agentCapabilities.dialogDescription": "Choose the Agent that provides model capability for this service. Configure its model and connection test from Agent settings.",
-  "settings.agentCapabilities.dialogCount": "{{available}} / {{total}} available",
+  "settings.agentCapabilities.dialogDescription":
+    "Choose the Agent that provides model capability for this service. Configure its model and connection test from Agent settings.",
+  "settings.agentCapabilities.dialogCount":
+    "{{available}} / {{total}} available",
   "settings.agentCapabilities.dialogChecking": "Checking {{count}} Agents",
   "settings.agentCapabilities.selectedLabel": "Agent used by this service",
-  "settings.agentCapabilities.usingDefaultModel": "Using the Agent default model",
+  "settings.agentCapabilities.usingDefaultModel":
+    "Using the Agent default model",
   "settings.agentCapabilities.usingModel": "Using model {{model}}",
   "settings.agentCapabilities.current": "In use",
   "settings.agentCapabilities.empty": "No Agent capabilities are available.",
   "settings.agentCapabilities.openAgentSettings": "Open Agent settings",
-  "settings.agentCapabilities.cardTranslationDescription": "Use the selected Agent to provide model capability for card translation.",
-  "settings.agentCapabilities.memoryDescription": "Use the selected Agent for Memory extraction, consolidation, and Recall.",
-  "settings.agentCapabilities.promptOptimizationDescription": "Use the selected Agent to provide model capability for prompt optimization.",
+  "settings.agentCapabilities.cardTranslationDescription":
+    "Use the selected Agent to provide model capability for card translation.",
+  "settings.agentCapabilities.memoryDescription":
+    "Use the selected Agent for Memory extraction, consolidation, and Recall.",
+  "settings.agentCapabilities.promptOptimizationDescription":
+    "Use the selected Agent to provide model capability for prompt optimization.",
   "settings.promptOptimization.descriptionLabel": "About this service",
-  "settings.promptOptimization.description": "Prompt optimization calls the selected Agent to rewrite raw prompts into clearer, more actionable versions.",
+  "settings.promptOptimization.description":
+    "Prompt optimization calls the selected Agent to rewrite raw prompts into clearer, more actionable versions.",
   "settings.promptOptimization.systemPrompt": "System prompt",
-  "settings.promptOptimization.systemPromptPlaceholder": "Supports the {content} placeholder.",
+  "settings.promptOptimization.systemPromptPlaceholder":
+    "Supports the {content} placeholder.",
   "settings.agents.title": "Agents",
-  "settings.agents.description": "Manage AI coding Agents available on this machine. AssetIWeave uses one Agent Registry to describe commands, protocols, and connection status.",
-  "settings.agents.registryHint": "Runtime definitions currently come from the built-in Registry; persistent custom Agent editing is planned for a later phase.",
+  "settings.agents.description":
+    "Manage AI coding Agents available on this machine. AssetIWeave uses one Agent Registry to describe commands, protocols, and connection status.",
+  "settings.agents.registryHint":
+    "Runtime definitions currently come from the built-in Registry; persistent custom Agent editing is planned for a later phase.",
   "settings.agents.marketTab": "Market",
   "settings.agents.installedTab": "Installed",
   "settings.agents.addCustom": "Add custom Agent",
   "settings.agents.customDefinition": "View definition template",
-  "settings.agents.customDefinitionHint": "Inspect the fields used to describe a launch command and protocol.",
+  "settings.agents.customDefinitionHint":
+    "Inspect the fields used to describe a launch command and protocol.",
   "settings.agents.customDialogTitle": "Custom Agent definition template",
-  "settings.agents.customDialogDescription": "Review the fields required by the Agent Registry; this version does not write custom definitions into the runtime Registry yet.",
-  "settings.agents.customDialogNotice": "When persistent custom Agents are connected, these fields will be edited and saved to App-owned configuration.",
+  "settings.agents.customDialogDescription":
+    "Review the fields required by the Agent Registry; this version does not write custom definitions into the runtime Registry yet.",
+  "settings.agents.customDialogNotice":
+    "When persistent custom Agents are connected, these fields will be edited and saved to App-owned configuration.",
   "settings.agents.field.agentId": "Agent ID",
   "settings.agents.field.displayName": "Display name",
   "settings.agents.field.arguments": "Launch arguments",
@@ -2278,14 +2497,16 @@ const en: Record<TranslationKey, string> = {
   "settings.agents.filterUnavailable": "Unavailable",
   "settings.agents.listLabel": "Agent list",
   "settings.agents.emptyTitle": "No matching Agents",
-  "settings.agents.emptyDescription": "Adjust the search or status filter and try again.",
+  "settings.agents.emptyDescription":
+    "Adjust the search or status filter and try again.",
   "settings.agents.statusAvailable": "Available",
   "settings.agents.statusUnavailable": "Unavailable",
   "settings.agents.statusChecking": "Checking",
   "settings.agents.statusNotInstalled": "Not installed",
   "settings.agents.statusNotTested": "Not tested",
   "settings.agents.coreIncompatible": "Core version incompatible",
-  "settings.agents.coreIncompatibleRange": "Core version incompatible (requires {min} ≤ core < {maxExclusive})",
+  "settings.agents.coreIncompatibleRange":
+    "Core version incompatible (requires {min} ≤ core < {maxExclusive})",
   "settings.agents.install": "Install",
   "settings.agents.update": "Update",
   "settings.agents.reinstall": "Reinstall",
@@ -2295,14 +2516,17 @@ const en: Record<TranslationKey, string> = {
   "settings.agents.enabled": "Enabled",
   "settings.agents.disabled": "Disabled",
   "settings.agents.installing": "Working...",
-  "settings.agents.installPreviewDescription": "Review the pinned version, distribution and local write scope before starting the lifecycle task.",
+  "settings.agents.installPreviewDescription":
+    "Review the pinned version, distribution and local write scope before starting the lifecycle task.",
   "settings.agents.confirmInstall": "Confirm and start",
   "settings.agents.confirmUninstall": "Confirm uninstall",
-  "settings.agents.uninstallPreviewDescription": "Review ownership, paths and capability assignment cleanup before uninstalling the Agent.",
+  "settings.agents.uninstallPreviewDescription":
+    "Review ownership, paths and capability assignment cleanup before uninstalling the Agent.",
   "settings.agents.installPath": "Install path",
   "settings.agents.externalRuntime": "External System runtime (binding only)",
   "settings.agents.assignmentsToClear": "Capability assignments to clear",
-  "settings.agents.assignmentsToClearDescription": "All capabilities still pointing to this Agent must be confirmed before uninstall.",
+  "settings.agents.assignmentsToClearDescription":
+    "All capabilities still pointing to this Agent must be confirmed before uninstall.",
   "settings.agents.uninstallFailed": "Agent uninstall failed",
   "settings.agents.distributionOptions": "Distribution options",
   "settings.agents.recommended": "Recommended",
@@ -2312,18 +2536,22 @@ const en: Record<TranslationKey, string> = {
   "settings.agents.refresh": "Refresh market catalog",
   "settings.agents.refreshFailed": "Market catalog refresh failed",
   "settings.agents.statusNotRegistered": "Not registered",
-  "settings.agents.notRegistered": "This Agent is not registered in the built-in Agent Registry",
+  "settings.agents.notRegistered":
+    "This Agent is not registered in the built-in Agent Registry",
   "settings.agents.testConnection": "Test connection",
   "settings.agents.testing": "Testing...",
   "settings.agents.model": "Model",
   "settings.agents.modelDefault": "Use Agent default model",
   "settings.agents.modelDialogTitle": "Select model",
-  "settings.agents.modelDialogDescription": "Load selectable models from the current Agent's ACP session/new response.",
+  "settings.agents.modelDialogDescription":
+    "Load selectable models from the current Agent's ACP session/new response.",
   "settings.agents.modelLoading": "Loading models...",
   "settings.agents.modelSearch": "Search models",
   "settings.agents.modelSearchPlaceholder": "Search models...",
-  "settings.agents.modelEmpty": "This Agent did not advertise selectable models.",
-  "settings.agents.modelEmptyHint": "The Agent can still use its own default model.",
+  "settings.agents.modelEmpty":
+    "This Agent did not advertise selectable models.",
+  "settings.agents.modelEmptyHint":
+    "The Agent can still use its own default model.",
   "settings.agents.modelSelected": "Selected",
   "settings.agents.modelCurrentSection": "Current model",
   "settings.agents.modelAvailableSection": "Other available models",
@@ -2334,50 +2562,67 @@ const en: Record<TranslationKey, string> = {
   "settings.agents.edit": "Edit",
   "settings.agents.command": "Launch command",
   "settings.agents.protocol": "Protocol",
-  "settings.agents.definitionDialogDescription": "Inspect the Agent runtime definition and registration status.",
-  "settings.agents.editHint": "Agent commands, protocols, and connection status are managed from the Agents page.",
-  "settings.agents.definitionEditingHint": "This version keeps Agent commands, protocols, and connection status on the Agents page; detailed definition editing will be connected later.",
-  "settings.agents.registryDefinitionHint": "This Agent is registered in the built-in Registry; connection testing succeeds only when ACP returns a usable model list. Editing the definition is not exposed yet.",
+  "settings.agents.definitionDialogDescription":
+    "Inspect the Agent runtime definition and registration status.",
+  "settings.agents.editHint":
+    "Agent commands, protocols, and connection status are managed from the Agents page.",
+  "settings.agents.definitionEditingHint":
+    "This version keeps Agent commands, protocols, and connection status on the Agents page; detailed definition editing will be connected later.",
+  "settings.agents.registryDefinitionHint":
+    "This Agent is registered in the built-in Registry; connection testing succeeds only when ACP returns a usable model list. Editing the definition is not exposed yet.",
   "settings.storage.configFile": "Legacy settings import file",
   "settings.storage.configDir": "User config directory",
   "settings.storage.defaultDataBackupDir": "Default database backup directory",
-  "settings.storage.customDataBackupDir": "Additional database backup directory",
+  "settings.storage.customDataBackupDir":
+    "Additional database backup directory",
   "settings.storage.dataBackupDirEmpty": "Not set",
   "settings.storage.pickDataBackupDir": "Choose database backup directory",
   "settings.storage.chooseDirectory": "Choose directory",
-  "settings.storage.clearDataBackupDir": "Clear additional database backup directory",
-  "settings.storage.conversationAdapterDir": "Conversation parser plugin directory",
+  "settings.storage.clearDataBackupDir":
+    "Clear additional database backup directory",
+  "settings.storage.conversationAdapterDir":
+    "Conversation parser plugin directory",
   "settings.storage.open": "Open",
   "settings.storage.reveal": "Reveal",
   "settings.cli.title": "Command line tools",
   "settings.cli.loading": "Checking command line tools",
   "settings.cli.ready": "Installed on PATH",
-  "settings.cli.needsTerminalRestart": "Installed; restart the terminal to use it",
+  "settings.cli.needsTerminalRestart":
+    "Installed; restart the terminal to use it",
   "settings.cli.notInstalled": "Bundled with the app, not installed on PATH",
-  "settings.cli.notBundled": "This app build does not bundle command line tools",
+  "settings.cli.notBundled":
+    "This app build does not bundle command line tools",
   "settings.cli.install": "Install",
   "settings.cli.repair": "Repair",
   "settings.cli.installing": "Installing...",
   "settings.conversation.sessionBrowserFont": "Session browser font",
-  "settings.conversation.autoFullSyncOnStartup": "Automatic full sync on startup",
-  "settings.conversation.autoFullSyncOnStartupHint": "Automatically reparse discoverable conversations when the app starts. You can still run a full sync manually when this is off.",
+  "settings.conversation.autoFullSyncOnStartup":
+    "Automatic full sync on startup",
+  "settings.conversation.autoFullSyncOnStartupHint":
+    "Automatically reparse discoverable conversations when the app starts. You can still run a full sync manually when this is off.",
   "settings.conversation.fullSyncTitle": "Full reparse",
-  "settings.conversation.fullSyncDescription": "Use the current parsers to reread every session and web record still discoverable at its source. Local history whose source was deleted or archived remains intact. Routine sync continues to use incremental mode.",
+  "settings.conversation.fullSyncDescription":
+    "Use the current parsers to reread every session and web record still discoverable at its source. Local history whose source was deleted or archived remains intact. Routine sync continues to use incremental mode.",
   "settings.conversation.fullSyncAction": "Start full sync",
   "settings.conversation.fullSyncButtonRunning": "Full sync running",
-  "settings.conversation.fullSyncButtonRunningWithProgress": "Full sync · {{percent}}%",
+  "settings.conversation.fullSyncButtonRunningWithProgress":
+    "Full sync · {{percent}}%",
   "settings.conversation.fullSyncConfirmTitle": "Confirm full reparse",
-  "settings.conversation.fullSyncConfirmMessage": "This rereads every currently discoverable conversation and usually takes more time and resources than incremental sync. Historical records no longer visible at their source remain retained.",
+  "settings.conversation.fullSyncConfirmMessage":
+    "This rereads every currently discoverable conversation and usually takes more time and resources than incremental sync. Historical records no longer visible at their source remain retained.",
   "settings.conversation.fullSyncConfirmAction": "Start reparse",
   "settings.conversation.fullSyncIdle": "No full sync has run yet",
-  "settings.conversation.fullSyncRunning": "Reparsing all discoverable records in the background",
+  "settings.conversation.fullSyncRunning":
+    "Reparsing all discoverable records in the background",
   "settings.conversation.fullSyncCompleted": "The latest full sync completed",
   "settings.conversation.fullSyncFailed": "The latest full sync failed",
-  "settings.conversation.fullSyncConflict": "Another conversation sync is already running. Try again after it finishes.",
+  "settings.conversation.fullSyncConflict":
+    "Another conversation sync is already running. Try again after it finishes.",
   "settings.conversation.fullSyncProgressLabel": "Full sync progress",
   "settings.conversation.fullSyncPreparing": "Preparing the source list…",
   "settings.conversation.fullSyncCurrentSource": "Processing: ",
-  "settings.conversation.fullSyncProgressCount": "Completed {{completed}} of {{total}} sources",
+  "settings.conversation.fullSyncProgressCount":
+    "Completed {{completed}} of {{total}} sources",
   "settings.conversation.fullSyncProgressPercent": "{{percent}}% complete",
   "settings.conversation.sessionBrowserSize": "Session browser font size",
   "settings.conversation.contentCardColors": "Content card colors",
@@ -2391,12 +2636,14 @@ const en: Record<TranslationKey, string> = {
   "settings.conversation.translationProvider.cli": "Host CLI",
   "settings.conversation.translationProvider.google": "Google Translate",
   "settings.conversation.translationProvider.apple": "Apple Translate",
-  "settings.conversation.translationProviderReserved": "This translation method is reserved in settings, but its connection is not implemented yet.",
+  "settings.conversation.translationProviderReserved":
+    "This translation method is reserved in settings, but its connection is not implemented yet.",
   "settings.conversation.translationCli": "CLI tool",
   "settings.conversation.translationCli.opencode": "OpenCode",
   "settings.conversation.translationCli.gemini": "Gemini",
   "settings.conversation.translationModel": "Model",
-  "settings.conversation.translationModelPlaceholder": "Leave empty for the CLI default model, or enter a model ID",
+  "settings.conversation.translationModelPlaceholder":
+    "Leave empty for the CLI default model, or enter a model ID",
   "settings.conversation.translationConnection": "Connection test",
   "settings.conversation.translationConnect": "Test connection",
   "settings.conversation.translationConnecting": "Testing...",
@@ -2404,11 +2651,14 @@ const en: Record<TranslationKey, string> = {
   "settings.conversation.translationConnectionFailed": "Connection failed",
   "settings.conversation.translationConnectionIdle": "Not tested yet",
   "settings.conversation.translationRefreshModels": "Refresh models",
-  "settings.conversation.translationModelsUnavailable": "The selected CLI did not return a model list. You can enter a model ID manually.",
+  "settings.conversation.translationModelsUnavailable":
+    "The selected CLI did not return a model list. You can enter a model ID manually.",
   "settings.conversation.translationPrompt": "Prompt template",
-  "settings.conversation.translationPromptPlaceholder": "Supports {targetLanguage}, {targetLanguageJson}, and {content} placeholders.",
+  "settings.conversation.translationPromptPlaceholder":
+    "Supports {targetLanguage}, {targetLanguageJson}, and {content} placeholders.",
   "settings.conversation.translationTarget": "Card translation target language",
-  "settings.conversation.translationTargetPlaceholder": "Example: Simplified Chinese, French, Spanish (Latin America)",
+  "settings.conversation.translationTargetPlaceholder":
+    "Example: Simplified Chinese, French, Spanish (Latin America)",
   "settings.conversation.translationTarget.zhCN": "Simplified Chinese",
   "settings.conversation.translationTarget.en": "English",
   "settings.conversation.translationTarget.ja": "Japanese",
@@ -2427,8 +2677,8 @@ const en: Record<TranslationKey, string> = {
   "settings.conversation.runtimeOverrides": "Runtime paths",
   "settings.conversation.runtimePath": "runtime path",
   "settings.conversation.runtimeClear": "Clear",
-  "settings.conversation.runtimeOverridesHint": "Leave blank to use the system PATH. Use absolute paths when a runtime is installed but the desktop app process cannot discover it on PATH.",
-
+  "settings.conversation.runtimeOverridesHint":
+    "Leave blank to use the system PATH. Use absolute paths when a runtime is installed but the desktop app process cannot discover it on PATH.",
 
   "settings.showStartupNotification": "Show startup notification",
   "settings.menu.sideRail": "Global entries",
@@ -2450,11 +2700,15 @@ const en: Record<TranslationKey, string> = {
   "settings.shortcuts.customIcon": "Custom symbol",
   "settings.shortcuts.editSvg": "Edit icon code",
   "settings.shortcuts.svgEditorTitle": "Icon code",
-  "settings.shortcuts.svgEditorDescription": "Enter a 1-4 character custom symbol, paste SVG exported from iconfont, or JSON with viewBox and paths. Saving stores it as the custom icon resource for icon settings.",
+  "settings.shortcuts.svgEditorDescription":
+    "Enter a 1-4 character custom symbol, paste SVG exported from iconfont, or JSON with viewBox and paths. Saving stores it as the custom icon resource for icon settings.",
   "settings.shortcuts.svgInput": "Symbol / SVG / JSON",
-  "settings.shortcuts.svgPlaceholder": "+ or <svg viewBox=\"0 0 1024 1024\"><path d=\"...\" /></svg>",
-  "settings.shortcuts.svgError": "Could not parse the icon resource. Use valid <svg><path d=\"...\" /></svg> markup or JSON paths.",
-  "settings.shortcuts.iconCodeEmptyError": "Enter a custom symbol, or paste a valid SVG / JSON icon resource.",
+  "settings.shortcuts.svgPlaceholder":
+    '+ or <svg viewBox="0 0 1024 1024"><path d="..." /></svg>',
+  "settings.shortcuts.svgError":
+    'Could not parse the icon resource. Use valid <svg><path d="..." /></svg> markup or JSON paths.',
+  "settings.shortcuts.iconCodeEmptyError":
+    "Enter a custom symbol, or paste a valid SVG / JSON icon resource.",
   "settings.shortcuts.clearSvg": "Clear custom icon",
   "settings.shortcuts.cancelSvg": "Cancel",
   "settings.shortcuts.closeSvg": "Close icon code editor",
@@ -2481,9 +2735,12 @@ const en: Record<TranslationKey, string> = {
   "plan.createSummary": "{{count}} create",
   "plan.title": "Deployment Plan",
   "plan.actions": "{{count}} actions",
-  "plan.reason.unsupported": "{{profile}} does not support {{kind}} or did not match include rules",
-  "plan.reason.conflictExisting": "Target path already exists. The current version does not overwrite files not managed by this app.",
-  "plan.reason.project": "{{profile}} supports {{kind}} and will project it to the target directory with {{strategy}}",
+  "plan.reason.unsupported":
+    "{{profile}} does not support {{kind}} or did not match include rules",
+  "plan.reason.conflictExisting":
+    "Target path already exists. The current version does not overwrite files not managed by this app.",
+  "plan.reason.project":
+    "{{profile}} supports {{kind}} and will project it to the target directory with {{strategy}}",
 
   "asset.list.aria": "Asset list",
   "asset.origin.local": "Local",
@@ -2496,11 +2753,14 @@ const en: Record<TranslationKey, string> = {
   "asset.edit": "Edit asset",
   "asset.delete": "Delete asset",
   "asset.editDialog.title": "Edit asset notes",
-  "asset.editDialog.readonlyMeta": "Asset name, type, and path come from scanning. This saves only supplemental catalog notes.",
-  "asset.editDialog.descriptionPlaceholder": "Record usage, scenarios, or maintenance notes for this asset",
+  "asset.editDialog.readonlyMeta":
+    "Asset name, type, and path come from scanning. This saves only supplemental catalog notes.",
+  "asset.editDialog.descriptionPlaceholder":
+    "Record usage, scenarios, or maintenance notes for this asset",
   "asset.editDialog.submit": "Save notes",
   "asset.editDialog.groups": "Groups",
-  "asset.editDialog.groupsHelp": "Manual membership can be changed here. Rule-matched groups must be changed in group rules.",
+  "asset.editDialog.groupsHelp":
+    "Manual membership can be changed here. Rule-matched groups must be changed in group rules.",
   "asset.editDialog.noGroups": "No groups yet.",
   "asset.editDialog.inGroup": "In group",
   "asset.editDialog.ruleMatched": "Rule matched",
@@ -2508,10 +2768,12 @@ const en: Record<TranslationKey, string> = {
   "asset.editDialog.addToGroup": "Add to group",
   "asset.editDialog.removeManualGroup": "Remove manual add",
   "asset.editDialog.mounts": "App mounts",
-  "asset.editDialog.mountsHelp": "These states come from a real filesystem scan. You can mount or unmount this Skill directly.",
+  "asset.editDialog.mountsHelp":
+    "These states come from a real filesystem scan. You can mount or unmount this Skill directly.",
   "asset.editDialog.noProfiles": "No apps/profiles available.",
   "asset.deleteDialog.title": "Delete asset",
-  "asset.deleteDialog.message": "Delete asset {{name}}? Only Skills in the AssetIWeave backup library are physically deleted; external source assets are rejected by the backend.",
+  "asset.deleteDialog.message":
+    "Delete asset {{name}}? Only Skills in the AssetIWeave backup library are physically deleted; external source assets are rejected by the backend.",
   "asset.deleteDialog.path": "Source path",
   "asset.deleteDialog.mountedCount": "{{count}} mounted targets detected.",
   "asset.deleteDialog.unmount": "Unmount managed mounts before deleting",
@@ -2533,10 +2795,13 @@ const en: Record<TranslationKey, string> = {
   "group.action.save": "Save group",
   "group.action.delete": "Delete group",
   "group.action.removeMember": "Remove {{name}}",
-  "group.confirmDelete": "Delete group {{name}}? This will not delete skill source files.",
+  "group.confirmDelete":
+    "Delete group {{name}}? This will not delete skill source files.",
   "group.deleteDialog.title": "Delete group",
-  "group.deleteDialog.message": "Delete group {{name}}? This will not delete skill source files.",
-  "group.deleteDialog.detail": "The backend confirms the group still exists, then removes the group record and manual memberships.",
+  "group.deleteDialog.message":
+    "Delete group {{name}}? This will not delete skill source files.",
+  "group.deleteDialog.detail":
+    "The backend confirms the group still exists, then removes the group record and manual memberships.",
   "group.column.groups": "Groups",
   "group.column.members": "Member Skills",
   "group.column.controls": "Rules and Mounts",
@@ -2589,7 +2854,8 @@ const en: Record<TranslationKey, string> = {
   "group.icon.cancelSvg": "Cancel",
   "group.icon.saveSvg": "Save Icon",
   "group.icon.svgEditorTitle": "Edit Group Icon",
-  "group.icon.svgEditorDescription": "Enter SVG JSON or SVG markup to customize the group icon.",
+  "group.icon.svgEditorDescription":
+    "Enter SVG JSON or SVG markup to customize the group icon.",
   "group.icon.svgInput": "SVG Code",
   "group.icon.svgPlaceholder": "Paste SVG markup or JSON...",
   "group.icon.svgError": "Cannot parse SVG, please check the format.",
@@ -2612,10 +2878,14 @@ const en: Record<TranslationKey, string> = {
   "group.mount.summary": "{{count}} skills",
   "group.mount.empty": "No skills in this group are available for batch mount.",
   "group.mount.noApps": "No app shortcuts available.",
-  "group.mount.disabled": "This group is disabled. Enable it before batch mounting.",
-  "group.mount.result": "Updated {{updated}}/{{total}} members, {{errors}} failed.",
-  "group.mount.resultMounted": "Mounted {{updated}} group skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
-  "group.mount.resultUnmounted": "Unmounted {{updated}} group skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
+  "group.mount.disabled":
+    "This group is disabled. Enable it before batch mounting.",
+  "group.mount.result":
+    "Updated {{updated}}/{{total}} members, {{errors}} failed.",
+  "group.mount.resultMounted":
+    "Mounted {{updated}} group skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
+  "group.mount.resultUnmounted":
+    "Unmounted {{updated}} group skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
   "group.exclusive.selectedGroups": "{{count}} groups selected",
   "group.exclusive.selectedSkills": "{{count}} skills in union",
   "group.exclusive.selectAll": "Select all enabled groups",
@@ -2643,7 +2913,8 @@ const en: Record<TranslationKey, string> = {
   "group.exclusive.skippedSection": "Skipped / Risks",
   "group.exclusive.emptySection": "No items",
   "group.exclusive.confirm": "Confirm",
-  "group.exclusive.result": "Updated {{profile}}: kept {{keep}}, mounted {{mount}}, unmounted {{unmount}}, now {{mounted}} mounted; {{skipped}} skipped/failed.",
+  "group.exclusive.result":
+    "Updated {{profile}}: kept {{keep}}, mounted {{mount}}, unmounted {{unmount}}, now {{mounted}} mounted; {{skipped}} skipped/failed.",
 
   "appMount.page.title": "App Mounts",
   "appMount.page.subtitle": "App mounts",
@@ -2695,15 +2966,22 @@ const en: Record<TranslationKey, string> = {
   "appMount.field.accentColor": "Accent color",
   "appMount.field.enabled": "Enable profile",
   "appMount.field.shortcutEnabled": "Show shortcut",
-  "appMount.confirmDelete": "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
+  "appMount.confirmDelete":
+    "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
   "appMount.deleteDialog.title": "Delete app",
-  "appMount.deleteDialog.message": "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
-  "appMount.deleteDialog.detail": "The backend checks managed deployments and real mount state. It rejects deletion while the app is still in use.",
-  "appMount.deleteDialog.defaultBlocked": "{{name}} is an official default app and cannot be deleted.",
-  "appMount.deleteDialog.defaultDetail": "Official default apps are built into AssetIWeave. You can adjust their settings, but you cannot delete them.",
+  "appMount.deleteDialog.message":
+    "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
+  "appMount.deleteDialog.detail":
+    "The backend checks managed deployments and real mount state. It rejects deletion while the app is still in use.",
+  "appMount.deleteDialog.defaultBlocked":
+    "{{name}} is an official default app and cannot be deleted.",
+  "appMount.deleteDialog.defaultDetail":
+    "Official default apps are built into AssetIWeave. You can adjust their settings, but you cannot delete them.",
   "appMount.pathChangeDialog.title": "Confirm Default App Path Change",
-  "appMount.pathChangeDialog.message": "{{name}} is an official default app. Change its Skill directory?",
-  "appMount.pathChangeDialog.detail": "Current path: {{previousPath}}\nNew path: {{nextPath}}",
+  "appMount.pathChangeDialog.message":
+    "{{name}} is an official default app. Change its Skill directory?",
+  "appMount.pathChangeDialog.detail":
+    "Current path: {{previousPath}}\nNew path: {{nextPath}}",
   "appMount.toolbar.appKindAll": "All apps ({{count}})",
   "appMount.toolbar.appKindFilter": "App kind",
   "appMount.toolbar.statusFilter": "App status",
@@ -2794,28 +3072,36 @@ const en: Record<TranslationKey, string> = {
   "source.rules.include": "Include",
   "source.rules.exclude": "Exclude",
   "source.rules.empty": "Not set",
-  "source.confirmDelete": "Delete source {{name}}? This unregisters it without deleting source files.",
+  "source.confirmDelete":
+    "Delete source {{name}}? This unregisters it without deleting source files.",
   "source.edit.title": "Edit skill source",
   "source.edit.submit": "Save source",
   "source.edit.submitting": "Saving...",
   "source.deleteDialog.title": "Delete source",
-  "source.deleteDialog.message": "Delete source {{name}}? This unregisters it without deleting source files.",
-  "source.deleteDialog.detail": "The backend confirms the source still exists and cleans linked assets, mount observations, and group member indexes.",
-  "source.delete.protected": "The default Skill source is maintained by the app and cannot be deleted.",
+  "source.deleteDialog.message":
+    "Delete source {{name}}? This unregisters it without deleting source files.",
+  "source.deleteDialog.detail":
+    "The backend confirms the source still exists and cleans linked assets, mount observations, and group member indexes.",
+  "source.delete.protected":
+    "The default Skill source is maintained by the app and cannot be deleted.",
 
   "skillAcquire.dialog.title": "Search and Import Skill",
-  "skillAcquire.dialog.description": "Search GitHub candidates, preview the download plan, then import into the AssetIWeave backup library.",
+  "skillAcquire.dialog.description":
+    "Search GitHub candidates, preview the download plan, then import into the AssetIWeave backup library.",
   "skillAcquire.close": "Close Skill search",
-  "skillAcquire.search.placeholder": "For example browser testing, kicad, pdf workflow",
+  "skillAcquire.search.placeholder":
+    "For example browser testing, kicad, pdf workflow",
   "skillAcquire.search.submit": "Search",
   "skillAcquire.search.searching": "Searching...",
   "skillAcquire.warning.title": "Search notices",
   "skillAcquire.empty.title": "No candidates",
-  "skillAcquire.empty.description": "Enter keywords to list GitHub candidates that can be imported.",
+  "skillAcquire.empty.description":
+    "Enter keywords to list GitHub candidates that can be imported.",
   "skillAcquire.candidate.open": "Open",
   "skillAcquire.candidate.preview": "Preview",
   "skillAcquire.field.url": "GitHub URL",
-  "skillAcquire.field.urlPlaceholder": "https://github.com/owner/repo/tree/main/skills/name",
+  "skillAcquire.field.urlPlaceholder":
+    "https://github.com/owner/repo/tree/main/skills/name",
   "skillAcquire.field.branch": "Branch",
   "skillAcquire.field.branchPlaceholder": "main",
   "skillAcquire.field.path": "Skill path",
@@ -2824,7 +3110,8 @@ const en: Record<TranslationKey, string> = {
   "skillAcquire.field.namePlaceholder": "Defaults to path or repository name",
   "skillAcquire.preview.submit": "Preview plan",
   "skillAcquire.preview.loading": "Previewing...",
-  "skillAcquire.preview.empty": "Select a candidate or enter a GitHub URL to preview the download plan.",
+  "skillAcquire.preview.empty":
+    "Select a candidate or enter a GitHub URL to preview the download plan.",
   "skillAcquire.preview.title": "Download Plan",
   "skillAcquire.preview.name": "Name",
   "skillAcquire.preview.repo": "Repository",
@@ -2845,45 +3132,59 @@ const en: Record<TranslationKey, string> = {
 
   "conversation.eyebrow": "Conversations",
   "conversation.sessions.title": "Conversation Browser",
-  "conversation.sessions.subtitle": "Start from an app and session, then browse questions and full response details in a dedicated workspace.",
+  "conversation.sessions.subtitle":
+    "Start from an app and session, then browse questions and full response details in a dedicated workspace.",
   "conversation.webRecords.title": "Web Record Browser",
-  "conversation.webRecords.subtitle": "Browse AI web conversations imported by user-directory harvesters and stored independently.",
+  "conversation.webRecords.subtitle":
+    "Browse AI web conversations imported by user-directory harvesters and stored independently.",
   "conversation.webRecords.status.syncedAll": "Synced web conversation sources",
   "conversation.scriptMarket.inlineTitle": "Script Market List",
-  "conversation.scriptMarket.inlineDescription": "Register a parser from the market (download and install); uninstall stops future sync while retaining package files and history.",
-  "conversation.scriptMarket.loading": "Validating script directories and runtime status in the background. You can keep using the interface…",
+  "conversation.scriptMarket.inlineDescription":
+    "Register a parser from the market (download and install); uninstall stops future sync while retaining package files and history.",
+  "conversation.scriptMarket.loading":
+    "Validating script directories and runtime status in the background. You can keep using the interface…",
   "conversation.scriptMarket.install": "Install",
   "conversation.scriptMarket.registerPackage": "Register",
   "conversation.scriptMarket.update": "Update",
   "conversation.scriptMarket.repair": "Repair",
   "conversation.scriptMarket.notInstalled": "Not installed",
   "conversation.scriptMarket.installed": "Installed",
-  "conversation.scriptMarket.uninstalled": "Uninstalled (files and records retained)",
+  "conversation.scriptMarket.uninstalled":
+    "Uninstalled (files and records retained)",
   "conversation.scriptMarket.updateAvailable": "Update",
   "conversation.scriptMarket.aheadOfRelease": "Ahead",
   "conversation.scriptMarket.runtimeMissing": "Runtime Missing",
   "conversation.scriptMarket.verificationFailed": "Verification failed",
   "conversation.scriptMarket.installing": "Installing script in the background",
   "conversation.scriptMarket.updating": "Updating the plugin in the background",
-  "conversation.scriptMarket.uninstalling": "Stopping the plugin runtime in the background",
+  "conversation.scriptMarket.uninstalling":
+    "Stopping the plugin runtime in the background",
   "conversation.scriptMarket.installStarted": "Script install started.",
   "conversation.scriptMarket.installCompleted": "Script install completed.",
-  "conversation.scriptMarket.registerCompleted": "The adapter was registered again and its runtime and sources were restored.",
-  "conversation.scriptMarket.builtInManifestMissing": "The built-in adapter has no manifest path and cannot be registered again.",
-  "conversation.scriptMarket.localManifestMissing": "The local adapter has no manifest path and cannot be registered.",
+  "conversation.scriptMarket.registerCompleted":
+    "The adapter was registered again and its runtime and sources were restored.",
+  "conversation.scriptMarket.builtInManifestMissing":
+    "The built-in adapter has no manifest path and cannot be registered again.",
+  "conversation.scriptMarket.localManifestMissing":
+    "The local adapter has no manifest path and cannot be registered.",
   "conversation.scriptMarket.installFailed": "Script install failed.",
   "conversation.scriptMarket.updateCompleted": "Plugin update completed.",
   "conversation.scriptMarket.updateFailed": "Plugin update failed.",
-  "conversation.scriptMarket.uninstallCompleted": "Plugin runtime uninstalled; it no longer syncs, while package files, conversation records, and source configuration remain.",
+  "conversation.scriptMarket.uninstallCompleted":
+    "Plugin runtime uninstalled; it no longer syncs, while package files, conversation records, and source configuration remain.",
   "conversation.scriptMarket.uninstallFailed": "Plugin uninstall failed.",
-  "conversation.scriptMarket.emptyForKind": "No installable script resources for this record type.",
+  "conversation.scriptMarket.emptyForKind":
+    "No installable script resources for this record type.",
   "conversation.scriptMarket.repository": "Repository",
   "conversation.scriptMarket.confirmTitle": "Confirm plugin change",
   "conversation.scriptMarket.confirmMessage": "Confirm {action} for “{name}”?",
-  "conversation.scriptMarket.recordsPreserved": "Existing conversation records will be preserved.",
+  "conversation.scriptMarket.recordsPreserved":
+    "Existing conversation records will be preserved.",
   "conversation.scriptMarket.affectedSources": "Affected sources",
-  "conversation.scriptMarket.managedPaths": "Managed paths (uninstall retains them; deleting a version removes them)",
-  "conversation.scriptMarket.taskConflict": "The plugin is in use by running tasks: {tasks}",
+  "conversation.scriptMarket.managedPaths":
+    "Managed paths (uninstall retains them; deleting a version removes them)",
+  "conversation.scriptMarket.taskConflict":
+    "The plugin is in use by running tasks: {tasks}",
   "conversation.scriptMarket.view.connected": "Connected",
   "conversation.scriptMarket.view.updates": "Updates",
   "conversation.scriptMarket.view.discover": "Discover",
@@ -2900,7 +3201,8 @@ const en: Record<TranslationKey, string> = {
   "conversation.scriptMarket.uninstall": "Uninstall",
   "conversation.scriptMarket.checkUpdates": "Check for updates",
   "conversation.scriptMarket.checkingUpdates": "Checking for updates…",
-  "conversation.scriptMarket.checkUpdatesCompleted": "Update check completed; {{count}} plugins can be updated.",
+  "conversation.scriptMarket.checkUpdatesCompleted":
+    "Update check completed; {{count}} plugins can be updated.",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "Origin",
@@ -2913,22 +3215,30 @@ const en: Record<TranslationKey, string> = {
   "conversation.scriptMarket.manifest": "Adapter manifest",
   "conversation.scriptMarket.contentHash": "Content hash",
   "conversation.scriptMarket.trustedHash": "Trusted hash",
-  "conversation.scriptMarket.devOverrideNotice": "This dev override is in debug mode; marketplace updates will not replace the active runtime.",
+  "conversation.scriptMarket.devOverrideNotice":
+    "This dev override is in debug mode; marketplace updates will not replace the active runtime.",
   "conversation.scriptMarket.versionHistory": "Version history and changelog",
   "conversation.scriptMarket.selectVersion": "Select install version",
-  "conversation.scriptMarket.noVersionHistory": "No version history is available.",
+  "conversation.scriptMarket.noVersionHistory":
+    "No version history is available.",
   "conversation.scriptMarket.installedVersions": "Installed offline versions",
   "conversation.scriptMarket.activeVersion": "Active",
   "conversation.scriptMarket.switchVersion": "Switch",
   "conversation.scriptMarket.registerVersion": "Register this version",
   "conversation.scriptMarket.rollback": "Roll back",
   "conversation.scriptMarket.deleteVersion": "Delete version",
-  "conversation.scriptMarket.deleteRunningVersionHelp": "Uninstall the running version before deleting it.",
-  "conversation.scriptMarket.deleteVersionHelp": "Managed files can be permanently deleted here after uninstall; sources and conversation history remain.",
-  "conversation.scriptMarket.externalDeleteUnavailable": "This plugin is locally or legacy registered, so its files are not managed by the version library. It can be uninstalled but not deleted by AssetIWeave; register it from the market to enable version deletion.",
-  "conversation.scriptMarket.builtInDeleteUnavailable": "Built-in or development adapters can be uninstalled and skipped by the scanner. Their files remain part of the app and cannot be deleted.",
-  "conversation.scriptMarket.deleteVersionConfirm": "Permanently delete the managed files for version {{version}}? A running version must be uninstalled or switched first.",
-  "conversation.scriptMarket.versionActionCompleted": "Local version operation completed.",
+  "conversation.scriptMarket.deleteRunningVersionHelp":
+    "Uninstall the running version before deleting it.",
+  "conversation.scriptMarket.deleteVersionHelp":
+    "Managed files can be permanently deleted here after uninstall; sources and conversation history remain.",
+  "conversation.scriptMarket.externalDeleteUnavailable":
+    "This plugin is locally or legacy registered, so its files are not managed by the version library. It can be uninstalled but not deleted by AssetIWeave; register it from the market to enable version deletion.",
+  "conversation.scriptMarket.builtInDeleteUnavailable":
+    "Built-in or development adapters can be uninstalled and skipped by the scanner. Their files remain part of the app and cannot be deleted.",
+  "conversation.scriptMarket.deleteVersionConfirm":
+    "Permanently delete the managed files for version {{version}}? A running version must be uninstalled or switched first.",
+  "conversation.scriptMarket.versionActionCompleted":
+    "Local version operation completed.",
   "conversation.scriptMarket.updatePolicy": "Update policy",
   "conversation.scriptMarket.policy.manual": "Manual notice (stable)",
   "conversation.scriptMarket.policy.follow_stable": "Follow stable",
@@ -2938,13 +3248,15 @@ const en: Record<TranslationKey, string> = {
   "conversation.toolbar.aria": "Conversation records toolbar",
   "conversation.toolbar.searchPlaceholder": "Search sessions or projects...",
   "conversation.toolbar.searchSubmit": "Search sessions",
-  "conversation.search.contentPlaceholder": "Search content and jump to cards...",
+  "conversation.search.contentPlaceholder":
+    "Search content and jump to cards...",
   "conversation.search.submit": "Search content",
   "conversation.search.resultsTitle": "Content Search Results",
   "conversation.search.loading": "Searching content...",
   "conversation.search.resultsCount": "“{{query}}” matched {{count}} cards",
   "conversation.search.empty": "No content matches.",
-  "conversation.search.typeFilterAria": "Filter content search results by card type",
+  "conversation.search.typeFilterAria":
+    "Filter content search results by card type",
   "conversation.search.type.all": "All",
   "conversation.search.groupCount": "{{count}}",
   "conversation.search.openHit": "Open {{type}} search result: {{title}}",
@@ -2962,7 +3274,8 @@ const en: Record<TranslationKey, string> = {
   "conversation.toolbar.questions": "Questions",
   "conversation.toolbar.selected": "Selected",
   "conversation.toolbar.batchExport": "Batch export",
-  "conversation.toolbar.batchExportSelected": "Batch export {{count}} questions",
+  "conversation.toolbar.batchExportSelected":
+    "Batch export {{count}} questions",
   "conversation.toolbar.sessionSort": "Session sort",
   "conversation.toolbar.questionSort": "Question sort",
   "conversation.toolbar.sort.updated": "By update time",
@@ -2971,15 +3284,19 @@ const en: Record<TranslationKey, string> = {
   "conversation.toolbar.sort.questionCount": "By questions",
   "conversation.toolbar.sort.turnCount": "By turns",
   "conversation.status.syncedAll": "Synced conversation sources",
-  "conversation.status.importStarted": "Added source \"{{source}}\". Background import has started.",
+  "conversation.status.importStarted":
+    'Added source "{{source}}". Background import has started.',
   "conversation.status.merged": "Merged adjacent questions",
   "conversation.status.split": "Split question",
   "conversation.status.exported": "Exported session Markdown",
-  "conversation.status.exportedSelected": "Exported {{count}} question Markdown",
+  "conversation.status.exportedSelected":
+    "Exported {{count}} question Markdown",
   "conversation.add.title.session": "Add Conversation Source",
   "conversation.add.title.web": "Add Web Record Source",
-  "conversation.add.description.session": "Install an external adapter plugin and add a Session source.",
-  "conversation.add.description.web": "Install an external adapter plugin and add a web record source.",
+  "conversation.add.description.session":
+    "Install an external adapter plugin and add a Session source.",
+  "conversation.add.description.web":
+    "Install an external adapter plugin and add a web record source.",
   "conversation.add.close": "Close add source dialog",
   "conversation.add.submit": "Add source",
   "conversation.add.submitting": "Adding...",
@@ -2997,7 +3314,8 @@ const en: Record<TranslationKey, string> = {
   "conversation.add.sourceKind.live": "Live",
   "conversation.add.sourceKind.custom": "Custom",
   "conversation.export.title": "Export Markdown",
-  "conversation.export.description": "Choose which content blocks should be written to the Markdown file.",
+  "conversation.export.description":
+    "Choose which content blocks should be written to the Markdown file.",
   "conversation.export.close": "Close export dialog",
   "conversation.export.scope": "Export scope",
   "conversation.export.scopeSession": "Current session, {{count}} questions",
@@ -3007,8 +3325,10 @@ const en: Record<TranslationKey, string> = {
   "conversation.export.exporting": "Exporting...",
   "conversation.import.sessionTitle": "Import Conversations",
   "conversation.import.webTitle": "Import Web Records",
-  "conversation.import.sessionDescription": "Choose an external adapter manifest and local record source. Import continues in the background.",
-  "conversation.import.webDescription": "Choose an adapter with web_records capability and a web record source. The web browser refreshes after import.",
+  "conversation.import.sessionDescription":
+    "Choose an external adapter manifest and local record source. Import continues in the background.",
+  "conversation.import.webDescription":
+    "Choose an adapter with web_records capability and a web record source. The web browser refreshes after import.",
   "conversation.import.close": "Close import dialog",
   "conversation.import.pageSwitchAria": "Import page switcher",
   "conversation.import.page.form": "Import Form",
@@ -3034,8 +3354,10 @@ const en: Record<TranslationKey, string> = {
   "conversation.import.step.source": "Add source",
   "conversation.import.step.sync": "Start sync",
   "conversation.import.step.done": "Refresh browser",
-  "conversation.import.error.manifestRequired": "Choose or enter an adapter manifest path.",
-  "conversation.import.error.locationRequired": "Choose or enter a source location.",
+  "conversation.import.error.manifestRequired":
+    "Choose or enter an adapter manifest path.",
+  "conversation.import.error.locationRequired":
+    "Choose or enter a source location.",
   "conversation.column.apps": "Apps",
   "conversation.column.projects": "Project Folders",
   "conversation.column.sessions": "Sessions",
@@ -3044,11 +3366,13 @@ const en: Record<TranslationKey, string> = {
   "conversation.app.select": "Select an app to view its sessions.",
   "conversation.app.selectNamed": "Select app {{name}}",
   "conversation.app.sessionCount": "{{count}} sessions",
-  "conversation.app.summary": "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
+  "conversation.app.summary":
+    "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.project.select": "Select a project folder to view sessions.",
   "conversation.project.selectNamed": "Select project folder {{path}}",
   "conversation.project.sessionCount": "{{count}} sessions",
-  "conversation.project.summary": "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
+  "conversation.project.summary":
+    "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.session.open": "Open session {{title}}",
   "conversation.session.backToBrowser": "Back to apps / sessions",
   "conversation.session.loading": "Loading session...",
@@ -3059,10 +3383,13 @@ const en: Record<TranslationKey, string> = {
   "conversation.session.questionCountChip": "{{count}} questions",
   "conversation.session.turnCountChip": "{{count}} turns",
   "conversation.session.emptyForApp": "This app has no sessions yet.",
-  "conversation.session.emptyForProject": "This project folder has no sessions yet.",
+  "conversation.session.emptyForProject":
+    "This project folder has no sessions yet.",
   "conversation.question.select": "Preview question {{title}}",
-  "conversation.question.selectForExport": "Select question {{title}} for batch export",
-  "conversation.question.searchPlaceholder": "Search questions in this session...",
+  "conversation.question.selectForExport":
+    "Select question {{title}} for batch export",
+  "conversation.question.searchPlaceholder":
+    "Search questions in this session...",
   "conversation.question.searchSubmit": "Search questions",
   "conversation.question.empty": "This session has no questions.",
   "conversation.question.emptyForSearch": "No matching questions.",
@@ -3095,14 +3422,16 @@ const en: Record<TranslationKey, string> = {
   "conversation.content.resultFailed": "failed",
   "conversation.content.changedFiles": "Changed files · {{count}} files",
   "conversation.content.diffSummaryFiles": "{{count}} changed files",
-  "conversation.content.diffSummaryUnavailable": "The file list could not be parsed. Expand to view the raw diff.",
+  "conversation.content.diffSummaryUnavailable":
+    "The file list could not be parsed. Expand to view the raw diff.",
   "conversation.content.viewDiff": "View Diff",
   "conversation.content.expandCommands": "Show {{count}} more commands",
   "conversation.content.collapseCommands": "Collapse commands",
   "conversation.content.loadMoreCommands": "Load more commands",
   "conversation.content.loadMoreResults": "Load more results",
   "conversation.content.loadMoreActivities": "Load more activity",
-  "conversation.content.projectionFailed": "Command display projection failed; raw command retained: {{message}}",
+  "conversation.content.projectionFailed":
+    "Command display projection failed; raw command retained: {{message}}",
   "conversation.content.hidden": "All response blocks are currently hidden.",
   "conversation.content.exitCode": "Exit code {{code}}",
   "conversation.content.copy": "Copy {{type}}",
@@ -3115,17 +3444,21 @@ const en: Record<TranslationKey, string> = {
   "conversation.content.translating": "Translating",
   "conversation.content.translation": "Translation · {{language}}",
   "conversation.content.translationChecking": "Checking translation service",
-  "conversation.content.translationUnavailable": "Translation service is unavailable",
+  "conversation.content.translationUnavailable":
+    "Translation service is unavailable",
   "conversation.content.translationFailed": "Translation failed: {{message}}",
-  "conversation.content.translationSaveFailed": "Failed to save translation: {{message}}",
-  "conversation.content.translationUnknownError": "The AI translation task returned no usable result",
+  "conversation.content.translationSaveFailed":
+    "Failed to save translation: {{message}}",
+  "conversation.content.translationUnknownError":
+    "The AI translation task returned no usable result",
   "conversation.content.translationCancel": "Cancel current translation",
   "conversation.content.translationCancelling": "Cancelling",
   "conversation.content.translationPhase.queued": "Waiting to run",
   "conversation.content.translationPhase.resolving": "Starting OpenCode",
   "conversation.content.translationPhase.spawning": "Starting OpenCode",
   "conversation.content.translationPhase.initializing": "Connecting to Agent",
-  "conversation.content.translationPhase.creating_session": "Connecting to Agent",
+  "conversation.content.translationPhase.creating_session":
+    "Connecting to Agent",
   "conversation.content.translationPhase.configuring": "Applying model",
   "conversation.content.translationPhase.prompting": "Translating",
   "conversation.content.translationPhase.cancelling": "Cancelling",
@@ -3133,64 +3466,93 @@ const en: Record<TranslationKey, string> = {
   "conversation.content.translationPhase.cleaning_up": "Finishing",
   "conversation.content.expandResult": "Show all",
   "conversation.content.collapseResult": "Collapse",
-  "conversation.content.resultPreviewLines": "Showing {{shown}} / {{total}} lines",
+  "conversation.content.resultPreviewLines":
+    "Showing {{shown}} / {{total}} lines",
   "conversation.sync.allSources": "All sources",
   "conversation.sync.phase.preparing": "Preparing sync",
   "conversation.sync.phase.importing": "Reading and importing conversations",
   "conversation.sync.phase.refreshing": "Refreshing session lists",
   "conversation.sync.phase.completed": "Sync completed",
   "conversation.sync.phase.failed": "Sync failed",
-  "conversation.sync.description.preparing": "Collecting sources and sync parameters before the task starts.",
-  "conversation.sync.description.importing": "Parsing local records and writing normalized sessions, questions, and content blocks.",
-  "conversation.sync.description.refreshing": "Import is complete. Reloading app, session, and question statistics.",
-  "conversation.sync.description.completed": "Conversation records and browser lists are up to date.",
-  "conversation.sync.description.failed": "Sync could not finish. Review the error notification and try again.",
+  "conversation.sync.description.preparing":
+    "Collecting sources and sync parameters before the task starts.",
+  "conversation.sync.description.importing":
+    "Parsing local records and writing normalized sessions, questions, and content blocks.",
+  "conversation.sync.description.refreshing":
+    "Import is complete. Reloading app, session, and question statistics.",
+  "conversation.sync.description.completed":
+    "Conversation records and browser lists are up to date.",
+  "conversation.sync.description.failed":
+    "Sync could not finish. Review the error notification and try again.",
   "conversation.sync.stage": "Stage {{current}} of {{total}}",
   "conversation.sync.scope": "Scope: {{source}}",
   "conversation.sync.dismiss": "Dismiss sync progress",
-  "conversation.sync.incrementalSummary": "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
-  "conversation.sync.incrementalSummaryWithErrors": "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.summary": "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources.",
-  "conversation.sync.summaryWithErrors": "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.summaryUnavailable": "Sync completed. Detailed statistics are not available.",
-  "conversation.sync.partialFailureAdvice": "Successful sources were imported. Fix the failed source below, then sync that source again.",
+  "conversation.sync.incrementalSummary":
+    "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
+  "conversation.sync.incrementalSummaryWithErrors":
+    "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.summary":
+    "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources.",
+  "conversation.sync.summaryWithErrors":
+    "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.summaryUnavailable":
+    "Sync completed. Detailed statistics are not available.",
+  "conversation.sync.partialFailureAdvice":
+    "Successful sources were imported. Fix the failed source below, then sync that source again.",
   "conversation.sync.failedSourcesTitle": "Failed sources",
-  "conversation.sync.failureMessageUnavailable": "No error message was provided.",
+  "conversation.sync.failureMessageUnavailable":
+    "No error message was provided.",
   "conversation.sync.unknownFailedSource": "Unknown source",
   "conversation.sync.web.phase.preparing": "Preparing web record sync",
   "conversation.sync.web.phase.importing": "Reading and importing web records",
   "conversation.sync.web.phase.refreshing": "Refreshing web record lists",
   "conversation.sync.web.phase.completed": "Web record sync completed",
   "conversation.sync.web.phase.failed": "Web record sync failed",
-  "conversation.sync.web.description.preparing": "Collecting web sources and sync parameters before the task starts.",
-  "conversation.sync.web.description.importing": "Parsing harvested web records and writing independent web conversations, questions, and content blocks.",
-  "conversation.sync.web.description.refreshing": "Import is complete. Reloading site, web conversation, and question statistics.",
-  "conversation.sync.web.description.completed": "Web records and browser lists are up to date.",
-  "conversation.sync.web.description.failed": "Web record sync could not finish. Review the error notification and try again.",
+  "conversation.sync.web.description.preparing":
+    "Collecting web sources and sync parameters before the task starts.",
+  "conversation.sync.web.description.importing":
+    "Parsing harvested web records and writing independent web conversations, questions, and content blocks.",
+  "conversation.sync.web.description.refreshing":
+    "Import is complete. Reloading site, web conversation, and question statistics.",
+  "conversation.sync.web.description.completed":
+    "Web records and browser lists are up to date.",
+  "conversation.sync.web.description.failed":
+    "Web record sync could not finish. Review the error notification and try again.",
   "conversation.sync.web.scope": "Web source: {{source}}",
-  "conversation.sync.web.summary": "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources.",
-  "conversation.sync.web.summaryWithErrors": "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.web.incrementalSummary": "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
-  "conversation.sync.web.incrementalSummaryWithErrors": "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.web.summaryUnavailable": "Web record sync completed. Detailed statistics are not available.",
-  "conversation.sync.web.partialFailureAdvice": "Successful sources were imported. Fix the failed web source below, then sync that source again.",
+  "conversation.sync.web.summary":
+    "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources.",
+  "conversation.sync.web.summaryWithErrors":
+    "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.web.incrementalSummary":
+    "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
+  "conversation.sync.web.incrementalSummaryWithErrors":
+    "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.web.summaryUnavailable":
+    "Web record sync completed. Detailed statistics are not available.",
+  "conversation.sync.web.partialFailureAdvice":
+    "Successful sources were imported. Fix the failed web source below, then sync that source again.",
   "conversation.sync.web.failedSourcesTitle": "Failed web sources",
-  "conversation.sync.background.title": "Syncing conversations in the background",
-  "conversation.sync.background.webTitle": "Syncing web records in the background",
-  "conversation.sync.background.description": "You can keep using other features. Lists refresh when it finishes.",
+  "conversation.sync.background.title":
+    "Syncing conversations in the background",
+  "conversation.sync.background.webTitle":
+    "Syncing web records in the background",
+  "conversation.sync.background.description":
+    "You can keep using other features. Lists refresh when it finishes.",
   "conversation.markdown.untitledQuestion": "Untitled question",
   "conversation.markdown.empty": "Nothing to preview yet.",
 
   "mount.title": "Mount Targets",
   "mount.description": "Choose which apps/profiles should mount this asset.",
   "mount.selected": "{{count}} selected",
-  "mount.empty": "No available profiles. Add a target app in Profile Management first.",
+  "mount.empty":
+    "No available profiles. Add a target app in Profile Management first.",
   "mount.unmount": "Unmount from {{profile}}",
   "mount.mountTo": "Mount to {{profile}}",
   "mount.supported": "Supports this asset type",
   "mount.unsupported": "This type is not declared as supported",
   "mount.blocked": "Mounting blocked",
-  "mount.blockedAppSource": "Skills from app-specific or app-local directories must be backed up into the AssetIWeave backup library before mounting.",
+  "mount.blockedAppSource":
+    "Skills from app-specific or app-local directories must be backed up into the AssetIWeave backup library before mounting.",
   "mount.status.mounted": "Mounted",
   "mount.status.not_mounted": "Not mounted",
   "mount.status.conflict": "Target conflict",
@@ -3202,31 +3564,50 @@ const en: Record<TranslationKey, string> = {
   "mount.stateHelp.open": "View mount state guide",
   "mount.stateHelp.openAria": "View mount state guide for {{status}}",
   "mount.stateHelp.title": "Mount State Guide",
-  "mount.stateHelp.description": "Mount state comes only from a real filesystem scan, so you can tell whether the target app can actually read this asset.",
+  "mount.stateHelp.description":
+    "Mount state comes only from a real filesystem scan, so you can tell whether the target app can actually read this asset.",
   "mount.stateHelp.close": "Close mount state guide",
   "mount.stateHelp.current": "Current state",
   "mount.stateHelp.meaning": "Meaning",
   "mount.stateHelp.action": "Suggested action",
-  "mount.stateHelp.mounted.meaning": "The target directory contains a correct symlink to this asset source path.",
-  "mount.stateHelp.mounted.action": "This is healthy. No action is needed; click the lit mount button only if you want to unmount it.",
-  "mount.stateHelp.not_mounted.meaning": "The target directory does not contain a symlink for this asset.",
-  "mount.stateHelp.not_mounted.action": "Click the mount button when you want the target app to read this asset; AssetIWeave will create and verify the symlink.",
-  "mount.stateHelp.conflict.meaning": "The target path is occupied by another file, directory, or a symlink pointing somewhere else.",
-  "mount.stateHelp.conflict.action": "Inspect the target path first, then move, rename, or remove the occupying item before mounting again.",
-  "mount.stateHelp.broken.meaning": "The target path is a symlink, but its source no longer exists.",
-  "mount.stateHelp.broken.action": "Check whether the source asset moved or was deleted; then clean the broken link and mount again.",
+  "mount.stateHelp.mounted.meaning":
+    "The target directory contains a correct symlink to this asset source path.",
+  "mount.stateHelp.mounted.action":
+    "This is healthy. No action is needed; click the lit mount button only if you want to unmount it.",
+  "mount.stateHelp.not_mounted.meaning":
+    "The target directory does not contain a symlink for this asset.",
+  "mount.stateHelp.not_mounted.action":
+    "Click the mount button when you want the target app to read this asset; AssetIWeave will create and verify the symlink.",
+  "mount.stateHelp.conflict.meaning":
+    "The target path is occupied by another file, directory, or a symlink pointing somewhere else.",
+  "mount.stateHelp.conflict.action":
+    "Inspect the target path first, then move, rename, or remove the occupying item before mounting again.",
+  "mount.stateHelp.broken.meaning":
+    "The target path is a symlink, but its source no longer exists.",
+  "mount.stateHelp.broken.action":
+    "Check whether the source asset moved or was deleted; then clean the broken link and mount again.",
   "mount.action.repair": "Repair {{profile}} mount",
-  "mount.notification.refreshingStatus": "Scanning real filesystem link state...",
-  "mount.notification.statusRefreshed": "Link state refreshed: {{count}} targets, {{mounted}} mounted, {{issues}} issues.",
-  "mount.notification.statusRefreshFailed": "Link state refresh failed: {{message}}",
+  "mount.notification.refreshingStatus":
+    "Scanning real filesystem link state...",
+  "mount.notification.statusRefreshed":
+    "Link state refreshed: {{count}} targets, {{mounted}} mounted, {{issues}} issues.",
+  "mount.notification.statusRefreshFailed":
+    "Link state refresh failed: {{message}}",
   "mount.notification.synced": "Mount state synced: {{name}}",
-  "mount.notification.assetMountedProfile": "Real scan shows {{name}} is mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetUnmountedProfile": "Real scan shows {{name}} is not mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetConflictProfile": "Real scan shows {{name}} has a mount conflict in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetBrokenProfile": "Real scan shows {{name}} has a broken mount in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.batchSynced": "Batch mount state synced for {{count}} assets",
-  "mount.notification.batchMountedProfile": "Mounted {{count}} skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.batchUnmountedProfile": "Unmounted {{count}} skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetMountedProfile":
+    "Real scan shows {{name}} is mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetUnmountedProfile":
+    "Real scan shows {{name}} is not mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetConflictProfile":
+    "Real scan shows {{name}} has a mount conflict in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetBrokenProfile":
+    "Real scan shows {{name}} has a broken mount in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.batchSynced":
+    "Batch mount state synced for {{count}} assets",
+  "mount.notification.batchMountedProfile":
+    "Mounted {{count}} skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.batchUnmountedProfile":
+    "Unmounted {{count}} skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
   "mount.notification.failed": "Mount operation failed: {{message}}",
 
   "assetKind.prompt": "Prompt",

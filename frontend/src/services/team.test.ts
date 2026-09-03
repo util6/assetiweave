@@ -28,19 +28,27 @@ describe("team service", () => {
 
     await expect(listTeams()).resolves.toEqual([detail]);
     await expect(getTeam("team-1")).resolves.toEqual(detail);
-    await expect(createTeam({ name: "Crew", members: members() })).resolves.toEqual(detail);
-    await expect(updateTeam({ team_id: "team-1", name: "Crew", members: members() })).resolves.toEqual(detail);
+    await expect(
+      createTeam({ name: "Crew", members: members() }),
+    ).resolves.toEqual(detail);
+    await expect(
+      updateTeam({ team_id: "team-1", name: "Crew", members: members() }),
+    ).resolves.toEqual(detail);
     await expect(deleteTeam("team-1")).resolves.toBeUndefined();
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "list_teams");
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_team", { teamId: "team-1" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "get_team", {
+      teamId: "team-1",
+    });
     expect(invokeMock).toHaveBeenNthCalledWith(3, "create_team", {
       input: { name: "Crew", members: members() },
     });
     expect(invokeMock).toHaveBeenNthCalledWith(4, "update_team", {
       input: { team_id: "team-1", name: "Crew", members: members() },
     });
-    expect(invokeMock).toHaveBeenNthCalledWith(5, "delete_team", { teamId: "team-1" });
+    expect(invokeMock).toHaveBeenNthCalledWith(5, "delete_team", {
+      teamId: "team-1",
+    });
   });
 
   it("keeps browser preview read-only instead of simulating Team persistence", async () => {
@@ -48,8 +56,12 @@ describe("team service", () => {
 
     await expect(listTeams()).resolves.toEqual([]);
     await expect(getTeam("team-1")).resolves.toBeNull();
-    await expect(createTeam({ name: "Crew", members: members() })).rejects.toThrow("desktop application");
-    await expect(updateTeam({ team_id: "team-1", name: "Crew", members: members() })).rejects.toThrow("desktop application");
+    await expect(
+      createTeam({ name: "Crew", members: members() }),
+    ).rejects.toThrow("desktop application");
+    await expect(
+      updateTeam({ team_id: "team-1", name: "Crew", members: members() }),
+    ).rejects.toThrow("desktop application");
     await expect(deleteTeam("team-1")).rejects.toThrow("desktop application");
     expect(invokeMock).not.toHaveBeenCalled();
   });

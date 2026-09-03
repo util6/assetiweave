@@ -1,17 +1,38 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowDownWideNarrow, Filter, FolderOpen, Grid3X3, LayoutList, Plus, RefreshCw, Settings, Sparkles } from "lucide-react";
+import {
+  ArrowDownWideNarrow,
+  Filter,
+  FolderOpen,
+  Grid3X3,
+  LayoutList,
+  Plus,
+  RefreshCw,
+  Settings,
+  Sparkles,
+} from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
 import { AssetList } from "../../components/assets/AssetList";
-import { AssetToolbar, type AssetViewMode } from "../../components/assets/AssetToolbar";
-import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
+import {
+  AssetToolbar,
+  type AssetViewMode,
+} from "../../components/assets/AssetToolbar";
+import {
+  ToolbarMultiSelectDropdown,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
+} from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { DeploymentPlanPanel } from "../../components/plans/DeploymentPlanPanel";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import type { CatalogController } from "../../hooks/catalog/useCatalogController";
-import { filterAssets, type AssetSortBy, type AssetSortDirection } from "../../hooks/catalog/useAssetFilter";
+import {
+  filterAssets,
+  type AssetSortBy,
+  type AssetSortDirection,
+} from "../../hooks/catalog/useAssetFilter";
 import { useI18n } from "../../i18n/I18nProvider";
 import { assetKindLabel } from "../../i18n/domain";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
@@ -41,7 +62,8 @@ export function CatalogPage({
   const [kindFilters, setKindFilters] = useState<AssetKind[]>([]);
   const [sourceFilters, setSourceFilters] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<AssetSortBy>("created");
-  const [sortDirection, setSortDirection] = useState<AssetSortDirection>("desc");
+  const [sortDirection, setSortDirection] =
+    useState<AssetSortDirection>("desc");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [deletingAsset, setDeletingAsset] = useState<Asset | null>(null);
   const [assetGroups, setAssetGroups] = useState<AssetGroupDetail[]>([]);
@@ -55,7 +77,14 @@ export function CatalogPage({
         sortDirection,
         sourceFilters,
       }),
-    [catalog.assets, catalog.query, kindFilters, sortBy, sortDirection, sourceFilters],
+    [
+      catalog.assets,
+      catalog.query,
+      kindFilters,
+      sortBy,
+      sortDirection,
+      sourceFilters,
+    ],
   );
   const kindFilterOptions = useMemo(
     () =>
@@ -68,7 +97,10 @@ export function CatalogPage({
   const sourceFilterOptions = useMemo(() => {
     const countBySourceId = new Map<string, number>();
     catalog.assets.forEach((asset) => {
-      countBySourceId.set(asset.source_id, (countBySourceId.get(asset.source_id) ?? 0) + 1);
+      countBySourceId.set(
+        asset.source_id,
+        (countBySourceId.get(asset.source_id) ?? 0) + 1,
+      );
     });
 
     return catalog.sources
@@ -79,7 +111,8 @@ export function CatalogPage({
       }));
   }, [catalog.assets, catalog.sources]);
   const currentEditingAsset = editingAsset
-    ? (catalog.assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
+    ? (catalog.assets.find((asset) => asset.id === editingAsset.id) ??
+      editingAsset)
     : null;
 
   useEffect(() => {
@@ -97,7 +130,10 @@ export function CatalogPage({
   }, [editingAsset]);
 
   useEffect(() => {
-    if (editingAsset && !catalog.assets.some((asset) => asset.id === editingAsset.id)) {
+    if (
+      editingAsset &&
+      !catalog.assets.some((asset) => asset.id === editingAsset.id)
+    ) {
       setEditingAsset(null);
     }
   }, [catalog.assets, editingAsset]);
@@ -117,7 +153,10 @@ export function CatalogPage({
 
     setAssetActionBusy(true);
     try {
-      const savedAsset = await updateAssetDescription(editingAsset.id, description);
+      const savedAsset = await updateAssetDescription(
+        editingAsset.id,
+        description,
+      );
       catalog.applyAssetUpdate({ ...editingAsset, ...savedAsset });
       catalog.clearDeploymentPlan();
       catalog.showNotification({
@@ -168,7 +207,10 @@ export function CatalogPage({
     }
   }
 
-  async function handleSetAssetGroupMembership(group: AssetGroupDetail, enabled: boolean) {
+  async function handleSetAssetGroupMembership(
+    group: AssetGroupDetail,
+    enabled: boolean,
+  ) {
     if (!editingAsset) {
       return;
     }
@@ -182,9 +224,13 @@ export function CatalogPage({
 
     setAssetActionBusy(true);
     try {
-      const savedGroup = await setSkillGroupManualMembers(group.group.id, [...manualAssetIds]);
+      const savedGroup = await setSkillGroupManualMembers(group.group.id, [
+        ...manualAssetIds,
+      ]);
       setAssetGroups((current) =>
-        current.map((candidate) => (candidate.group.id === savedGroup.group.id ? savedGroup : candidate)),
+        current.map((candidate) =>
+          candidate.group.id === savedGroup.group.id ? savedGroup : candidate,
+        ),
       );
       catalog.showNotification({
         tone: "success",
@@ -219,11 +265,17 @@ export function CatalogPage({
             metrics={[
               {
                 label: t("metric.sources"),
-                value: catalog.sources.length > 0 ? catalog.sources.length : (catalog.overview?.source_count ?? 0),
+                value:
+                  catalog.sources.length > 0
+                    ? catalog.sources.length
+                    : (catalog.overview?.source_count ?? 0),
               },
               {
                 label: t("metric.supportedApps"),
-                value: catalog.profiles.length > 0 ? catalog.profiles.length : (catalog.overview?.profile_count ?? 0),
+                value:
+                  catalog.profiles.length > 0
+                    ? catalog.profiles.length
+                    : (catalog.overview?.profile_count ?? 0),
               },
             ]}
           />
@@ -252,33 +304,45 @@ export function CatalogPage({
               label: t("toolbar.refreshMountStatus"),
               onClick: () => void catalog.refreshMountStatus(),
             },
-            { icon: <Settings size={17} />, label: t("toolbar.settings"), onClick: onOpenSettings },
+            {
+              icon: <Settings size={17} />,
+              label: t("toolbar.settings"),
+              onClick: onOpenSettings,
+            },
           ],
         ]}
         ariaLabel={t("toolbar.aria.assetActions")}
         filterControls={
           <>
             <ToolbarMultiSelectDropdown
-              allLabel={t("toolbar.filter.all", { count: catalog.assets.length })}
+              allLabel={t("toolbar.filter.all", {
+                count: catalog.assets.length,
+              })}
               ariaLabel={t("toolbar.filter.kind")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<Filter size={15} />}
               label={t("toolbar.filter.kind")}
               onClear={() => setKindFilters([])}
-              onToggleValue={(value) => setKindFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setKindFilters((current) => toggleFilterValue(current, value))
+              }
               options={kindFilterOptions}
               selectedValues={kindFilters}
             />
             <ToolbarMultiSelectDropdown
-              allLabel={t("toolbar.filter.sourceAll", { count: catalog.sources.length })}
+              allLabel={t("toolbar.filter.sourceAll", {
+                count: catalog.sources.length,
+              })}
               ariaLabel={t("toolbar.filter.source")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<FolderOpen size={15} />}
               label={t("toolbar.filter.source")}
               onClear={() => setSourceFilters([])}
-              onToggleValue={(value) => setSourceFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setSourceFilters((current) => toggleFilterValue(current, value))
+              }
               options={sourceFilterOptions}
               selectedValues={sourceFilters}
             />
@@ -297,8 +361,16 @@ export function CatalogPage({
             <ToolbarSortDirectionButton
               direction={sortDirection}
               label={t("toolbar.sort.direction.label")}
-              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+              onClick={() =>
+                setSortDirection((current) =>
+                  current === "desc" ? "asc" : "desc",
+                )
+              }
+              title={t(
+                sortDirection === "desc"
+                  ? "toolbar.sort.direction.descTitle"
+                  : "toolbar.sort.direction.ascTitle",
+              )}
             />
           </>
         }
@@ -312,13 +384,26 @@ export function CatalogPage({
         viewAriaLabel={t("toolbar.view.aria")}
         viewMode={assetViewMode}
         viewOptions={[
-          { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
-          { icon: <Grid3X3 size={17} />, label: t("toolbar.view.grid"), value: "grid" },
+          {
+            icon: <LayoutList size={17} />,
+            label: t("toolbar.view.list"),
+            value: "list",
+          },
+          {
+            icon: <Grid3X3 size={17} />,
+            label: t("toolbar.view.grid"),
+            value: "grid",
+          },
         ]}
       />
 
       {catalog.loading ? (
-        <AppSkeleton label={t("common.loading")} layout="list" layoutProps={{ rows: 8 }} scope="content" />
+        <AppSkeleton
+          label={t("common.loading")}
+          layout="list"
+          layoutProps={{ rows: 8 }}
+          scope="content"
+        />
       ) : (
         <>
           <DeploymentPlanPanel plan={catalog.plan} />
@@ -350,7 +435,9 @@ export function CatalogPage({
         onSubmit={handleSaveAssetDescription}
         onToggleMount={handleToggleAssetMount}
         profiles={catalog.profiles}
-        source={catalog.sources.find((source) => source.id === editingAsset?.source_id)}
+        source={catalog.sources.find(
+          (source) => source.id === editingAsset?.source_id,
+        )}
       />
       <AssetDeleteDialog
         asset={deletingAsset}
@@ -367,7 +454,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+function toggleFilterValue<Value extends string>(
+  current: Value[],
+  value: Value,
+) {
   if (current.includes(value)) {
     return current.filter((item) => item !== value);
   }

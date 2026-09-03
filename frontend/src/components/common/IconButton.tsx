@@ -17,7 +17,11 @@ export function IconButton({
   return (
     <button
       className={clsx(
-        toolbarIconRecipe({ className: compact ? "size-7" : "size-9 border border-theme-control-border bg-theme-control/95 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]" }),
+        toolbarIconRecipe({
+          className: compact
+            ? "size-7"
+            : "size-9 border border-theme-control-border bg-theme-control/95 shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)]",
+        }),
       )}
       aria-label={label}
       onClick={onClick}

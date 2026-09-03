@@ -8,7 +8,10 @@ import {
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   type ResolvedConversationTranslationSettings,
 } from "../../store/settings/AppSettingsProvider";
-import { useConversationContentController, type ConversationTranslationTaskController } from "./useConversationContentController";
+import {
+  useConversationContentController,
+  type ConversationTranslationTaskController,
+} from "./useConversationContentController";
 import type { ConversationContentBlock } from "./ConversationContentCards";
 
 const t = ((key: string) => key) as never;
@@ -27,7 +30,9 @@ const block: ConversationContentBlock = {
   type: "answer",
 };
 
-function task(overrides: Partial<AiExecutionTaskSnapshot> = {}): AiExecutionTaskSnapshot {
+function task(
+  overrides: Partial<AiExecutionTaskSnapshot> = {},
+): AiExecutionTaskSnapshot {
   return {
     agent_id: "opencode",
     created_at: "2026-08-16T00:00:00Z",
@@ -48,28 +53,37 @@ afterEach(() => cleanup());
 
 describe("useConversationContentController", () => {
   it("keeps expanded and translated state across rerenders and isolates a new question scope", async () => {
-    const translationAvailabilityChecker = vi.fn(async () => ({ available: true, error: null, version: "1" }));
+    const translationAvailabilityChecker = vi.fn(async () => ({
+      available: true,
+      error: null,
+      version: "1",
+    }));
     const translationSaver = vi.fn(async () => undefined);
     const { result, rerender } = renderHook(
-      ({ scopeKey }) => useConversationContentController({
-        blocks: [block],
-        recordKind: "session",
-        scopeKey,
-        t,
-        translationAvailabilityChecker,
-        translationSaver,
-        translationSettings: settings,
-        translator: async () => ({ translated_text: "你好" }),
-      }),
+      ({ scopeKey }) =>
+        useConversationContentController({
+          blocks: [block],
+          recordKind: "session",
+          scopeKey,
+          t,
+          translationAvailabilityChecker,
+          translationSaver,
+          translationSettings: settings,
+          translator: async () => ({ translated_text: "你好" }),
+        }),
       { initialProps: { scopeKey: "question-1" } },
     );
 
-    await waitFor(() => expect(result.current.translationAvailability).toBe("available"));
+    await waitFor(() =>
+      expect(result.current.translationAvailability).toBe("available"),
+    );
     act(() => result.current.toggleExpanded(block.id));
     expect(result.current.expandedBlockIds.has(block.id)).toBe(true);
     await act(async () => result.current.translateBlock(block));
     expect(result.current.getTranslatedText(block)).toBe("你好");
-    expect(translationSaver).toHaveBeenCalledWith(expect.objectContaining({ partId: "part-1", translatedText: "你好" }));
+    expect(translationSaver).toHaveBeenCalledWith(
+      expect.objectContaining({ partId: "part-1", translatedText: "你好" }),
+    );
     expect(translationAvailabilityChecker).toHaveBeenCalledTimes(1);
 
     rerender({ scopeKey: "question-2" });
@@ -87,17 +101,25 @@ describe("useConversationContentController", () => {
       startTranslation: vi.fn(async () => currentTask),
       tasks: [],
     };
-    const translationAvailabilityChecker = vi.fn(async () => ({ available: true, error: null, version: "1" }));
-    const { result, rerender, unmount } = renderHook(() => useConversationContentController({
-      blocks: [block],
-      recordKind: "session",
-      t,
-      translationAvailabilityChecker,
-      translationSettings: settings,
-      translationTaskController: controller,
+    const translationAvailabilityChecker = vi.fn(async () => ({
+      available: true,
+      error: null,
+      version: "1",
     }));
+    const { result, rerender, unmount } = renderHook(() =>
+      useConversationContentController({
+        blocks: [block],
+        recordKind: "session",
+        t,
+        translationAvailabilityChecker,
+        translationSettings: settings,
+        translationTaskController: controller,
+      }),
+    );
 
-    await waitFor(() => expect(result.current.translationAvailability).toBe("available"));
+    await waitFor(() =>
+      expect(result.current.translationAvailability).toBe("available"),
+    );
     await act(async () => result.current.translateBlock(block));
     expect(controller.startTranslation).toHaveBeenCalledTimes(1);
     controller.tasks = [currentTask];
@@ -112,7 +134,9 @@ describe("useConversationContentController", () => {
     });
     controller.tasks = [currentTask];
     rerender();
-    await waitFor(() => expect(result.current.getTranslatedText(block)).toBe("translated"));
+    await waitFor(() =>
+      expect(result.current.getTranslatedText(block)).toBe("translated"),
+    );
     expect(controller.startTranslation).toHaveBeenCalledTimes(1);
     unmount();
   });
@@ -120,26 +144,39 @@ describe("useConversationContentController", () => {
   it("reports task failures through the global callback without retaining a card error", async () => {
     let currentTask = task();
     const onTranslationError = vi.fn();
-    const translationAvailabilityChecker = vi.fn(async () => ({ available: true, error: null, version: "1" }));
+    const translationAvailabilityChecker = vi.fn(async () => ({
+      available: true,
+      error: null,
+      version: "1",
+    }));
     const controller: ConversationTranslationTaskController = {
       cancelTask: vi.fn(async () => currentTask),
       startTranslation: vi.fn(async () => currentTask),
       tasks: [],
     };
-    const { result, rerender } = renderHook(() => useConversationContentController({
-      blocks: [block],
-      onTranslationError,
-      recordKind: "session",
-      t,
-      translationAvailabilityChecker,
-      translationSettings: settings,
-      translationTaskController: controller,
-    }));
+    const { result, rerender } = renderHook(() =>
+      useConversationContentController({
+        blocks: [block],
+        onTranslationError,
+        recordKind: "session",
+        t,
+        translationAvailabilityChecker,
+        translationSettings: settings,
+        translationTaskController: controller,
+      }),
+    );
 
-    await waitFor(() => expect(result.current.translationAvailability).toBe("available"));
+    await waitFor(() =>
+      expect(result.current.translationAvailability).toBe("available"),
+    );
     await act(async () => result.current.translateBlock(block));
     currentTask = task({
-      error: { code: "cleanup_failed", message: "cleanup failed", retryable: true, phase: "prompting" },
+      error: {
+        code: "cleanup_failed",
+        message: "cleanup failed",
+        retryable: true,
+        phase: "prompting",
+      },
       finished_at: "2026-08-16T00:00:02Z",
       state: "failed",
       updated_at: "2026-08-16T00:00:02Z",
@@ -147,6 +184,10 @@ describe("useConversationContentController", () => {
     controller.tasks = [currentTask];
     rerender();
 
-    await waitFor(() => expect(onTranslationError).toHaveBeenCalledWith("conversation.content.translationFailed"));
+    await waitFor(() =>
+      expect(onTranslationError).toHaveBeenCalledWith(
+        "conversation.content.translationFailed",
+      ),
+    );
   });
 });

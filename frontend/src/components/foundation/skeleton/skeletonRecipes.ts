@@ -13,15 +13,24 @@ import type {
 export const skeletonRecipes: SkeletonRecipeRegistry = {
   list: {
     component: ListSkeletonRecipe,
-    defaults: { density: "default", rows: 7 } satisfies Omit<ListSkeletonRecipeProps, "children">,
+    defaults: { density: "default", rows: 7 } satisfies Omit<
+      ListSkeletonRecipeProps,
+      "children"
+    >,
   },
   cards: {
     component: CardsSkeletonRecipe,
-    defaults: { cards: 6, columns: 2, density: "default" } satisfies Omit<CardsSkeletonRecipeProps, "children">,
+    defaults: { cards: 6, columns: 2, density: "default" } satisfies Omit<
+      CardsSkeletonRecipeProps,
+      "children"
+    >,
   },
   columns: {
     component: ColumnsSkeletonRecipe,
-    defaults: { columns: 3, density: "default" } satisfies Omit<ColumnsSkeletonRecipeProps, "children">,
+    defaults: { columns: 3, density: "default" } satisfies Omit<
+      ColumnsSkeletonRecipeProps,
+      "children"
+    >,
   },
 };
 

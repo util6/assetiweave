@@ -12,14 +12,20 @@ import {
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
 import type { ConversationContentController } from "./useConversationContentController";
-import type { ConversationContentNode, ConversationQuestionDetail } from "../../types";
+import type {
+  ConversationContentNode,
+  ConversationQuestionDetail,
+} from "../../types";
 
 const now = "2026-08-16T00:00:00Z";
-const t: Translator = (key, params?: TranslationParams) => interpolate(messages.zh[key] ?? key, params);
+const t: Translator = (key, params?: TranslationParams) =>
+  interpolate(messages.zh[key] ?? key, params);
 
 function interpolate(template: string, params?: TranslationParams) {
   if (!params) return template;
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
+    String(params[key] ?? ""),
+  );
 }
 
 const question: ConversationQuestionDetail = {
@@ -101,9 +107,17 @@ describe("ConversationTurn", () => {
     const models = buildConversationTurnPresentations(question);
     expect(models).toHaveLength(2);
     expect(models[0]?.promptBlockId).toBe("turn-1-question");
-    expect(models[0]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-1" } });
-    expect(models[1]?.displayNodes?.[0]).toMatchObject({ type: "card", block: { id: "part-2" } });
-    expect(collectConversationTurnBlocks(models).map((block) => block.id)).toEqual(["part-1", "part-2"]);
+    expect(models[0]?.displayNodes?.[0]).toMatchObject({
+      type: "card",
+      block: { id: "part-1" },
+    });
+    expect(models[1]?.displayNodes?.[0]).toMatchObject({
+      type: "card",
+      block: { id: "part-2" },
+    });
+    expect(
+      collectConversationTurnBlocks(models).map((block) => block.id),
+    ).toEqual(["part-1", "part-2"]);
 
     const index = buildConversationBlockTurnIndex(models);
     expect(index.get("turn-1-question")).toBe("turn-1");
@@ -111,7 +125,8 @@ describe("ConversationTurn", () => {
   });
 
   it("keeps prompt, split, empty, and content card presentation inside one memoized turn", () => {
-    const model: ConversationTurnPresentation = buildConversationTurnPresentations(question)[0]!;
+    const model: ConversationTurnPresentation =
+      buildConversationTurnPresentations(question)[0]!;
     const controller: ConversationContentController = {
       cancelTranslation: async () => undefined,
       copyBlock: async () => undefined,
@@ -133,7 +148,13 @@ describe("ConversationTurn", () => {
         onSplit={() => undefined}
         recordKind="session"
         t={t}
-        visibility={{ answer: true, code: true, command: true, result: true, tool: true }}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
       />,
     );
     expect(html).toContain('data-conversation-turn-id="turn-1"');
@@ -148,31 +169,49 @@ describe("ConversationTurn", () => {
       turns: [question.turns[0]!],
       question_turns: [question.question_turns[0]!],
       projected_content_nodes: [
-        executionNode("part-shell", "shell-command", "command", "printf divider; printf one; printf two", 0),
+        executionNode(
+          "part-shell",
+          "shell-command",
+          "command",
+          "printf divider; printf one; printf two",
+          0,
+        ),
         executionNode("part-result", "shell-result", "result", "one\ntwo", 1),
       ],
     };
 
-    const [model] = buildConversationTurnPresentations(executionQuestion, [{
-      part_id: "part-shell",
-      schema_version: 1,
-      projector_version: "shell-projector-v1",
-      nodes: [
-        { display_order: 0, command: "printf one", command_label: "one" },
-        { display_order: 1, command: "printf two", command_label: "two" },
-      ],
-    }]);
+    const [model] = buildConversationTurnPresentations(executionQuestion, [
+      {
+        part_id: "part-shell",
+        schema_version: 1,
+        projector_version: "shell-projector-v1",
+        nodes: [
+          { display_order: 0, command: "printf one", command_label: "one" },
+          { display_order: 1, command: "printf two", command_label: "two" },
+        ],
+      },
+    ]);
     expect(model?.displayNodes).toHaveLength(1);
     expect(model?.displayNodes?.[0]).toMatchObject({
       type: "execution",
       sourceExecutionId: "shell-execution",
       commands: [
-        { id: "part-shell::display:0", partId: "part-shell", commandLabel: "one" },
-        { id: "part-shell::display:1", partId: "part-shell", commandLabel: "two" },
+        {
+          id: "part-shell::display:0",
+          partId: "part-shell",
+          commandLabel: "one",
+        },
+        {
+          id: "part-shell::display:1",
+          partId: "part-shell",
+          commandLabel: "two",
+        },
       ],
       results: [{ id: "part-result-node-1" }],
     });
-    expect(buildConversationBlockTurnIndex([model!]).get("part-shell-node-0")).toBe("turn-1");
+    expect(
+      buildConversationBlockTurnIndex([model!]).get("part-shell-node-0"),
+    ).toBe("turn-1");
   });
 });
 

@@ -14,8 +14,20 @@ describe("target profile input schema", () => {
         app_kind: "custom",
         deployment_strategy: "symlink_to_source",
         enabled: true,
-        exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
-        include: { groups: [], kinds: ["skill"], path_patterns: [], sources: [], tags: [] },
+        exclude: {
+          groups: [],
+          kinds: ["unclassified"],
+          path_patterns: [],
+          sources: [],
+          tags: [],
+        },
+        include: {
+          groups: [],
+          kinds: ["skill"],
+          path_patterns: [],
+          sources: [],
+          tags: [],
+        },
         name: "Team App",
         safety: { allow_overwrite: false, allow_remove: false },
         supported_kinds: ["skill"],
@@ -33,7 +45,9 @@ describe("target profile input schema", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors.fieldErrors.target_paths).toEqual([expect.any(String)]);
+      expect(result.errors.fieldErrors.target_paths).toEqual([
+        expect.any(String),
+      ]);
     }
   });
 
@@ -42,9 +56,21 @@ describe("target profile input schema", () => {
       app_kind: "open_code",
       deployment_strategy: "symlink_to_source",
       enabled: true,
-      exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+      exclude: {
+        groups: [],
+        kinds: ["unclassified"],
+        path_patterns: [],
+        sources: [],
+        tags: [],
+      },
       id: "opencode",
-      include: { groups: [], kinds: ["skill"], path_patterns: [], sources: [], tags: [] },
+      include: {
+        groups: [],
+        kinds: ["skill"],
+        path_patterns: [],
+        sources: [],
+        tags: [],
+      },
       name: "OpenCode",
       safety: { allow_overwrite: false, allow_remove: false },
       supported_kinds: ["skill"],

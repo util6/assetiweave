@@ -11,7 +11,9 @@ export interface TenantControllerOptions {
   onTenantChanged?: (tenant: Tenant) => Promise<void> | void;
 }
 
-export function useTenantController({ onTenantChanged }: TenantControllerOptions = {}) {
+export function useTenantController({
+  onTenantChanged,
+}: TenantControllerOptions = {}) {
   const [activeTenant, setActiveTenant] = useState<Tenant | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +66,10 @@ export function useTenantController({ onTenantChanged }: TenantControllerOptions
     setBusy(true);
     try {
       const setActive = params.set_active ?? true;
-      const tenant = await createTenantRequest({ ...params, set_active: setActive });
+      const tenant = await createTenantRequest({
+        ...params,
+        set_active: setActive,
+      });
       setTenants((current) => ensureTenantInList(current, tenant));
       if (setActive) {
         setActiveTenant(tenant);
@@ -121,9 +126,10 @@ async function loadTenantState() {
 }
 
 function ensureTenantInList(tenants: Tenant[], tenant: Tenant) {
-  return [...tenants.filter((candidate) => candidate.id !== tenant.id), tenant].sort((left, right) =>
-    left.name.localeCompare(right.name),
-  );
+  return [
+    ...tenants.filter((candidate) => candidate.id !== tenant.id),
+    tenant,
+  ].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function errorMessage(error: unknown) {

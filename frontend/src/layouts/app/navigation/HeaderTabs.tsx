@@ -26,7 +26,8 @@ export function HeaderTabs({
           <button
             className={clsx(
               "h-8 min-w-24 whitespace-nowrap rounded-full px-5 text-center text-label-caps text-on-surface-variant transition-colors hover:bg-theme-control-hover hover:text-on-surface",
-              tab.id === activeId && "bg-theme-nav-active text-theme-nav-active-fg shadow-[0_10px_24px_rgb(var(--theme-panel-shadow)/0.22),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]",
+              tab.id === activeId &&
+                "bg-theme-nav-active text-theme-nav-active-fg shadow-[0_10px_24px_rgb(var(--theme-panel-shadow)/0.22),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]",
             )}
             key={tab.id}
             onClick={() => onSelect(tab)}

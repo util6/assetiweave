@@ -7,7 +7,9 @@ export interface BackgroundTaskRuntimeAdapter<TState, TEvent> {
   isRunning: (state: TState) => boolean;
   merge: (current: TState, incoming: TState | TEvent) => TState;
   refresh: () => Promise<TState>;
-  subscribe: (listener: (event: TEvent) => void) => Promise<BackgroundTaskUnsubscribe>;
+  subscribe: (
+    listener: (event: TEvent) => void,
+  ) => Promise<BackgroundTaskUnsubscribe>;
   pollIntervalMs?: number;
   reconnectDelayMs?: number;
 }
@@ -19,10 +21,13 @@ export function useBackgroundTaskRuntime<TState, TEvent>(
   const adapterRef = useRef(adapter);
   adapterRef.current = adapter;
 
-  const merge = useCallback((incoming: TState | TEvent) => {
-    if (adapterRef.current !== adapter) return;
-    setState((current) => adapter.merge(current, incoming));
-  }, [adapter]);
+  const merge = useCallback(
+    (incoming: TState | TEvent) => {
+      if (adapterRef.current !== adapter) return;
+      setState((current) => adapter.merge(current, incoming));
+    },
+    [adapter],
+  );
 
   const refresh = useCallback(async () => {
     const incoming = await adapter.refresh();
@@ -44,21 +49,27 @@ export function useBackgroundTaskRuntime<TState, TEvent>(
     void refresh().catch(() => undefined);
 
     function connect() {
-      void adapter.subscribe((event) => {
-        if (!cancelled) {
-          merge(event);
-        }
-      }).then((unsubscribe) => {
-        if (cancelled) {
-          unsubscribe();
-        } else {
-          cleanupSubscription = unsubscribe;
-        }
-      }).catch(() => {
-        if (!cancelled) {
-          reconnectTimer = window.setTimeout(connect, adapter.reconnectDelayMs ?? 1000);
-        }
-      });
+      void adapter
+        .subscribe((event) => {
+          if (!cancelled) {
+            merge(event);
+          }
+        })
+        .then((unsubscribe) => {
+          if (cancelled) {
+            unsubscribe();
+          } else {
+            cleanupSubscription = unsubscribe;
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            reconnectTimer = window.setTimeout(
+              connect,
+              adapter.reconnectDelayMs ?? 1000,
+            );
+          }
+        });
     }
 
     connect();

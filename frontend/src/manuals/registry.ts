@@ -15,7 +15,8 @@ export const manualDocuments = [
     {
       title: "目录总览使用手册",
       subtitle: "浏览、筛选和部署 Skill 资产",
-      overview: "目录总览用于查看当前扫描到的 Skill 资产、来源数量、目标 App，以及生成部署计划。",
+      overview:
+        "目录总览用于查看当前扫描到的 Skill 资产、来源数量、目标 App，以及生成部署计划。",
       sections: [
         {
           heading: "常用流程",
@@ -61,7 +62,8 @@ export const manualDocuments = [
     {
       title: "Catalog Overview Manual",
       subtitle: "Browse, filter, and deploy Skill assets",
-      overview: "The catalog overview shows scanned Skill assets, source counts, target apps, and deployment plan entry points.",
+      overview:
+        "The catalog overview shows scanned Skill assets, source counts, target apps, and deployment plan entry points.",
       sections: [
         {
           heading: "Common workflow",
@@ -81,7 +83,13 @@ export const manualDocuments = [
             "Catalog metrics come from the latest scan; refresh after source folders change.",
             "Creating a plan is a preview step and does not write target app files.",
           ],
-          keywords: ["catalog", "search", "asset edit", "deployment plan", "Skill"],
+          keywords: [
+            "catalog",
+            "search",
+            "asset edit",
+            "deployment plan",
+            "Skill",
+          ],
         },
         {
           heading: "Reading state",
@@ -100,7 +108,13 @@ export const manualDocuments = [
             "Do not delete unknown target files just to clear conflicts; confirm ownership first.",
             "App-specific sources often have stricter mount policies than regular local sources.",
           ],
-          keywords: ["state", "conflict", "broken link", "refresh mount state", "skip"],
+          keywords: [
+            "state",
+            "conflict",
+            "broken link",
+            "refresh mount state",
+            "skip",
+          ],
         },
       ],
     },
@@ -110,7 +124,8 @@ export const manualDocuments = [
     {
       title: "分组管理使用手册",
       subtitle: "按场景组织 Skill 并批量挂载",
-      overview: "分组管理用于把 Skill 按项目、角色或使用场景归类，并对一组 Skill 执行批量挂载。",
+      overview:
+        "分组管理用于把 Skill 按项目、角色或使用场景归类，并对一组 Skill 执行批量挂载。",
       sections: [
         {
           heading: "创建和维护分组",
@@ -155,7 +170,8 @@ export const manualDocuments = [
     {
       title: "Group Management Manual",
       subtitle: "Organize Skills by scenario and mount them in batches",
-      overview: "Group management lets you classify Skills by project, role, or scenario and apply batch mount operations.",
+      overview:
+        "Group management lets you classify Skills by project, role, or scenario and apply batch mount operations.",
       sections: [
         {
           heading: "Create and maintain groups",
@@ -174,7 +190,13 @@ export const manualDocuments = [
             "Renaming a group does not move Skill files, but it affects later search and recognition.",
             "Disabling is not unmounting; existing mounts must be handled from mount or batch flows.",
           ],
-          keywords: ["groups", "scenario", "manual members", "rule members", "disabled"],
+          keywords: [
+            "groups",
+            "scenario",
+            "manual members",
+            "rule members",
+            "disabled",
+          ],
         },
         {
           heading: "Batch mounting",
@@ -193,7 +215,13 @@ export const manualDocuments = [
             "Exclusive mode unmounts managed Skills that are not in the selected groups; review the preview.",
             "Items blocked by source policy, conflict, or broken links are skipped and need separate handling.",
           ],
-          keywords: ["batch mount", "exclusive", "additive", "preview", "skipped"],
+          keywords: [
+            "batch mount",
+            "exclusive",
+            "additive",
+            "preview",
+            "skipped",
+          ],
         },
       ],
     },
@@ -203,7 +231,8 @@ export const manualDocuments = [
     {
       title: "技能源管理使用手册",
       subtitle: "导入、扫描和维护 Skill 来源",
-      overview: "技能源管理用于维护本地目录、Git 工作区、备份库和 App 专属来源，并把这些来源扫描成资产目录。",
+      overview:
+        "技能源管理用于维护本地目录、Git 工作区、备份库和 App 专属来源，并把这些来源扫描成资产目录。",
       sections: [
         {
           heading: "导入来源",
@@ -248,7 +277,8 @@ export const manualDocuments = [
     {
       title: "Skill Sources Manual",
       subtitle: "Import, scan, and maintain Skill sources",
-      overview: "Skill sources manage local folders, Git checkouts, backup libraries, and app-specific sources that feed the asset catalog.",
+      overview:
+        "Skill sources manage local folders, Git checkouts, backup libraries, and app-specific sources that feed the asset catalog.",
       sections: [
         {
           heading: "Import sources",
@@ -267,7 +297,13 @@ export const manualDocuments = [
             "Point source roots at stable locations; temporary download folders often create broken links or duplicates.",
             "Confirm remote repositories are trusted before acquiring Skills into your daily toolchain.",
           ],
-          keywords: ["sources", "import", "remote acquire", "scan rules", "priority"],
+          keywords: [
+            "sources",
+            "import",
+            "remote acquire",
+            "scan rules",
+            "priority",
+          ],
         },
         {
           heading: "Troubleshoot scan results",
@@ -286,7 +322,13 @@ export const manualDocuments = [
             "Disabling a source does not remove files from disk, but it affects the catalog and future deployment plans.",
             "Broad rules may include test files; narrow rules may miss valid Skills.",
           ],
-          keywords: ["scan", "source issues", "include rules", "exclude rules", "mount state"],
+          keywords: [
+            "scan",
+            "source issues",
+            "include rules",
+            "exclude rules",
+            "mount state",
+          ],
         },
       ],
     },
@@ -296,7 +338,8 @@ export const manualDocuments = [
     {
       title: "应用挂载使用手册",
       subtitle: "管理目标 App/Profile 的 Skill 链接",
-      overview: "应用挂载用于配置每个目标 App 的 skills 目录，并把 Skill 以受管方式挂载或卸载到这些目录。",
+      overview:
+        "应用挂载用于配置每个目标 App 的 skills 目录，并把 Skill 以受管方式挂载或卸载到这些目录。",
       sections: [
         {
           heading: "维护目标 App",
@@ -315,7 +358,13 @@ export const manualDocuments = [
             "默认 App 受保护是为了避免误删内置投放目标，修改路径前先确认真实目录。",
             "多个 Profile 指向同一目录时，挂载状态会互相影响。",
           ],
-          keywords: ["目标 App", "Profile", "skills 目录", "备份库", "默认 App"],
+          keywords: [
+            "目标 App",
+            "Profile",
+            "skills 目录",
+            "备份库",
+            "默认 App",
+          ],
         },
         {
           heading: "挂载和验证",
@@ -341,7 +390,8 @@ export const manualDocuments = [
     {
       title: "App Mounts Manual",
       subtitle: "Manage Skill links for target apps and profiles",
-      overview: "App mounts configure target skills directories and mount or unmount Skills through managed links.",
+      overview:
+        "App mounts configure target skills directories and mount or unmount Skills through managed links.",
       sections: [
         {
           heading: "Maintain target apps",
@@ -360,7 +410,13 @@ export const manualDocuments = [
             "Default apps are protected to avoid deleting built-in targets; confirm real directories before changing paths.",
             "Profiles that share one target directory will affect each other's mount state.",
           ],
-          keywords: ["target app", "profile", "skills directory", "backup library", "default app"],
+          keywords: [
+            "target app",
+            "profile",
+            "skills directory",
+            "backup library",
+            "default app",
+          ],
         },
         {
           heading: "Mount and verify",
@@ -379,7 +435,13 @@ export const manualDocuments = [
             "A conflict usually means an unmanaged file already exists at the target path; confirm ownership first.",
             "A broken link means the target points at a missing source file; check whether the source moved or was deleted.",
           ],
-          keywords: ["mount", "symlink", "conflict", "broken link", "refresh mount state"],
+          keywords: [
+            "mount",
+            "symlink",
+            "conflict",
+            "broken link",
+            "refresh mount state",
+          ],
         },
       ],
     },
@@ -389,7 +451,8 @@ export const manualDocuments = [
     {
       title: "Session 浏览使用手册",
       subtitle: "同步、浏览和导出历史对话",
-      overview: "Session 浏览是对话记录下保留的主入口，用于同步外部来源、按 App 浏览 Session、审阅问题内容，并说明来源、适配器和 aICLI/assetiweave-cli 的使用方式。",
+      overview:
+        "Session 浏览是对话记录下保留的主入口，用于同步外部来源、按 App 浏览 Session、审阅问题内容，并说明来源、适配器和 aICLI/assetiweave-cli 的使用方式。",
       sections: [
         {
           heading: "同步和浏览",
@@ -448,7 +511,13 @@ export const manualDocuments = [
             "未注册、未受信任、内容 hash 已变化或未启用的外部 adapter 不应进入日常同步。",
             "修改 manifest 或脚本后，先重新 validate 和 try-run，再进入正式同步。",
           ],
-          keywords: ["对话来源", "适配器", "adapter_id", "manifest", "同步链路"],
+          keywords: [
+            "对话来源",
+            "适配器",
+            "adapter_id",
+            "manifest",
+            "同步链路",
+          ],
         },
         {
           heading: "aICLI / assetiweave-cli",
@@ -460,10 +529,10 @@ export const manualDocuments = [
           ],
           items: [
             "先列出现有适配器：assetiweave-cli conversation adapter list。",
-            "创建外部适配器骨架：assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\" --runtime node。",
+            '创建外部适配器骨架：assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name "My App" --runtime node。',
             "校验 manifest：assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json。",
             "试运行读取能力：assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes。",
-            "注册适配器并新增来源：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes；assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records。",
+            '注册适配器并新增来源：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes；assetiweave-cli conversation source add --id my-app-live --adapter my-app --name "My App Live" --kind directory --location ~/my-app-records。',
             "预览同步：assetiweave-cli conversation sync --adapter my-app --dry-run；确认后去掉 --dry-run 正式导入。",
           ],
           cautions: [
@@ -471,14 +540,23 @@ export const manualDocuments = [
             "kind 只能使用 live、file、directory、sqlite 或 custom，且要匹配 adapter manifest 支持的 input_kinds。",
             "开发中的 adapter 建议先用测试目录和 --dry-run 验证，避免污染正式对话库。",
           ],
-          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "register", "source add", "sync"],
+          keywords: [
+            "aICLI",
+            "assetiweave-cli",
+            "scaffold",
+            "validate",
+            "register",
+            "source add",
+            "sync",
+          ],
         },
       ],
     },
     {
       title: "Session Browser Manual",
       subtitle: "Sync, browse, and export conversation history",
-      overview: "The session browser is the remaining Conversations entry point for syncing external sources, browsing sessions by app, reviewing question content, and documenting source, adapter, and aICLI/assetiweave-cli usage.",
+      overview:
+        "The session browser is the remaining Conversations entry point for syncing external sources, browsing sessions by app, reviewing question content, and documenting source, adapter, and aICLI/assetiweave-cli usage.",
       sections: [
         {
           heading: "Sync and browse",
@@ -497,7 +575,13 @@ export const manualDocuments = [
             "Sync depends on enabled sources and adapter bindings; disabled sources import nothing new.",
             "Detail search filters only the active session and does not query every source again.",
           ],
-          keywords: ["Session", "sync", "app list", "question search", "detail workspace"],
+          keywords: [
+            "Session",
+            "sync",
+            "app list",
+            "question search",
+            "detail workspace",
+          ],
         },
         {
           heading: "Organize and export",
@@ -516,7 +600,13 @@ export const manualDocuments = [
             "Merge and split change normalized records; verify selected and adjacent questions first.",
             "The export directory defaults under Desktop, so check sensitive commands or paths before sharing.",
           ],
-          keywords: ["export", "content blocks", "bulk selection", "merge", "split"],
+          keywords: [
+            "export",
+            "content blocks",
+            "bulk selection",
+            "merge",
+            "split",
+          ],
         },
         {
           heading: "Sources and adapters",
@@ -537,7 +627,13 @@ export const manualDocuments = [
             "External adapters that are unregistered, untrusted, hash-changed, or disabled should not enter routine sync.",
             "After changing a manifest or script, validate and try-run before real sync.",
           ],
-          keywords: ["conversation source", "adapter", "adapter_id", "manifest", "sync pipeline"],
+          keywords: [
+            "conversation source",
+            "adapter",
+            "adapter_id",
+            "manifest",
+            "sync pipeline",
+          ],
         },
         {
           heading: "aICLI / assetiweave-cli",
@@ -549,10 +645,10 @@ export const manualDocuments = [
           ],
           items: [
             "List adapters: assetiweave-cli conversation adapter list.",
-            "Create a skeleton: assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name \"My App\" --runtime node.",
+            'Create a skeleton: assetiweave-cli conversation adapter scaffold --directory ~/.assetiweave/conversation-adapters/my-adapter --id my-app --name "My App" --runtime node.',
             "Validate the manifest: assetiweave-cli conversation adapter validate ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json.",
             "Try a read method: assetiweave-cli conversation adapter try-run ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --method read_session --location ~/my-app-records --yes.",
-            "Register the adapter and add a source: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes; assetiweave-cli conversation source add --id my-app-live --adapter my-app --name \"My App Live\" --kind directory --location ~/my-app-records.",
+            'Register the adapter and add a source: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/my-adapter/conversation-adapter.json --yes; assetiweave-cli conversation source add --id my-app-live --adapter my-app --name "My App Live" --kind directory --location ~/my-app-records.',
             "Preview sync: assetiweave-cli conversation sync --adapter my-app --dry-run; remove --dry-run to import.",
           ],
           cautions: [
@@ -560,7 +656,15 @@ export const manualDocuments = [
             "kind must be live, file, directory, sqlite, or custom, and must match adapter manifest input_kinds.",
             "Validate development adapters against test folders and --dry-run before touching the production conversation library.",
           ],
-          keywords: ["aICLI", "assetiweave-cli", "scaffold", "validate", "register", "source add", "sync"],
+          keywords: [
+            "aICLI",
+            "assetiweave-cli",
+            "scaffold",
+            "validate",
+            "register",
+            "source add",
+            "sync",
+          ],
         },
       ],
     },
@@ -570,7 +674,8 @@ export const manualDocuments = [
     {
       title: "网页记录浏览使用手册",
       subtitle: "采集、同步和管理网页版 AI 对话",
-      overview: "网页记录浏览只展示由用户目录采集脚本导入的网页版 AI 对话。解析脚本保存在 .assetiweave 下，应用负责执行、标准化，并把结果写入独立的 web_record 数据表。",
+      overview:
+        "网页记录浏览只展示由用户目录采集脚本导入的网页版 AI 对话。解析脚本保存在 .assetiweave 下，应用负责执行、标准化，并把结果写入独立的 web_record 数据表。",
       sections: [
         {
           heading: "采集链路",
@@ -595,7 +700,7 @@ export const manualDocuments = [
         {
           heading: "CLI",
           items: [
-            "安装网页插件来源：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/chatgpt-web/conversation-adapter.json --yes；assetiweave-cli conversation source add --id chatgpt-web-export --adapter chatgpt-web --name \"ChatGPT Web\" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized。",
+            '安装网页插件来源：assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/chatgpt-web/conversation-adapter.json --yes；assetiweave-cli conversation source add --id chatgpt-web-export --adapter chatgpt-web --name "ChatGPT Web" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized。',
             "同步网页来源：assetiweave-cli conversation sync --adapter chatgpt-web --record-kind web。",
             "列出网页记录：assetiweave-cli conversation web-record list。",
             "查看或导出：assetiweave-cli conversation web-record get <record-id>；assetiweave-cli conversation web-record export <record-id> --output-root <dir>。",
@@ -606,7 +711,8 @@ export const manualDocuments = [
     {
       title: "Web Record Browser Manual",
       subtitle: "Harvest, sync, and manage AI web conversations",
-      overview: "The web record browser only shows conversations imported by user-directory web harvesters. Scripts live under .assetiweave, while the app executes adapters, normalizes output, and stores it in independent web_record tables.",
+      overview:
+        "The web record browser only shows conversations imported by user-directory web harvesters. Scripts live under .assetiweave, while the app executes adapters, normalizes output, and stores it in independent web_record tables.",
       sections: [
         {
           heading: "Harvest pipeline",
@@ -631,7 +737,7 @@ export const manualDocuments = [
         {
           heading: "CLI",
           items: [
-            "Install a web plugin source: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/chatgpt-web/conversation-adapter.json --yes; assetiweave-cli conversation source add --id chatgpt-web-export --adapter chatgpt-web --name \"ChatGPT Web\" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized.",
+            'Install a web plugin source: assetiweave-cli conversation adapter register ~/.assetiweave/conversation-adapters/chatgpt-web/conversation-adapter.json --yes; assetiweave-cli conversation source add --id chatgpt-web-export --adapter chatgpt-web --name "ChatGPT Web" --kind directory --location ~/.assetiweave/conversation-adapters/chatgpt-web/output/normalized.',
             "Sync a web adapter: assetiweave-cli conversation sync --adapter chatgpt-web --record-kind web.",
             "List records: assetiweave-cli conversation web-record list.",
             "Inspect or export: assetiweave-cli conversation web-record get <record-id>; assetiweave-cli conversation web-record export <record-id> --output-root <dir>.",
@@ -645,7 +751,8 @@ export const manualDocuments = [
     {
       title: "服务总览使用手册",
       subtitle: "查看 MCP 服务资产和配置状态",
-      overview: "服务总览用于汇总 MCP Server、配置片段和目标应用投影的整体状态；当前页面仍在建设中，本手册先固定入口和操作边界。",
+      overview:
+        "服务总览用于汇总 MCP Server、配置片段和目标应用投影的整体状态；当前页面仍在建设中，本手册先固定入口和操作边界。",
       sections: [
         {
           heading: "当前可用",
@@ -668,7 +775,8 @@ export const manualDocuments = [
     {
       title: "Service Overview Manual",
       subtitle: "Review MCP service assets and configuration state",
-      overview: "The service overview will summarize MCP servers, configuration fragments, and target app projections; the screen is under construction, and this guide fixes the entry point and workflow boundary.",
+      overview:
+        "The service overview will summarize MCP servers, configuration fragments, and target app projections; the screen is under construction, and this guide fixes the entry point and workflow boundary.",
       sections: [
         {
           heading: "Available now",
@@ -694,7 +802,8 @@ export const manualDocuments = [
     {
       title: "服务管理使用手册",
       subtitle: "登记和维护 MCP Server 定义",
-      overview: "服务管理用于维护 MCP Server 的名称、命令、环境变量、启用状态和来源归属；当前页面保留入口，等待服务模型落地。",
+      overview:
+        "服务管理用于维护 MCP Server 的名称、命令、环境变量、启用状态和来源归属；当前页面保留入口，等待服务模型落地。",
       sections: [
         {
           heading: "当前可用",
@@ -717,7 +826,8 @@ export const manualDocuments = [
     {
       title: "Server Management Manual",
       subtitle: "Register and maintain MCP server definitions",
-      overview: "Server management will maintain MCP server names, commands, environment variables, enabled state, and source ownership; the route is present while the service model is still being implemented.",
+      overview:
+        "Server management will maintain MCP server names, commands, environment variables, enabled state, and source ownership; the route is present while the service model is still being implemented.",
       sections: [
         {
           heading: "Available now",
@@ -743,7 +853,8 @@ export const manualDocuments = [
     {
       title: "配置投影使用手册",
       subtitle: "把 MCP 配置安全写入目标 App",
-      overview: "配置投影用于把已登记的 MCP Server 组合成目标 App 可识别的配置文件，并在写入前展示差异、冲突和跳过原因。",
+      overview:
+        "配置投影用于把已登记的 MCP Server 组合成目标 App 可识别的配置文件，并在写入前展示差异、冲突和跳过原因。",
       sections: [
         {
           heading: "当前可用",
@@ -766,7 +877,8 @@ export const manualDocuments = [
     {
       title: "Config Projection Manual",
       subtitle: "Project MCP config safely into target apps",
-      overview: "Config projection will compose registered MCP servers into target app configuration files and show diffs, conflicts, and skip reasons before writing.",
+      overview:
+        "Config projection will compose registered MCP servers into target app configuration files and show diffs, conflicts, and skip reasons before writing.",
       sections: [
         {
           heading: "Available now",
@@ -792,7 +904,8 @@ export const manualDocuments = [
     {
       title: "提示词总览使用手册",
       subtitle: "查看和筛选 Prompt 资产",
-      overview: "提示词总览用于集中浏览 prompt 类资产、来源和挂载状态，并把提示词后续纳入与 Skill 相同的资产管理模型。",
+      overview:
+        "提示词总览用于集中浏览 prompt 类资产、来源和挂载状态，并把提示词后续纳入与 Skill 相同的资产管理模型。",
       sections: [
         {
           heading: "当前可用",
@@ -815,7 +928,8 @@ export const manualDocuments = [
     {
       title: "Prompt Overview Manual",
       subtitle: "Review and filter Prompt assets",
-      overview: "Prompt overview will centralize prompt assets, sources, and mount state so prompts can join the same asset management model as Skills.",
+      overview:
+        "Prompt overview will centralize prompt assets, sources, and mount state so prompts can join the same asset management model as Skills.",
       sections: [
         {
           heading: "Available now",
@@ -841,7 +955,8 @@ export const manualDocuments = [
     {
       title: "模板管理使用手册",
       subtitle: "维护可复用 Prompt 模板",
-      overview: "模板管理用于维护可复用的 prompt 模板、变量占位、默认说明和适用场景，避免把模板正文散落在多个工具目录里。",
+      overview:
+        "模板管理用于维护可复用的 prompt 模板、变量占位、默认说明和适用场景，避免把模板正文散落在多个工具目录里。",
       sections: [
         {
           heading: "当前可用",
@@ -864,7 +979,8 @@ export const manualDocuments = [
     {
       title: "Template Management Manual",
       subtitle: "Maintain reusable Prompt templates",
-      overview: "Template management will maintain reusable prompt templates, variable placeholders, default notes, and scenarios without scattering template bodies across tool folders.",
+      overview:
+        "Template management will maintain reusable prompt templates, variable placeholders, default notes, and scenarios without scattering template bodies across tool folders.",
       sections: [
         {
           heading: "Available now",
@@ -890,7 +1006,8 @@ export const manualDocuments = [
     {
       title: "目标应用使用手册",
       subtitle: "管理 Prompt 的目标 App 投放",
-      overview: "目标应用页面用于决定哪些 prompt 或模板可以投放到哪些 App/Profile，并显示目标目录、兼容性和投影风险。",
+      overview:
+        "目标应用页面用于决定哪些 prompt 或模板可以投放到哪些 App/Profile，并显示目标目录、兼容性和投影风险。",
       sections: [
         {
           heading: "当前可用",
@@ -913,7 +1030,8 @@ export const manualDocuments = [
     {
       title: "Target Apps Manual",
       subtitle: "Manage Prompt delivery into target apps",
-      overview: "Target Apps will decide which prompts or templates can project into which app/profile, while showing target directories, compatibility, and projection risk.",
+      overview:
+        "Target Apps will decide which prompts or templates can project into which app/profile, while showing target directories, compatibility, and projection risk.",
       sections: [
         {
           heading: "Available now",
@@ -939,7 +1057,8 @@ export const manualDocuments = [
     {
       title: "规则总览使用手册",
       subtitle: "查看 Rule 资产和策略覆盖范围",
-      overview: "规则总览用于集中查看 rule 类资产、启用范围、目标工具兼容性和潜在冲突，帮助用户理解哪些规则会影响部署结果。",
+      overview:
+        "规则总览用于集中查看 rule 类资产、启用范围、目标工具兼容性和潜在冲突，帮助用户理解哪些规则会影响部署结果。",
       sections: [
         {
           heading: "当前可用",
@@ -962,7 +1081,8 @@ export const manualDocuments = [
     {
       title: "Rule Overview Manual",
       subtitle: "Review Rule assets and policy coverage",
-      overview: "Rule overview will centralize rule assets, enablement scope, target tool compatibility, and potential conflicts so users understand which rules affect deployment output.",
+      overview:
+        "Rule overview will centralize rule assets, enablement scope, target tool compatibility, and potential conflicts so users understand which rules affect deployment output.",
       sections: [
         {
           heading: "Available now",
@@ -988,7 +1108,8 @@ export const manualDocuments = [
     {
       title: "启用策略使用手册",
       subtitle: "配置规则如何参与部署决策",
-      overview: "启用策略页面用于表达 rule 资产的 include/exclude 条件、优先级和 Profile 覆盖关系，确保部署决策可解释。",
+      overview:
+        "启用策略页面用于表达 rule 资产的 include/exclude 条件、优先级和 Profile 覆盖关系，确保部署决策可解释。",
       sections: [
         {
           heading: "当前可用",
@@ -1011,7 +1132,8 @@ export const manualDocuments = [
     {
       title: "Policy Management Manual",
       subtitle: "Configure how rules participate in deployment decisions",
-      overview: "Policy Management will express include/exclude conditions, priority, and profile overrides for rule assets so deployment decisions remain explainable.",
+      overview:
+        "Policy Management will express include/exclude conditions, priority, and profile overrides for rule assets so deployment decisions remain explainable.",
       sections: [
         {
           heading: "Available now",
@@ -1037,7 +1159,8 @@ export const manualDocuments = [
     {
       title: "冲突检测使用手册",
       subtitle: "发现重叠规则和目标文件风险",
-      overview: "冲突检测用于在执行前发现多个 rule 资产对同一目标、同一文件或同一策略产生的重叠影响，并给出可解释的处理入口。",
+      overview:
+        "冲突检测用于在执行前发现多个 rule 资产对同一目标、同一文件或同一策略产生的重叠影响，并给出可解释的处理入口。",
       sections: [
         {
           heading: "当前可用",
@@ -1060,7 +1183,8 @@ export const manualDocuments = [
     {
       title: "Conflict Detection Manual",
       subtitle: "Find overlapping rules and target file risk",
-      overview: "Conflict Detection will identify overlapping effects from multiple rule assets on the same target, file, or policy before execution and provide explainable resolution entry points.",
+      overview:
+        "Conflict Detection will identify overlapping effects from multiple rule assets on the same target, file, or policy before execution and provide explainable resolution entry points.",
       sections: [
         {
           heading: "Available now",
@@ -1086,7 +1210,8 @@ export const manualDocuments = [
     {
       title: "应用总览使用手册",
       subtitle: "查看目标 App/Profile 的整体状态",
-      overview: "应用总览用于集中查看所有目标 App/Profile 的路径、支持资产类型、挂载数量和最近部署状态，是目标配置的入口页。",
+      overview:
+        "应用总览用于集中查看所有目标 App/Profile 的路径、支持资产类型、挂载数量和最近部署状态，是目标配置的入口页。",
       sections: [
         {
           heading: "当前可用",
@@ -1109,7 +1234,8 @@ export const manualDocuments = [
     {
       title: "App Overview Manual",
       subtitle: "Review target app/profile state",
-      overview: "App Overview will centralize target app/profile paths, supported asset kinds, mount counts, and recent deployment state as the target configuration entry page.",
+      overview:
+        "App Overview will centralize target app/profile paths, supported asset kinds, mount counts, and recent deployment state as the target configuration entry page.",
       sections: [
         {
           heading: "Available now",
@@ -1135,7 +1261,8 @@ export const manualDocuments = [
     {
       title: "配置模板使用手册",
       subtitle: "用模板创建目标 Profile",
-      overview: "配置模板用于维护 Codex、Claude、Cursor、OpenCode、Gemini、Antigravity、OpenClaw 和自定义工具的 Profile 起始配置。",
+      overview:
+        "配置模板用于维护 Codex、Claude、Cursor、OpenCode、Gemini、Antigravity、OpenClaw 和自定义工具的 Profile 起始配置。",
       sections: [
         {
           heading: "当前可用",
@@ -1158,7 +1285,8 @@ export const manualDocuments = [
     {
       title: "Profile Templates Manual",
       subtitle: "Create target profiles from templates",
-      overview: "Profile Templates will maintain starter profile configurations for Codex, Claude, Cursor, OpenCode, Gemini, Antigravity, OpenClaw, and custom tools.",
+      overview:
+        "Profile Templates will maintain starter profile configurations for Codex, Claude, Cursor, OpenCode, Gemini, Antigravity, OpenClaw, and custom tools.",
       sections: [
         {
           heading: "Available now",
@@ -1184,7 +1312,8 @@ export const manualDocuments = [
     {
       title: "部署计划使用手册",
       subtitle: "按 Profile 预览和执行部署变化",
-      overview: "部署计划页面用于按目标 Profile 汇总 create、update、remove、skip 和 conflict 动作，并在执行前解释每个动作的原因。",
+      overview:
+        "部署计划页面用于按目标 Profile 汇总 create、update、remove、skip 和 conflict 动作，并在执行前解释每个动作的原因。",
       sections: [
         {
           heading: "当前可用",
@@ -1207,7 +1336,8 @@ export const manualDocuments = [
     {
       title: "Deployment Plans Manual",
       subtitle: "Preview and execute deployment changes by profile",
-      overview: "Deployment Plans will summarize create, update, remove, skip, and conflict actions by target profile and explain every action before execution.",
+      overview:
+        "Deployment Plans will summarize create, update, remove, skip, and conflict actions by target profile and explain every action before execution.",
       sections: [
         {
           heading: "Available now",
@@ -1233,7 +1363,8 @@ export const manualDocuments = [
     {
       title: "近期记忆使用手册",
       subtitle: "按项目或时间查看可继续的近期进展",
-      overview: "近期记忆只展示已确认且仍与当前会话源一致的进展；点击事件会回到原始会话证据，不在页面内复制第二份事实源。",
+      overview:
+        "近期记忆只展示已确认且仍与当前会话源一致的进展；点击事件会回到原始会话证据，不在页面内复制第二份事实源。",
       sections: [
         {
           heading: "查看方式",
@@ -1248,7 +1379,8 @@ export const manualDocuments = [
     {
       title: "Recent Memory Manual",
       subtitle: "Review resumable progress by project or time",
-      overview: "Recent Memory shows confirmed progress that still matches the current conversation source; opening an event returns to the canonical session record rather than copying a second source of truth.",
+      overview:
+        "Recent Memory shows confirmed progress that still matches the current conversation source; opening an event returns to the canonical session record rather than copying a second source of truth.",
       sections: [
         {
           heading: "Views",
@@ -1262,13 +1394,13 @@ export const manualDocuments = [
     },
   ),
 
-
   manual(
     "memory.recall",
     {
       title: "回忆使用手册",
       subtitle: "在持久会话中基于本地证据连续追问",
-      overview: "回忆会话将每轮问题和结构化回答持久化到 Conversation，并通过只读工具检索可定位的来源。",
+      overview:
+        "回忆会话将每轮问题和结构化回答持久化到 Conversation，并通过只读工具检索可定位的来源。",
       sections: [
         {
           heading: "使用方式",
@@ -1283,7 +1415,8 @@ export const manualDocuments = [
     {
       title: "Recall Manual",
       subtitle: "Ask follow-up questions in a persistent local-record session",
-      overview: "Each Recall turn is persisted in Conversation with structured source references and read-only retrieval tools.",
+      overview:
+        "Each Recall turn is persisted in Conversation with structured source references and read-only retrieval tools.",
       sections: [
         {
           heading: "How to use it",
@@ -1302,7 +1435,8 @@ export const manualDocuments = [
     {
       title: "Team 团队管理使用手册",
       subtitle: "创建并管理具有固定角色与固定顺序的 Agent 团队",
-      overview: "Team 模块用于编排多 Agent 协作单元，指定唯一的 Leader 和多个 Teammates，并分配 Agent 与模型。",
+      overview:
+        "Team 模块用于编排多 Agent 协作单元，指定唯一的 Leader 和多个 Teammates，并分配 Agent 与模型。",
       sections: [
         {
           heading: "核心规则",
@@ -1317,17 +1451,17 @@ export const manualDocuments = [
             "编辑现有 Team 可调整成员顺序，成员上下文标识在重排序后保持不变。",
             "支持为不同成员分配相同的 Agent 和模型。",
           ],
-          cautions: [
-            "删除 Team 会同时级联移除关联的固定成员编排。",
-          ],
+          cautions: ["删除 Team 会同时级联移除关联的固定成员编排。"],
           keywords: ["Team", "Leader", "Teammate", "Roster", "多 Agent"],
         },
       ],
     },
     {
       title: "Teams & Rosters Manual",
-      subtitle: "Create and manage multi-agent teams with fixed roles and rosters",
-      overview: "The Team domain manages multi-agent collaborative units with exactly one Leader and one or more ordered Teammates.",
+      subtitle:
+        "Create and manage multi-agent teams with fixed roles and rosters",
+      overview:
+        "The Team domain manages multi-agent collaborative units with exactly one Leader and one or more ordered Teammates.",
       sections: [
         {
           heading: "Core Rules",
@@ -1352,9 +1486,13 @@ export const manualDocuments = [
   ),
 ];
 
-const manualByRouteKey = new Map(manualDocuments.map((document) => [document.routeKey, document]));
+const manualByRouteKey = new Map(
+  manualDocuments.map((document) => [document.routeKey, document]),
+);
 
-export function getManualDocument(routeKey: string): ManualDocument | undefined {
+export function getManualDocument(
+  routeKey: string,
+): ManualDocument | undefined {
   return manualByRouteKey.get(routeKey);
 }
 
@@ -1362,6 +1500,9 @@ export function hasManualDocument(routeKey: string): boolean {
   return manualByRouteKey.has(routeKey);
 }
 
-export function getManualContent(document: ManualDocument, locale: Locale): ManualContent {
+export function getManualContent(
+  document: ManualDocument,
+  locale: Locale,
+): ManualContent {
   return document.content[locale] ?? document.content.zh;
 }

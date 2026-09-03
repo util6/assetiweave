@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SearchIndexProvider, useSearchIndex } from "./SearchIndexProvider";
 
@@ -19,7 +25,9 @@ vi.mock("../../services/conversations", () => ({
 describe("SearchIndexProvider", () => {
   beforeEach(() => {
     subscribeSearchIndexTasksMock.mockReset().mockResolvedValue(vi.fn());
-    statusMock.mockReset().mockResolvedValue({ health: "ready", source_revision: 0 });
+    statusMock
+      .mockReset()
+      .mockResolvedValue({ health: "ready", source_revision: 0 });
     taskMock.mockReset().mockResolvedValue(null);
     rebuildMock.mockReset();
   });
@@ -41,9 +49,11 @@ describe("SearchIndexProvider", () => {
       error: null,
     } as const;
     rebuildMock.mockResolvedValue(running);
-    taskMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ ...running, status: "completed", finished_at: "2026-07-22T00:00:01Z" });
+    taskMock.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      ...running,
+      status: "completed",
+      finished_at: "2026-07-22T00:00:01Z",
+    });
     statusMock
       .mockResolvedValueOnce({ health: "ready", source_revision: 0 })
       .mockResolvedValueOnce({ health: "ready", source_revision: 0 });
@@ -56,7 +66,10 @@ describe("SearchIndexProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
     await act(async () => {});
     expect(screen.getByTestId("task-status").textContent).toBe("running");
-    expect((screen.getByRole("button", { name: "Other" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Other" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
@@ -84,7 +97,9 @@ function Harness() {
   const { rebuild, status, task } = useSearchIndex();
   return (
     <>
-      <button onClick={() => void rebuild()} type="button">Rebuild</button>
+      <button onClick={() => void rebuild()} type="button">
+        Rebuild
+      </button>
       <button type="button">Other</button>
       <output data-testid="task-status">{task?.status ?? "idle"}</output>
       <output data-testid="index-health">{status?.health ?? "unknown"}</output>

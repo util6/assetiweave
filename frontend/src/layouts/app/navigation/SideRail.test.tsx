@@ -12,8 +12,22 @@ const headerTabs: HeaderTabItem[] = [
 ];
 
 const railItems: RailMenuItem[] = [
-  { id: "logs", label: "Logs", icon: "file-text", scope: "global", enabled: true, position: "secondary" },
-  { id: "settings", label: "Settings", icon: "settings", scope: "settings", enabled: true, position: "secondary" },
+  {
+    id: "logs",
+    label: "Logs",
+    icon: "file-text",
+    scope: "global",
+    enabled: true,
+    position: "secondary",
+  },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: "settings",
+    scope: "settings",
+    enabled: true,
+    position: "secondary",
+  },
 ];
 
 describe("SideRail", () => {
@@ -61,7 +75,9 @@ describe("SideRail", () => {
 
     expect(html).toContain('aria-label="查看当前版本功能介绍"');
     expect(html).toContain('type="button"');
-    expect(html.indexOf('aria-label="查看当前版本功能介绍"')).toBeLessThan(html.indexOf("展开侧边栏"));
+    expect(html.indexOf('aria-label="查看当前版本功能介绍"')).toBeLessThan(
+      html.indexOf("展开侧边栏"),
+    );
   });
 
   it("turns the expanded brand text into a regular intro button", () => {
@@ -87,7 +103,9 @@ describe("SideRail", () => {
 
     expect(html).toContain('aria-label="发现新版本 v0.2.0"');
     expect(html).toContain('type="button"');
-    expect(html.indexOf('aria-label="发现新版本 v0.2.0"')).toBeLessThan(html.indexOf("展开侧边栏"));
+    expect(html.indexOf('aria-label="发现新版本 v0.2.0"')).toBeLessThan(
+      html.indexOf("展开侧边栏"),
+    );
   });
 
   it("turns the expanded brand text into an update button when an update is available", () => {
@@ -100,11 +118,17 @@ describe("SideRail", () => {
 
     expect(html).toContain(">发现新版本 v0.2.0<");
     expect(html).toContain('aria-label="发现新版本 v0.2.0"');
-    expect(html.indexOf("发现新版本 v0.2.0")).toBeLessThan(html.indexOf(">技能<"));
+    expect(html.indexOf("发现新版本 v0.2.0")).toBeLessThan(
+      html.indexOf(">技能<"),
+    );
   });
 
   it("renders a primary action above the brand identity", () => {
-    const html = renderSideRail(false, undefined, <button type="button">Tenants</button>);
+    const html = renderSideRail(
+      false,
+      undefined,
+      <button type="button">Tenants</button>,
+    );
     const actionIndex = html.indexOf(">Tenants<");
 
     expect(actionIndex).toBeLessThan(html.indexOf('title="AssetIWeave"'));

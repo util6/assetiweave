@@ -50,10 +50,13 @@ describe("assetSourceLabel", () => {
         repository: {
           root_path: "/Users/util6/code-space/util6-agents",
           remote_url: "https://github.com/util6/util6-agents.git",
-          web_url: "https://github.com/util6/util6-agents/tree/main/skills/zh-cn/office-utils",
+          web_url:
+            "https://github.com/util6/util6-agents/tree/main/skills/zh-cn/office-utils",
         },
       }),
-    ).toBe("https://github.com/util6/util6-agents/tree/main/skills/zh-cn/office-utils");
+    ).toBe(
+      "https://github.com/util6/util6-agents/tree/main/skills/zh-cn/office-utils",
+    );
     expect(assetSourceHref(asset)).toBeUndefined();
   });
 });

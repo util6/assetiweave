@@ -8,7 +8,11 @@ import { useI18n } from "../../i18n/I18nProvider";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
 import type { Asset, AssetGroupIconSvg, AssetGroupInput } from "../../types";
-import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
+import {
+  AssetPickerHeader,
+  AssetPickerText,
+  GroupField,
+} from "./SkillGroupFormPrimitives";
 
 function generateRandomGroupColor(): string {
   const hue = Math.floor(Math.random() * 360);
@@ -55,14 +59,22 @@ export function SkillGroupCreateDialog({
   const [iconSvg, setIconSvg] = useState<AssetGroupIconSvg | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [query, setQuery] = useState("");
-  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [formError, setFormError] = useState<string | null>(null);
   const [svgEditorOpen, setSvgEditorOpen] = useState(false);
   const [svgDraft, setSvgDraft] = useState("");
   const [svgError, setSvgError] = useState("");
 
-  const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
-  const filteredAssets = useMemo(() => filterAssets(skillAssets, query), [query, skillAssets]);
+  const skillAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "skill"),
+    [assets],
+  );
+  const filteredAssets = useMemo(
+    () => filterAssets(skillAssets, query),
+    [query, skillAssets],
+  );
   const selectedCount = selectedAssetIds.size;
 
   useEffect(() => {
@@ -174,7 +186,9 @@ export function SkillGroupCreateDialog({
   function toggleAllVisible() {
     setSelectedAssetIds((current) => {
       const next = new Set(current);
-      const allVisibleSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => next.has(asset.id));
+      const allVisibleSelected =
+        filteredAssets.length > 0 &&
+        filteredAssets.every((asset) => next.has(asset.id));
       for (const asset of filteredAssets) {
         if (allVisibleSelected) {
           next.delete(asset.id);
@@ -214,10 +228,19 @@ export function SkillGroupCreateDialog({
           <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-end gap-2 max-[720px]:grid-cols-1">
               <GroupField label={t("group.field.name")}>
-                <Input disabled={busy} onChange={(event) => setName(event.target.value)} ref={nameInputRef} value={name} />
+                <Input
+                  disabled={busy}
+                  onChange={(event) => setName(event.target.value)}
+                  ref={nameInputRef}
+                  value={name}
+                />
               </GroupField>
               <GroupField label={t("group.field.description")}>
-                <Input disabled={busy} onChange={(event) => setDescription(event.target.value)} value={description} />
+                <Input
+                  disabled={busy}
+                  onChange={(event) => setDescription(event.target.value)}
+                  value={description}
+                />
               </GroupField>
             </div>
 
@@ -242,7 +265,9 @@ export function SkillGroupCreateDialog({
                     disabled={busy}
                     maxLength={7}
                     onBlur={(event) => commitColor(event.currentTarget.value)}
-                    onChange={(event) => setDraftColor(event.target.value.slice(0, 7))}
+                    onChange={(event) =>
+                      setDraftColor(event.target.value.slice(0, 7))
+                    }
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
                         commitColor(event.currentTarget.value);
@@ -315,12 +340,20 @@ export function SkillGroupCreateDialog({
               </GroupField>
 
               <label className="flex h-10 items-center gap-2 self-end rounded-xl border border-theme-control-border bg-theme-control px-3">
-                <Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} />
-                <span className="text-body-sm text-on-surface-variant">{t("group.field.enabled")}</span>
+                <Switch
+                  checked={enabled}
+                  disabled={busy}
+                  onCheckedChange={setEnabled}
+                />
+                <span className="text-body-sm text-on-surface-variant">
+                  {t("group.field.enabled")}
+                </span>
               </label>
             </div>
 
-            {formError && <div className="text-body-sm text-status-remove">{formError}</div>}
+            {formError && (
+              <div className="text-body-sm text-status-remove">{formError}</div>
+            )}
           </section>
 
           <section className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
@@ -334,7 +367,9 @@ export function SkillGroupCreateDialog({
             />
             <div className="max-h-[340px] overflow-y-auto rounded-xl border border-theme-card-border bg-theme-card/45">
               {filteredAssets.length === 0 ? (
-                <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("group.assets.empty")}</div>
+                <div className="px-4 py-5 text-body-sm text-on-surface-variant">
+                  {t("group.assets.empty")}
+                </div>
               ) : (
                 filteredAssets.map((asset) => {
                   const selected = selectedAssetIds.has(asset.id);
@@ -369,7 +404,11 @@ export function SkillGroupCreateDialog({
                 {t("group.icon.clearSvg")}
               </Button>
               <div className="flex items-center gap-2">
-                <Button onClick={closeSvgEditor} type="button" variant="outline">
+                <Button
+                  onClick={closeSvgEditor}
+                  type="button"
+                  variant="outline"
+                >
                   {t("group.icon.cancelSvg")}
                 </Button>
                 <Button onClick={saveIconSvg} type="button">
@@ -388,9 +427,13 @@ export function SkillGroupCreateDialog({
           title={t("group.icon.svgEditorTitle")}
         >
           <div className="flex min-h-0 flex-col gap-3">
-            <p className="text-body-sm text-on-surface-variant">{t("group.icon.svgEditorDescription")}</p>
+            <p className="text-body-sm text-on-surface-variant">
+              {t("group.icon.svgEditorDescription")}
+            </p>
             <label className="flex min-h-0 flex-1 flex-col gap-2">
-              <span className="text-label-caps uppercase text-outline">{t("group.icon.svgInput")}</span>
+              <span className="text-label-caps uppercase text-outline">
+                {t("group.icon.svgInput")}
+              </span>
               <textarea
                 aria-label={t("group.icon.svgInput")}
                 className="min-h-80 resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60"
@@ -400,7 +443,9 @@ export function SkillGroupCreateDialog({
                 value={svgDraft}
               />
             </label>
-            {svgError && <p className="text-body-sm text-status-remove">{svgError}</p>}
+            {svgError && (
+              <p className="text-body-sm text-status-remove">{svgError}</p>
+            )}
           </div>
         </DialogFrame>
       )}
@@ -415,7 +460,10 @@ function filterAssets(assets: Asset[], query: string) {
   }
 
   return assets.filter((asset) =>
-    [asset.name, asset.description ?? "", asset.relative_path].join(" ").toLowerCase().includes(normalizedQuery),
+    [asset.name, asset.description ?? "", asset.relative_path]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery),
   );
 }
 
@@ -435,7 +483,13 @@ function parseGroupIconSvgInput(value: string): AssetGroupIconSvg | null {
         if (!d) return [];
         const clipRule = normalizeSvgRule(path.clip_rule ?? path.clipRule);
         const fillRule = normalizeSvgRule(path.fill_rule ?? path.fillRule);
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
+        return [
+          {
+            d,
+            ...(clipRule ? { clip_rule: clipRule } : {}),
+            ...(fillRule ? { fill_rule: fillRule } : {}),
+          },
+        ];
       });
       if (paths.length === 0) return null;
       return {
@@ -468,7 +522,13 @@ function parseGroupIconSvgInput(value: string): AssetGroupIconSvg | null {
         const fillRule = normalizeSvgRule(
           path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"),
         );
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
+        return [
+          {
+            d,
+            ...(clipRule ? { clip_rule: clipRule } : {}),
+            ...(fillRule ? { fill_rule: fillRule } : {}),
+          },
+        ];
       });
       if (paths.length === 0) return null;
 

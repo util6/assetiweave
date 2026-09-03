@@ -42,11 +42,19 @@ describe("schema validation helpers", () => {
   });
 
   it("throws a typed validation error when requested", () => {
-    expect(() => parseSchemaOrThrow(schema, { name: "" }, "Invalid source")).toThrow(SchemaValidationError);
+    expect(() =>
+      parseSchemaOrThrow(schema, { name: "" }, "Invalid source"),
+    ).toThrow(SchemaValidationError);
   });
 
   it("returns fallback data for invalid persisted values", () => {
-    expect(parseSchemaOrFallback(schema, { name: "" }, { name: "Fallback", priority: 1 })).toEqual({
+    expect(
+      parseSchemaOrFallback(
+        schema,
+        { name: "" },
+        { name: "Fallback", priority: 1 },
+      ),
+    ).toEqual({
       name: "Fallback",
       priority: 1,
     });

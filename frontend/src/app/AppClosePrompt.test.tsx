@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppClosePrompt } from "./AppClosePrompt";
 
@@ -19,7 +26,6 @@ vi.mock("../services/windowChrome", () => ({
   runWindowAction: runWindowActionMock,
 }));
 
-
 vi.mock("../i18n/I18nProvider", () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }));
@@ -29,10 +35,12 @@ describe("AppClosePrompt", () => {
 
   beforeEach(() => {
     closeListener = undefined;
-    subscribeAppCloseRequestedMock.mockReset().mockImplementation(async (listener: () => void) => {
-      closeListener = listener;
-      return vi.fn();
-    });
+    subscribeAppCloseRequestedMock
+      .mockReset()
+      .mockImplementation(async (listener: () => void) => {
+        closeListener = listener;
+        return vi.fn();
+      });
     completeAppCloseMock.mockReset().mockResolvedValue(undefined);
     cancelAppClosePromptMock.mockReset().mockResolvedValue(undefined);
     runWindowActionMock.mockReset().mockResolvedValue(undefined);
@@ -42,12 +50,18 @@ describe("AppClosePrompt", () => {
 
   it("shows the close prompt with backup enabled and confirms the selected choice", async () => {
     render(<AppClosePrompt />);
-    await waitFor(() => expect(subscribeAppCloseRequestedMock).toHaveBeenCalledWith(expect.any(Function)));
+    await waitFor(() =>
+      expect(subscribeAppCloseRequestedMock).toHaveBeenCalledWith(
+        expect.any(Function),
+      ),
+    );
 
     act(() => closeListener?.());
 
     expect(screen.getByRole("dialog")).toBeTruthy();
-    const backupCheckbox = screen.getByRole("checkbox", { name: "app.close.backupDatabase" }) as HTMLInputElement;
+    const backupCheckbox = screen.getByRole("checkbox", {
+      name: "app.close.backupDatabase",
+    }) as HTMLInputElement;
     expect(backupCheckbox.checked).toBe(true);
     fireEvent.click(backupCheckbox);
     expect(backupCheckbox.checked).toBe(false);
@@ -62,7 +76,9 @@ describe("AppClosePrompt", () => {
 
   it("allows dismissing the prompt without closing the app", async () => {
     render(<AppClosePrompt />);
-    await waitFor(() => expect(subscribeAppCloseRequestedMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(subscribeAppCloseRequestedMock).toHaveBeenCalled(),
+    );
     act(() => closeListener?.());
 
     fireEvent.click(screen.getByRole("button", { name: "common.close" }));
@@ -75,11 +91,12 @@ describe("AppClosePrompt", () => {
 
   it("cancels the close request and minimizes the window", async () => {
     render(<AppClosePrompt />);
-    await waitFor(() => expect(subscribeAppCloseRequestedMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(subscribeAppCloseRequestedMock).toHaveBeenCalled(),
+    );
     act(() => closeListener?.());
 
     fireEvent.click(screen.getByRole("button", { name: "app.close.minimize" }));
-
 
     await waitFor(() => {
       expect(cancelAppClosePromptMock).toHaveBeenCalledTimes(1);
@@ -89,7 +106,19 @@ describe("AppClosePrompt", () => {
 
     act(() => closeListener?.());
 
-    expect((screen.getByRole("button", { name: "app.close.confirm" }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole("checkbox", { name: "app.close.backupDatabase" }) as HTMLInputElement).disabled).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "app.close.confirm",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (
+        screen.getByRole("checkbox", {
+          name: "app.close.backupDatabase",
+        }) as HTMLInputElement
+      ).disabled,
+    ).toBe(false);
   });
 });

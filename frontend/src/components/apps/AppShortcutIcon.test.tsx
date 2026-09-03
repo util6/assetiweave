@@ -12,7 +12,11 @@ import {
 describe("AppShortcutIcon", () => {
   it("renders a built-in icon from the unified SVG asset catalog", () => {
     const html = renderToStaticMarkup(
-      <AppShortcutIcon appKind="claude" className="icon" displayIcon="app:claude" />,
+      <AppShortcutIcon
+        appKind="claude"
+        className="icon"
+        displayIcon="app:claude"
+      />,
     );
 
     expect(html).toContain('class="icon"');
@@ -26,7 +30,11 @@ describe("AppShortcutIcon", () => {
       viewBox: "0 0 24 24",
     };
     const html = renderToStaticMarkup(
-      <AppShortcutIcon appKind="claude" displayIcon="app:claude" iconSvg={customIcon} />,
+      <AppShortcutIcon
+        appKind="claude"
+        displayIcon="app:claude"
+        iconSvg={customIcon}
+      />,
     );
 
     expect(html).toContain("M0 0h24v24H0z");
@@ -35,13 +43,21 @@ describe("AppShortcutIcon", () => {
 
   it("renders newly added app icons such as kiro and zcode", () => {
     const kiroHtml = renderToStaticMarkup(
-      <AppShortcutIcon appKind="kiro" className="icon" displayIcon="app:kiro" />,
+      <AppShortcutIcon
+        appKind="kiro"
+        className="icon"
+        displayIcon="app:kiro"
+      />,
     );
     expect(kiroHtml).toContain('viewBox="0 0 1024 1024"');
     expect(kiroHtml).toContain("M507.03104 244.768");
 
     const zcodeHtml = renderToStaticMarkup(
-      <AppShortcutIcon appKind="zcode" className="icon" displayIcon="app:zcode" />,
+      <AppShortcutIcon
+        appKind="zcode"
+        className="icon"
+        displayIcon="app:zcode"
+      />,
     );
     expect(zcodeHtml).toContain('viewBox="0 0 1024 1024"');
     expect(zcodeHtml).toContain("M515.072 154.624L437.76");
@@ -49,13 +65,25 @@ describe("AppShortcutIcon", () => {
 
   it("resolves custom profiles with matched profileId and legacy single-letter icon", () => {
     const zcodeCustomHtml = renderToStaticMarkup(
-      <AppShortcutIcon appKind="custom" className="icon" displayIcon="Z" profileId="zcode" profileName="Zcode" />,
+      <AppShortcutIcon
+        appKind="custom"
+        className="icon"
+        displayIcon="Z"
+        profileId="zcode"
+        profileName="Zcode"
+      />,
     );
     expect(zcodeCustomHtml).toContain('viewBox="0 0 1024 1024"');
     expect(zcodeCustomHtml).toContain("M515.072 154.624L437.76");
 
     const kiroCustomHtml = renderToStaticMarkup(
-      <AppShortcutIcon appKind="custom" className="icon" displayIcon="K" profileId="kiro" profileName="Kiro" />,
+      <AppShortcutIcon
+        appKind="custom"
+        className="icon"
+        displayIcon="K"
+        profileId="kiro"
+        profileName="Kiro"
+      />,
     );
     expect(kiroCustomHtml).toContain('viewBox="0 0 1024 1024"');
     expect(kiroCustomHtml).toContain("M507.03104 244.768");
@@ -63,9 +91,17 @@ describe("AppShortcutIcon", () => {
 
   it("keeps text fallback for unmatched custom profiles", () => {
     const fallbackHtml = renderToStaticMarkup(
-      <AppShortcutIcon appKind="custom" className="icon" displayIcon="+" profileId="custom" profileName="Custom" />,
+      <AppShortcutIcon
+        appKind="custom"
+        className="icon"
+        displayIcon="+"
+        profileId="custom"
+        profileName="Custom"
+      />,
     );
-    expect(fallbackHtml).toContain('<span class="icon" style="border-radius:22%;overflow:hidden">+</span>');
+    expect(fallbackHtml).toContain(
+      '<span class="icon" style="border-radius:22%;overflow:hidden">+</span>',
+    );
   });
 
   it("uses a Mac Dock rounded frame for app icon containers", () => {

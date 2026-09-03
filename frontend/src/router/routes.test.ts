@@ -7,7 +7,9 @@ describe("app route resolution", () => {
   it("keeps every implemented route on the registry path", () => {
     expect(routeRegistry.catalog.loader).toBeTypeOf("function");
     expect(routeRegistry.conversations.loader).toBeTypeOf("function");
-    expect(routeRegistry["web-records"].loader).toBe(routeRegistry.conversations.loader);
+    expect(routeRegistry["web-records"].loader).toBe(
+      routeRegistry.conversations.loader,
+    );
     expect(routeRegistry.memory.loader).toBeTypeOf("function");
     expect(routeRegistry["under-construction"].loader).toBeUndefined();
   });
@@ -30,11 +32,15 @@ describe("app route resolution", () => {
   });
 
   it("routes the skills mounts tab to the app-centered mount page", () => {
-    expect(resolveAppRoute(fallbackNavigationModel, "mounts")).toBe("skill-mounts");
+    expect(resolveAppRoute(fallbackNavigationModel, "mounts")).toBe(
+      "skill-mounts",
+    );
   });
 
   it("keeps the default skills overview route on the catalog page", () => {
-    expect(resolveAppRoute(fallbackNavigationModel, "overview")).toBe("catalog");
+    expect(resolveAppRoute(fallbackNavigationModel, "overview")).toBe(
+      "catalog",
+    );
   });
 
   it("routes the conversations tab to the conversations page", () => {
@@ -124,19 +130,38 @@ describe("app route resolution", () => {
       subNavItems: {
         ...fallbackNavigationModel.subNavItems,
         conversations: [
-          { id: "sessions", label: "Sessions", routeKey: "conversations.sessions", enabled: true },
-          { id: "web-records", label: "Web Records", routeKey: "conversations.web-records", enabled: true },
-          { id: "sources", label: "Sources", routeKey: "conversations.sources", enabled: true },
-          { id: "adapters", label: "Adapters", routeKey: "conversations.adapters", enabled: true },
+          {
+            id: "sessions",
+            label: "Sessions",
+            routeKey: "conversations.sessions",
+            enabled: true,
+          },
+          {
+            id: "web-records",
+            label: "Web Records",
+            routeKey: "conversations.web-records",
+            enabled: true,
+          },
+          {
+            id: "sources",
+            label: "Sources",
+            routeKey: "conversations.sources",
+            enabled: true,
+          },
+          {
+            id: "adapters",
+            label: "Adapters",
+            routeKey: "conversations.adapters",
+            enabled: true,
+          },
         ],
       },
     });
 
     expect(normalized.activeSubNavId).toBe("sessions");
-    expect(normalized.subNavItems.conversations.map((item) => item.routeKey)).toEqual([
-      "conversations.sessions",
-      "conversations.web-records",
-    ]);
+    expect(
+      normalized.subNavItems.conversations.map((item) => item.routeKey),
+    ).toEqual(["conversations.sessions", "conversations.web-records"]);
   });
 
   it("routes enabled but unimplemented navigation entries to the under-construction page", () => {

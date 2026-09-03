@@ -45,21 +45,29 @@ export const controlRecipe = cva(
   },
 );
 
-export const badgeRecipe = cva("inline-flex items-center rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]", {
-  variants: {
-    tone: {
-      neutral: "border-theme-control-border bg-theme-control text-on-surface-variant",
-      primary: "border-primary/45 bg-primary/10 text-primary",
-      create: "border-status-create/35 bg-status-create/15 text-status-create",
-      update: "border-status-update/35 bg-status-update/15 text-status-update",
-      remove: "border-status-remove/40 bg-status-remove/12 text-status-remove",
-      conflict: "border-status-conflict/35 bg-status-conflict/12 text-status-conflict",
+export const badgeRecipe = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]",
+  {
+    variants: {
+      tone: {
+        neutral:
+          "border-theme-control-border bg-theme-control text-on-surface-variant",
+        primary: "border-primary/45 bg-primary/10 text-primary",
+        create:
+          "border-status-create/35 bg-status-create/15 text-status-create",
+        update:
+          "border-status-update/35 bg-status-update/15 text-status-update",
+        remove:
+          "border-status-remove/40 bg-status-remove/12 text-status-remove",
+        conflict:
+          "border-status-conflict/35 bg-status-conflict/12 text-status-conflict",
+      },
+    },
+    defaultVariants: {
+      tone: "neutral",
     },
   },
-  defaultVariants: {
-    tone: "neutral",
-  },
-});
+);
 
 export const dialogRecipe = cva(
   "fixed inset-0 z-50 grid place-items-center bg-[rgb(var(--theme-scrim)/0.62)] px-4 py-6 backdrop-blur-md",
@@ -101,8 +109,10 @@ export const surfaceButtonRecipe = cva(
           "theme-danger-gradient text-theme-button-primary-fg hover:-translate-y-px active:translate-y-0",
         outline:
           "border border-theme-control-border/80 bg-theme-control/70 text-theme-control-fg shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md hover:-translate-y-px hover:border-primary-strong/45 hover:bg-theme-control-hover hover:text-on-surface active:translate-y-0",
-        secondary: "border border-theme-control-border/40 bg-theme-control-hover/75 text-on-surface shadow-[var(--theme-shadow-control-inset)] hover:-translate-y-px hover:bg-theme-card-header active:translate-y-0",
-        ghost: "text-theme-control-fg hover:bg-theme-control-hover/70 hover:text-on-surface",
+        secondary:
+          "border border-theme-control-border/40 bg-theme-control-hover/75 text-on-surface shadow-[var(--theme-shadow-control-inset)] hover:-translate-y-px hover:bg-theme-card-header active:translate-y-0",
+        ghost:
+          "text-theme-control-fg hover:bg-theme-control-hover/70 hover:text-on-surface",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
@@ -146,7 +156,8 @@ export const toolbarIconRecipe = cva(
     variants: {
       active: {
         true: "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)]",
-        false: "hover:-translate-y-px hover:bg-theme-control-hover/70 hover:text-on-surface active:translate-y-0",
+        false:
+          "hover:-translate-y-px hover:bg-theme-control-hover/70 hover:text-on-surface active:translate-y-0",
       },
     },
     defaultVariants: {

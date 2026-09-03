@@ -12,8 +12,19 @@ vi.mock("../../services/catalog", () => ({
     activeHeaderTabId: "skills",
     activeSubNavId: "overview",
     railItems: [],
-    headerTabs: [{ id: "skills", label: "Skills", assetKind: "skill", enabled: true }],
-    subNavItems: { skills: [{ id: "overview", label: "Overview", routeKey: "skills.overview", enabled: true }] },
+    headerTabs: [
+      { id: "skills", label: "Skills", assetKind: "skill", enabled: true },
+    ],
+    subNavItems: {
+      skills: [
+        {
+          id: "overview",
+          label: "Overview",
+          routeKey: "skills.overview",
+          enabled: true,
+        },
+      ],
+    },
   })),
   getOverview: vi.fn(async () => null),
   listAppShortcutSettings: vi.fn(async () => []),
@@ -29,7 +40,9 @@ vi.mock("../../services/catalog", () => ({
 describe("useCatalogData navigation persistence", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    updateNavigationModelMock.mockReset().mockImplementation(async (model) => model);
+    updateNavigationModelMock
+      .mockReset()
+      .mockImplementation(async (model) => model);
   });
 
   it("updates navigation immediately and persists the latest model after a short buffer", async () => {
@@ -55,8 +68,14 @@ describe("useCatalogData navigation persistence", () => {
 
   it("coalesces rapid navigation changes into one persistence request", async () => {
     const { result } = renderHook(() => useCatalogData());
-    const firstModel = { ...result.current.navigationModel, activeSubNavId: "groups" };
-    const secondModel = { ...result.current.navigationModel, activeSubNavId: "sources" };
+    const firstModel = {
+      ...result.current.navigationModel,
+      activeSubNavId: "groups",
+    };
+    const secondModel = {
+      ...result.current.navigationModel,
+      activeSubNavId: "sources",
+    };
 
     act(() => {
       result.current.deferNavigationModelSave(firstModel);

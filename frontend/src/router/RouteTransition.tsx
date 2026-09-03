@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { AppSkeleton, type SkeletonLayoutName } from "../components/foundation/skeleton";
+import {
+  AppSkeleton,
+  type SkeletonLayoutName,
+} from "../components/foundation/skeleton";
 import { cn } from "../lib/utils";
 
 export const ROUTE_TRANSITION_DURATION_MS = 300;
@@ -13,8 +16,12 @@ export interface RouteTransitionState {
   phase: "enter" | "exit";
 }
 
-export function useRouteTransition({ durationMs = ROUTE_TRANSITION_DURATION_MS } = {}) {
-  const [transition, setTransition] = useState<RouteTransitionState | null>(null);
+export function useRouteTransition({
+  durationMs = ROUTE_TRANSITION_DURATION_MS,
+} = {}) {
+  const [transition, setTransition] = useState<RouteTransitionState | null>(
+    null,
+  );
   const nextId = useRef(0);
   const startedAt = useRef(0);
   const exitTimer = useRef<number | null>(null);
@@ -43,7 +50,10 @@ export function useRouteTransition({ durationMs = ROUTE_TRANSITION_DURATION_MS }
     startedAt.current = performance.now();
     setTransition({ id, layout, label, phase: "enter" });
 
-    fallbackTimer.current = window.setTimeout(() => completeTransition(id), Math.max(durationMs, 3000));
+    fallbackTimer.current = window.setTimeout(
+      () => completeTransition(id),
+      Math.max(durationMs, 3000),
+    );
   }
 
   function completeTransition(id = nextId.current) {
@@ -56,9 +66,14 @@ export function useRouteTransition({ durationMs = ROUTE_TRANSITION_DURATION_MS }
       fallbackTimer.current = null;
     }
 
-    const exitDelay = Math.max(0, durationMs - (performance.now() - startedAt.current));
+    const exitDelay = Math.max(
+      0,
+      durationMs - (performance.now() - startedAt.current),
+    );
     exitTimer.current = window.setTimeout(() => {
-      setTransition((current) => (current?.id === id ? { ...current, phase: "exit" } : current));
+      setTransition((current) =>
+        current?.id === id ? { ...current, phase: "exit" } : current,
+      );
     }, exitDelay);
     clearTimer.current = window.setTimeout(() => {
       setTransition((current) => (current?.id === id ? null : current));
@@ -72,7 +87,11 @@ export function useRouteTransition({ durationMs = ROUTE_TRANSITION_DURATION_MS }
   return { completeTransition, startTransition, transition };
 }
 
-export function RouteTransitionOverlay({ transition }: { transition: RouteTransitionState | null }) {
+export function RouteTransitionOverlay({
+  transition,
+}: {
+  transition: RouteTransitionState | null;
+}) {
   if (!transition) {
     return null;
   }

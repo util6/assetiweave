@@ -24,7 +24,11 @@ describe("externalLinks service", () => {
 
     await openExternalUrl("https://example.com");
 
-    expect(windowOpenMock).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
+    expect(windowOpenMock).toHaveBeenCalledWith(
+      "https://example.com",
+      "_blank",
+      "noopener,noreferrer",
+    );
     expect(openUrlMock).not.toHaveBeenCalled();
   });
 
@@ -51,6 +55,10 @@ describe("externalLinks service", () => {
 
     await openExternalUrl("https://example.com");
 
-    expect(windowOpenMock).toHaveBeenCalledWith("https://example.com", "_blank", "noopener,noreferrer");
+    expect(windowOpenMock).toHaveBeenCalledWith(
+      "https://example.com",
+      "_blank",
+      "noopener,noreferrer",
+    );
   });
 });

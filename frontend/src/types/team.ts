@@ -51,8 +51,10 @@ export interface UpdateTeamInput {
   members: TeamMemberInput[];
 }
 
-export type TeamRunState = "drafting" | "awaiting_review" | "executing" | "terminal";
-export type TeamTaskState = "draft" | "queued" | "running" | "succeeded" | "failed" | "canceled";
+export type TeamRunState =
+  "drafting" | "awaiting_review" | "executing" | "terminal";
+export type TeamTaskState =
+  "draft" | "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export interface TeamRosterSnapshotMember {
   member_id: string;
@@ -160,9 +162,19 @@ export interface TeamRuntimeTaskSnapshot {
   kind: "TeamRun";
   tenant_id?: string;
   dedup_key: string | null;
-  state: "Pending" | "Running" | "Cancelling" | "Succeeded" | "Failed" | "Canceled";
-  progress: { current: number; total: number | null; note: string | null } | null;
-  error: { code: string; message: string; retryable: boolean; details?: unknown } | null;
+  state:
+    "Pending" | "Running" | "Cancelling" | "Succeeded" | "Failed" | "Canceled";
+  progress: {
+    current: number;
+    total: number | null;
+    note: string | null;
+  } | null;
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  } | null;
   started_at: string;
   finished_at: string | null;
   detail: unknown;
@@ -172,7 +184,8 @@ export interface TeamRuntimeTaskSnapshot {
 export type SessionEventDelivery = "live" | "replay";
 export type SessionProcessingState = "started" | "active" | "completed";
 export type SessionToolState = "running" | "succeeded" | "failed" | "cancelled";
-export type SessionTaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type SessionTaskStatus =
+  "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export interface SessionEventIdentity {
   session_id: string;
@@ -229,12 +242,7 @@ export type SessionItemKind =
   | "error";
 
 export type SessionItemState =
-  | "pending"
-  | "streaming"
-  | "completed"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
+  "pending" | "streaming" | "completed" | "succeeded" | "failed" | "cancelled";
 
 export interface SessionItemSnapshot {
   identity: SessionItemIdentity;
@@ -302,7 +310,10 @@ export interface TeamMemberTaskResult {
   terminal: true;
 }
 
-export interface TeamMemberTaskSnapshot extends Omit<TeamRuntimeTaskSnapshot, "detail" | "result"> {
+export interface TeamMemberTaskSnapshot extends Omit<
+  TeamRuntimeTaskSnapshot,
+  "detail" | "result"
+> {
   detail: TeamMemberTaskDetail;
   result: TeamMemberTaskResult | null;
 }
@@ -317,7 +328,8 @@ export interface TeamMemberStreamSnapshot {
   stream: SessionSnapshot;
 }
 
-export type TeamMemberRestoreState = "not-started" | "restoring" | "ready" | "partial" | "unavailable";
+export type TeamMemberRestoreState =
+  "not-started" | "restoring" | "ready" | "partial" | "unavailable";
 
 export interface TeamMemberExecutionProjection {
   team_id: string;

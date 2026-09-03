@@ -9,7 +9,9 @@ export function SkillBackupBadge({ asset }: { asset: Asset }) {
     return null;
   }
 
-  const labelKey = (state === "downloaded" ? "backup.badge.downloaded" : "backup.badge.backedUp") as TranslationKey;
+  const labelKey = (
+    state === "downloaded" ? "backup.badge.downloaded" : "backup.badge.backedUp"
+  ) as TranslationKey;
   return (
     <span className="shrink-0 rounded-md border border-status-update/25 bg-status-update/10 px-2 py-0.5 text-label-caps uppercase text-status-update">
       {t(labelKey)}

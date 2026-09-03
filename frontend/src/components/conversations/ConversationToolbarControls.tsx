@@ -17,7 +17,10 @@ import type {
   ConversationContentType,
   ConversationContentVisibility,
 } from "./ConversationContentCards";
-import { conversationCardColor, conversationCardLabel } from "./ConversationContentCards";
+import {
+  conversationCardColor,
+  conversationCardLabel,
+} from "./ConversationContentCards";
 import {
   isRedundantConversationCardKind,
   useConversationCardKindRegistry,
@@ -46,9 +49,11 @@ export function ConversationBackgroundTaskIndicator({
       </span>
       <span className="min-w-0">
         <span className="block text-body-sm font-semibold">
-          {t(task.record_kind === "web"
-            ? "conversation.sync.background.webTitle"
-            : "conversation.sync.background.title")}
+          {t(
+            task.record_kind === "web"
+              ? "conversation.sync.background.webTitle"
+              : "conversation.sync.background.title",
+          )}
         </span>
         <span className="mt-0.5 block text-code-sm text-on-surface-variant">
           {t("conversation.sync.background.description")}
@@ -58,7 +63,13 @@ export function ConversationBackgroundTaskIndicator({
   );
 }
 
-const contentFilterOptions: ConversationContentType[] = ["answer", "tool", "command", "code", "result"];
+const contentFilterOptions: ConversationContentType[] = [
+  "answer",
+  "tool",
+  "command",
+  "code",
+  "result",
+];
 
 export function ConversationContentFilter({
   availableTypes,
@@ -75,23 +86,32 @@ export function ConversationContentFilter({
 }) {
   const { definitions } = useConversationCardKindRegistry();
   const types = Array.from(new Set(availableTypes))
-    .filter((type) => !isRedundantConversationCardKind(type, definitions.get(type)))
+    .filter(
+      (type) => !isRedundantConversationCardKind(type, definitions.get(type)),
+    )
     .sort(compareConversationContentTypes);
   if (types.length === 0) return null;
 
   return (
-    <ToolbarCluster ariaLabel={t("conversation.content.filterAria")} className="justify-start">
+    <ToolbarCluster
+      ariaLabel={t("conversation.content.filterAria")}
+      className="justify-start"
+    >
       <span className="mr-1 whitespace-nowrap text-label-caps text-on-surface-muted">
         {t("conversation.content.visible")}
       </span>
       {types.map((type) => {
-        const label = definitions.get(type)?.label ?? conversationCardLabel(type, t);
+        const label =
+          definitions.get(type)?.label ?? conversationCardLabel(type, t);
         return (
           <label
             className="inline-flex min-h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-1.5 text-body-sm text-on-surface-variant transition-[background-color,color] duration-200 hover:bg-theme-control-hover/70"
             key={type}
           >
-            <span className="size-2 rounded-full" style={{ backgroundColor: conversationCardColor(type, colors) }} />
+            <span
+              className="size-2 rounded-full"
+              style={{ backgroundColor: conversationCardColor(type, colors) }}
+            />
             <span className="whitespace-nowrap">{label}</span>
             <Switch
               aria-label={t("conversation.content.toggle", { type: label })}
@@ -105,7 +125,10 @@ export function ConversationContentFilter({
   );
 }
 
-function compareConversationContentTypes(left: ConversationContentType, right: ConversationContentType) {
+function compareConversationContentTypes(
+  left: ConversationContentType,
+  right: ConversationContentType,
+) {
   const leftIndex = contentFilterOptions.indexOf(left);
   const rightIndex = contentFilterOptions.indexOf(right);
   if (leftIndex >= 0 && rightIndex >= 0) return leftIndex - rightIndex;
@@ -147,19 +170,25 @@ export function ConversationSyncProgress({
           : completedWithAdvice
             ? "border-status-update/40 bg-status-update/[0.08]"
             : completed
-            ? "border-status-create/40 bg-status-create/10"
-            : "border-status-update/35 bg-status-update/[0.08]"
+              ? "border-status-create/40 bg-status-create/10"
+              : "border-status-update/35 bg-status-update/[0.08]"
       }`}
       role="status"
     >
       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div className="min-w-0">
-          <p className={`text-body-sm font-semibold ${failed ? "text-status-remove" : completedWithAdvice ? "text-status-update" : completed ? "text-status-create" : "text-on-surface"}`}>
+          <p
+            className={`text-body-sm font-semibold ${failed ? "text-status-remove" : completedWithAdvice ? "text-status-update" : completed ? "text-status-create" : "text-on-surface"}`}
+          >
             {title}
           </p>
-          <p className="mt-1 max-w-3xl text-body-sm text-on-surface-variant">{description}</p>
+          <p className="mt-1 max-w-3xl text-body-sm text-on-surface-variant">
+            {description}
+          </p>
           {state.summary ? (
-            <p className="mt-2 max-w-4xl break-words text-body-sm text-on-surface">{state.summary}</p>
+            <p className="mt-2 max-w-4xl break-words text-body-sm text-on-surface">
+              {state.summary}
+            </p>
           ) : null}
           {state.advice ? (
             <p className="mt-2 max-w-4xl break-words text-body-sm font-medium text-status-update">
@@ -181,7 +210,9 @@ export function ConversationSyncProgress({
                     className="min-w-0 border-l-2 border-status-update/50 pl-3 text-body-sm"
                     key={`${item.source}-${index}`}
                   >
-                    <p className="break-words font-semibold text-on-surface">{item.source}</p>
+                    <p className="break-words font-semibold text-on-surface">
+                      {item.source}
+                    </p>
                     <p className="mt-0.5 break-words text-code-sm text-on-surface-variant">
                       {item.message}
                     </p>
@@ -203,7 +234,9 @@ export function ConversationSyncProgress({
           {onDismiss ? (
             <button
               aria-label={t("conversation.sync.dismiss")}
-              className={iconButtonRecipe({ className: "size-7 text-on-surface-muted" })}
+              className={iconButtonRecipe({
+                className: "size-7 text-on-surface-muted",
+              })}
               onClick={onDismiss}
               title={t("conversation.sync.dismiss")}
               type="button"
@@ -218,7 +251,10 @@ export function ConversationSyncProgress({
         aria-valuemax={4}
         aria-valuemin={1}
         aria-valuenow={step}
-        aria-valuetext={t("conversation.sync.stage", { current: step, total: 4 })}
+        aria-valuetext={t("conversation.sync.stage", {
+          current: step,
+          total: 4,
+        })}
         className="mt-3 h-2 overflow-hidden rounded-full bg-theme-control"
         role="progressbar"
       >
@@ -229,8 +265,8 @@ export function ConversationSyncProgress({
               : completedWithAdvice
                 ? "bg-status-update"
                 : completed
-                ? "bg-status-create"
-                : "animate-pulse bg-status-update"
+                  ? "bg-status-create"
+                  : "animate-pulse bg-status-update"
           }`}
           style={{ width: `${step * 25}%` }}
         />
@@ -247,7 +283,10 @@ function syncStep(state: ConversationSyncProgressState) {
   return state.failedStep ?? 2;
 }
 
-function syncPhaseKey(recordKind: ConversationRecordKind, phase: ConversationSyncPhase): TranslationKey {
+function syncPhaseKey(
+  recordKind: ConversationRecordKind,
+  phase: ConversationSyncPhase,
+): TranslationKey {
   return (
     recordKind === "web"
       ? `conversation.sync.web.phase.${phase}`
@@ -255,7 +294,10 @@ function syncPhaseKey(recordKind: ConversationRecordKind, phase: ConversationSyn
   ) as TranslationKey;
 }
 
-function syncDescriptionKey(recordKind: ConversationRecordKind, phase: ConversationSyncPhase): TranslationKey {
+function syncDescriptionKey(
+  recordKind: ConversationRecordKind,
+  phase: ConversationSyncPhase,
+): TranslationKey {
   return (
     recordKind === "web"
       ? `conversation.sync.web.description.${phase}`

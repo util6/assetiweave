@@ -16,7 +16,9 @@ export function LanguageSwitcher() {
         <button
           className={clsx(
             "h-7 rounded-lg px-2.5 font-semibold transition-colors",
-            locale === nextLocale ? "bg-theme-control-hover text-primary" : "text-theme-control-fg hover:text-on-surface",
+            locale === nextLocale
+              ? "bg-theme-control-hover text-primary"
+              : "text-theme-control-fg hover:text-on-surface",
           )}
           key={nextLocale}
           onClick={() => setLocale(nextLocale)}

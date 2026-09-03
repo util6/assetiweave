@@ -89,22 +89,36 @@ export function ResizableColumns({
   scrollRightLabel,
   storageKey,
 }: ResizableColumnsProps) {
-  const fallbackWeights = useMemo(() => columns.map((column) => column.defaultWeight), [columns]);
-  const minWidths = useMemo(() => resolveColumnMinWidths(minimumWidth, columns), [columns, minimumWidth]);
+  const fallbackWeights = useMemo(
+    () => columns.map((column) => column.defaultWeight),
+    [columns],
+  );
+  const minWidths = useMemo(
+    () => resolveColumnMinWidths(minimumWidth, columns),
+    [columns, minimumWidth],
+  );
   const totalMinimumWidth = minWidths.reduce((sum, width) => sum + width, 0);
-  const resizableCanvasWidth = totalMinimumWidth + Math.round(minimumWidth * 0.5);
-  const [weights, setWeights] = useState(() => readStoredColumnWeights(storageKey, fallbackWeights));
-  const [columnDragState, setColumnDragState] = useState<ColumnDragState | null>(null);
+  const resizableCanvasWidth =
+    totalMinimumWidth + Math.round(minimumWidth * 0.5);
+  const [weights, setWeights] = useState(() =>
+    readStoredColumnWeights(storageKey, fallbackWeights),
+  );
+  const [columnDragState, setColumnDragState] =
+    useState<ColumnDragState | null>(null);
   const [handlePositions, setHandlePositions] = useState<number[]>([]);
-  const [scrollDragState, setScrollDragState] = useState<ScrollDragState | null>(null);
-  const [scrollMetrics, setScrollMetrics] = useState<ScrollMetrics>(EMPTY_SCROLL_METRICS);
+  const [scrollDragState, setScrollDragState] =
+    useState<ScrollDragState | null>(null);
+  const [scrollMetrics, setScrollMetrics] =
+    useState<ScrollMetrics>(EMPTY_SCROLL_METRICS);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollTrackRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const childArray = Children.toArray(children);
 
   useEffect(() => {
-    setWeights((currentWeights) => sanitizeColumnWeights(currentWeights, fallbackWeights));
+    setWeights((currentWeights) =>
+      sanitizeColumnWeights(currentWeights, fallbackWeights),
+    );
   }, [fallbackWeights]);
 
   useEffect(() => {
@@ -126,15 +140,22 @@ export function ResizableColumns({
         scrollWidth: activeViewport.scrollWidth,
       });
       setHandlePositions((currentPositions) => {
-        const nextPositions = readColumnBoundaryPositions(activeGrid, childArray.length);
-        return arraysEqual(currentPositions, nextPositions) ? currentPositions : nextPositions;
+        const nextPositions = readColumnBoundaryPositions(
+          activeGrid,
+          childArray.length,
+        );
+        return arraysEqual(currentPositions, nextPositions)
+          ? currentPositions
+          : nextPositions;
       });
     }
 
     const resizeObserver = new ResizeObserver(updateScrollMetrics);
     resizeObserver.observe(activeGrid);
     resizeObserver.observe(activeViewport);
-    activeViewport.addEventListener("scroll", updateScrollMetrics, { passive: true });
+    activeViewport.addEventListener("scroll", updateScrollMetrics, {
+      passive: true,
+    });
     updateScrollMetrics();
 
     return () => {
@@ -183,10 +204,12 @@ export function ResizableColumns({
     function handlePointerMove(event: PointerEvent) {
       const deltaRatio =
         activeDragState.trackTravelWidth > 0
-          ? (event.clientX - activeDragState.startClientX) / activeDragState.trackTravelWidth
+          ? (event.clientX - activeDragState.startClientX) /
+            activeDragState.trackTravelWidth
           : 0;
       activeViewport.scrollLeft = clamp(
-        activeDragState.startScrollLeft + deltaRatio * activeDragState.maxScroll,
+        activeDragState.startScrollLeft +
+          deltaRatio * activeDragState.maxScroll,
         0,
         activeDragState.maxScroll,
       );
@@ -206,7 +229,10 @@ export function ResizableColumns({
   }, [scrollDragState]);
 
   const columnTemplate = minWidths
-    .map((width, index) => `minmax(${width}px, ${formatWeight(weights[index] ?? columns[index].defaultWeight)}fr)`)
+    .map(
+      (width, index) =>
+        `minmax(${width}px, ${formatWeight(weights[index] ?? columns[index].defaultWeight)}fr)`,
+    )
     .join(" ");
   const boundaries = getColumnBoundaries(weights);
   const style: ResizableColumnsStyle = {
@@ -219,10 +245,16 @@ export function ResizableColumns({
     style[`--resizable-column-boundary-${index}`] = String(boundary);
   });
 
-  const maxScroll = Math.max(0, scrollMetrics.scrollWidth - scrollMetrics.clientWidth);
+  const maxScroll = Math.max(
+    0,
+    scrollMetrics.scrollWidth - scrollMetrics.clientWidth,
+  );
   const thumb = calculateScrollThumb(scrollMetrics);
 
-  function startResize(handleIndex: number, event: ReactPointerEvent<HTMLDivElement>) {
+  function startResize(
+    handleIndex: number,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
     const grid = gridRef.current;
     const containerWidth = grid?.getBoundingClientRect().width ?? 0;
     if (!grid || containerWidth <= 0) return;
@@ -237,7 +269,10 @@ export function ResizableColumns({
     });
   }
 
-  function resizeFromKeyboard(handleIndex: number, event: KeyboardEvent<HTMLDivElement>) {
+  function resizeFromKeyboard(
+    handleIndex: number,
+    event: KeyboardEvent<HTMLDivElement>,
+  ) {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 
     const grid = gridRef.current;
@@ -246,7 +281,9 @@ export function ResizableColumns({
 
     event.preventDefault();
     const direction = event.key === "ArrowRight" ? 1 : -1;
-    const step = event.shiftKey ? KEYBOARD_RESIZE_STEP_LARGE : KEYBOARD_RESIZE_STEP;
+    const step = event.shiftKey
+      ? KEYBOARD_RESIZE_STEP_LARGE
+      : KEYBOARD_RESIZE_STEP;
 
     setWeights((currentWeights) =>
       resizeColumnWeights({
@@ -254,7 +291,11 @@ export function ResizableColumns({
         deltaPx: direction * step,
         handleIndex,
         minWidths,
-        weights: readMeasuredColumnWeights(grid, childArray.length, currentWeights),
+        weights: readMeasuredColumnWeights(
+          grid,
+          childArray.length,
+          currentWeights,
+        ),
       }),
     );
   }
@@ -270,7 +311,8 @@ export function ResizableColumns({
 
     event.preventDefault();
     event.stopPropagation();
-    const trackTravelWidth = track.getBoundingClientRect().width * (1 - thumb.widthRatio);
+    const trackTravelWidth =
+      track.getBoundingClientRect().width * (1 - thumb.widthRatio);
     setScrollDragState({
       maxScroll,
       startClientX: event.clientX,
@@ -287,8 +329,13 @@ export function ResizableColumns({
     const trackRect = track.getBoundingClientRect();
     const thumbWidth = trackRect.width * thumb.widthRatio;
     const trackTravelWidth = trackRect.width - thumbWidth;
-    const nextThumbLeft = clamp(event.clientX - trackRect.left - thumbWidth / 2, 0, trackTravelWidth);
-    viewport.scrollLeft = trackTravelWidth > 0 ? (nextThumbLeft / trackTravelWidth) * maxScroll : 0;
+    const nextThumbLeft = clamp(
+      event.clientX - trackRect.left - thumbWidth / 2,
+      0,
+      trackTravelWidth,
+    );
+    viewport.scrollLeft =
+      trackTravelWidth > 0 ? (nextThumbLeft / trackTravelWidth) * maxScroll : 0;
   }
 
   function handleScrollKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -311,9 +358,18 @@ export function ResizableColumns({
   }
 
   return (
-    <div className={cn("relative isolate z-0 grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible", className, "overflow-visible")}>
+    <div
+      className={cn(
+        "relative isolate z-0 grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible",
+        className,
+        "overflow-visible",
+      )}
+    >
       <div className="min-h-0 min-w-0 overflow-hidden rounded-t-[inherit]">
-        <div className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden" ref={scrollViewportRef}>
+        <div
+          className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden"
+          ref={scrollViewportRef}
+        >
           <div
             className={cn(
               "relative grid h-full min-h-0 w-[max(100%,var(--resizable-columns-width))] grid-cols-[var(--resizable-columns-template)]",
@@ -417,7 +473,12 @@ export function resizeColumnWeights({
   minWidths,
   weights,
 }: ResizeColumnWeightsOptions) {
-  if (containerWidth <= 0 || handleIndex < 0 || handleIndex >= weights.length - 1) return weights;
+  if (
+    containerWidth <= 0 ||
+    handleIndex < 0 ||
+    handleIndex >= weights.length - 1
+  )
+    return weights;
 
   const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
   if (totalWeight <= 0) return weights;
@@ -433,11 +494,16 @@ export function resizeColumnWeights({
   if (pairWidth < minPairWidth) return weights;
 
   const currentLeftWidth = (leftWeight / pairWeight) * pairWidth;
-  const nextLeftWidth = clamp(currentLeftWidth + deltaPx, minLeft, pairWidth - minRight);
+  const nextLeftWidth = clamp(
+    currentLeftWidth + deltaPx,
+    minLeft,
+    pairWidth - minRight,
+  );
   const nextWeights = [...weights];
 
   nextWeights[handleIndex] = (nextLeftWidth / pairWidth) * pairWeight;
-  nextWeights[handleIndex + 1] = ((pairWidth - nextLeftWidth) / pairWidth) * pairWeight;
+  nextWeights[handleIndex + 1] =
+    ((pairWidth - nextLeftWidth) / pairWidth) * pairWeight;
 
   return nextWeights;
 }
@@ -458,13 +524,22 @@ export function resizeColumnDragWeights({
     weights,
   });
 
-  return arraysAlmostEqual(nextWeights, weights) ? committedWeights : nextWeights;
+  return arraysAlmostEqual(nextWeights, weights)
+    ? committedWeights
+    : nextWeights;
 }
 
-export function sanitizeColumnWeights(weights: number[], fallbackWeights: number[]) {
+export function sanitizeColumnWeights(
+  weights: number[],
+  fallbackWeights: number[],
+) {
   if (weights.length !== fallbackWeights.length) return fallbackWeights;
-  if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) return fallbackWeights;
-  return scaleWeightsToTotal(weights, fallbackWeights.reduce((sum, weight) => sum + weight, 0));
+  if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0))
+    return fallbackWeights;
+  return scaleWeightsToTotal(
+    weights,
+    fallbackWeights.reduce((sum, weight) => sum + weight, 0),
+  );
 }
 
 export function getColumnBoundaries(weights: number[]) {
@@ -480,11 +555,20 @@ export function getColumnBoundaries(weights: number[]) {
   });
 }
 
-export function resolveColumnMinWidths(minimumWidth: number, columns: ResizableColumnConfig[]) {
-  return columns.map((column) => Math.round(minimumWidth * (column.minWidthScale ?? 1)));
+export function resolveColumnMinWidths(
+  minimumWidth: number,
+  columns: ResizableColumnConfig[],
+) {
+  return columns.map((column) =>
+    Math.round(minimumWidth * (column.minWidthScale ?? 1)),
+  );
 }
 
-export function calculateScrollThumb({ clientWidth, scrollLeft, scrollWidth }: ScrollMetrics) {
+export function calculateScrollThumb({
+  clientWidth,
+  scrollLeft,
+  scrollWidth,
+}: ScrollMetrics) {
   if (clientWidth <= 0 || scrollWidth <= clientWidth) {
     return {
       leftRatio: 0,
@@ -499,20 +583,34 @@ export function calculateScrollThumb({ clientWidth, scrollLeft, scrollWidth }: S
   };
 }
 
-function readMeasuredColumnWeights(grid: HTMLDivElement, columnCount: number, fallbackWeights: number[]) {
+function readMeasuredColumnWeights(
+  grid: HTMLDivElement,
+  columnCount: number,
+  fallbackWeights: number[],
+) {
   const widths = Array.from(grid.children)
     .slice(0, columnCount)
     .map((child) => child.getBoundingClientRect().width);
   const totalWidth = widths.reduce((sum, width) => sum + width, 0);
 
-  if (widths.length !== fallbackWeights.length || totalWidth <= 0 || widths.some((width) => width <= 0)) {
+  if (
+    widths.length !== fallbackWeights.length ||
+    totalWidth <= 0 ||
+    widths.some((width) => width <= 0)
+  ) {
     return fallbackWeights;
   }
 
-  return scaleWeightsToTotal(widths, fallbackWeights.reduce((sum, weight) => sum + weight, 0));
+  return scaleWeightsToTotal(
+    widths,
+    fallbackWeights.reduce((sum, weight) => sum + weight, 0),
+  );
 }
 
-function readColumnBoundaryPositions(grid: HTMLDivElement, columnCount: number) {
+function readColumnBoundaryPositions(
+  grid: HTMLDivElement,
+  columnCount: number,
+) {
   return Array.from(grid.children)
     .slice(0, Math.max(0, columnCount - 1))
     .map((child) => {
@@ -521,8 +619,12 @@ function readColumnBoundaryPositions(grid: HTMLDivElement, columnCount: number) 
     });
 }
 
-function readStoredColumnWeights(storageKey: string | undefined, fallbackWeights: number[]) {
-  if (!storageKey || typeof localStorage === "undefined") return fallbackWeights;
+function readStoredColumnWeights(
+  storageKey: string | undefined,
+  fallbackWeights: number[],
+) {
+  if (!storageKey || typeof localStorage === "undefined")
+    return fallbackWeights;
 
   try {
     const storedValue = localStorage.getItem(storageKey);
@@ -554,11 +656,17 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function arraysEqual(left: number[], right: number[]) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+  return (
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }
 
 function arraysAlmostEqual(left: number[], right: number[]) {
-  return left.length === right.length && left.every((value, index) => Math.abs(value - right[index]) < 0.001);
+  return (
+    left.length === right.length &&
+    left.every((value, index) => Math.abs(value - right[index]) < 0.001)
+  );
 }
 
 function scaleWeightsToTotal(weights: number[], targetTotal: number) {

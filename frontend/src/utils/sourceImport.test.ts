@@ -72,7 +72,9 @@ describe("source import helpers", () => {
 
   it("derives readable names across common path formats", () => {
     expect(deriveSourceName("~/code/skills/")).toBe("skills");
-    expect(deriveSourceName("/Users/util6/code-space/util6-agents")).toBe("util6-agents");
+    expect(deriveSourceName("/Users/util6/code-space/util6-agents")).toBe(
+      "util6-agents",
+    );
     expect(deriveSourceName("C:\\Users\\util6\\skills")).toBe("skills");
   });
 });

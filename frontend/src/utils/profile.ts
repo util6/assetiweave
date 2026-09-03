@@ -1,4 +1,10 @@
-import type { AppKind, AppShortcut, TargetProfile, TargetProfileInput, TargetProfileRuleSet } from "../types";
+import type {
+  AppKind,
+  AppShortcut,
+  TargetProfile,
+  TargetProfileInput,
+  TargetProfileRuleSet,
+} from "../types";
 
 export interface AppProfileFormValues {
   accentColor: string;
@@ -18,30 +24,45 @@ export function deriveProfileId(name: string) {
     .replace(/^-+|-+$/g, "");
 }
 
-export function hasProfileIdConflict(profileId: string, profiles: TargetProfile[], editingProfileId?: string) {
-  return profiles.some((profile) => profile.id === profileId && profile.id !== editingProfileId);
+export function hasProfileIdConflict(
+  profileId: string,
+  profiles: TargetProfile[],
+  editingProfileId?: string,
+) {
+  return profiles.some(
+    (profile) => profile.id === profileId && profile.id !== editingProfileId,
+  );
 }
 
-export function buildTargetProfileInput(values: AppProfileFormValues, editingProfile?: TargetProfile | null): TargetProfileInput {
+export function buildTargetProfileInput(
+  values: AppProfileFormValues,
+  editingProfile?: TargetProfile | null,
+): TargetProfileInput {
   const name = values.name.trim();
   const targetPath = values.targetPath.trim();
   const baseProfile = editingProfile ?? null;
 
   return {
     app_kind: values.appKind,
-    deployment_strategy: baseProfile?.deployment_strategy ?? "symlink_to_source",
+    deployment_strategy:
+      baseProfile?.deployment_strategy ?? "symlink_to_source",
     enabled: values.enabled,
     exclude: baseProfile?.exclude ?? defaultProfileExclude(),
     id: baseProfile?.id ?? deriveProfileId(name),
     include: baseProfile?.include ?? defaultProfileInclude(),
     name,
-    safety: baseProfile?.safety ?? { allow_overwrite: false, allow_remove: false },
+    safety: baseProfile?.safety ?? {
+      allow_overwrite: false,
+      allow_remove: false,
+    },
     supported_kinds: baseProfile?.supported_kinds ?? ["skill"],
     target_paths: [targetPath],
   };
 }
 
-export function targetProfileFromInput(input: TargetProfileInput): TargetProfile {
+export function targetProfileFromInput(
+  input: TargetProfileInput,
+): TargetProfile {
   const name = input.name.trim();
   return {
     app_kind: input.app_kind ?? "custom",
@@ -53,11 +74,16 @@ export function targetProfileFromInput(input: TargetProfileInput): TargetProfile
     name,
     safety: input.safety ?? { allow_overwrite: false, allow_remove: false },
     supported_kinds: input.supported_kinds ?? ["skill"],
-    target_paths: (input.target_paths ?? []).map((path) => path.trim()).filter(Boolean),
+    target_paths: (input.target_paths ?? [])
+      .map((path) => path.trim())
+      .filter(Boolean),
   };
 }
 
-export function defaultAppShortcut(profile: TargetProfile, overrides: Partial<AppShortcut> = {}): AppShortcut {
+export function defaultAppShortcut(
+  profile: TargetProfile,
+  overrides: Partial<AppShortcut> = {},
+): AppShortcut {
   return {
     accentColor: defaultAccentColor(profile.app_kind),
     appKind: profile.app_kind,
@@ -91,7 +117,9 @@ export function defaultProfileExclude(): TargetProfileRuleSet {
 }
 
 function defaultDisplayIcon(profile: TargetProfile) {
-  return profile.app_kind === "custom" ? profile.name.slice(0, 1).toUpperCase() || "A" : `app:${profile.app_kind}`;
+  return profile.app_kind === "custom"
+    ? profile.name.slice(0, 1).toUpperCase() || "A"
+    : `app:${profile.app_kind}`;
 }
 
 function defaultAccentColor(appKind: AppKind) {

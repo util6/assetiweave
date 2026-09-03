@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationDataMaintenanceProvider,
@@ -40,10 +46,12 @@ describe("ConversationDataMaintenanceProvider", () => {
     const runningTask = maintenanceTask("audit-1", "running");
     auditMock.mockResolvedValue(runningTask);
     let listener: ((snapshot: unknown) => void) | undefined;
-    subscribeMock.mockImplementation(async (next: (snapshot: unknown) => void) => {
-      listener = next;
-      return vi.fn();
-    });
+    subscribeMock.mockImplementation(
+      async (next: (snapshot: unknown) => void) => {
+        listener = next;
+        return vi.fn();
+      },
+    );
 
     render(
       <ConversationDataMaintenanceProvider>
@@ -53,13 +61,23 @@ describe("ConversationDataMaintenanceProvider", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start audit" }));
     await act(async () => {});
-    expect(screen.getByTestId("maintenance-status").textContent).toBe("running");
-    expect((screen.getByRole("button", { name: "Other feature" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId("maintenance-status").textContent).toBe(
+      "running",
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Other feature",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
 
     await act(async () => {
       listener?.(maintenanceTask("audit-1", "completed"));
     });
-    expect(screen.getByTestId("maintenance-status").textContent).toBe("completed");
+    expect(screen.getByTestId("maintenance-status").textContent).toBe(
+      "completed",
+    );
   });
 
   it("polls when an event is missed and exposes cancellation", async () => {
@@ -79,17 +97,23 @@ describe("ConversationDataMaintenanceProvider", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
     await act(async () => {});
-    expect(screen.getByTestId("maintenance-status").textContent).toBe("running");
+    expect(screen.getByTestId("maintenance-status").textContent).toBe(
+      "running",
+    );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByTestId("maintenance-status").textContent).toBe("completed");
+    expect(screen.getByTestId("maintenance-status").textContent).toBe(
+      "completed",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Cancel maintenance" }));
     await act(async () => {});
     expect(cancelMock).toHaveBeenCalledWith("repair-1");
-    expect(screen.getByTestId("maintenance-status").textContent).toBe("cancelling");
+    expect(screen.getByTestId("maintenance-status").textContent).toBe(
+      "cancelling",
+    );
   });
 });
 
@@ -98,16 +122,28 @@ function MaintenanceHarness() {
 
   return (
     <>
-      <button onClick={() => void audit({ record_kind: "session" })} type="button">Start audit</button>
-      <button onClick={() => void repair({ dry_run: true })} type="button">Start repair</button>
-      <button onClick={() => void (task && cancel(task.id))} type="button">Cancel maintenance</button>
+      <button
+        onClick={() => void audit({ record_kind: "session" })}
+        type="button"
+      >
+        Start audit
+      </button>
+      <button onClick={() => void repair({ dry_run: true })} type="button">
+        Start repair
+      </button>
+      <button onClick={() => void (task && cancel(task.id))} type="button">
+        Cancel maintenance
+      </button>
       <button type="button">Other feature</button>
       <output data-testid="maintenance-status">{task?.status ?? "idle"}</output>
     </>
   );
 }
 
-function maintenanceTask(id: string, status: "running" | "completed" | "cancelling") {
+function maintenanceTask(
+  id: string,
+  status: "running" | "completed" | "cancelling",
+) {
   return {
     id,
     status,
@@ -115,7 +151,12 @@ function maintenanceTask(id: string, status: "running" | "completed" | "cancelli
     source_id: null,
     record_kind: null,
     dry_run: false,
-    progress: { phase: status, completed_stage: status === "completed" ? 10 : 1, total_stage: 10, note: null },
+    progress: {
+      phase: status,
+      completed_stage: status === "completed" ? 10 : 1,
+      total_stage: 10,
+      note: null,
+    },
     started_at: "2026-08-25T00:00:00Z",
     finished_at: status === "completed" ? "2026-08-25T00:00:05Z" : null,
     result: null,

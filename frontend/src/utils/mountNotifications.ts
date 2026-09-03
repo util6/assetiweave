@@ -1,6 +1,9 @@
 import type { NotificationMessage } from "../components/notifications/NotificationBanner";
 import type { AssetMountStatus } from "../types";
-import { countMountedAssetsForProfile, getMountDisplayState } from "./mountState";
+import {
+  countMountedAssetsForProfile,
+  getMountDisplayState,
+} from "./mountState";
 
 interface AssetMountNotificationInput {
   assetId: string;
@@ -16,8 +19,14 @@ export function buildAssetMountNotification({
   profileId,
   profileName,
   statuses,
-}: AssetMountNotificationInput): Pick<NotificationMessage, "tone" | "messageKey" | "messageParams"> {
-  const status = statuses.find((candidate) => candidate.asset_id === assetId && candidate.profile_id === profileId);
+}: AssetMountNotificationInput): Pick<
+  NotificationMessage,
+  "tone" | "messageKey" | "messageParams"
+> {
+  const status = statuses.find(
+    (candidate) =>
+      candidate.asset_id === assetId && candidate.profile_id === profileId,
+  );
   const mounted = countMountedAssetsForProfile(statuses, profileId);
   const params = {
     name: assetName,

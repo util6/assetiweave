@@ -8,7 +8,10 @@ export function groupSourceDisplayAssets(assets: Asset[], sources: Source[]) {
       return current;
     }
 
-    current.set(asset.source_id, [...(current.get(asset.source_id) ?? []), asset]);
+    current.set(asset.source_id, [
+      ...(current.get(asset.source_id) ?? []),
+      asset,
+    ]);
     return current;
   }, new Map<string, Asset[]>());
 
@@ -18,11 +21,20 @@ export function groupSourceDisplayAssets(assets: Asset[], sources: Source[]) {
   }
 
   const existingAssetIds = new Set(assets.map((asset) => asset.id));
-  const displayedBackupIds = new Set((grouped.get(backupSource.id) ?? []).map((asset) => asset.id));
+  const displayedBackupIds = new Set(
+    (grouped.get(backupSource.id) ?? []).map((asset) => asset.id),
+  );
   for (const asset of assets) {
     const backupPath = asset.backup_status?.backup_path;
-    const hiddenBackupId = asset.backup_status?.hidden_asset_ids.find((assetId) => !existingAssetIds.has(assetId));
-    if (!backupPath || !hiddenBackupId || asset.source_id === backupSource.id || displayedBackupIds.has(hiddenBackupId)) {
+    const hiddenBackupId = asset.backup_status?.hidden_asset_ids.find(
+      (assetId) => !existingAssetIds.has(assetId),
+    );
+    if (
+      !backupPath ||
+      !hiddenBackupId ||
+      asset.source_id === backupSource.id ||
+      displayedBackupIds.has(hiddenBackupId)
+    ) {
       continue;
     }
 
@@ -39,7 +51,10 @@ export function groupSourceDisplayAssets(assets: Asset[], sources: Source[]) {
         hidden_asset_ids: [],
       },
     };
-    grouped.set(backupSource.id, [...(grouped.get(backupSource.id) ?? []), backupAsset]);
+    grouped.set(backupSource.id, [
+      ...(grouped.get(backupSource.id) ?? []),
+      backupAsset,
+    ]);
     displayedBackupIds.add(hiddenBackupId);
   }
 
@@ -47,13 +62,19 @@ export function groupSourceDisplayAssets(assets: Asset[], sources: Source[]) {
 }
 
 function isSkillBackupSource(source: Source) {
-  return source.id === SKILL_BACKUP_SOURCE_ID || source.source_origin === "assetiweave_library";
+  return (
+    source.id === SKILL_BACKUP_SOURCE_ID ||
+    source.source_origin === "assetiweave_library"
+  );
 }
 
 function backupRelativePath(backupPath: string, rootPath: string) {
   const normalizedBackupPath = backupPath.replace(/\\/g, "/");
   const normalizedRootPath = rootPath.replace(/\\/g, "/").replace(/\/$/, "");
-  if (normalizedRootPath && normalizedBackupPath.startsWith(`${normalizedRootPath}/`)) {
+  if (
+    normalizedRootPath &&
+    normalizedBackupPath.startsWith(`${normalizedRootPath}/`)
+  ) {
     return normalizedBackupPath.slice(normalizedRootPath.length + 1);
   }
   return normalizedBackupPath;

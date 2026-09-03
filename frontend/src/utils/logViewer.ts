@@ -11,10 +11,16 @@ export function clampLogLineLimit(value: number): number {
     return DEFAULT_LOG_LINE_LIMIT;
   }
 
-  return Math.min(MAX_LOG_LINE_LIMIT, Math.max(MIN_LOG_LINE_LIMIT, Math.round(value)));
+  return Math.min(
+    MAX_LOG_LINE_LIMIT,
+    Math.max(MIN_LOG_LINE_LIMIT, Math.round(value)),
+  );
 }
 
-export function filterLogContent(content: string, level: LogLevelFilter): string {
+export function filterLogContent(
+  content: string,
+  level: LogLevelFilter,
+): string {
   if (level === "ALL" || !content) {
     return content;
   }
@@ -33,7 +39,8 @@ export function filterLogContent(content: string, level: LogLevelFilter): string
   }
 
   for (const line of lines) {
-    const matchedLevel = line.match(LOG_ENTRY_LEVEL_PATTERN)?.[1] as LogLevelFilter | undefined;
+    const matchedLevel = line.match(LOG_ENTRY_LEVEL_PATTERN)?.[1] as
+      LogLevelFilter | undefined;
     if (matchedLevel) {
       flushEntry();
       currentEntry = [line];

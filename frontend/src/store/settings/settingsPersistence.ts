@@ -1,4 +1,8 @@
-import { defaultSettings, normalizeStoredSettings, type AppSettings } from "./settingsSchema";
+import {
+  defaultSettings,
+  normalizeStoredSettings,
+  type AppSettings,
+} from "./settingsSchema";
 
 export const SETTINGS_CACHE_KEY = "assetiweave.settings";
 
@@ -8,7 +12,9 @@ export function readCachedSettings(): AppSettings {
       return defaultSettings;
     }
     const stored = localStorage.getItem(SETTINGS_CACHE_KEY);
-    return stored ? normalizeStoredSettings(JSON.parse(stored)) : defaultSettings;
+    return stored
+      ? normalizeStoredSettings(JSON.parse(stored))
+      : defaultSettings;
   } catch {
     return defaultSettings;
   }

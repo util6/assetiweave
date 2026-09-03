@@ -9,7 +9,10 @@ export function ConversationFullSyncProgress({
   t: Translator;
 }) {
   const totalSourceCount = progress.total_source_count;
-  const completedSourceCount = Math.min(progress.completed_source_count, totalSourceCount);
+  const completedSourceCount = Math.min(
+    progress.completed_source_count,
+    totalSourceCount,
+  );
   const determinate = totalSourceCount > 0;
   const percent = determinate
     ? Math.round((completedSourceCount / totalSourceCount) * 100)
@@ -25,7 +28,9 @@ export function ConversationFullSyncProgress({
           {progress.current_source_name ? (
             <p className="truncate">
               {t("settings.conversation.fullSyncCurrentSource")}
-              <span className="font-semibold text-on-surface">{progress.current_source_name}</span>
+              <span className="font-semibold text-on-surface">
+                {progress.current_source_name}
+              </span>
             </p>
           ) : determinate ? (
             <p>
@@ -47,9 +52,11 @@ export function ConversationFullSyncProgress({
         aria-valuemax={determinate ? totalSourceCount : undefined}
         aria-valuemin={determinate ? 0 : undefined}
         aria-valuenow={determinate ? completedSourceCount : undefined}
-        aria-valuetext={determinate
-          ? t("settings.conversation.fullSyncProgressPercent", { percent })
-          : t("settings.conversation.fullSyncPreparing")}
+        aria-valuetext={
+          determinate
+            ? t("settings.conversation.fullSyncProgressPercent", { percent })
+            : t("settings.conversation.fullSyncPreparing")
+        }
         className="mt-2 h-2 overflow-hidden rounded-full bg-theme-control-border/70"
         role="progressbar"
       >

@@ -17,7 +17,9 @@ export function ListSkeletonRecipe({
     <SkeletonList density={density}>
       {customChildren
         ? children
-        : Array.from({ length: rowCount }, (_, index) => <DefaultListRow index={index} key={index} />)}
+        : Array.from({ length: rowCount }, (_, index) => (
+            <DefaultListRow index={index} key={index} />
+          ))}
     </SkeletonList>
   );
 }
@@ -28,7 +30,12 @@ function DefaultListRow({ index }: { index: number }): React.ReactElement {
       <Skeleton className="size-8 shrink-0 rounded-xl" />
       <div className="grid min-w-0 flex-1 content-start gap-2">
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <Skeleton className={cn("h-4 rounded-md", index % 3 === 0 ? "w-48" : "w-64 max-w-[60%]")} />
+          <Skeleton
+            className={cn(
+              "h-4 rounded-md",
+              index % 3 === 0 ? "w-48" : "w-64 max-w-[60%]",
+            )}
+          />
           <Skeleton className="h-6 w-16 shrink-0 rounded-full" />
         </div>
         <SkeletonText lines={2} />

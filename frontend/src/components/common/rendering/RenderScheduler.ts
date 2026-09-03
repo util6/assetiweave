@@ -24,7 +24,9 @@ const MOVING_FRAME_LIMIT = 1;
 const IDLE_TASK_LIMIT = 4;
 const IDLE_BUDGET_MS = 4;
 
-export function createRenderScheduler(options: SchedulerOptions = {}): RenderScheduler {
+export function createRenderScheduler(
+  options: SchedulerOptions = {},
+): RenderScheduler {
   let phase: ScrollPhase = "idle";
   let frameId: number | null = null;
   let disposed = false;
@@ -37,7 +39,8 @@ export function createRenderScheduler(options: SchedulerOptions = {}): RenderSch
   };
 
   const scheduleFlush = () => {
-    if (disposed || phase === "fast" || tasks.size === 0 || frameId != null) return;
+    if (disposed || phase === "fast" || tasks.size === 0 || frameId != null)
+      return;
     frameId = requestAnimationFrame(flush);
   };
 
@@ -48,10 +51,16 @@ export function createRenderScheduler(options: SchedulerOptions = {}): RenderSch
     const startedAt = performance.now();
     const budget = phase === "moving" ? MOVING_FRAME_LIMIT : IDLE_TASK_LIMIT;
     let committed = 0;
-    const ordered = [...tasks.values()].sort((left, right) => left.priority - right.priority);
+    const ordered = [...tasks.values()].sort(
+      (left, right) => left.priority - right.priority,
+    );
 
     for (const task of ordered) {
-      if (committed >= budget || (phase === "idle" && performance.now() - startedAt >= IDLE_BUDGET_MS)) break;
+      if (
+        committed >= budget ||
+        (phase === "idle" && performance.now() - startedAt >= IDLE_BUDGET_MS)
+      )
+        break;
       if (!tasks.delete(task.key)) continue;
       committed += 1;
       try {

@@ -1,5 +1,14 @@
 import clsx from "clsx";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   AppWindow,
   ArrowDownWideNarrow,
@@ -52,7 +61,10 @@ import {
   collectConversationTurnBlocks,
   ConversationTurn,
 } from "../../components/conversations/ConversationTurn";
-import { DEFAULT_TRANSLATION_SETTINGS, useConversationContentController } from "../../components/conversations/useConversationContentController";
+import {
+  DEFAULT_TRANSLATION_SETTINGS,
+  useConversationContentController,
+} from "../../components/conversations/useConversationContentController";
 import { MarkdownContent } from "../../components/conversations/ConversationMarkdown";
 import {
   ConversationCardKindIcon,
@@ -181,7 +193,10 @@ function conversationAdapterCacheKey(recordKind: ConversationRecordKind) {
   return `conversation.adapters.${recordKind}`;
 }
 
-function conversationSessionCacheKey(recordKind: ConversationRecordKind, query: string) {
+function conversationSessionCacheKey(
+  recordKind: ConversationRecordKind,
+  query: string,
+) {
   return `conversation.sessions.${recordKind}.${query}`;
 }
 
@@ -273,24 +288,39 @@ export function ConversationsPage({
     updateContentVisibility,
   } = useConversationsController({ recordKind: currentRecordKind });
   const { startSync, taskFor } = conversationSync;
-  const { rebuild: rebuildSearchIndex, status: searchIndexStatus, task: searchIndexTask } = searchIndex;
+  const {
+    rebuild: rebuildSearchIndex,
+    status: searchIndexStatus,
+    task: searchIndexTask,
+  } = searchIndex;
   const syncTask = taskFor(currentRecordKind);
   const webRecordMode = currentRecordKind === "web";
   const [adapters, setAdapters] = useState<ConversationAdapter[]>(
-    () => readSharedResource<ConversationAdapter[]>(conversationAdapterCacheKey(currentRecordKind)) ?? [],
+    () =>
+      readSharedResource<ConversationAdapter[]>(
+        conversationAdapterCacheKey(currentRecordKind),
+      ) ?? [],
   );
   const [sessions, setSessions] = useState<ConversationSessionListItem[]>(
-    () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) ?? [],
+    () =>
+      readSharedResource<ConversationSessionListItem[]>(
+        conversationSessionCacheKey(currentRecordKind, ""),
+      ) ?? [],
   );
-  const [sessionDetail, setSessionDetail] = useState<ConversationSessionDetail | null>(null);
+  const [sessionDetail, setSessionDetail] =
+    useState<ConversationSessionDetail | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
   const sessionSearchRequestIdRef = useRef(0);
-  const syncRunning = syncTask?.status === "running" || syncTask?.status === "cancelling";
+  const syncRunning =
+    syncTask?.status === "running" || syncTask?.status === "cancelling";
   const searchIndexRunning = searchIndexTask?.status === "running";
   const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const sessionDetailRequestIdRef = useRef(0);
   const [sessionCatalogReady, setSessionCatalogReady] = useState(
-    () => readSharedResource<ConversationSessionListItem[]>(conversationSessionCacheKey(currentRecordKind, "")) !== undefined,
+    () =>
+      readSharedResource<ConversationSessionListItem[]>(
+        conversationSessionCacheKey(currentRecordKind, ""),
+      ) !== undefined,
   );
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
   const startedNavigationNonceRef = useRef<string | null>(null);
@@ -303,12 +333,20 @@ export function ConversationsPage({
     clearConversationSelection();
   }
 
-  const sessionQuestionCount = useMemo(() => sessions.reduce((total, session) => total + session.question_count, 0), [sessions]);
+  const sessionQuestionCount = useMemo(
+    () =>
+      sessions.reduce((total, session) => total + session.question_count, 0),
+    [sessions],
+  );
   const sortedSessions = useMemo(
-    () => sortConversationSessions(sessions, sessionSortBy, sessionSortDirection),
+    () =>
+      sortConversationSessions(sessions, sessionSortBy, sessionSortDirection),
     [sessionSortBy, sessionSortDirection, sessions],
   );
-  const appGroups = useMemo(() => groupConversationSessionsByApp(adapters, sortedSessions), [adapters, sortedSessions]);
+  const appGroups = useMemo(
+    () => groupConversationSessionsByApp(adapters, sortedSessions),
+    [adapters, sortedSessions],
+  );
   const appMetaById = useMemo(
     () =>
       new Map(
@@ -330,35 +368,50 @@ export function ConversationsPage({
     [appGroups, selectedAppId],
   );
   const selectedQuestion = useMemo(
-    () => sessionDetail?.questions.find((question) => question.question.id === selectedQuestionId) ?? null,
+    () =>
+      sessionDetail?.questions.find(
+        (question) => question.question.id === selectedQuestionId,
+      ) ?? null,
     [selectedQuestionId, sessionDetail],
   );
   const availableContentTypes = useMemo(
-    () => conversationContentTypesForQuestions(
-      selectedQuestion ? [selectedQuestion] : sessionDetail?.questions ?? [],
-    ),
+    () =>
+      conversationContentTypesForQuestions(
+        selectedQuestion
+          ? [selectedQuestion]
+          : (sessionDetail?.questions ?? []),
+      ),
     [selectedQuestion, sessionDetail],
   );
   const visibleSessionQuestions = useMemo(
-    () => sortConversationQuestions(sessionDetail?.questions ?? [], "index", "asc"),
+    () =>
+      sortConversationQuestions(sessionDetail?.questions ?? [], "index", "asc"),
     [sessionDetail],
   );
   const selectedQuestionCount = selectedQuestionIds.size;
   const exportAvailableContentTypes = useMemo(() => {
     if (!exportDialog || !sessionDetail) return [];
     const selectedIds = new Set(exportDialog.questionIds);
-    const questions = exportDialog.mode === "questions"
-      ? sessionDetail.questions.filter((question) => selectedIds.has(question.question.id))
-      : sessionDetail.questions;
+    const questions =
+      exportDialog.mode === "questions"
+        ? sessionDetail.questions.filter((question) =>
+            selectedIds.has(question.question.id),
+          )
+        : sessionDetail.questions;
     return conversationContentTypesForQuestions(questions);
   }, [exportDialog, sessionDetail]);
   const conversationStyle = useMemo(
     () =>
       ({
-        "--conversation-session-browser-font-family":
-          resolveFontFamilyCss(appSettings.conversations.sessionBrowserFontFamily, "sans"),
+        "--conversation-session-browser-font-family": resolveFontFamilyCss(
+          appSettings.conversations.sessionBrowserFontFamily,
+          "sans",
+        ),
         "--conversation-session-browser-font-size": `${appSettings.conversations.sessionBrowserFontSize}px`,
-        "--conversation-content-font-family": resolveFontFamilyCss(appSettings.conversations.contentFontFamily, "sans"),
+        "--conversation-content-font-family": resolveFontFamilyCss(
+          appSettings.conversations.contentFontFamily,
+          "sans",
+        ),
         "--conversation-content-font-size": `${appSettings.conversations.contentFontSize}px`,
         "--conversation-code-font-size": `${appSettings.conversations.codeFontSize}px`,
       }) as CSSProperties,
@@ -375,9 +428,12 @@ export function ConversationsPage({
     void refreshCatalog();
   }, [currentRecordKind]);
 
-  useEffect(() => () => {
-    sessionDetailRequestIdRef.current += 1;
-  }, []);
+  useEffect(
+    () => () => {
+      sessionDetailRequestIdRef.current += 1;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (sessionCatalogReady) {
@@ -394,9 +450,12 @@ export function ConversationsPage({
   }, [query]);
 
   useEffect(() => {
-    const kinds = sessionDetail?.questions.flatMap((question) =>
-      question.projected_content_nodes.map((node) => conversationCardPresentationKind(node.node_type, node.semantic_role))
-    ) ?? [];
+    const kinds =
+      sessionDetail?.questions.flatMap((question) =>
+        question.projected_content_nodes.map((node) =>
+          conversationCardPresentationKind(node.node_type, node.semantic_role),
+        ),
+      ) ?? [];
     if (kinds.length === 0) return;
     ensureContentVisibility(kinds);
   }, [ensureContentVisibility, sessionDetail]);
@@ -426,7 +485,8 @@ export function ConversationsPage({
         setContentSearchResult({
           cardKinds: conversationSearchCardKinds(result),
           semanticRoles: Object.keys(result.semantic_role_counts ?? {}),
-          includeQuestions: result.scope?.include_questions ?? contentSearchIncludesQuestions,
+          includeQuestions:
+            result.scope?.include_questions ?? contentSearchIncludesQuestions,
           hits: result.hits,
           recordKind: result.record_kind,
           query: result.query,
@@ -460,13 +520,19 @@ export function ConversationsPage({
   useEffect(() => {
     reconcileAppSelection(
       appGroups.map((group) => group.app.id),
-      appGroups.find((group) => group.sessions.length > 0)?.app.id ?? appGroups[0]?.app.id ?? null,
+      appGroups.find((group) => group.sessions.length > 0)?.app.id ??
+        appGroups[0]?.app.id ??
+        null,
     );
   }, [appGroups, reconcileAppSelection]);
 
   useEffect(() => {
     if (!selectedAppGroup || !selectedSessionId) return;
-    if (!selectedAppGroup.sessions.some((session) => session.id === selectedSessionId)) {
+    if (
+      !selectedAppGroup.sessions.some(
+        (session) => session.id === selectedSessionId,
+      )
+    ) {
       closeSession();
     }
   }, [closeSession, selectedAppGroup, selectedSessionId]);
@@ -484,7 +550,12 @@ export function ConversationsPage({
       selectedAppGroup.projectGroups.map((group) => group.key),
       selectedAppGroup.projectGroups[0]?.key ?? null,
     );
-  }, [reconcileProjectSelection, selectProject, selectedAppGroup, webRecordMode]);
+  }, [
+    reconcileProjectSelection,
+    selectProject,
+    selectedAppGroup,
+    webRecordMode,
+  ]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -511,24 +582,42 @@ export function ConversationsPage({
     }
     reconcileQuestionSelection(
       sessionDetail.questions.map((question) => question.question.id),
-      preferredConversationQuestionId(sessionDetail.questions, selectedQuestionId),
+      preferredConversationQuestionId(
+        sessionDetail.questions,
+        selectedQuestionId,
+      ),
     );
-  }, [clearConversationSelection, reconcileQuestionSelection, selectedQuestionId, sessionDetail]);
+  }, [
+    clearConversationSelection,
+    reconcileQuestionSelection,
+    selectedQuestionId,
+    sessionDetail,
+  ]);
 
   useEffect(() => {
-    if (!activeSearchTarget || sessionDetail?.session.id !== activeSearchTarget.sessionId) {
+    if (
+      !activeSearchTarget ||
+      sessionDetail?.session.id !== activeSearchTarget.sessionId
+    ) {
       return;
     }
-    if (sessionDetail.questions.some((question) => question.question.id === activeSearchTarget.questionId)) {
+    if (
+      sessionDetail.questions.some(
+        (question) => question.question.id === activeSearchTarget.questionId,
+      )
+    ) {
       selectQuestion(activeSearchTarget.questionId);
     }
   }, [activeSearchTarget, selectQuestion, sessionDetail]);
 
-  const consumeNavigationTarget = useCallback((nonce: string) => {
-    if (consumedNavigationNonceRef.current === nonce) return;
-    consumedNavigationNonceRef.current = nonce;
-    onNavigationTargetConsumed?.(nonce);
-  }, [onNavigationTargetConsumed]);
+  const consumeNavigationTarget = useCallback(
+    (nonce: string) => {
+      if (consumedNavigationNonceRef.current === nonce) return;
+      consumedNavigationNonceRef.current = nonce;
+      onNavigationTargetConsumed?.(nonce);
+    },
+    [onNavigationTargetConsumed],
+  );
 
   useEffect(() => {
     if (
@@ -540,7 +629,9 @@ export function ConversationsPage({
     ) {
       return;
     }
-    const targetSession = sessions.find((session) => session.id === navigationTarget.sessionId);
+    const targetSession = sessions.find(
+      (session) => session.id === navigationTarget.sessionId,
+    );
     if (!targetSession) {
       onNotifyError(t("conversation.navigation.sessionMissing"));
       consumeNavigationTarget(navigationTarget.nonce);
@@ -550,17 +641,19 @@ export function ConversationsPage({
     startedNavigationNonceRef.current = navigationTarget.nonce;
     openConversationTarget({
       appId: targetSession.adapter_id,
-      projectKey: currentRecordKind === "web"
-        ? null
-        : normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY,
+      projectKey:
+        currentRecordKind === "web"
+          ? null
+          : (normalizedProjectPath(targetSession) ?? NO_PROJECT_GROUP_KEY),
       questionId: navigationTarget.questionId ?? null,
-      searchTarget: navigationTarget.blockId && navigationTarget.questionId
-        ? {
-            blockId: navigationTarget.blockId,
-            questionId: navigationTarget.questionId,
-            sessionId: navigationTarget.sessionId,
-          }
-        : null,
+      searchTarget:
+        navigationTarget.blockId && navigationTarget.questionId
+          ? {
+              blockId: navigationTarget.blockId,
+              questionId: navigationTarget.questionId,
+              sessionId: navigationTarget.sessionId,
+            }
+          : null,
       sessionId: targetSession.id,
     });
   }, [
@@ -584,7 +677,10 @@ export function ConversationsPage({
     ) {
       return;
     }
-    const resolved = resolveConversationNavigationTarget(sessionDetail, navigationTarget);
+    const resolved = resolveConversationNavigationTarget(
+      sessionDetail,
+      navigationTarget,
+    );
     if (!resolved) {
       onNotifyError(t("conversation.navigation.questionMissing"));
       consumeNavigationTarget(navigationTarget.nonce);
@@ -653,27 +749,65 @@ export function ConversationsPage({
     handledSyncTaskIdRef.current = syncTask.id;
 
     if (syncTask.status === "failed") {
-      setSyncProgress({ failedStep: 2, phase: "failed", sourceLabel, taskId: syncTask.id });
-      onNotifyError(syncTask.error?.message ?? t("conversation.sync.description.failed"));
+      setSyncProgress({
+        failedStep: 2,
+        phase: "failed",
+        sourceLabel,
+        taskId: syncTask.id,
+      });
+      onNotifyError(
+        syncTask.error?.message ?? t("conversation.sync.description.failed"),
+      );
       return;
     }
 
     const summaryCounts = summarizeConversationSyncTask(syncTask);
-    const summary = formatConversationSyncSummary(summaryCounts, t, currentRecordKind);
-    const advice = formatConversationSyncAdvice(summaryCounts, t, currentRecordKind);
-    const failureItems = formatConversationSyncFailureItems(syncTask, syncSourceLabel, t);
+    const summary = formatConversationSyncSummary(
+      summaryCounts,
+      t,
+      currentRecordKind,
+    );
+    const advice = formatConversationSyncAdvice(
+      summaryCounts,
+      t,
+      currentRecordKind,
+    );
+    const failureItems = formatConversationSyncFailureItems(
+      syncTask,
+      syncSourceLabel,
+      t,
+    );
     let cancelled = false;
-    setSyncProgress({ advice, failureItems, phase: "refreshing", sourceLabel, summary, taskId: syncTask.id });
+    setSyncProgress({
+      advice,
+      failureItems,
+      phase: "refreshing",
+      sourceLabel,
+      summary,
+      taskId: syncTask.id,
+    });
     void refreshCatalog({ rethrow: true })
       .then(() => {
         if (cancelled) {
           return;
         }
-        setSyncProgress({ advice, failureItems, phase: "completed", sourceLabel, summary, taskId: syncTask.id });
+        setSyncProgress({
+          advice,
+          failureItems,
+          phase: "completed",
+          sourceLabel,
+          summary,
+          taskId: syncTask.id,
+        });
       })
       .catch((error) => {
         if (!cancelled) {
-          setSyncProgress({ failedStep: 3, phase: "failed", sourceLabel, taskId: syncTask.id });
+          setSyncProgress({
+            failedStep: 3,
+            phase: "failed",
+            sourceLabel,
+            taskId: syncTask.id,
+          });
           onNotifyError(errorMessage(error));
         }
       });
@@ -681,7 +815,13 @@ export function ConversationsPage({
     return () => {
       cancelled = true;
     };
-  }, [currentRecordKind, syncTask?.id, syncTask?.record_kind, syncTask?.source_id, syncTask?.status]);
+  }, [
+    currentRecordKind,
+    syncTask?.id,
+    syncTask?.record_kind,
+    syncTask?.source_id,
+    syncTask?.status,
+  ]);
 
   function syncSourceLabel(sourceId: string | null | undefined) {
     if (!sourceId) {
@@ -713,7 +853,9 @@ export function ConversationsPage({
     sessionSearchRequestIdRef.current = requestId;
     setSessionSearchLoading(true);
     try {
-      const listSessions = webRecordMode ? listWebRecordSessions : listConversationSessions;
+      const listSessions = webRecordMode
+        ? listWebRecordSessions
+        : listConversationSessions;
       const nextSessions = await loadSharedResource(
         conversationSessionCacheKey(currentRecordKind, query),
         () => loadAllConversationSessionPages(listSessions, query || null),
@@ -742,7 +884,9 @@ export function ConversationsPage({
     clearConversationSelection();
 
     try {
-      const getSession = webRecordMode ? getWebRecordSession : getConversationSession;
+      const getSession = webRecordMode
+        ? getWebRecordSession
+        : getConversationSession;
       const detail = await getSession(sessionId);
       if (sessionDetailRequestIdRef.current !== requestId) return;
       setSessionDetail(detail);
@@ -776,7 +920,11 @@ export function ConversationsPage({
         t,
         currentRecordKind,
       );
-      const failureItems = formatConversationSyncFailureItems(task, syncSourceLabel, t);
+      const failureItems = formatConversationSyncFailureItems(
+        task,
+        syncSourceLabel,
+        t,
+      );
       setSyncProgress({
         advice,
         failedStep: task.status === "failed" ? 2 : undefined,
@@ -805,11 +953,20 @@ export function ConversationsPage({
     }
   }
 
-  async function handleMerge(previous: ConversationQuestionDetail, current: ConversationQuestionDetail) {
+  async function handleMerge(
+    previous: ConversationQuestionDetail,
+    current: ConversationQuestionDetail,
+  ) {
     try {
-      await mergeConversationQuestions([previous.question.id, current.question.id], false);
+      await mergeConversationQuestions(
+        [previous.question.id, current.question.id],
+        false,
+      );
       selectQuestion(previous.question.id);
-      updateQuestionSelectionAfterMerge(previous.question.id, current.question.id);
+      updateQuestionSelectionAfterMerge(
+        previous.question.id,
+        current.question.id,
+      );
       onNotify({ messageKey: "conversation.status.merged", tone: "success" });
       if (selectedSessionId) await loadSession(selectedSessionId);
       await refreshSessions();
@@ -818,7 +975,10 @@ export function ConversationsPage({
     }
   }
 
-  async function handleSplit(question: ConversationQuestionDetail, turnId: string) {
+  async function handleSplit(
+    question: ConversationQuestionDetail,
+    turnId: string,
+  ) {
     try {
       await splitConversationQuestion(question.question.id, turnId, false);
       onNotify({ messageKey: "conversation.status.split", tone: "success" });
@@ -829,7 +989,10 @@ export function ConversationsPage({
     }
   }
 
-  function openExportDialog(mode: ConversationExportMode, questionIds: string[] = []) {
+  function openExportDialog(
+    mode: ConversationExportMode,
+    questionIds: string[] = [],
+  ) {
     setExportVisibility({ ...contentVisibility });
     setExportDialog({ mode, questionIds });
   }
@@ -839,8 +1002,16 @@ export function ConversationsPage({
     const questionIds = exportDialog.questionIds;
     setExporting(true);
     try {
-      const exportSession = webRecordMode ? exportWebRecordSession : exportConversationSession;
-      await exportSession(selectedSessionId, outputRoot, false, questionIds, exportVisibility);
+      const exportSession = webRecordMode
+        ? exportWebRecordSession
+        : exportConversationSession;
+      await exportSession(
+        selectedSessionId,
+        outputRoot,
+        false,
+        questionIds,
+        exportVisibility,
+      );
       onNotify(
         questionIds.length > 0
           ? {
@@ -858,33 +1029,47 @@ export function ConversationsPage({
     }
   }
 
-  const handleOpenSession = useCallback((sessionId: string) => {
-    openSession(sessionId);
-    if (sessionId === selectedSessionId) {
-      void loadSession(sessionId);
-    }
-  }, [openSession, selectedSessionId]);
+  const handleOpenSession = useCallback(
+    (sessionId: string) => {
+      openSession(sessionId);
+      if (sessionId === selectedSessionId) {
+        void loadSession(sessionId);
+      }
+    },
+    [openSession, selectedSessionId],
+  );
 
-  const handleOpenSearchHit = useCallback((hit: ConversationSearchHit) => {
-    openConversationTarget({
-      appId: hit.session.adapter_id,
-      projectKey: currentRecordKind === "web" ? null : normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY,
-      questionId: hit.question_id,
-      searchTarget: {
-        blockId: hit.block_id,
-        cardType: hit.card_type,
+  const handleOpenSearchHit = useCallback(
+    (hit: ConversationSearchHit) => {
+      openConversationTarget({
+        appId: hit.session.adapter_id,
+        projectKey:
+          currentRecordKind === "web"
+            ? null
+            : (normalizedProjectPath(hit.session) ?? NO_PROJECT_GROUP_KEY),
         questionId: hit.question_id,
+        searchTarget: {
+          blockId: hit.block_id,
+          cardType: hit.card_type,
+          questionId: hit.question_id,
+          sessionId: hit.session.id,
+        },
         sessionId: hit.session.id,
-      },
-      sessionId: hit.session.id,
-    });
-    if (hit.card_type !== "question") {
-      updateContentVisibility(hit.card_type, true);
-    }
-    if (hit.session.id === selectedSessionId) {
-      void loadSession(hit.session.id);
-    }
-  }, [currentRecordKind, openConversationTarget, selectedSessionId, updateContentVisibility]);
+      });
+      if (hit.card_type !== "question") {
+        updateContentVisibility(hit.card_type, true);
+      }
+      if (hit.session.id === selectedSessionId) {
+        void loadSession(hit.session.id);
+      }
+    },
+    [
+      currentRecordKind,
+      openConversationTarget,
+      selectedSessionId,
+      updateContentVisibility,
+    ],
+  );
 
   const handleQuestionSelectionChange = toggleQuestionSelection;
 
@@ -898,7 +1083,10 @@ export function ConversationsPage({
 
   function handleDismissSyncProgress() {
     if (syncProgress?.phase === "completed" && syncProgress.taskId) {
-      rememberDismissedConversationSyncProgressTask(currentRecordKind, syncProgress.taskId);
+      rememberDismissedConversationSyncProgressTask(
+        currentRecordKind,
+        syncProgress.taskId,
+      );
     }
     setSyncProgressDismissed(true);
     setSyncProgress(null);
@@ -910,9 +1098,18 @@ export function ConversationsPage({
         sessionView === "browser" ? (
           <PageMetrics
             metrics={[
-              { label: t("conversation.toolbar.apps"), value: appGroups.length },
-              { label: t("conversation.toolbar.sessions"), value: sessions.length },
-              { label: t("conversation.toolbar.questions"), value: sessionQuestionCount },
+              {
+                label: t("conversation.toolbar.apps"),
+                value: appGroups.length,
+              },
+              {
+                label: t("conversation.toolbar.sessions"),
+                value: sessions.length,
+              },
+              {
+                label: t("conversation.toolbar.questions"),
+                value: sessionQuestionCount,
+              },
               {
                 label: t("conversation.searchIndex.metric"),
                 value: searchIndexRunning
@@ -924,15 +1121,29 @@ export function ConversationsPage({
         ) : (
           <PageMetrics
             metrics={[
-              { label: t("conversation.toolbar.questions"), value: sessionDetail?.questions.length ?? 0 },
-              { label: t("conversation.toolbar.selected"), value: selectedQuestionCount },
+              {
+                label: t("conversation.toolbar.questions"),
+                value: sessionDetail?.questions.length ?? 0,
+              },
+              {
+                label: t("conversation.toolbar.selected"),
+                value: selectedQuestionCount,
+              },
             ]}
           />
         )
       }
       style={conversationStyle}
-      title={t(webRecordMode ? "conversation.webRecords.title" : "conversation.sessions.title")}
-      subtitle={t(webRecordMode ? "conversation.webRecords.subtitle" : "conversation.sessions.subtitle")}
+      title={t(
+        webRecordMode
+          ? "conversation.webRecords.title"
+          : "conversation.sessions.title",
+      )}
+      subtitle={t(
+        webRecordMode
+          ? "conversation.webRecords.subtitle"
+          : "conversation.sessions.subtitle",
+      )}
       onManualOpen={onManualOpen}
       t={t}
     >
@@ -948,9 +1159,17 @@ export function ConversationsPage({
               <ToolbarActionButton
                 disabled={searchIndexRunning}
                 icon={<Layers3 size={17} />}
-                label={searchIndexRunning ? t("conversation.searchIndex.building") : t("conversation.searchIndex.rebuild")}
+                label={
+                  searchIndexRunning
+                    ? t("conversation.searchIndex.building")
+                    : t("conversation.searchIndex.rebuild")
+                }
                 onClick={() => void handleSearchIndexRebuild()}
-                text={searchIndexRunning ? t("conversation.searchIndex.building") : t("conversation.searchIndex.rebuild")}
+                text={
+                  searchIndexRunning
+                    ? t("conversation.searchIndex.building")
+                    : t("conversation.searchIndex.rebuild")
+                }
               />
               <ToolbarActionButton
                 disabled={syncRunning}
@@ -962,10 +1181,18 @@ export function ConversationsPage({
               <ToolbarActionButton
                 disabled={syncRunning}
                 icon={<RefreshCw size={17} />}
-                label={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                label={
+                  syncRunning
+                    ? t("conversation.toolbar.syncing")
+                    : t("conversation.toolbar.sync")
+                }
                 onClick={() => void handleSync()}
                 primary
-                text={syncRunning ? t("conversation.toolbar.syncing") : t("conversation.toolbar.sync")}
+                text={
+                  syncRunning
+                    ? t("conversation.toolbar.syncing")
+                    : t("conversation.toolbar.sync")
+                }
               />
             </>
           }
@@ -1000,19 +1227,39 @@ export function ConversationsPage({
                 icon={<ArrowDownWideNarrow size={15} />}
                 onChange={setSessionSortBy}
                 options={[
-                  { label: t("conversation.toolbar.sort.updated"), value: "updated" },
-                  { label: t("conversation.toolbar.sort.started"), value: "started" },
+                  {
+                    label: t("conversation.toolbar.sort.updated"),
+                    value: "updated",
+                  },
+                  {
+                    label: t("conversation.toolbar.sort.started"),
+                    value: "started",
+                  },
                   { label: t("toolbar.sort.name"), value: "title" },
-                  { label: t("conversation.toolbar.sort.questionCount"), value: "question-count" },
-                  { label: t("conversation.toolbar.sort.turnCount"), value: "turn-count" },
+                  {
+                    label: t("conversation.toolbar.sort.questionCount"),
+                    value: "question-count",
+                  },
+                  {
+                    label: t("conversation.toolbar.sort.turnCount"),
+                    value: "turn-count",
+                  },
                 ]}
                 value={sessionSortBy}
               />
               <ToolbarSortDirectionButton
                 direction={sessionSortDirection}
                 label={t("toolbar.sort.direction.label")}
-                onClick={() => setSessionSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-                title={t(sessionSortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+                onClick={() =>
+                  setSessionSortDirection((current) =>
+                    current === "desc" ? "asc" : "desc",
+                  )
+                }
+                title={t(
+                  sessionSortDirection === "desc"
+                    ? "toolbar.sort.direction.descTitle"
+                    : "toolbar.sort.direction.ascTitle",
+                )}
               />
             </>
           }
@@ -1054,20 +1301,28 @@ export function ConversationsPage({
               : undefined
           }
           recordKind={currentRecordKind}
-          state={syncRunning && syncTask?.progress?.current_source_name
-            ? { ...syncProgress, sourceLabel: syncTask.progress.current_source_name }
-            : syncProgress}
+          state={
+            syncRunning && syncTask?.progress?.current_source_name
+              ? {
+                  ...syncProgress,
+                  sourceLabel: syncTask.progress.current_source_name,
+                }
+              : syncProgress
+          }
           t={t}
         />
       ) : null}
-      {sessionView === "browser" && (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
+      {sessionView === "browser" &&
+      (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
         <ConversationContentSearchResults
           appMetaById={appMetaById}
           contentCardColors={appSettings.conversations.contentCardColors}
           includeQuestions={contentSearchIncludesQuestions}
           loading={contentSearchLoading}
           onCardKindToggle={toggleContentSearchCardKind}
-          onQuestionToggle={() => setContentSearchIncludesQuestions((current) => !current)}
+          onQuestionToggle={() =>
+            setContentSearchIncludesQuestions((current) => !current)
+          }
           onSemanticRoleToggle={toggleContentSearchSemanticRole}
           onShowAllCardTypes={showAllContentSearchCardTypes}
           onOpenHit={handleOpenSearchHit}
@@ -1086,7 +1341,9 @@ export function ConversationsPage({
           onClose={() => setExportDialog(null)}
           onConfirm={handleConfirmExport}
           onOutputRootChange={setOutputRoot}
-          onPickOutputRoot={() => selectTargetDirectory(t("conversation.export.pickOutputRoot"))}
+          onPickOutputRoot={() =>
+            selectTargetDirectory(t("conversation.export.pickOutputRoot"))
+          }
           onVisibilityChange={(type, checked) =>
             setExportVisibility((current) => ({ ...current, [type]: checked }))
           }
@@ -1094,7 +1351,7 @@ export function ConversationsPage({
           questionCount={
             exportDialog.mode === "questions"
               ? exportDialog.questionIds.length
-              : sessionDetail?.questions.length ?? 0
+              : (sessionDetail?.questions.length ?? 0)
           }
           t={t}
           visibility={exportVisibility}
@@ -1126,13 +1383,19 @@ export function ConversationsPage({
         />
       ) : (
         <SessionQuestionWorkspace
-          adapterVersion={adapters.find((adapter) => adapter.id === sessionDetail?.session.adapter_id)?.version ?? "unknown"}
+          adapterVersion={
+            adapters.find(
+              (adapter) => adapter.id === sessionDetail?.session.adapter_id,
+            )?.version ?? "unknown"
+          }
           activeSearchTarget={activeSearchTarget}
           contentCardColors={appSettings.conversations.contentCardColors}
           onExport={() => openExportDialog("session")}
           onCopyError={onNotifyError}
           onMerge={webRecordMode ? undefined : handleMerge}
-          onPickOutputRoot={() => selectTargetDirectory(t("conversation.export.pickOutputRoot"))}
+          onPickOutputRoot={() =>
+            selectTargetDirectory(t("conversation.export.pickOutputRoot"))
+          }
           onQuestionSelect={selectQuestion}
           onQuestionSelectionChange={handleQuestionSelectionChange}
           onSplit={webRecordMode ? undefined : handleSplit}
@@ -1140,7 +1403,9 @@ export function ConversationsPage({
           outputRoot={outputRoot}
           question={selectedQuestion}
           questions={visibleSessionQuestions}
-          resultPreviewLineLimit={appSettings.conversations.resultPreviewLineLimit}
+          resultPreviewLineLimit={
+            appSettings.conversations.resultPreviewLineLimit
+          }
           selectedQuestionId={selectedQuestionId}
           selectedQuestionIds={selectedQuestionIds}
           session={sessionDetail}
@@ -1161,21 +1426,42 @@ export function ConversationsPage({
 export function resolveConversationNavigationTarget(
   session: ConversationSessionDetail,
   target: ConversationNavigationTarget,
-): { blockFound: boolean; blockId: string | null; cardType: ConversationSearchCardType | null; questionId: string } | null {
+): {
+  blockFound: boolean;
+  blockId: string | null;
+  cardType: ConversationSearchCardType | null;
+  questionId: string;
+} | null {
   const candidateQuestions = target.questionId
-    ? session.questions.filter((question) => question.question.id === target.questionId)
+    ? session.questions.filter(
+        (question) => question.question.id === target.questionId,
+      )
     : session.questions;
   if (candidateQuestions.length === 0) return null;
   if (!target.blockId) {
-    return { blockFound: true, blockId: null, cardType: null, questionId: candidateQuestions[0].question.id };
+    return {
+      blockFound: true,
+      blockId: null,
+      cardType: null,
+      questionId: candidateQuestions[0].question.id,
+    };
   }
 
   for (const question of candidateQuestions) {
-    if (question.turns.some((turn) => `${turn.id}-question` === target.blockId)) {
-      return { blockFound: true, blockId: target.blockId, cardType: "question", questionId: question.question.id };
+    if (
+      question.turns.some((turn) => `${turn.id}-question` === target.blockId)
+    ) {
+      return {
+        blockFound: true,
+        blockId: target.blockId,
+        cardType: "question",
+        questionId: question.question.id,
+      };
     }
     const block = question.projected_content_nodes.find(
-      (candidate) => candidate.node_id === target.blockId || candidate.legacy_anchor_ids.includes(target.blockId ?? ""),
+      (candidate) =>
+        candidate.node_id === target.blockId ||
+        candidate.legacy_anchor_ids.includes(target.blockId ?? ""),
     );
     if (block) {
       return {
@@ -1213,7 +1499,10 @@ function ConversationShell({
   title: string;
 }) {
   return (
-    <div className="flex w-full flex-1 flex-col px-[var(--app-page-x)] py-6" style={style}>
+    <div
+      className="flex w-full flex-1 flex-col px-[var(--app-page-x)] py-6"
+      style={style}
+    >
       <PageHeader
         actions={headerActions}
         className="mb-5"
@@ -1243,15 +1532,24 @@ function ColumnPanel({
   title: string;
 }) {
   return (
-    <section className={`conversation-column flex min-h-0 flex-col ${className}`}>
+    <section
+      className={`conversation-column flex min-h-0 flex-col ${className}`}
+    >
       <header className="conversation-column-header flex h-12 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-primary">{icon}</span>
-          <h2 className="truncate text-label-caps text-on-surface-variant">{title}</h2>
+          <h2 className="truncate text-label-caps text-on-surface-variant">
+            {title}
+          </h2>
         </div>
-        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
+        {actions ? (
+          <div className="flex shrink-0 items-center gap-1">{actions}</div>
+        ) : null}
       </header>
-      <RenderSafeScrollSurface className="conversation-column-scroll min-h-0 flex-1" ref={scrollRef}>
+      <RenderSafeScrollSurface
+        className="conversation-column-scroll min-h-0 flex-1"
+        ref={scrollRef}
+      >
         {children}
       </RenderSafeScrollSurface>
     </section>
@@ -1283,11 +1581,15 @@ export interface ConversationProjectSessionGroup {
 export function conversationContentTypesForQuestions(
   questions: readonly ConversationQuestionDetail[],
 ): ConversationContentType[] {
-  return Array.from(new Set(
-    questions.flatMap((question) =>
-      question.projected_content_nodes.map((node) => conversationCardPresentationKind(node.node_type, node.semantic_role))
+  return Array.from(
+    new Set(
+      questions.flatMap((question) =>
+        question.projected_content_nodes.map((node) =>
+          conversationCardPresentationKind(node.node_type, node.semantic_role),
+        ),
+      ),
     ),
-  ));
+  );
 }
 
 export function groupConversationSessionsByApp(
@@ -1333,8 +1635,14 @@ function createAppSessionGroup(
     app,
     projectGroups: groupConversationSessionsByProject(sessions),
     sessions,
-    questionCount: sessions.reduce((total, session) => total + session.question_count, 0),
-    turnCount: sessions.reduce((total, session) => total + session.turn_count, 0),
+    questionCount: sessions.reduce(
+      (total, session) => total + session.question_count,
+      0,
+    ),
+    turnCount: sessions.reduce(
+      (total, session) => total + session.turn_count,
+      0,
+    ),
   };
 }
 
@@ -1400,7 +1708,9 @@ function sortConversationSessions(
       return primary * direction;
     }
 
-    return left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+    return (
+      left.title.localeCompare(right.title) || left.id.localeCompare(right.id)
+    );
   });
 }
 
@@ -1414,22 +1724,34 @@ function sortConversationQuestions(
     let primary = 0;
 
     if (sortBy === "title") {
-      primary = (conversationQuestionTitle(left) ?? "").localeCompare(conversationQuestionTitle(right) ?? "");
+      primary = (conversationQuestionTitle(left) ?? "").localeCompare(
+        conversationQuestionTitle(right) ?? "",
+      );
     } else if (sortBy === "updated") {
-      primary = compareOptionalDate(left.question.updated_at, right.question.updated_at);
+      primary = compareOptionalDate(
+        left.question.updated_at,
+        right.question.updated_at,
+      );
     } else {
-      primary = conversationQuestionOrder(left) - conversationQuestionOrder(right);
+      primary =
+        conversationQuestionOrder(left) - conversationQuestionOrder(right);
     }
 
     if (primary !== 0) {
       return primary * direction;
     }
 
-    return conversationQuestionOrder(left) - conversationQuestionOrder(right) || left.question.id.localeCompare(right.question.id);
+    return (
+      conversationQuestionOrder(left) - conversationQuestionOrder(right) ||
+      left.question.id.localeCompare(right.question.id)
+    );
   });
 }
 
-function compareOptionalDate(left: string | null | undefined, right: string | null | undefined) {
+function compareOptionalDate(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
   const leftTime = left ? Date.parse(left) : 0;
   const rightTime = right ? Date.parse(right) : 0;
   return leftTime - rightTime;
@@ -1458,7 +1780,10 @@ export function ConversationExportDialog({
   onConfirm: () => Promise<void>;
   onOutputRootChange: (value: string) => void;
   onPickOutputRoot: () => Promise<string | null>;
-  onVisibilityChange: (type: keyof ConversationContentVisibility, checked: boolean) => void;
+  onVisibilityChange: (
+    type: keyof ConversationContentVisibility,
+    checked: boolean,
+  ) => void;
   outputRoot: string;
   questionCount: number;
   t: Translator;
@@ -1498,10 +1823,18 @@ export function ConversationExportDialog({
           <ToolbarActionButton
             disabled={exporting}
             icon={<Download size={17} />}
-            label={exporting ? t("conversation.export.exporting") : t("conversation.export.confirm")}
+            label={
+              exporting
+                ? t("conversation.export.exporting")
+                : t("conversation.export.confirm")
+            }
             onClick={() => void onConfirm()}
             primary
-            text={exporting ? t("conversation.export.exporting") : t("conversation.export.confirm")}
+            text={
+              exporting
+                ? t("conversation.export.exporting")
+                : t("conversation.export.confirm")
+            }
           />
         </>
       }
@@ -1512,11 +1845,15 @@ export function ConversationExportDialog({
     >
       <div className="grid gap-4">
         <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-control/55 px-3 py-3">
-          <span className="text-label-caps text-on-surface-muted">{t("conversation.export.scope")}</span>
+          <span className="text-label-caps text-on-surface-muted">
+            {t("conversation.export.scope")}
+          </span>
           <strong className="text-body-sm text-on-surface">{scopeLabel}</strong>
         </div>
         <div className="grid gap-2">
-          <span className="text-label-caps text-on-surface-muted">{t("conversation.session.outputRoot")}</span>
+          <span className="text-label-caps text-on-surface-muted">
+            {t("conversation.session.outputRoot")}
+          </span>
           <PathPickerInput
             aria-label={t("conversation.session.outputRoot")}
             disabled={exporting}
@@ -1564,11 +1901,14 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
 }) {
   const sessionListScrollRef = useRef<HTMLDivElement>(null);
   const showProjectColumn = recordKind !== "web";
-  const selectedGroup = groups.find((group) => group.app.id === selectedAppId) ?? null;
+  const selectedGroup =
+    groups.find((group) => group.app.id === selectedAppId) ?? null;
   const selectedProjectGroup = showProjectColumn
-    ? selectedGroup?.projectGroups.find((group) => group.key === selectedProjectKey) ??
+    ? (selectedGroup?.projectGroups.find(
+        (group) => group.key === selectedProjectKey,
+      ) ??
       selectedGroup?.projectGroups[0] ??
-      null
+      null)
     : selectedGroup
       ? {
           key: selectedGroup.app.id,
@@ -1578,22 +1918,21 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
           turnCount: selectedGroup.turnCount,
         }
       : null;
-  const selectedShortcut = selectedGroup ? findConversationAppShortcut(appShortcuts, selectedGroup.app) : null;
+  const selectedShortcut = selectedGroup
+    ? findConversationAppShortcut(appShortcuts, selectedGroup.app)
+    : null;
   const browserColumns = showProjectColumn
     ? [
         { defaultWeight: 0.3 },
         { defaultWeight: 0.62 },
         { defaultWeight: 1.08, minWidthScale: 1.25 },
       ]
-    : [
-        { defaultWeight: 0.36 },
-        { defaultWeight: 1.64, minWidthScale: 1.25 },
-      ];
+    : [{ defaultWeight: 0.36 }, { defaultWeight: 1.64, minWidthScale: 1.25 }];
   const sessionHeaderTitle = showProjectColumn
     ? selectedProjectGroup
       ? projectGroupLabel(selectedProjectGroup, t)
       : t("conversation.project.select")
-    : selectedGroup?.app.name ?? t("conversation.app.select");
+    : (selectedGroup?.app.name ?? t("conversation.app.select"));
   const emptySessionsMessage = showProjectColumn
     ? t("conversation.session.emptyForProject")
     : t("conversation.session.emptyForApp");
@@ -1609,9 +1948,16 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
       scrollBarLabel={t("layout.scrollColumns")}
       scrollLeftLabel={t("layout.scrollColumnsLeft")}
       scrollRightLabel={t("layout.scrollColumnsRight")}
-      storageKey={showProjectColumn ? "assetiweave.conversationBrowserColumns.v2" : "assetiweave.webRecordBrowserColumns.v1"}
+      storageKey={
+        showProjectColumn
+          ? "assetiweave.conversationBrowserColumns.v2"
+          : "assetiweave.webRecordBrowserColumns.v1"
+      }
     >
-      <ColumnPanel title={t("conversation.column.apps")} icon={<AppWindow size={16} />}>
+      <ColumnPanel
+        title={t("conversation.column.apps")}
+        icon={<AppWindow size={16} />}
+      >
         {groups.length === 0 ? (
           <EmptyPanel>{t("conversation.app.empty")}</EmptyPanel>
         ) : (
@@ -1628,7 +1974,10 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
         )}
       </ColumnPanel>
       {showProjectColumn ? (
-        <ColumnPanel title={t("conversation.column.projects")} icon={<Folder size={16} />}>
+        <ColumnPanel
+          title={t("conversation.column.projects")}
+          icon={<Folder size={16} />}
+        >
           {!selectedGroup ? (
             <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
           ) : selectedGroup.projectGroups.length === 0 ? (
@@ -1649,10 +1998,19 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
       <section className="conversation-column flex min-h-0 flex-col">
         <header className="conversation-column-header flex min-h-16 shrink-0 items-center justify-between gap-4 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
-            {selectedGroup ? <ConversationAppIcon appName={selectedGroup.app.name} shortcut={selectedShortcut} /> : null}
+            {selectedGroup ? (
+              <ConversationAppIcon
+                appName={selectedGroup.app.name}
+                shortcut={selectedShortcut}
+              />
+            ) : null}
             <div className="min-w-0">
-              <p className="text-label-caps text-primary">{t("conversation.column.sessions")}</p>
-              <h2 className="mt-1 truncate text-title-sm text-on-surface">{sessionHeaderTitle}</h2>
+              <p className="text-label-caps text-primary">
+                {t("conversation.column.sessions")}
+              </p>
+              <h2 className="mt-1 truncate text-title-sm text-on-surface">
+                {sessionHeaderTitle}
+              </h2>
             </div>
           </div>
           {selectedProjectGroup ? (
@@ -1665,21 +2023,33 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
             </span>
           ) : null}
         </header>
-        <RenderSafeScrollSurface className="min-h-0 flex-1 p-4" ref={sessionListScrollRef}>
+        <RenderSafeScrollSurface
+          className="min-h-0 flex-1 p-4"
+          ref={sessionListScrollRef}
+        >
           {!selectedGroup ? (
             <EmptyPanel>{t("conversation.app.select")}</EmptyPanel>
           ) : showProjectColumn && selectedGroup.projectGroups.length === 0 ? (
             <EmptyPanel>{t("conversation.session.emptyForApp")}</EmptyPanel>
           ) : !selectedProjectGroup ? (
-            <EmptyPanel>{showProjectColumn ? t("conversation.project.select") : t("conversation.app.select")}</EmptyPanel>
+            <EmptyPanel>
+              {showProjectColumn
+                ? t("conversation.project.select")
+                : t("conversation.app.select")}
+            </EmptyPanel>
           ) : selectedProjectGroup.sessions.length === 0 ? (
             <EmptyPanel>{emptySessionsMessage}</EmptyPanel>
           ) : (
             <RenderActivityProvider scrollElementRef={sessionListScrollRef}>
               <VirtualizedCollection
                 className="grid gap-3"
-                contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
-                deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && selectedProjectGroup.sessions.length >= 12}
+                contentVisibilityContainmentEnabled={
+                  renderingFlags.contentVisibilityContainment
+                }
+                deferredRenderingEnabled={
+                  renderingFlags.deferredSkeletonRendering &&
+                  selectedProjectGroup.sessions.length >= 12
+                }
                 enabled={renderingFlags.conversationListVirtualization}
                 estimateSize={132}
                 fallback={() => <SessionCardSkeleton />}
@@ -1708,7 +2078,10 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
 
 function SessionCardSkeleton() {
   return (
-    <div aria-hidden="true" className="conversation-session-card grid min-h-32 animate-pulse gap-3 border px-4 py-4">
+    <div
+      aria-hidden="true"
+      className="conversation-session-card grid min-h-32 animate-pulse gap-3 border px-4 py-4"
+    >
       <div className="h-4 w-2/3 rounded bg-theme-control" />
       <div className="h-3 w-4/5 rounded bg-theme-control/75" />
       <div className="h-7 w-1/2 rounded-xl bg-theme-control/60" />
@@ -1742,18 +2115,30 @@ function ProjectListItem({
         <Folder size={16} />
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-mono text-code-sm font-semibold text-on-surface">{label}</span>
+        <span className="block truncate font-mono text-code-sm font-semibold text-on-surface">
+          {label}
+        </span>
         <span className="mt-1 block text-code-sm text-on-surface-variant">
-          {t("conversation.project.sessionCount", { count: group.sessions.length })}
+          {t("conversation.project.sessionCount", {
+            count: group.sessions.length,
+          })}
         </span>
       </span>
-      <ChevronRight className={selected ? "text-primary" : "text-on-surface-muted"} size={16} />
+      <ChevronRight
+        className={selected ? "text-primary" : "text-on-surface-muted"}
+        size={16}
+      />
     </button>
   );
 }
 
-function projectGroupLabel(group: ConversationProjectSessionGroup, t: Translator) {
-  return group.projectPath ? abbreviateHomePath(group.projectPath) : t("conversation.session.noProject");
+function projectGroupLabel(
+  group: ConversationProjectSessionGroup,
+  t: Translator,
+) {
+  return group.projectPath
+    ? abbreviateHomePath(group.projectPath)
+    : t("conversation.session.noProject");
 }
 
 function conversationSearchCardKinds(result: ConversationSearchResult) {
@@ -1761,7 +2146,9 @@ function conversationSearchCardKinds(result: ConversationSearchResult) {
     ...Object.keys(result.content_type_counts ?? {}),
     ...result.hits.map((hit) => hit.card_type),
   ].filter((kind) => kind !== "question");
-  return [...new Set(dynamicKinds)].sort((left, right) => left.localeCompare(right));
+  return [...new Set(dynamicKinds)].sort((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 export function ConversationContentSearchResults({
@@ -1798,42 +2185,56 @@ export function ConversationContentSearchResults({
   const availableCardKinds = (result?.cardKinds ?? []).filter(
     (kind) => !isRedundantConversationCardKind(kind, definitions.get(kind)),
   );
-  const availableSemanticRoles = [...new Set([
-    ...(result?.semanticRoles ?? []),
-    ...(result?.cardKinds ?? []).flatMap((kind) => {
-      const definition = definitions.get(kind);
-      return isRedundantConversationCardKind(kind, definition) && definition?.semantic_role
-        ? [definition.semantic_role]
-        : [];
-    }),
-  ])];
+  const availableSemanticRoles = [
+    ...new Set([
+      ...(result?.semanticRoles ?? []),
+      ...(result?.cardKinds ?? []).flatMap((kind) => {
+        const definition = definitions.get(kind);
+        return isRedundantConversationCardKind(kind, definition) &&
+          definition?.semantic_role
+          ? [definition.semantic_role]
+          : [];
+      }),
+    ]),
+  ];
   const showProjectPath = result?.recordKind !== "web";
-  const allCardTypesSelected = includeQuestions
-    && selectedCardKinds.length === 0
-    && selectedSemanticRoles.length === 0;
+  const allCardTypesSelected =
+    includeQuestions &&
+    selectedCardKinds.length === 0 &&
+    selectedSemanticRoles.length === 0;
   // Keep the previous result useful while a narrowed request is in flight. Card
   // kinds are carried by every hit, so they can be filtered optimistically;
   // semantic roles are facet metadata and are applied by the backend response.
   const visibleHits = hits.filter((hit) => {
     if (hit.card_type === "question") return includeQuestions;
-    if (selectedCardKinds.length === 0 || selectedSemanticRoles.length > 0) return true;
+    if (selectedCardKinds.length === 0 || selectedSemanticRoles.length > 0)
+      return true;
     return selectedCardKinds.includes(hit.card_type);
   });
   const query = result?.query ?? "";
   const displayedTotalCount = result?.totalCount ?? visibleHits.length;
-  const groupedCardTypes = [...new Set(visibleHits
-    .filter((hit) => hit.card_type !== "question")
-    .map((hit) => conversationCardPresentationKind(
-      hit.card_type,
-      definitions.get(hit.card_type)?.semantic_role,
-    )))].sort((left, right) => left.localeCompare(right));
+  const groupedCardTypes = [
+    ...new Set(
+      visibleHits
+        .filter((hit) => hit.card_type !== "question")
+        .map((hit) =>
+          conversationCardPresentationKind(
+            hit.card_type,
+            definitions.get(hit.card_type)?.semantic_role,
+          ),
+        ),
+    ),
+  ].sort((left, right) => left.localeCompare(right));
   const groupedHits = ["question", ...groupedCardTypes]
     .map((cardType) => ({
       cardType,
-      hits: visibleHits.filter((hit) => conversationCardPresentationKind(
-        hit.card_type,
-        definitions.get(hit.card_type)?.semantic_role,
-      ) === cardType),
+      hits: visibleHits.filter(
+        (hit) =>
+          conversationCardPresentationKind(
+            hit.card_type,
+            definitions.get(hit.card_type)?.semantic_role,
+          ) === cardType,
+      ),
     }))
     .filter((group) => group.hits.length > 0);
 
@@ -1844,12 +2245,17 @@ export function ConversationContentSearchResults({
     >
       <header className="conversation-section-header grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
-          <h2 className="text-label-caps text-on-surface-variant">{t("conversation.search.resultsTitle")}</h2>
+          <h2 className="text-label-caps text-on-surface-variant">
+            {t("conversation.search.resultsTitle")}
+          </h2>
           <p className="mt-1 truncate text-body-sm text-on-surface">
             {loading
               ? t("conversation.search.loading")
               : result
-                ? t("conversation.search.resultsCount", { count: displayedTotalCount, query })
+                ? t("conversation.search.resultsCount", {
+                    count: displayedTotalCount,
+                    query,
+                  })
                 : t("conversation.search.empty")}
           </p>
         </div>
@@ -1910,16 +2316,24 @@ export function ConversationContentSearchResults({
       ) : null}
       {visibleHits.length === 0 ? (
         <div className="px-4 py-6 text-body-sm text-on-surface-variant">
-          {loading ? t("conversation.search.loading") : t("conversation.search.empty")}
+          {loading
+            ? t("conversation.search.loading")
+            : t("conversation.search.empty")}
         </div>
       ) : (
         <div className="grid gap-2">
           {groupedHits.map((group) => (
             <section className="conversation-search-group" key={group.cardType}>
               <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 bg-theme-card-header/35 px-4 py-2">
-                <SearchCardTypeBadge cardType={group.cardType} colors={contentCardColors} t={t} />
+                <SearchCardTypeBadge
+                  cardType={group.cardType}
+                  colors={contentCardColors}
+                  t={t}
+                />
                 <span className="text-code-sm text-on-surface-muted">
-                  {t("conversation.search.groupCount", { count: group.hits.length })}
+                  {t("conversation.search.groupCount", {
+                    count: group.hits.length,
+                  })}
                 </span>
               </header>
               <div className="grid gap-2">
@@ -1944,14 +2358,22 @@ export function ConversationContentSearchResults({
                       type="button"
                     >
                       <span className="flex min-w-0 flex-wrap items-center gap-2">
-                        <SearchCardTypeBadge cardType={hit.card_type} colors={contentCardColors} t={t} />
+                        <SearchCardTypeBadge
+                          cardType={hit.card_type}
+                          colors={contentCardColors}
+                          t={t}
+                        />
                         <SearchHitMetaChip
                           accentColor={appMeta?.accentColor}
-                          label={t("conversation.search.appChip", { app: appName })}
+                          label={t("conversation.search.appChip", {
+                            app: appName,
+                          })}
                         />
                         <SearchHitMetaChip
                           className="font-mono"
-                          label={t("conversation.search.sessionChip", { sessionId: conversationIdFragment(hit.session.id) })}
+                          label={t("conversation.search.sessionChip", {
+                            sessionId: conversationIdFragment(hit.session.id),
+                          })}
                         />
                         <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
                           {hit.session.title}
@@ -1960,7 +2382,9 @@ export function ConversationContentSearchResults({
                           {hit.question_title}
                         </span>
                       </span>
-                      <span className="line-clamp-2 text-body-sm text-on-surface-variant">{hit.snippet}</span>
+                      <span className="line-clamp-2 text-body-sm text-on-surface-variant">
+                        {hit.snippet}
+                      </span>
                       {showProjectPath && hit.session.project_path ? (
                         <span className="truncate font-mono text-code-sm text-on-surface-muted">
                           {abbreviateHomePath(hit.session.project_path)}
@@ -1990,7 +2414,9 @@ function SearchHitMetaChip({
   return (
     <span
       className={`inline-flex h-6 min-w-0 max-w-full items-center overflow-hidden text-ellipsis whitespace-nowrap rounded-md border border-theme-control-border bg-theme-control/80 px-2 text-code-sm font-medium text-on-surface-variant shadow-[var(--theme-shadow-control-inset)] ${className}`}
-      style={accentColor ? searchHitMetaChipAccentStyle(accentColor) : undefined}
+      style={
+        accentColor ? searchHitMetaChipAccentStyle(accentColor) : undefined
+      }
       title={label}
     >
       {label}
@@ -2038,7 +2464,10 @@ function SearchCardTypeFilterButton({
       type="button"
     >
       {cardType === "question" ? (
-        <span className="size-2 rounded-full" style={{ backgroundColor: palette.accentColor }} />
+        <span
+          className="size-2 rounded-full"
+          style={{ backgroundColor: palette.accentColor }}
+        />
       ) : (
         <ConversationCardKindIcon
           iconHint={definition?.icon_hint}
@@ -2047,7 +2476,9 @@ function SearchCardTypeFilterButton({
           size={13}
         />
       )}
-      <span>{definition?.label ?? conversationSearchCardTypeLabel(cardType, t)}</span>
+      <span>
+        {definition?.label ?? conversationSearchCardTypeLabel(cardType, t)}
+      </span>
     </button>
   );
 }
@@ -2088,8 +2519,12 @@ function SearchCardTypeBadge({
 }) {
   const { definitions } = useConversationCardKindRegistry();
   const definition = definitions.get(cardType);
-  const presentationType = conversationCardPresentationKind(cardType, definition?.semantic_role);
-  const presentationDefinition = presentationType === cardType ? definition : undefined;
+  const presentationType = conversationCardPresentationKind(
+    cardType,
+    definition?.semantic_role,
+  );
+  const presentationDefinition =
+    presentationType === cardType ? definition : undefined;
   const palette = searchCardTypePalette(presentationType, colors);
   return (
     <span
@@ -2101,7 +2536,8 @@ function SearchCardTypeBadge({
         color: palette.accentColor,
       }}
     >
-      {presentationDefinition?.label ?? conversationSearchCardTypeLabel(presentationType, t)}
+      {presentationDefinition?.label ??
+        conversationSearchCardTypeLabel(presentationType, t)}
     </span>
   );
 }
@@ -2129,7 +2565,10 @@ function hexWithAlpha(hexColor: string, alpha: string) {
   return `${hexColor}${alpha}`;
 }
 
-function conversationSearchCardTypeLabel(cardType: ConversationSearchCardType, t: Translator) {
+function conversationSearchCardTypeLabel(
+  cardType: ConversationSearchCardType,
+  t: Translator,
+) {
   if (cardType === "question") {
     return t("conversation.search.card.question");
   }
@@ -2160,12 +2599,17 @@ function AppListItem({
     >
       <ConversationAppIcon appName={group.app.name} shortcut={shortcut} />
       <span className="min-w-0">
-        <span className="block truncate text-body-sm font-semibold text-on-surface">{group.app.name}</span>
+        <span className="block truncate text-body-sm font-semibold text-on-surface">
+          {group.app.name}
+        </span>
         <span className="mt-1 block text-code-sm text-on-surface-variant">
           {t("conversation.app.sessionCount", { count: group.sessions.length })}
         </span>
       </span>
-      <ChevronRight className={selected ? "text-primary" : "text-on-surface-muted"} size={16} />
+      <ChevronRight
+        className={selected ? "text-primary" : "text-on-surface-muted"}
+        size={16}
+      />
     </button>
   );
 }
@@ -2188,7 +2632,10 @@ function ConversationAppIcon({
   return (
     <span
       aria-label={appName}
-      className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-9 shrink-0 text-[13px] font-bold")}
+      className={clsx(
+        APP_SHORTCUT_ICON_FRAME_CLASS,
+        "size-9 shrink-0 text-[13px] font-bold",
+      )}
       style={{
         borderColor: `${shortcut.accentColor}66`,
         backgroundColor: `${shortcut.accentColor}1f`,
@@ -2200,27 +2647,37 @@ function ConversationAppIcon({
   );
 }
 
-function findConversationAppShortcut(shortcuts: AppShortcut[], app: ConversationAppSummary) {
+function findConversationAppShortcut(
+  shortcuts: AppShortcut[],
+  app: ConversationAppSummary,
+) {
   return (
     shortcuts.find((shortcut) => shortcut.profileId === app.id) ??
-    shortcuts.find((shortcut) => app.appKind !== "custom" && shortcut.appKind === app.appKind) ??
+    shortcuts.find(
+      (shortcut) =>
+        app.appKind !== "custom" && shortcut.appKind === app.appKind,
+    ) ??
     null
   );
 }
 
 function isWebRecordAdapter(adapter: ConversationAdapter) {
-  return adapter.capabilities.includes("web_records") || adapter.id.endsWith("-web");
+  return (
+    adapter.capabilities.includes("web_records") || adapter.id.endsWith("-web")
+  );
 }
 
 function inferAppKindFromAdapterId(adapterId: string): AppKind {
   const normalized = adapterId.toLowerCase().replace(/_/g, "-");
   if (normalized === "claude" || normalized === "claude-code") return "claude";
   if (normalized === "codex") return "codex";
-  if (normalized === "opencode" || normalized === "open-code") return "opencode";
+  if (normalized === "opencode" || normalized === "open-code")
+    return "opencode";
   if (normalized === "gemini") return "gemini";
   if (normalized === "cursor") return "cursor";
   if (normalized === "antigravity") return "antigravity";
-  if (normalized === "openclaw" || normalized === "open-claw") return "openclaw";
+  if (normalized === "openclaw" || normalized === "open-claw")
+    return "openclaw";
   return "custom";
 }
 
@@ -2240,10 +2697,14 @@ function SessionCard({
   return (
     <article className="conversation-session-card group grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border px-4 py-4 text-left">
       <span className="min-w-0 select-text">
-        <span className="block truncate text-body-sm font-semibold text-on-surface">{session.title}</span>
+        <span className="block truncate text-body-sm font-semibold text-on-surface">
+          {session.title}
+        </span>
         {showProjectPath ? (
           <span className="mt-1 block truncate font-mono text-code-sm text-on-surface-variant">
-            {session.project_path ? abbreviateHomePath(session.project_path) : t("conversation.session.noProject")}
+            {session.project_path
+              ? abbreviateHomePath(session.project_path)
+              : t("conversation.session.noProject")}
           </span>
         ) : null}
         <SessionMetaChips
@@ -2255,7 +2716,10 @@ function SessionCard({
       </span>
       <button
         aria-label={t("conversation.session.open", { title: session.title })}
-        className={iconButtonRecipe({ className: "size-9 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant group-hover:text-primary" })}
+        className={iconButtonRecipe({
+          className:
+            "size-9 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant group-hover:text-primary",
+        })}
         onClick={onOpen}
         type="button"
       >
@@ -2282,8 +2746,14 @@ function SessionMetaChips({
       className="mt-3 flex min-w-0 flex-wrap items-center gap-1.5"
     >
       <SessionMetaChip className="font-mono" label={idFragment} />
-      <SessionMetaChip label={t("conversation.session.questionCountChip", { count: questions })} />
-      <SessionMetaChip label={t("conversation.session.turnCountChip", { count: turns })} />
+      <SessionMetaChip
+        label={t("conversation.session.questionCountChip", {
+          count: questions,
+        })}
+      />
+      <SessionMetaChip
+        label={t("conversation.session.turnCountChip", { count: turns })}
+      />
     </span>
   );
 }
@@ -2335,11 +2805,17 @@ export function SessionQuestionWorkspace({
   contentCardColors: ConversationContentCardColorSettings;
   onExport: () => void;
   onCopyError?: (message: string) => void;
-  onMerge?: (previous: ConversationQuestionDetail, current: ConversationQuestionDetail) => Promise<void>;
+  onMerge?: (
+    previous: ConversationQuestionDetail,
+    current: ConversationQuestionDetail,
+  ) => Promise<void>;
   onPickOutputRoot: () => Promise<string | null>;
   onQuestionSelect: (questionId: string) => void;
   onQuestionSelectionChange: (questionId: string, checked: boolean) => void;
-  onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
+  onSplit?: (
+    question: ConversationQuestionDetail,
+    turnId: string,
+  ) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail | null;
   questions: ConversationQuestionDetail[];
@@ -2382,7 +2858,9 @@ export function SessionQuestionWorkspace({
           onSplit={onSplit}
           outputRoot={outputRoot}
           question={question}
-          questionListToggle={questionListCollapsed ? questionListToggle : undefined}
+          questionListToggle={
+            questionListCollapsed ? questionListToggle : undefined
+          }
           resultPreviewLineLimit={resultPreviewLineLimit}
           recordKind={recordKind}
           session={session}
@@ -2392,9 +2870,13 @@ export function SessionQuestionWorkspace({
           visibility={visibility}
         />
       ) : session ? (
-        <ConversationSelectionState label={t("conversation.question.noSelection")} />
+        <ConversationSelectionState
+          label={t("conversation.question.noSelection")}
+        />
       ) : (
-        <ConversationPreviewLoadingState label={t("conversation.question.previewLoading")} />
+        <ConversationPreviewLoadingState
+          label={t("conversation.question.previewLoading")}
+        />
       )}
     </section>
   );
@@ -2439,9 +2921,18 @@ export function SessionQuestionWorkspace({
         ) : (
           <RenderActivityProvider scrollElementRef={questionListScrollRef}>
             <VirtualizedCollection
-              contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
-              deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && questions.length >= 12}
-              eagerKeys={selectedQuestionListKey ? new Set([selectedQuestionListKey]) : undefined}
+              contentVisibilityContainmentEnabled={
+                renderingFlags.contentVisibilityContainment
+              }
+              deferredRenderingEnabled={
+                renderingFlags.deferredSkeletonRendering &&
+                questions.length >= 12
+              }
+              eagerKeys={
+                selectedQuestionListKey
+                  ? new Set([selectedQuestionListKey])
+                  : undefined
+              }
               enabled={renderingFlags.conversationListVirtualization}
               estimateSize={192}
               fallback={() => <QuestionListItemSkeleton />}
@@ -2449,23 +2940,35 @@ export function SessionQuestionWorkspace({
               gap={0}
               items={questions}
               minItems={12}
-              pinnedKeys={selectedQuestionListKey ? new Set([selectedQuestionListKey]) : undefined}
+              pinnedKeys={
+                selectedQuestionListKey
+                  ? new Set([selectedQuestionListKey])
+                  : undefined
+              }
               renderItem={(item) => {
                 const sessionQuestionIndex = session.questions.findIndex(
                   (candidate) => candidate.question.id === item.question.id,
                 );
                 const previousQuestion =
-                  sessionQuestionIndex > 0 ? session.questions[sessionQuestionIndex - 1] : null;
+                  sessionQuestionIndex > 0
+                    ? session.questions[sessionQuestionIndex - 1]
+                    : null;
                 return (
                   <QuestionListItem
                     onMergeWithPrevious={
-                      previousQuestion && onMerge ? () => void onMerge(previousQuestion, item) : undefined
+                      previousQuestion && onMerge
+                        ? () => void onMerge(previousQuestion, item)
+                        : undefined
                     }
                     onSelect={() => onQuestionSelect(item.question.id)}
-                    onSelectionChange={(checked) => onQuestionSelectionChange(item.question.id, checked)}
+                    onSelectionChange={(checked) =>
+                      onQuestionSelectionChange(item.question.id, checked)
+                    }
                     question={item}
                     selected={item.question.id === selectedQuestionId}
-                    selectedForExport={selectedQuestionIds.has(item.question.id)}
+                    selectedForExport={selectedQuestionIds.has(
+                      item.question.id,
+                    )}
                     t={t}
                   />
                 );
@@ -2483,7 +2986,10 @@ export function SessionQuestionWorkspace({
 
 function QuestionListItemSkeleton() {
   return (
-    <div aria-hidden="true" className="conversation-row grid h-48 animate-pulse gap-3 px-4 py-4">
+    <div
+      aria-hidden="true"
+      className="conversation-row grid h-48 animate-pulse gap-3 px-4 py-4"
+    >
       <div className="h-4 w-3/4 rounded bg-theme-control" />
       <div className="h-3 w-full rounded bg-theme-control/75" />
       <div className="h-3 w-2/3 rounded bg-theme-control/60" />
@@ -2498,7 +3004,9 @@ export function ConversationSelectionState({ label }: { label: string }) {
         <span aria-hidden="true" className="conversation-selection-orb">
           <Layers3 size={25} />
         </span>
-        <p className="max-w-sm text-center text-body-sm font-semibold leading-6 text-on-surface">{label}</p>
+        <p className="max-w-sm text-center text-body-sm font-semibold leading-6 text-on-surface">
+          {label}
+        </p>
       </div>
     </div>
   );
@@ -2513,13 +3021,20 @@ function QuestionListToggleButton({
   onClick: () => void;
   t: Translator;
 }) {
-  const label = t(collapsed ? "conversation.questionSidebar.expand" : "conversation.questionSidebar.collapse");
+  const label = t(
+    collapsed
+      ? "conversation.questionSidebar.expand"
+      : "conversation.questionSidebar.collapse",
+  );
 
   return (
     <button
       aria-expanded={!collapsed}
       aria-label={label}
-      className={iconButtonRecipe({ className: "size-8 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]" })}
+      className={iconButtonRecipe({
+        className:
+          "size-8 shrink-0 border border-theme-control-border bg-theme-control text-on-surface-variant shadow-[var(--theme-shadow-control-inset)]",
+      })}
       onClick={onClick}
       title={label}
       type="button"
@@ -2546,11 +3061,17 @@ function QuestionListItem({
   selectedForExport: boolean;
   t: Translator;
 }) {
-  const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
-  const answerPreview = conversationQuestionPreview(question) ?? t("conversation.markdown.empty");
+  const title =
+    conversationQuestionTitle(question) ??
+    t("conversation.markdown.untitledQuestion");
+  const answerPreview =
+    conversationQuestionPreview(question) ?? t("conversation.markdown.empty");
 
   return (
-    <article className={`conversation-row flex h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`} data-selected={selected}>
+    <article
+      className={`conversation-row flex h-48 flex-col overflow-hidden ${selected ? "text-on-surface" : ""}`}
+      data-selected={selected}
+    >
       <div className="grid min-h-0 flex-1 grid-cols-[auto_minmax(0,1fr)]">
         <label className="flex px-4 py-3 pr-3">
           <input
@@ -2569,18 +3090,30 @@ function QuestionListItem({
           type="button"
         >
           <div className="flex min-w-0 items-start justify-between gap-3">
-            <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">{title}</h3>
+            <h3 className="line-clamp-2 min-w-0 break-words text-body-sm font-semibold text-on-surface">
+              {title}
+            </h3>
             <span className="shrink-0 rounded-full bg-theme-control px-2 py-1 text-code-sm text-on-surface-muted">
-              {t("conversation.question.turnCount", { count: question.turns.length })}
+              {t("conversation.question.turnCount", {
+                count: question.turns.length,
+              })}
             </span>
           </div>
-          <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">{answerPreview}</p>
-          <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">{questionOriginLabel(question, t)}</p>
+          <p className="mt-2 line-clamp-2 text-body-sm text-on-surface-variant">
+            {answerPreview}
+          </p>
+          <p className="mt-auto pt-2 text-label-caps text-on-surface-muted">
+            {questionOriginLabel(question, t)}
+          </p>
         </button>
       </div>
       {onMergeWithPrevious ? (
         <div className="px-4 pb-3 pl-14">
-          <ToolbarTextButton icon={<GitMerge size={15} />} label={t("conversation.question.mergePrevious")} onClick={onMergeWithPrevious} />
+          <ToolbarTextButton
+            icon={<GitMerge size={15} />}
+            label={t("conversation.question.mergePrevious")}
+            onClick={onMergeWithPrevious}
+          />
         </div>
       ) : null}
     </article>
@@ -2612,7 +3145,10 @@ export function QuestionPreview({
   onExport: () => void;
   onCopyError?: (message: string) => void;
   onPickOutputRoot: () => Promise<string | null>;
-  onSplit?: (question: ConversationQuestionDetail, turnId: string) => Promise<void>;
+  onSplit?: (
+    question: ConversationQuestionDetail,
+    turnId: string,
+  ) => Promise<void>;
   outputRoot: string;
   question: ConversationQuestionDetail;
   questionListToggle?: ReactNode;
@@ -2624,14 +3160,27 @@ export function QuestionPreview({
   translationSettings?: ResolvedConversationTranslationSettings;
   visibility?: ConversationContentVisibility;
 }) {
-  const title = conversationQuestionTitle(question) ?? t("conversation.markdown.untitledQuestion");
+  const title =
+    conversationQuestionTitle(question) ??
+    t("conversation.markdown.untitledQuestion");
   const [pickingOutputRoot, setPickingOutputRoot] = useState(false);
-  const [commandProjections, setCommandProjections] = useState<ConversationCommandProjection[]>([]);
+  const [commandProjections, setCommandProjections] = useState<
+    ConversationCommandProjection[]
+  >([]);
   const requestedProjectionPartIdsRef = useRef(new Set<string>());
-  const commandPartById = useMemo(() => new Map(question.parts.flatMap((part) => (
-    part.command?.trim() ? [[part.id, part] as const] : []
-  ))), [question.parts]);
-  const activeBlockId = activeSearchTarget?.questionId === question.question.id ? activeSearchTarget.blockId : null;
+  const commandPartById = useMemo(
+    () =>
+      new Map(
+        question.parts.flatMap((part) =>
+          part.command?.trim() ? [[part.id, part] as const] : [],
+        ),
+      ),
+    [question.parts],
+  );
+  const activeBlockId =
+    activeSearchTarget?.questionId === question.question.id
+      ? activeSearchTarget.blockId
+      : null;
   const previewScrollRef = useRef<HTMLDivElement>(null);
   const virtualizedCollectionRef = useRef<VirtualizedCollectionHandle>(null);
   const turnModels = useMemo(
@@ -2647,45 +3196,74 @@ export function QuestionPreview({
     t,
     translationSettings: translationSettings ?? DEFAULT_TRANSLATION_SETTINGS,
   });
-  const blockTurnIndex = useMemo(() => buildConversationBlockTurnIndex(turnModels), [turnModels]);
+  const blockTurnIndex = useMemo(
+    () => buildConversationBlockTurnIndex(turnModels),
+    [turnModels],
+  );
   const activeTurnId = activeBlockId
-    ? blockTurnIndex.get(activeBlockId)
-      ?? blockTurnIndex.get(conversationProjectionPartId(activeBlockId))
-      ?? null
+    ? (blockTurnIndex.get(activeBlockId) ??
+      blockTurnIndex.get(conversationProjectionPartId(activeBlockId)) ??
+      null)
     : null;
   const [focusedTurnId, setFocusedTurnId] = useState<string | null>(null);
   const eagerKeys = useMemo(
-    () => activeTurnId ? new Set([activeTurnId]) : new Set<string>(),
+    () => (activeTurnId ? new Set([activeTurnId]) : new Set<string>()),
     [activeTurnId],
   );
   const pinnedKeys = useMemo(
-    () => new Set([activeTurnId, focusedTurnId].filter((value): value is string => Boolean(value))),
+    () =>
+      new Set(
+        [activeTurnId, focusedTurnId].filter((value): value is string =>
+          Boolean(value),
+        ),
+      ),
     [activeTurnId, focusedTurnId],
   );
 
-  const handleCommandPartsVisible = useCallback((partIds: string[]) => {
-    const parts = partIds.flatMap((partId) => {
-      if (requestedProjectionPartIdsRef.current.has(partId)) return [];
-      const part = commandPartById.get(partId);
-      if (!part?.command?.trim()) return [];
-      requestedProjectionPartIdsRef.current.add(partId);
-      return [{ partId, command: part.command, commandLabel: part.command_label }];
-    });
-    if (parts.length === 0) return;
-    void projectConversationCommandParts({
-      adapterId: session.session.adapter_id,
-      adapterVersion,
-      parts,
-    }).then((projections) => {
-      setCommandProjections((current) => {
-        const merged = new Map(current.map((projection) => [projection.part_id, projection]));
-        projections.forEach((projection) => merged.set(projection.part_id, projection));
-        return [...merged.values()];
+  const handleCommandPartsVisible = useCallback(
+    (partIds: string[]) => {
+      const parts = partIds.flatMap((partId) => {
+        if (requestedProjectionPartIdsRef.current.has(partId)) return [];
+        const part = commandPartById.get(partId);
+        if (!part?.command?.trim()) return [];
+        requestedProjectionPartIdsRef.current.add(partId);
+        return [
+          { partId, command: part.command, commandLabel: part.command_label },
+        ];
       });
-    }).catch((error) => {
-      onCopyError?.(t("conversation.content.projectionFailed", { message: errorMessage(error) }));
-    });
-  }, [adapterVersion, commandPartById, onCopyError, session.session.adapter_id, t]);
+      if (parts.length === 0) return;
+      void projectConversationCommandParts({
+        adapterId: session.session.adapter_id,
+        adapterVersion,
+        parts,
+      })
+        .then((projections) => {
+          setCommandProjections((current) => {
+            const merged = new Map(
+              current.map((projection) => [projection.part_id, projection]),
+            );
+            projections.forEach((projection) =>
+              merged.set(projection.part_id, projection),
+            );
+            return [...merged.values()];
+          });
+        })
+        .catch((error) => {
+          onCopyError?.(
+            t("conversation.content.projectionFailed", {
+              message: errorMessage(error),
+            }),
+          );
+        });
+    },
+    [
+      adapterVersion,
+      commandPartById,
+      onCopyError,
+      session.session.adapter_id,
+      t,
+    ],
+  );
 
   useEffect(() => {
     if (!activeTurnId) return;
@@ -2695,19 +3273,27 @@ export function QuestionPreview({
     });
   }, [activeTurnId]);
 
-  const handleTurnReady = useCallback((turnId: string) => {
-    if (turnId !== activeTurnId || !activeBlockId) return;
-    window.requestAnimationFrame(() => {
-      document
-        .getElementById(conversationCardDomId(activeBlockId))
-        ?.scrollIntoView?.({ behavior: "auto", block: "center" });
-    });
-  }, [activeBlockId, activeTurnId]);
+  const handleTurnReady = useCallback(
+    (turnId: string) => {
+      if (turnId !== activeTurnId || !activeBlockId) return;
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById(conversationCardDomId(activeBlockId))
+          ?.scrollIntoView?.({ behavior: "auto", block: "center" });
+      });
+    },
+    [activeBlockId, activeTurnId],
+  );
 
-  const handlePreviewFocus = useCallback((event: React.FocusEvent<HTMLDivElement>) => {
-    const turn = (event.target as HTMLElement).closest<HTMLElement>("[data-conversation-turn-id]");
-    setFocusedTurnId(turn?.dataset.conversationTurnId ?? null);
-  }, []);
+  const handlePreviewFocus = useCallback(
+    (event: React.FocusEvent<HTMLDivElement>) => {
+      const turn = (event.target as HTMLElement).closest<HTMLElement>(
+        "[data-conversation-turn-id]",
+      );
+      setFocusedTurnId(turn?.dataset.conversationTurnId ?? null);
+    },
+    [],
+  );
 
   async function handlePickOutputRoot() {
     setPickingOutputRoot(true);
@@ -2728,11 +3314,15 @@ export function QuestionPreview({
           <div className="flex min-w-0 flex-1 items-start gap-3">
             {questionListToggle}
             <div className="min-w-0">
-              <p className="text-label-caps text-primary">{questionOriginLabel(question, t)}</p>
+              <p className="text-label-caps text-primary">
+                {questionOriginLabel(question, t)}
+              </p>
               <h2 className="mt-1 text-title-md text-on-surface">{title}</h2>
               {recordKind !== "web" ? (
                 <p className="mt-1 text-body-sm text-on-surface-variant">
-                  {session.session.project_path ? abbreviateHomePath(session.session.project_path) : t("conversation.session.noProject")}
+                  {session.session.project_path
+                    ? abbreviateHomePath(session.session.project_path)
+                    : t("conversation.session.noProject")}
                 </p>
               ) : null}
             </div>
@@ -2747,7 +3337,12 @@ export function QuestionPreview({
               picking={pickingOutputRoot}
               value={outputRoot}
             />
-            <ToolbarActionButton icon={<Download size={17} />} label={t("conversation.session.exportMarkdown")} onClick={onExport} text={t("toolbar.export")} />
+            <ToolbarActionButton
+              icon={<Download size={17} />}
+              label={t("conversation.session.exportMarkdown")}
+              onClick={onExport}
+              text={t("toolbar.export")}
+            />
           </div>
         </div>
       </header>
@@ -2759,8 +3354,13 @@ export function QuestionPreview({
         <RenderActivityProvider scrollElementRef={previewScrollRef}>
           <div className="render-safe-scroll-content px-5 py-5">
             <VirtualizedCollection
-              contentVisibilityContainmentEnabled={renderingFlags.contentVisibilityContainment}
-              deferredRenderingEnabled={renderingFlags.deferredSkeletonRendering && turnModels.length >= 12}
+              contentVisibilityContainmentEnabled={
+                renderingFlags.contentVisibilityContainment
+              }
+              deferredRenderingEnabled={
+                renderingFlags.deferredSkeletonRendering &&
+                turnModels.length >= 12
+              }
               eagerKeys={eagerKeys}
               enabled={renderingFlags.conversationTurnVirtualization}
               estimateSize={420}
@@ -2781,7 +3381,11 @@ export function QuestionPreview({
                   model={model}
                   onCopyError={onCopyError}
                   onCommandPartsVisible={handleCommandPartsVisible}
-                  onSplit={onSplit ? (turnId) => void onSplit(question, turnId) : undefined}
+                  onSplit={
+                    onSplit
+                      ? (turnId) => void onSplit(question, turnId)
+                      : undefined
+                  }
                   recordKind={recordKind}
                   resultPreviewLineLimit={resultPreviewLineLimit}
                   t={t}
@@ -2799,9 +3403,18 @@ export function QuestionPreview({
   );
 }
 
-function questionOriginLabel(question: ConversationQuestionDetail, t: Translator) {
-  const origins = new Set(question.question_turns.map((membership) => membership.assignment_origin));
-  const origin = origins.has("manual") ? "manual" : origins.has("auto_merged") ? "auto_merged" : "imported";
+function questionOriginLabel(
+  question: ConversationQuestionDetail,
+  t: Translator,
+) {
+  const origins = new Set(
+    question.question_turns.map((membership) => membership.assignment_origin),
+  );
+  const origin = origins.has("manual")
+    ? "manual"
+    : origins.has("auto_merged")
+      ? "auto_merged"
+      : "imported";
   const key = `conversation.question.origin.${origin}` as TranslationKey;
   return t(key);
 }
@@ -2811,15 +3424,27 @@ function conversationProjectionPartId(blockId: string) {
 }
 
 function conversationQuestionOrder(question: ConversationQuestionDetail) {
-  return Math.min(...question.turns.map((turn) => turn.turn_index), Number.MAX_SAFE_INTEGER);
+  return Math.min(
+    ...question.turns.map((turn) => turn.turn_index),
+    Number.MAX_SAFE_INTEGER,
+  );
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
+  return (
+    <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">
+      {children}
+    </div>
+  );
 }
 
 function firstLine(value: string, t: Translator) {
-  return value.split(/\r?\n/).find((line) => line.trim())?.trim() ?? t("conversation.markdown.untitledQuestion");
+  return (
+    value
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim() ?? t("conversation.markdown.untitledQuestion")
+  );
 }
 
 export function preferredConversationQuestionId(
@@ -2829,8 +3454,11 @@ export function preferredConversationQuestionId(
   const currentQuestion = currentQuestionId
     ? questions.find((question) => question.question.id === currentQuestionId)
     : null;
-  if (currentQuestion && currentQuestion.parts.length > 0) return currentQuestion.question.id;
-  const firstWithContent = questions.find((question) => question.parts.length > 0);
+  if (currentQuestion && currentQuestion.parts.length > 0)
+    return currentQuestion.question.id;
+  const firstWithContent = questions.find(
+    (question) => question.parts.length > 0,
+  );
   if (firstWithContent) return firstWithContent.question.id;
   return currentQuestion?.question.id ?? questions[0]?.question.id ?? null;
 }
@@ -2851,16 +3479,24 @@ function rememberDismissedConversationSyncProgressTask(
   dismissedConversationSyncProgressTaskKeys.add(
     conversationSyncProgressTaskKey(recordKind, taskId),
   );
-  if (dismissedConversationSyncProgressTaskKeys.size <= DISMISSED_SYNC_PROGRESS_TASK_LIMIT) {
+  if (
+    dismissedConversationSyncProgressTaskKeys.size <=
+    DISMISSED_SYNC_PROGRESS_TASK_LIMIT
+  ) {
     return;
   }
-  const oldestKey = dismissedConversationSyncProgressTaskKeys.values().next().value;
+  const oldestKey = dismissedConversationSyncProgressTaskKeys
+    .values()
+    .next().value;
   if (oldestKey) {
     dismissedConversationSyncProgressTaskKeys.delete(oldestKey);
   }
 }
 
-function conversationSyncProgressTaskKey(recordKind: ConversationRecordKind, taskId: string) {
+function conversationSyncProgressTaskKey(
+  recordKind: ConversationRecordKind,
+  taskId: string,
+) {
   return `${recordKind}:${taskId}`;
 }
 
@@ -2931,8 +3567,12 @@ function formatConversationSyncFailureItems(
   }
 
   const items = task.result.errors
-    .map((rawError) => formatConversationSyncFailureItem(rawError, sourceLabel, t))
-    .filter((item): item is { message: string; source: string } => Boolean(item));
+    .map((rawError) =>
+      formatConversationSyncFailureItem(rawError, sourceLabel, t),
+    )
+    .filter((item): item is { message: string; source: string } =>
+      Boolean(item),
+    );
 
   return items.length > 0 ? items : undefined;
 }
@@ -2949,7 +3589,12 @@ function formatConversationSyncFailureItem(
   const adapterId = stringRecordValue(rawError.adapter_id);
   const sourceId = stringRecordValue(rawError.source_id);
   const sourceName = sourceId ? sourceLabel(sourceId) : null;
-  const source = formatConversationSyncFailureSource(adapterId, sourceId, sourceName, t);
+  const source = formatConversationSyncFailureSource(
+    adapterId,
+    sourceId,
+    sourceName,
+    t,
+  );
   const message = compactConversationSyncFailureMessage(
     stringRecordValue(rawError.message),
     t,
@@ -2973,12 +3618,17 @@ function formatConversationSyncFailureSource(
     : t("conversation.sync.unknownFailedSource");
 }
 
-function compactConversationSyncFailureMessage(message: string | null, t: Translator) {
+function compactConversationSyncFailureMessage(
+  message: string | null,
+  t: Translator,
+) {
   const normalized = message?.replace(/\s+/g, " ").trim();
   if (!normalized) {
     return t("conversation.sync.failureMessageUnavailable");
   }
-  return normalized.length > 260 ? `${normalized.slice(0, 257)}...` : normalized;
+  return normalized.length > 260
+    ? `${normalized.slice(0, 257)}...`
+    : normalized;
 }
 
 function stringRecordValue(value: unknown) {

@@ -1,8 +1,14 @@
 export type AppWindowIconState = "display" | "minimized";
 
 const appWindowIconAssets: Record<AppWindowIconState, string> = {
-  display: new URL("../../../assets/assetiweave/app-icon-display.png", import.meta.url).href,
-  minimized: new URL("../../../assets/assetiweave/app-icon-minimized.png", import.meta.url).href,
+  display: new URL(
+    "../../../assets/assetiweave/app-icon-display.png",
+    import.meta.url,
+  ).href,
+  minimized: new URL(
+    "../../../assets/assetiweave/app-icon-minimized.png",
+    import.meta.url,
+  ).href,
 };
 
 let appliedState: AppWindowIconState | null = null;
@@ -46,7 +52,9 @@ export function setAppWindowIcon(state: AppWindowIconState) {
   return iconUpdateQueue;
 }
 
-export async function observeAppWindowIconState(onStateChange: (state: AppWindowIconState) => void) {
+export async function observeAppWindowIconState(
+  onStateChange: (state: AppWindowIconState) => void,
+) {
   if (!isTauriRuntime()) {
     return () => undefined;
   }
@@ -63,7 +71,9 @@ export async function observeAppWindowIconState(onStateChange: (state: AppWindow
 
     syncing = true;
     try {
-      const state: AppWindowIconState = (await currentWindow.isMinimized()) ? "minimized" : "display";
+      const state: AppWindowIconState = (await currentWindow.isMinimized())
+        ? "minimized"
+        : "display";
       if (!disposed) {
         onStateChange(state);
         await setAppWindowIcon(state);

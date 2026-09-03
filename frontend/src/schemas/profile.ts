@@ -1,6 +1,15 @@
 import * as z from "zod";
-import type { ProfileSafety, TargetProfile, TargetProfileInput, TargetProfileRuleSet } from "../types";
-import { appKindSchema, assetKindSchema, deploymentStrategySchema } from "./domain";
+import type {
+  ProfileSafety,
+  TargetProfile,
+  TargetProfileInput,
+  TargetProfileRuleSet,
+} from "../types";
+import {
+  appKindSchema,
+  assetKindSchema,
+  deploymentStrategySchema,
+} from "./domain";
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
@@ -37,7 +46,10 @@ export const targetProfileInputSchema = z.strictObject({
     tags: [],
   }),
   name: nonEmptyStringSchema,
-  safety: profileSafetySchema.default({ allow_overwrite: false, allow_remove: false }),
+  safety: profileSafetySchema.default({
+    allow_overwrite: false,
+    allow_remove: false,
+  }),
   supported_kinds: z.array(assetKindSchema).default(["skill"]),
   target_paths: z.array(nonEmptyStringSchema).min(1),
 }) satisfies z.ZodType<TargetProfileInput>;

@@ -4,7 +4,9 @@ import { isTauriRuntime } from "./appUpdater";
 
 export const APP_CLOSE_REQUESTED_EVENT = "app-close-requested";
 
-export function subscribeAppCloseRequested(listener: () => void): Promise<() => void> {
+export function subscribeAppCloseRequested(
+  listener: () => void,
+): Promise<() => void> {
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
@@ -20,4 +22,3 @@ export async function completeAppClose(backupDatabase: boolean): Promise<void> {
 export async function cancelAppClosePrompt(): Promise<void> {
   await invoke("cancel_app_close_prompt");
 }
-

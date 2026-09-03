@@ -1,5 +1,7 @@
 export function isDiffLanguage(language?: string | null) {
-  return ["diff", "patch", "udiff", "unified-diff"].includes(language?.trim().toLowerCase() ?? "");
+  return ["diff", "patch", "udiff", "unified-diff"].includes(
+    language?.trim().toLowerCase() ?? "",
+  );
 }
 
 export function isUnifiedDiffText(value?: string | null) {
@@ -12,7 +14,9 @@ export function isUnifiedDiffText(value?: string | null) {
   const hasFileMarkers =
     trimmed.some((line) => line.startsWith("--- ")) &&
     trimmed.some((line) => line.startsWith("+++ "));
-  const hasHunk = trimmed.some((line) => /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line));
+  const hasHunk = trimmed.some((line) =>
+    /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line),
+  );
   if (!((hasGitHeader || hasFileMarkers) && hasHunk)) return false;
   const markedLines = trimmed.filter((line) => /^[+\- ]/.test(line)).length;
   return markedLines / lines.length >= 0.5;

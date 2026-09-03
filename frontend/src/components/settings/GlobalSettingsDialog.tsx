@@ -47,7 +47,13 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -72,7 +78,10 @@ import { AgentCapabilityDialog } from "./AgentCapabilityDialog";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import { AgentCapabilitySetting } from "./AgentCapabilitySetting";
 import { ConversationFullSyncProgress } from "./ConversationFullSyncProgress";
-import { conversationCardColor, conversationCardLabel } from "../conversations/ConversationContentCards";
+import {
+  conversationCardColor,
+  conversationCardLabel,
+} from "../conversations/ConversationContentCards";
 import {
   isRedundantConversationCardKind,
   useConversationCardKindRegistry,
@@ -81,9 +90,23 @@ import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import { useSettingsPanelController } from "../../hooks/settings/useSettingsPanelController";
 import { headerTabLabel, railLabel, subNavLabel } from "../../i18n/navigation";
 import type { Locale, TranslationKey } from "../../i18n/messages";
-import type { HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem } from "../../router/types";
-import { getCliToolsStatus, installCliTools, type CliToolsStatus } from "../../services/cliTools";
-import { getSkillBackupSettings, revealPath, selectTargetDirectory } from "../../services/catalog";
+import type {
+  HeaderTabItem,
+  LocalizedNavigationLabels,
+  NavigationModel,
+  RailMenuItem,
+  SubNavItem,
+} from "../../router/types";
+import {
+  getCliToolsStatus,
+  installCliTools,
+  type CliToolsStatus,
+} from "../../services/cliTools";
+import {
+  getSkillBackupSettings,
+  revealPath,
+  selectTargetDirectory,
+} from "../../services/catalog";
 import {
   listConversationAdapterRuntimeStatuses,
   type ConversationAdapterRuntimeStatus,
@@ -123,7 +146,11 @@ import {
   type InterfaceDensity,
   type SettingsPanelId,
 } from "../../store/settings/AppSettingsProvider";
-import type { AppShortcut, AppShortcutIconSvg, SkillBackupSettings } from "../../types";
+import type {
+  AppShortcut,
+  AppShortcutIconSvg,
+  SkillBackupSettings,
+} from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 
@@ -164,71 +191,127 @@ export function GlobalSettingsDialog({
   open: boolean;
 }) {
   const { locale, setLocale, t } = useI18n();
-  const settingGroups = useMemo<SettingsGroupConfig[]>(() => [
-    {
-      id: "general",
-      label: t("settings.group.general"),
-      scope: t("settings.scope.general"),
-      panels: [
-        { id: "general.appearance", icon: Palette, label: t("settings.section.appearance") },
-        { id: "general.memory", icon: Cpu, label: t("settings.section.memory") },
-        { id: "general.promptOptimization", icon: Sparkles, label: t("settings.section.promptOptimization") },
-        { id: "general.typography", icon: Type, label: t("settings.section.typography") },
-        { id: "general.storage", icon: FileJson, label: t("settings.section.storage") },
-      ],
-    },
-    {
-      id: "workspace",
-      label: t("settings.group.workspace"),
-      scope: t("settings.scope.workspace"),
-      panels: [
-        { id: "workspace.menu", icon: Menu, label: t("settings.section.menu") },
-        { id: "workspace.shortcuts", icon: MousePointerClick, label: t("settings.section.shortcuts") },
-      ],
-    },
-    {
-      id: "agents",
-      label: t("settings.group.agents"),
-      scope: t("settings.scope.agents"),
-      panels: [
-        { id: "agents.market", icon: Bot, label: t("settings.section.acpMarket") },
-        { id: "agents.settings", icon: Settings, label: t("settings.section.acpSettings") },
-      ],
-    },
-    {
-      id: "conversations",
-      label: t("settings.group.conversations"),
-      scope: t("settings.scope.conversations"),
-      panels: [
-        { id: "conversations.sessions", icon: ListTree, label: t("settings.section.conversationSessions") },
-        { id: "conversations.translation", icon: Languages, label: t("settings.section.conversationTranslation") },
-        { id: "conversations.adapters", icon: Puzzle, label: t("settings.section.conversationAdapters") },
-      ],
-    },
-  ], [t]);
-  const { resetSettings, settings, storageInfo, updateSetting } = useAppSettings();
-  const { startSync: startConversationSync, tasks: conversationSyncTasks } = useConversationSync();
-  const {
-    activePanel,
-    collapsedGroups,
-    openPanel,
-    toggleGroupCollapsed,
-  } = useSettingsPanelController({
-    groups: settingGroups,
-    initialPanel,
-    normalizePanel: normalizeSettingsPanelId,
-    open,
-  });
-  const [editingShortcutIconId, setEditingShortcutIconId] = useState<string | null>(null);
+  const settingGroups = useMemo<SettingsGroupConfig[]>(
+    () => [
+      {
+        id: "general",
+        label: t("settings.group.general"),
+        scope: t("settings.scope.general"),
+        panels: [
+          {
+            id: "general.appearance",
+            icon: Palette,
+            label: t("settings.section.appearance"),
+          },
+          {
+            id: "general.memory",
+            icon: Cpu,
+            label: t("settings.section.memory"),
+          },
+          {
+            id: "general.promptOptimization",
+            icon: Sparkles,
+            label: t("settings.section.promptOptimization"),
+          },
+          {
+            id: "general.typography",
+            icon: Type,
+            label: t("settings.section.typography"),
+          },
+          {
+            id: "general.storage",
+            icon: FileJson,
+            label: t("settings.section.storage"),
+          },
+        ],
+      },
+      {
+        id: "workspace",
+        label: t("settings.group.workspace"),
+        scope: t("settings.scope.workspace"),
+        panels: [
+          {
+            id: "workspace.menu",
+            icon: Menu,
+            label: t("settings.section.menu"),
+          },
+          {
+            id: "workspace.shortcuts",
+            icon: MousePointerClick,
+            label: t("settings.section.shortcuts"),
+          },
+        ],
+      },
+      {
+        id: "agents",
+        label: t("settings.group.agents"),
+        scope: t("settings.scope.agents"),
+        panels: [
+          {
+            id: "agents.market",
+            icon: Bot,
+            label: t("settings.section.acpMarket"),
+          },
+          {
+            id: "agents.settings",
+            icon: Settings,
+            label: t("settings.section.acpSettings"),
+          },
+        ],
+      },
+      {
+        id: "conversations",
+        label: t("settings.group.conversations"),
+        scope: t("settings.scope.conversations"),
+        panels: [
+          {
+            id: "conversations.sessions",
+            icon: ListTree,
+            label: t("settings.section.conversationSessions"),
+          },
+          {
+            id: "conversations.translation",
+            icon: Languages,
+            label: t("settings.section.conversationTranslation"),
+          },
+          {
+            id: "conversations.adapters",
+            icon: Puzzle,
+            label: t("settings.section.conversationAdapters"),
+          },
+        ],
+      },
+    ],
+    [t],
+  );
+  const { resetSettings, settings, storageInfo, updateSetting } =
+    useAppSettings();
+  const { startSync: startConversationSync, tasks: conversationSyncTasks } =
+    useConversationSync();
+  const { activePanel, collapsedGroups, openPanel, toggleGroupCollapsed } =
+    useSettingsPanelController({
+      groups: settingGroups,
+      initialPanel,
+      normalizePanel: normalizeSettingsPanelId,
+      open,
+    });
+  const [editingShortcutIconId, setEditingShortcutIconId] = useState<
+    string | null
+  >(null);
   const [iconSvgDraft, setIconSvgDraft] = useState("");
   const [iconSvgError, setIconSvgError] = useState("");
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
   const [backupError, setBackupError] = useState("");
-  const [backupSettings, setBackupSettings] = useState<SkillBackupSettings | null>(null);
-  const [cliToolsStatus, setCliToolsStatus] = useState<CliToolsStatus | null>(null);
+  const [backupSettings, setBackupSettings] =
+    useState<SkillBackupSettings | null>(null);
+  const [cliToolsStatus, setCliToolsStatus] = useState<CliToolsStatus | null>(
+    null,
+  );
   const [cliToolsError, setCliToolsError] = useState("");
   const [cliToolsInstalling, setCliToolsInstalling] = useState(false);
-  const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<ConversationAdapterRuntimeStatus[]>([]);
+  const [adapterRuntimeStatuses, setAdapterRuntimeStatuses] = useState<
+    ConversationAdapterRuntimeStatus[]
+  >([]);
   const [adapterRuntimeLoading, setAdapterRuntimeLoading] = useState(false);
   const [adapterRuntimeError, setAdapterRuntimeError] = useState("");
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false);
@@ -307,12 +390,16 @@ export function GlobalSettingsDialog({
   }
 
   const activePanelConfig =
-    settingGroups.flatMap((group) => group.panels).find((panel) => panel.id === activePanel) ??
-    settingGroups[0].panels[0];
+    settingGroups
+      .flatMap((group) => group.panels)
+      .find((panel) => panel.id === activePanel) ?? settingGroups[0].panels[0];
   const activeScope =
-    settingGroups.find((group) => group.panels.some((panel) => panel.id === activePanel))?.scope ??
-    t("settings.scope.general");
-  const configurableRailItems = navigationModel.railItems.filter(isConfigurableRailItem);
+    settingGroups.find((group) =>
+      group.panels.some((panel) => panel.id === activePanel),
+    )?.scope ?? t("settings.scope.general");
+  const configurableRailItems = navigationModel.railItems.filter(
+    isConfigurableRailItem,
+  );
 
   function commitNavigationModel(nextNavigationModel: NavigationModel) {
     onNavigationModelChange(nextNavigationModel);
@@ -357,23 +444,33 @@ export function GlobalSettingsDialog({
   function updateRailItem(id: string, patch: Partial<RailMenuItem>) {
     commitNavigationModel({
       ...navigationModel,
-      railItems: navigationModel.railItems.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      railItems: navigationModel.railItems.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
     });
   }
 
   function updateHeaderTab(id: string, patch: Partial<HeaderTabItem>) {
     commitNavigationModel({
       ...navigationModel,
-      headerTabs: navigationModel.headerTabs.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      headerTabs: navigationModel.headerTabs.map((item) =>
+        item.id === id ? { ...item, ...patch } : item,
+      ),
     });
   }
 
-  function updateSubNavItem(parentTabId: string, id: string, patch: Partial<SubNavItem>) {
+  function updateSubNavItem(
+    parentTabId: string,
+    id: string,
+    patch: Partial<SubNavItem>,
+  ) {
     commitNavigationModel({
       ...navigationModel,
       subNavItems: {
         ...navigationModel.subNavItems,
-        [parentTabId]: (navigationModel.subNavItems[parentTabId] ?? []).map((item) => (item.id === id ? { ...item, ...patch } : item)),
+        [parentTabId]: (navigationModel.subNavItems[parentTabId] ?? []).map(
+          (item) => (item.id === id ? { ...item, ...patch } : item),
+        ),
       },
     });
   }
@@ -382,7 +479,12 @@ export function GlobalSettingsDialog({
     commitNavigationModel({
       ...navigationModel,
       railItems: navigationModel.railItems.map((item) =>
-        item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+        item.id === id
+          ? {
+              ...item,
+              labels: setLocalizedNavigationLabel(item.labels, locale, label),
+            }
+          : item,
       ),
     });
   }
@@ -391,25 +493,49 @@ export function GlobalSettingsDialog({
     commitNavigationModel({
       ...navigationModel,
       headerTabs: navigationModel.headerTabs.map((item) =>
-        item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+        item.id === id
+          ? {
+              ...item,
+              labels: setLocalizedNavigationLabel(item.labels, locale, label),
+            }
+          : item,
       ),
     });
   }
 
-  function updateSubNavItemLabel(parentTabId: string, id: string, label: string) {
+  function updateSubNavItemLabel(
+    parentTabId: string,
+    id: string,
+    label: string,
+  ) {
     commitNavigationModel({
       ...navigationModel,
       subNavItems: {
         ...navigationModel.subNavItems,
-        [parentTabId]: (navigationModel.subNavItems[parentTabId] ?? []).map((item) =>
-          item.id === id ? { ...item, labels: setLocalizedNavigationLabel(item.labels, locale, label) } : item,
+        [parentTabId]: (navigationModel.subNavItems[parentTabId] ?? []).map(
+          (item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  labels: setLocalizedNavigationLabel(
+                    item.labels,
+                    locale,
+                    label,
+                  ),
+                }
+              : item,
         ),
       },
     });
   }
 
-  function reorderRailItems(position: RailMenuItem["position"], orderedIds: string[]) {
-    const itemById = new Map(navigationModel.railItems.map((item) => [item.id, item]));
+  function reorderRailItems(
+    position: RailMenuItem["position"],
+    orderedIds: string[],
+  ) {
+    const itemById = new Map(
+      navigationModel.railItems.map((item) => [item.id, item]),
+    );
     const orderedItems = orderedIds.flatMap((id) => {
       const item = itemById.get(id);
       return item ? [item] : [];
@@ -433,7 +559,9 @@ export function GlobalSettingsDialog({
   }
 
   function reorderHeaderTabs(orderedIds: string[]) {
-    const itemById = new Map(navigationModel.headerTabs.map((item) => [item.id, item]));
+    const itemById = new Map(
+      navigationModel.headerTabs.map((item) => [item.id, item]),
+    );
     commitNavigationModel({
       ...navigationModel,
       headerTabs: orderedIds.flatMap((id) => {
@@ -459,11 +587,17 @@ export function GlobalSettingsDialog({
   }
 
   function updateAppShortcut(profileId: string, patch: Partial<AppShortcut>) {
-    commitAppShortcuts(appShortcuts.map((shortcut) => (shortcut.profileId === profileId ? { ...shortcut, ...patch } : shortcut)));
+    commitAppShortcuts(
+      appShortcuts.map((shortcut) =>
+        shortcut.profileId === profileId ? { ...shortcut, ...patch } : shortcut,
+      ),
+    );
   }
 
   function reorderAppShortcuts(orderedIds: string[]) {
-    const shortcutById = new Map(appShortcuts.map((shortcut) => [shortcut.profileId, shortcut]));
+    const shortcutById = new Map(
+      appShortcuts.map((shortcut) => [shortcut.profileId, shortcut]),
+    );
     commitAppShortcuts(
       orderedIds.flatMap((id) => {
         const shortcut = shortcutById.get(id);
@@ -473,7 +607,9 @@ export function GlobalSettingsDialog({
   }
 
   async function chooseDataBackupDirectory() {
-    const selected = await selectTargetDirectory(t("settings.storage.pickDataBackupDir"));
+    const selected = await selectTargetDirectory(
+      t("settings.storage.pickDataBackupDir"),
+    );
     if (!selected) {
       return;
     }
@@ -629,42 +765,54 @@ export function GlobalSettingsDialog({
     }
   }
 
-  const editingShortcutIcon = appShortcuts.find((shortcut) => shortcut.profileId === editingShortcutIconId) ?? null;
+  const editingShortcutIcon =
+    appShortcuts.find(
+      (shortcut) => shortcut.profileId === editingShortcutIconId,
+    ) ?? null;
   const runningConversationSync = conversationSyncTasks.some(
     (task) => task.status === "running" || task.status === "cancelling",
   );
-  const fullConversationSyncTask = conversationSyncTasks
-    .filter((task) => task.mode === "full" && task.record_kind == null)
-    .sort((left, right) => right.started_at.localeCompare(left.started_at))[0] ?? null;
-  const fullConversationSyncStatus = fullConversationSyncTask?.status === "running"
-    || fullConversationSyncTask?.status === "cancelling"
-    ? t("settings.conversation.fullSyncRunning")
-    : fullConversationSyncTask?.status === "completed"
-      ? t("settings.conversation.fullSyncCompleted")
-      : fullConversationSyncTask?.status === "failed"
-        ? fullConversationSyncTask.error?.message || t("settings.conversation.fullSyncFailed")
-        : t("settings.conversation.fullSyncIdle");
-  const fullSyncRunning = fullConversationSyncTask?.status === "running"
-    || fullConversationSyncTask?.status === "cancelling";
+  const fullConversationSyncTask =
+    conversationSyncTasks
+      .filter((task) => task.mode === "full" && task.record_kind == null)
+      .sort((left, right) =>
+        right.started_at.localeCompare(left.started_at),
+      )[0] ?? null;
+  const fullConversationSyncStatus =
+    fullConversationSyncTask?.status === "running" ||
+    fullConversationSyncTask?.status === "cancelling"
+      ? t("settings.conversation.fullSyncRunning")
+      : fullConversationSyncTask?.status === "completed"
+        ? t("settings.conversation.fullSyncCompleted")
+        : fullConversationSyncTask?.status === "failed"
+          ? fullConversationSyncTask.error?.message ||
+            t("settings.conversation.fullSyncFailed")
+          : t("settings.conversation.fullSyncIdle");
+  const fullSyncRunning =
+    fullConversationSyncTask?.status === "running" ||
+    fullConversationSyncTask?.status === "cancelling";
   const fullSyncAnimating = fullSyncStarting || fullSyncRunning;
-  const fullSyncButtonPercent = fullSyncRunning
-    && fullConversationSyncTask.progress
-    && fullConversationSyncTask.progress.total_source_count > 0
-    ? Math.round(
-      (Math.min(
-        fullConversationSyncTask.progress.completed_source_count,
-        fullConversationSyncTask.progress.total_source_count,
-      )
-        / fullConversationSyncTask.progress.total_source_count) * 100,
-    )
-    : null;
-  const fullSyncButtonLabel = fullSyncButtonPercent == null
-    ? fullSyncAnimating
-      ? t("settings.conversation.fullSyncButtonRunning")
-      : t("settings.conversation.fullSyncAction")
-    : t("settings.conversation.fullSyncButtonRunningWithProgress", {
-      percent: fullSyncButtonPercent,
-    });
+  const fullSyncButtonPercent =
+    fullSyncRunning &&
+    fullConversationSyncTask.progress &&
+    fullConversationSyncTask.progress.total_source_count > 0
+      ? Math.round(
+          (Math.min(
+            fullConversationSyncTask.progress.completed_source_count,
+            fullConversationSyncTask.progress.total_source_count,
+          ) /
+            fullConversationSyncTask.progress.total_source_count) *
+            100,
+        )
+      : null;
+  const fullSyncButtonLabel =
+    fullSyncButtonPercent == null
+      ? fullSyncAnimating
+        ? t("settings.conversation.fullSyncButtonRunning")
+        : t("settings.conversation.fullSyncAction")
+      : t("settings.conversation.fullSyncButtonRunningWithProgress", {
+          percent: fullSyncButtonPercent,
+        });
 
   return (
     <FullscreenDialogFrame
@@ -682,15 +830,23 @@ export function GlobalSettingsDialog({
                 <Settings size={20} />
               </span>
               <div className="min-w-0">
-                <p className="text-label-caps uppercase text-outline">AssetIWeave</p>
-                <h2 className="truncate text-h2 text-on-surface" id="global-settings-title">
+                <p className="text-label-caps uppercase text-outline">
+                  AssetIWeave
+                </p>
+                <h2
+                  className="truncate text-h2 text-on-surface"
+                  id="global-settings-title"
+                >
                   {t("settings.title")}
                 </h2>
               </div>
             </div>
           </div>
 
-          <nav className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-5" aria-label={t("settings.navAria")}>
+          <nav
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-4 py-5"
+            aria-label={t("settings.navAria")}
+          >
             {settingGroups.map((group) => {
               const collapsed = collapsedGroups.has(group.id);
               return (
@@ -702,7 +858,11 @@ export function GlobalSettingsDialog({
                     onClick={() => toggleGroupCollapsed(group.id)}
                     type="button"
                   >
-                    {collapsed ? <ChevronRight size={17} /> : <ChevronDown size={17} />}
+                    {collapsed ? (
+                      <ChevronRight size={17} />
+                    ) : (
+                      <ChevronDown size={17} />
+                    )}
                     <span>{group.label}</span>
                   </button>
                   {!collapsed && (
@@ -751,8 +911,12 @@ export function GlobalSettingsDialog({
         <div className="flex min-h-0 min-w-0 flex-col bg-surface">
           <header className="flex h-20 shrink-0 items-center justify-between border-b border-theme-card-border bg-theme-toolbar/72 px-8">
             <div className="min-w-0">
-              <p className="text-label-caps uppercase text-outline">{activeScope}</p>
-              <h3 className="truncate text-h2 text-on-surface">{activePanelConfig.label}</h3>
+              <p className="text-label-caps uppercase text-outline">
+                {activeScope}
+              </p>
+              <h3 className="truncate text-h2 text-on-surface">
+                {activePanelConfig.label}
+              </h3>
             </div>
             <Button
               className="text-on-surface-variant hover:text-on-surface"
@@ -769,7 +933,10 @@ export function GlobalSettingsDialog({
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-8 py-6">
             {activePanel === "general.appearance" && (
               <SettingsGroup>
-                <SettingRow icon={<Languages size={18} />} label={t("settings.language")}>
+                <SettingRow
+                  icon={<Languages size={18} />}
+                  label={t("settings.language")}
+                >
                   <SegmentedControl
                     label={t("settings.language")}
                     onChange={(value) => setLocale(value as Locale)}
@@ -780,21 +947,42 @@ export function GlobalSettingsDialog({
                     value={locale}
                   />
                 </SettingRow>
-                <SettingRow icon={<Palette size={18} />} label={t("settings.theme")}>
-                  <ThemePaletteControl onChange={(value) => updateSetting("theme", value)} t={t} value={settings.theme} />
+                <SettingRow
+                  icon={<Palette size={18} />}
+                  label={t("settings.theme")}
+                >
+                  <ThemePaletteControl
+                    onChange={(value) => updateSetting("theme", value)}
+                    t={t}
+                    value={settings.theme}
+                  />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.density")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.density")}
+                >
                   <SegmentedControl
                     label={t("settings.density")}
-                    onChange={(value) => updateSetting("density", value as InterfaceDensity)}
+                    onChange={(value) =>
+                      updateSetting("density", value as InterfaceDensity)
+                    }
                     options={[
-                      { label: t("settings.density.comfortable"), value: "comfortable" },
-                      { label: t("settings.density.compact"), value: "compact" },
+                      {
+                        label: t("settings.density.comfortable"),
+                        value: "comfortable",
+                      },
+                      {
+                        label: t("settings.density.compact"),
+                        value: "compact",
+                      },
                     ]}
                     value={settings.density}
                   />
                 </SettingRow>
-                <SettingRow icon={<Columns3 size={18} />} label={t("settings.columnMinWidth")}>
+                <SettingRow
+                  icon={<Columns3 size={18} />}
+                  label={t("settings.columnMinWidth")}
+                >
                   <RangeSettingControl
                     label={t("settings.columnMinWidth")}
                     max={COLUMN_MIN_WIDTH_MAX}
@@ -804,63 +992,135 @@ export function GlobalSettingsDialog({
                     value={settings.columnMinWidth}
                   />
                 </SettingRow>
-                <SettingRow icon={<Bell size={18} />} label={t("settings.showStartupNotification")}>
+                <SettingRow
+                  icon={<Bell size={18} />}
+                  label={t("settings.showStartupNotification")}
+                >
                   <SwitchControl
                     checked={settings.showStartupNotification}
                     label={t("settings.showStartupNotification")}
-                    onChange={(checked) => updateSetting("showStartupNotification", checked)}
+                    onChange={(checked) =>
+                      updateSetting("showStartupNotification", checked)
+                    }
                   />
                 </SettingRow>
               </SettingsGroup>
             )}
 
-            {(activePanel === "agents.market" || activePanel === "agents.settings") && (
+            {(activePanel === "agents.market" ||
+              activePanel === "agents.settings") && (
               <AgentSettingsPanel
                 appShortcuts={appShortcuts}
                 focusAgentId={agentFocusId}
                 onModelChange={(agentId, modelId) => {
                   updateSetting(
                     "agentAssignments",
-                    assignModelToAgentActions(settings.agentAssignments, agentId, modelId),
+                    assignModelToAgentActions(
+                      settings.agentAssignments,
+                      agentId,
+                      modelId,
+                    ),
                   );
                 }}
-                selectedModels={modelsByAgentFromAssignments(settings.agentAssignments)}
+                selectedModels={modelsByAgentFromAssignments(
+                  settings.agentAssignments,
+                )}
                 view={activePanel === "agents.settings" ? "settings" : "market"}
               />
             )}
 
             {activePanel === "general.memory" && (
               <SettingsGroup>
-                <MemoryAgentAssignmentRow actionId="memory.extraction" appShortcuts={appShortcuts} label={t("settings.memory.extraction")} onOpen={() => openAgentCapabilityDialog("memory.extraction")} settings={settings} t={t} />
-                <MemoryAgentAssignmentRow actionId="memory.project" appShortcuts={appShortcuts} label={t("settings.memory.project")} onOpen={() => openAgentCapabilityDialog("memory.project")} settings={settings} t={t} />
-                <MemoryAgentAssignmentRow actionId="memory.global" appShortcuts={appShortcuts} label={t("settings.memory.global")} onOpen={() => openAgentCapabilityDialog("memory.global")} settings={settings} t={t} />
-                <MemoryAgentAssignmentRow actionId="memory.recall" appShortcuts={appShortcuts} label={t("settings.memory.recall")} onOpen={() => openAgentCapabilityDialog("memory.recall")} settings={settings} t={t} />
-                <SettingRow icon={<Cpu size={18} />} label={t("settings.memory.generationEnabled")}>
+                <MemoryAgentAssignmentRow
+                  actionId="memory.extraction"
+                  appShortcuts={appShortcuts}
+                  label={t("settings.memory.extraction")}
+                  onOpen={() => openAgentCapabilityDialog("memory.extraction")}
+                  settings={settings}
+                  t={t}
+                />
+                <MemoryAgentAssignmentRow
+                  actionId="memory.project"
+                  appShortcuts={appShortcuts}
+                  label={t("settings.memory.project")}
+                  onOpen={() => openAgentCapabilityDialog("memory.project")}
+                  settings={settings}
+                  t={t}
+                />
+                <MemoryAgentAssignmentRow
+                  actionId="memory.global"
+                  appShortcuts={appShortcuts}
+                  label={t("settings.memory.global")}
+                  onOpen={() => openAgentCapabilityDialog("memory.global")}
+                  settings={settings}
+                  t={t}
+                />
+                <MemoryAgentAssignmentRow
+                  actionId="memory.recall"
+                  appShortcuts={appShortcuts}
+                  label={t("settings.memory.recall")}
+                  onOpen={() => openAgentCapabilityDialog("memory.recall")}
+                  settings={settings}
+                  t={t}
+                />
+                <SettingRow
+                  icon={<Cpu size={18} />}
+                  label={t("settings.memory.generationEnabled")}
+                >
                   <SwitchControl
                     checked={settings.memory.generationEnabled}
                     label={t("settings.memory.generationEnabled")}
-                    onChange={(checked) => updateSetting("memory", { ...settings.memory, generationEnabled: checked })}
+                    onChange={(checked) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        generationEnabled: checked,
+                      })
+                    }
                   />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.memory.usageEnabled")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.memory.usageEnabled")}
+                >
                   <SwitchControl
                     checked={settings.memory.usageEnabled}
                     label={t("settings.memory.usageEnabled")}
-                    onChange={(checked) => updateSetting("memory", { ...settings.memory, usageEnabled: checked })}
+                    onChange={(checked) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        usageEnabled: checked,
+                      })
+                    }
                   />
                 </SettingRow>
-                <SettingRow icon={<ListTree size={18} />} label={t("settings.memory.excludedSessionIds")}>
+                <SettingRow
+                  icon={<ListTree size={18} />}
+                  label={t("settings.memory.excludedSessionIds")}
+                >
                   <MemoryExclusionInput
                     ariaLabel={t("settings.memory.excludedSessionIds")}
-                    onChange={(value) => updateSetting("memory", { ...settings.memory, excludedSessionIds: value })}
+                    onChange={(value) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        excludedSessionIds: value,
+                      })
+                    }
                     placeholder={t("settings.memory.excludedPlaceholder")}
                     value={settings.memory.excludedSessionIds}
                   />
                 </SettingRow>
-                <SettingRow icon={<ListTree size={18} />} label={t("settings.memory.excludedSourceIds")}>
+                <SettingRow
+                  icon={<ListTree size={18} />}
+                  label={t("settings.memory.excludedSourceIds")}
+                >
                   <MemoryExclusionInput
                     ariaLabel={t("settings.memory.excludedSourceIds")}
-                    onChange={(value) => updateSetting("memory", { ...settings.memory, excludedSourceIds: value })}
+                    onChange={(value) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        excludedSourceIds: value,
+                      })
+                    }
                     placeholder={t("settings.memory.excludedPlaceholder")}
                     value={settings.memory.excludedSourceIds}
                   />
@@ -870,21 +1130,40 @@ export function GlobalSettingsDialog({
 
             {activePanel === "general.promptOptimization" && (
               <SettingsGroup>
-                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
+                <SettingRow
+                  icon={<Bot size={18} />}
+                  label={t("settings.agentCapabilities.label")}
+                >
                   <AgentCapabilitySetting
-                    agentId={resolveAgentCapability(settings, "promptOptimization").agentId}
+                    agentId={
+                      resolveAgentCapability(settings, "promptOptimization")
+                        .agentId
+                    }
                     appShortcuts={appShortcuts}
-                    description={t("settings.agentCapabilities.promptOptimizationDescription")}
-                    model={resolveAgentCapability(settings, "promptOptimization").model}
-                    onOpen={() => openAgentCapabilityDialog("promptOptimization")}
+                    description={t(
+                      "settings.agentCapabilities.promptOptimizationDescription",
+                    )}
+                    model={
+                      resolveAgentCapability(settings, "promptOptimization")
+                        .model
+                    }
+                    onOpen={() =>
+                      openAgentCapabilityDialog("promptOptimization")
+                    }
                   />
                 </SettingRow>
-                <SettingRow icon={<Sparkles size={18} />} label={t("settings.promptOptimization.descriptionLabel")}>
+                <SettingRow
+                  icon={<Sparkles size={18} />}
+                  label={t("settings.promptOptimization.descriptionLabel")}
+                >
                   <p className="w-[min(38rem,52vw)] text-body-sm leading-6 text-on-surface-variant">
                     {t("settings.promptOptimization.description")}
                   </p>
                 </SettingRow>
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.promptOptimization.systemPrompt")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.promptOptimization.systemPrompt")}
+                >
                   <textarea
                     aria-label={t("settings.promptOptimization.systemPrompt")}
                     className="min-h-44 w-[min(38rem,52vw)] rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
@@ -896,10 +1175,15 @@ export function GlobalSettingsDialog({
                     }
                     onChange={(event) =>
                       updatePromptOptimization({
-                        promptTemplate: event.target.value.slice(0, PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH),
+                        promptTemplate: event.target.value.slice(
+                          0,
+                          PROMPT_OPTIMIZATION_PROMPT_TEMPLATE_MAX_LENGTH,
+                        ),
                       })
                     }
-                    placeholder={t("settings.promptOptimization.systemPromptPlaceholder")}
+                    placeholder={t(
+                      "settings.promptOptimization.systemPromptPlaceholder",
+                    )}
                     spellCheck={false}
                     value={settings.promptOptimization.promptTemplate}
                   />
@@ -909,7 +1193,10 @@ export function GlobalSettingsDialog({
 
             {activePanel === "general.typography" && (
               <SettingsGroup>
-                <SettingRow icon={<Type size={18} />} label={t("settings.font.interface")}>
+                <SettingRow
+                  icon={<Type size={18} />}
+                  label={t("settings.font.interface")}
+                >
                   <FontFamilyControl
                     fallback="sans"
                     label={t("settings.font.interface")}
@@ -923,7 +1210,10 @@ export function GlobalSettingsDialog({
                     value={settings.typography.interfaceFontFamily}
                   />
                 </SettingRow>
-                <SettingRow icon={<Type size={18} />} label={t("settings.font.content")}>
+                <SettingRow
+                  icon={<Type size={18} />}
+                  label={t("settings.font.content")}
+                >
                   <FontFamilyControl
                     fallback="sans"
                     label={t("settings.font.content")}
@@ -937,7 +1227,10 @@ export function GlobalSettingsDialog({
                     value={settings.typography.contentFontFamily}
                   />
                 </SettingRow>
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.font.code")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.font.code")}
+                >
                   <FontFamilyControl
                     fallback="mono"
                     label={t("settings.font.code")}
@@ -951,7 +1244,10 @@ export function GlobalSettingsDialog({
                     value={settings.typography.codeFontFamily}
                   />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.font.baseSize")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.font.baseSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.font.baseSize")}
                     max={FONT_SIZE_MAX}
@@ -967,7 +1263,10 @@ export function GlobalSettingsDialog({
                     value={settings.typography.baseFontSize}
                   />
                 </SettingRow>
-                <SettingRow icon={<Type size={18} />} label={t("settings.font.contentSize")}>
+                <SettingRow
+                  icon={<Type size={18} />}
+                  label={t("settings.font.contentSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.font.contentSize")}
                     max={FONT_SIZE_MAX}
@@ -983,7 +1282,10 @@ export function GlobalSettingsDialog({
                     value={settings.typography.contentFontSize}
                   />
                 </SettingRow>
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.font.codeSize")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.font.codeSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.font.codeSize")}
                     max={FONT_SIZE_MAX}
@@ -1021,7 +1323,9 @@ export function GlobalSettingsDialog({
                 <SettingsPathRow
                   icon={<Database size={18} />}
                   label={t("settings.storage.defaultDataBackupDir")}
-                  onOpen={() => void revealPath(storageInfo.defaultDataBackupDir)}
+                  onOpen={() =>
+                    void revealPath(storageInfo.defaultDataBackupDir)
+                  }
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.defaultDataBackupDir}
                 />
@@ -1035,22 +1339,28 @@ export function GlobalSettingsDialog({
                 <DataBackupDirectoryRow
                   customDirectory={settings.dataBackup.customDirectory}
                   onClear={clearDataBackupDirectory}
-                  onOpen={() => void revealPath(settings.dataBackup.customDirectory)}
+                  onOpen={() =>
+                    void revealPath(settings.dataBackup.customDirectory)
+                  }
                   onPick={() => void chooseDataBackupDirectory()}
                   t={t}
                 />
                 <SettingsPathRow
                   icon={<Puzzle size={18} />}
                   label={t("settings.storage.conversationAdapterDir")}
-                  onOpen={() => void revealPath(storageInfo.conversationAdapterDir)}
+                  onOpen={() =>
+                    void revealPath(storageInfo.conversationAdapterDir)
+                  }
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.conversationAdapterDir}
                 />
 
-
                 <SkillBackupDirectorySetting
                   onOpen={() => setBackupDialogOpen(true)}
-                  rootPath={backupSettings?.display_root_path ?? backupSettings?.expanded_root_path}
+                  rootPath={
+                    backupSettings?.display_root_path ??
+                    backupSettings?.expanded_root_path
+                  }
                 />
                 {backupError && (
                   <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 px-3 py-2 text-body-sm text-status-remove">
@@ -1062,39 +1372,64 @@ export function GlobalSettingsDialog({
 
             {activePanel === "workspace.menu" && (
               <div className="flex flex-col gap-5">
-                <MenuSection icon={<PanelLeft size={18} />} title={t("settings.menu.headerTabs")}>
-                  <SortableMenuList itemIds={navigationModel.headerTabs.map((item) => item.id)} onReorder={reorderHeaderTabs}>
+                <MenuSection
+                  icon={<PanelLeft size={18} />}
+                  title={t("settings.menu.headerTabs")}
+                >
+                  <SortableMenuList
+                    itemIds={navigationModel.headerTabs.map((item) => item.id)}
+                    onReorder={reorderHeaderTabs}
+                  >
                     {navigationModel.headerTabs.map((item) => (
                       <SortableMenuEditRow
                         enabled={item.enabled}
                         id={item.id}
                         key={item.id}
                         label={headerTabLabel(item, t, locale)}
-                        onEnabledChange={(enabled) => updateHeaderTab(item.id, { enabled })}
-                        onLabelChange={(label) => updateHeaderTabLabel(item.id, label)}
+                        onEnabledChange={(enabled) =>
+                          updateHeaderTab(item.id, { enabled })
+                        }
+                        onLabelChange={(label) =>
+                          updateHeaderTabLabel(item.id, label)
+                        }
                         t={t}
                       />
                     ))}
                   </SortableMenuList>
                 </MenuSection>
 
-                <MenuSection icon={<PanelTop size={18} />} title={t("settings.menu.sideRail")}>
-                  <SortableMenuList itemIds={configurableRailItems.map((item) => item.id)} onReorder={(orderedIds) => reorderRailItems("secondary", orderedIds)}>
+                <MenuSection
+                  icon={<PanelTop size={18} />}
+                  title={t("settings.menu.sideRail")}
+                >
+                  <SortableMenuList
+                    itemIds={configurableRailItems.map((item) => item.id)}
+                    onReorder={(orderedIds) =>
+                      reorderRailItems("secondary", orderedIds)
+                    }
+                  >
                     {configurableRailItems.map((item) => (
                       <SortableMenuEditRow
                         enabled={item.enabled}
                         id={item.id}
                         key={item.id}
                         label={railLabel(item, t, locale)}
-                        onEnabledChange={(enabled) => updateRailItem(item.id, { enabled })}
-                        onLabelChange={(label) => updateRailItemLabel(item.id, label)}
+                        onEnabledChange={(enabled) =>
+                          updateRailItem(item.id, { enabled })
+                        }
+                        onLabelChange={(label) =>
+                          updateRailItemLabel(item.id, label)
+                        }
                         t={t}
                       />
                     ))}
                   </SortableMenuList>
                 </MenuSection>
 
-                <MenuSection icon={<ListTree size={18} />} title={t("settings.menu.subNavigation")}>
+                <MenuSection
+                  icon={<ListTree size={18} />}
+                  title={t("settings.menu.subNavigation")}
+                >
                   {navigationModel.headerTabs.map((tab) => {
                     const items = navigationModel.subNavItems[tab.id] ?? [];
                     if (items.length === 0) {
@@ -1102,19 +1437,31 @@ export function GlobalSettingsDialog({
                     }
 
                     return (
-                      <div className="border-b border-theme-card-border last:border-b-0" key={tab.id}>
+                      <div
+                        className="border-b border-theme-card-border last:border-b-0"
+                        key={tab.id}
+                      >
                         <div className="border-b border-theme-card-border/70 bg-theme-card-header/65 px-4 py-2 text-label-caps uppercase text-outline">
                           {headerTabLabel(tab, t, locale)}
                         </div>
-                        <SortableMenuList itemIds={items.map((item) => item.id)} onReorder={(orderedIds) => reorderSubNavItems(tab.id, orderedIds)}>
+                        <SortableMenuList
+                          itemIds={items.map((item) => item.id)}
+                          onReorder={(orderedIds) =>
+                            reorderSubNavItems(tab.id, orderedIds)
+                          }
+                        >
                           {items.map((item) => (
                             <SortableMenuEditRow
                               enabled={item.enabled}
                               id={item.id}
                               key={item.id}
                               label={subNavLabel(item, t, locale)}
-                              onEnabledChange={(enabled) => updateSubNavItem(tab.id, item.id, { enabled })}
-                              onLabelChange={(label) => updateSubNavItemLabel(tab.id, item.id, label)}
+                              onEnabledChange={(enabled) =>
+                                updateSubNavItem(tab.id, item.id, { enabled })
+                              }
+                              onLabelChange={(label) =>
+                                updateSubNavItemLabel(tab.id, item.id, label)
+                              }
                               t={t}
                             />
                           ))}
@@ -1127,15 +1474,27 @@ export function GlobalSettingsDialog({
             )}
 
             {activePanel === "workspace.shortcuts" && (
-              <MenuSection icon={<MousePointerClick size={18} />} title={t("settings.shortcuts.title")}>
-                <SortableMenuList itemIds={appShortcuts.map((shortcut) => shortcut.profileId)} onReorder={reorderAppShortcuts}>
+              <MenuSection
+                icon={<MousePointerClick size={18} />}
+                title={t("settings.shortcuts.title")}
+              >
+                <SortableMenuList
+                  itemIds={appShortcuts.map((shortcut) => shortcut.profileId)}
+                  onReorder={reorderAppShortcuts}
+                >
                   {appShortcuts.map((shortcut) => (
                     <SortableShortcutEditRow
                       id={shortcut.profileId}
                       key={shortcut.profileId}
-                      onAccentColorChange={(accentColor) => updateAppShortcut(shortcut.profileId, { accentColor })}
-                      onDisplayIconChange={(displayIcon) => updateAppShortcut(shortcut.profileId, { displayIcon })}
-                      onEnabledChange={(enabled) => updateAppShortcut(shortcut.profileId, { enabled })}
+                      onAccentColorChange={(accentColor) =>
+                        updateAppShortcut(shortcut.profileId, { accentColor })
+                      }
+                      onDisplayIconChange={(displayIcon) =>
+                        updateAppShortcut(shortcut.profileId, { displayIcon })
+                      }
+                      onEnabledChange={(enabled) =>
+                        updateAppShortcut(shortcut.profileId, { enabled })
+                      }
                       onIconSvgEdit={() => openShortcutIconEditor(shortcut)}
                       shortcut={shortcut}
                       t={t}
@@ -1145,11 +1504,12 @@ export function GlobalSettingsDialog({
               </MenuSection>
             )}
 
-
-
             {activePanel === "conversations.sessions" && (
               <SettingsGroup>
-                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.autoFullSyncOnStartup")}>
+                <SettingRow
+                  icon={<RefreshCw size={18} />}
+                  label={t("settings.conversation.autoFullSyncOnStartup")}
+                >
                   <div className="flex w-[min(38rem,52vw)] items-center justify-between gap-4">
                     <p className="text-body-sm text-on-surface-variant">
                       {t("settings.conversation.autoFullSyncOnStartupHint")}
@@ -1166,19 +1526,27 @@ export function GlobalSettingsDialog({
                     />
                   </div>
                 </SettingRow>
-                <SettingRow icon={<RefreshCw size={18} />} label={t("settings.conversation.fullSyncTitle")}>
+                <SettingRow
+                  icon={<RefreshCw size={18} />}
+                  label={t("settings.conversation.fullSyncTitle")}
+                >
                   <div className="flex w-[min(38rem,52vw)] flex-col gap-2 py-1">
                     <p className="text-body-sm leading-6 text-on-surface-variant">
                       {t("settings.conversation.fullSyncDescription")}
                     </p>
                     <div className="flex items-center justify-between gap-3">
-                      <span aria-live="polite" className="min-w-0 truncate text-body-sm text-outline">
+                      <span
+                        aria-live="polite"
+                        className="min-w-0 truncate text-body-sm text-outline"
+                      >
                         {fullConversationSyncStatus}
                       </span>
                       <Button
-                        className={fullSyncAnimating
-                          ? "border-status-update/55 bg-status-update/10 text-status-update disabled:opacity-100"
-                          : undefined}
+                        className={
+                          fullSyncAnimating
+                            ? "border-status-update/55 bg-status-update/10 text-status-update disabled:opacity-100"
+                            : undefined
+                        }
                         disabled={runningConversationSync || fullSyncStarting}
                         onClick={() => {
                           setFullSyncError("");
@@ -1188,21 +1556,36 @@ export function GlobalSettingsDialog({
                         variant="outline"
                       >
                         <RefreshCw
-                          className={fullSyncAnimating ? "motion-safe:animate-spin" : undefined}
+                          className={
+                            fullSyncAnimating
+                              ? "motion-safe:animate-spin"
+                              : undefined
+                          }
                           size={16}
                         />
                         {fullSyncButtonLabel}
                       </Button>
                     </div>
                     {fullConversationSyncTask?.progress ? (
-                      <ConversationFullSyncProgress progress={fullConversationSyncTask.progress} t={t} />
+                      <ConversationFullSyncProgress
+                        progress={fullConversationSyncTask.progress}
+                        t={t}
+                      />
                     ) : null}
                     {fullSyncError ? (
-                      <p className="text-body-sm text-status-remove" role="alert">{fullSyncError}</p>
+                      <p
+                        className="text-body-sm text-status-remove"
+                        role="alert"
+                      >
+                        {fullSyncError}
+                      </p>
                     ) : null}
                   </div>
                 </SettingRow>
-                <SettingRow icon={<Type size={18} />} label={t("settings.conversation.sessionBrowserFont")}>
+                <SettingRow
+                  icon={<Type size={18} />}
+                  label={t("settings.conversation.sessionBrowserFont")}
+                >
                   <FontFamilyControl
                     fallback="sans"
                     label={t("settings.conversation.sessionBrowserFont")}
@@ -1216,7 +1599,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.sessionBrowserFontFamily}
                   />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.conversation.sessionBrowserSize")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.conversation.sessionBrowserSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.conversation.sessionBrowserSize")}
                     max={FONT_SIZE_MAX}
@@ -1232,7 +1618,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.sessionBrowserFontSize}
                   />
                 </SettingRow>
-                <SettingRow icon={<Palette size={18} />} label={t("settings.conversation.contentCardColors")}>
+                <SettingRow
+                  icon={<Palette size={18} />}
+                  label={t("settings.conversation.contentCardColors")}
+                >
                   <ConversationContentCardColorControl
                     onChange={(colors) =>
                       updateSetting("conversations", {
@@ -1244,7 +1633,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.contentCardColors}
                   />
                 </SettingRow>
-                <SettingRow icon={<Type size={18} />} label={t("settings.conversation.contentFont")}>
+                <SettingRow
+                  icon={<Type size={18} />}
+                  label={t("settings.conversation.contentFont")}
+                >
                   <FontFamilyControl
                     fallback="sans"
                     label={t("settings.conversation.contentFont")}
@@ -1258,7 +1650,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.contentFontFamily}
                   />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.conversation.contentSize")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.conversation.contentSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.conversation.contentSize")}
                     max={FONT_SIZE_MAX}
@@ -1274,7 +1669,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.contentFontSize}
                   />
                 </SettingRow>
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.conversation.codeSize")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.conversation.codeSize")}
+                >
                   <RangeSettingControl
                     label={t("settings.conversation.codeSize")}
                     max={FONT_SIZE_MAX}
@@ -1290,7 +1688,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.codeFontSize}
                   />
                 </SettingRow>
-                <SettingRow icon={<Gauge size={18} />} label={t("settings.conversation.resultPreviewLines")}>
+                <SettingRow
+                  icon={<Gauge size={18} />}
+                  label={t("settings.conversation.resultPreviewLines")}
+                >
                   <RangeSettingControl
                     label={t("settings.conversation.resultPreviewLines")}
                     max={RESULT_PREVIEW_LINE_LIMIT_MAX}
@@ -1306,7 +1707,10 @@ export function GlobalSettingsDialog({
                     value={settings.conversations.resultPreviewLineLimit}
                   />
                 </SettingRow>
-                <SettingRow icon={<Columns3 size={18} />} label={t("settings.conversation.compactToolbar")}>
+                <SettingRow
+                  icon={<Columns3 size={18} />}
+                  label={t("settings.conversation.compactToolbar")}
+                >
                   <SwitchControl
                     checked={settings.conversations.sessionToolbarCompact}
                     label={t("settings.conversation.compactToolbar")}
@@ -1323,16 +1727,29 @@ export function GlobalSettingsDialog({
 
             {activePanel === "conversations.translation" && (
               <SettingsGroup>
-                <SettingRow icon={<Bot size={18} />} label={t("settings.agentCapabilities.label")}>
+                <SettingRow
+                  icon={<Bot size={18} />}
+                  label={t("settings.agentCapabilities.label")}
+                >
                   <AgentCapabilitySetting
-                    agentId={resolveAgentCapability(settings, "cardTranslation").agentId}
+                    agentId={
+                      resolveAgentCapability(settings, "cardTranslation")
+                        .agentId
+                    }
                     appShortcuts={appShortcuts}
-                    description={t("settings.agentCapabilities.cardTranslationDescription")}
-                    model={resolveAgentCapability(settings, "cardTranslation").model}
+                    description={t(
+                      "settings.agentCapabilities.cardTranslationDescription",
+                    )}
+                    model={
+                      resolveAgentCapability(settings, "cardTranslation").model
+                    }
                     onOpen={() => openAgentCapabilityDialog("cardTranslation")}
                   />
                 </SettingRow>
-                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationProvider")}>
+                <SettingRow
+                  icon={<Languages size={18} />}
+                  label={t("settings.conversation.translationProvider")}
+                >
                   <SegmentedControl
                     label={t("settings.conversation.translationProvider")}
                     onChange={(value) =>
@@ -1341,40 +1758,72 @@ export function GlobalSettingsDialog({
                       })
                     }
                     options={[
-                      { label: t("settings.conversation.translationProvider.cli"), value: "cli" },
-                      { label: t("settings.conversation.translationProvider.google"), value: "google" },
-                      { label: t("settings.conversation.translationProvider.apple"), value: "apple" },
+                      {
+                        label: t(
+                          "settings.conversation.translationProvider.cli",
+                        ),
+                        value: "cli",
+                      },
+                      {
+                        label: t(
+                          "settings.conversation.translationProvider.google",
+                        ),
+                        value: "google",
+                      },
+                      {
+                        label: t(
+                          "settings.conversation.translationProvider.apple",
+                        ),
+                        value: "apple",
+                      },
                     ]}
                     value={settings.conversationTranslation.provider}
                   />
                 </SettingRow>
                 {settings.conversationTranslation.provider !== "cli" ? (
-                  <SettingRow icon={<Activity size={18} />} label={t("settings.conversation.translationConnection")}>
+                  <SettingRow
+                    icon={<Activity size={18} />}
+                    label={t("settings.conversation.translationConnection")}
+                  >
                     <div className="w-[min(38rem,52vw)] rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
                       {t("settings.conversation.translationProviderReserved")}
                     </div>
                   </SettingRow>
                 ) : null}
-                <SettingRow icon={<Languages size={18} />} label={t("settings.conversation.translationTarget")}>
+                <SettingRow
+                  icon={<Languages size={18} />}
+                  label={t("settings.conversation.translationTarget")}
+                >
                   <Input
                     aria-label={t("settings.conversation.translationTarget")}
                     className="h-9 w-[min(28rem,44vw)] min-w-56"
                     maxLength={TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH}
                     onBlur={(event) =>
                       updateConversationTranslation({
-                        targetLanguage: normalizeConversationTranslationTargetLanguage(event.currentTarget.value),
+                        targetLanguage:
+                          normalizeConversationTranslationTargetLanguage(
+                            event.currentTarget.value,
+                          ),
                       })
                     }
                     onChange={(event) =>
                       updateConversationTranslation({
-                        targetLanguage: event.target.value.slice(0, TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH),
+                        targetLanguage: event.target.value.slice(
+                          0,
+                          TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
+                        ),
                       })
                     }
-                    placeholder={t("settings.conversation.translationTargetPlaceholder")}
+                    placeholder={t(
+                      "settings.conversation.translationTargetPlaceholder",
+                    )}
                     value={settings.conversationTranslation.targetLanguage}
                   />
                 </SettingRow>
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.conversation.translationPrompt")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.conversation.translationPrompt")}
+                >
                   <textarea
                     aria-label={t("settings.conversation.translationPrompt")}
                     className="min-h-44 w-[min(38rem,52vw)] rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
@@ -1386,10 +1835,15 @@ export function GlobalSettingsDialog({
                     }
                     onChange={(event) =>
                       updateConversationTranslation({
-                        promptTemplate: event.target.value.slice(0, TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH),
+                        promptTemplate: event.target.value.slice(
+                          0,
+                          TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
+                        ),
                       })
                     }
-                    placeholder={t("settings.conversation.translationPromptPlaceholder")}
+                    placeholder={t(
+                      "settings.conversation.translationPromptPlaceholder",
+                    )}
                     spellCheck={false}
                     value={settings.conversationTranslation.promptTemplate}
                   />
@@ -1402,13 +1856,19 @@ export function GlobalSettingsDialog({
                 <SettingsPathRow
                   icon={<Puzzle size={18} />}
                   label={t("settings.storage.conversationAdapterDir")}
-                  onOpen={() => void revealPath(storageInfo.conversationAdapterDir)}
+                  onOpen={() =>
+                    void revealPath(storageInfo.conversationAdapterDir)
+                  }
                   openLabel={t("settings.storage.open")}
                   value={storageInfo.conversationAdapterDir}
                 />
-                <SettingRow icon={<Code2 size={18} />} label={t("settings.conversation.adapterWorkflow")}>
+                <SettingRow
+                  icon={<Code2 size={18} />}
+                  label={t("settings.conversation.adapterWorkflow")}
+                >
                   <div className="w-[min(36rem,52vw)] rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface-variant">
-                    assetiweave-cli conversation adapter scaffold --directory {storageInfo.conversationAdapterDir} --runtime node
+                    assetiweave-cli conversation adapter scaffold --directory{" "}
+                    {storageInfo.conversationAdapterDir} --runtime node
                   </div>
                 </SettingRow>
                 <ConversationRuntimeOverrideRow
@@ -1522,11 +1982,21 @@ function SettingsGroup({ children }: { children: ReactNode }) {
   );
 }
 
-function MenuSection({ children, icon, title }: { children: ReactNode; icon: ReactNode; title: string }) {
+function MenuSection({
+  children,
+  icon,
+  title,
+}: {
+  children: ReactNode;
+  icon: ReactNode;
+  title: string;
+}) {
   return (
     <Card aria-label={title} className="overflow-hidden" role="region">
       <CardHeader className="flex h-12 flex-row items-center gap-3 bg-theme-card-header px-4 py-0">
-        <span className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">{icon}</span>
+        <span className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
+          {icon}
+        </span>
         <CardTitle className="text-body-md">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">{children}</CardContent>
@@ -1570,7 +2040,11 @@ function SortableMenuList({
   }
 
   return (
-    <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
+    <DndContext
+      collisionDetection={closestCenter}
+      onDragEnd={handleDragEnd}
+      sensors={sensors}
+    >
       <SortableContext items={itemIds} strategy={verticalListSortingStrategy}>
         <div>{children}</div>
       </SortableContext>
@@ -1593,7 +2067,14 @@ function SortableMenuEditRow({
   onLabelChange: (label: string) => void;
   t: Translator;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
   const [draftLabel, setDraftLabel] = useState(label);
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1620,7 +2101,8 @@ function SortableMenuEditRow({
     <div
       className={clsx(
         "grid min-h-14 grid-cols-[32px_minmax(220px,1fr)_auto] items-center gap-4 border-b border-theme-card-border px-4 py-2.5 last:border-b-0",
-        isDragging && "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
+        isDragging &&
+          "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
       )}
       ref={setNodeRef}
       style={style}
@@ -1638,7 +2120,13 @@ function SortableMenuEditRow({
         <GripVertical size={16} />
       </Button>
       <label className="flex min-w-0 items-center gap-3">
-        <span className={clsx("size-2 shrink-0 rounded-full", enabled ? "bg-status-create" : "bg-outline-variant")} aria-hidden="true" />
+        <span
+          className={clsx(
+            "size-2 shrink-0 rounded-full",
+            enabled ? "bg-status-create" : "bg-outline-variant",
+          )}
+          aria-hidden="true"
+        />
         <Input
           aria-label={t("settings.menu.name")}
           className="min-w-0 flex-1 font-semibold"
@@ -1660,8 +2148,14 @@ function SortableMenuEditRow({
       </label>
 
       <div className="flex items-center gap-2">
-        <span className="w-12 text-right text-body-sm text-on-surface-variant">{enabled ? t("settings.menu.visible") : t("settings.menu.hidden")}</span>
-        <SwitchControl checked={enabled} label={t("settings.menu.visible")} onChange={onEnabledChange} />
+        <span className="w-12 text-right text-body-sm text-on-surface-variant">
+          {enabled ? t("settings.menu.visible") : t("settings.menu.hidden")}
+        </span>
+        <SwitchControl
+          checked={enabled}
+          label={t("settings.menu.visible")}
+          onChange={onEnabledChange}
+        />
       </div>
     </div>
   );
@@ -1684,12 +2178,21 @@ function SortableShortcutEditRow({
   shortcut: AppShortcut;
   t: Translator;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
   const [draftColor, setDraftColor] = useState(shortcut.accentColor);
   const appIconKey = resolveAppIconKey(shortcut);
   const canUseAppIcon = Boolean(appIconKey);
   const usesAppIcon = shortcutUsesAppIcon(shortcut);
-  const usesCustomIcon = Boolean(shortcut.iconSvg || shortcutCustomIconText(shortcut));
+  const usesCustomIcon = Boolean(
+    shortcut.iconSvg || shortcutCustomIconText(shortcut),
+  );
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -1714,7 +2217,8 @@ function SortableShortcutEditRow({
     <div
       className={clsx(
         "grid min-h-16 grid-cols-[32px_minmax(200px,1fr)_240px_170px_auto] items-center gap-4 border-b border-theme-card-border px-4 py-3 last:border-b-0",
-        isDragging && "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
+        isDragging &&
+          "relative z-10 border-theme-nav-active-border bg-theme-control-hover shadow-[0_18px_44px_rgb(var(--theme-panel-shadow)/0.28)]",
       )}
       ref={setNodeRef}
       style={style}
@@ -1733,24 +2237,37 @@ function SortableShortcutEditRow({
       </Button>
       <div className="flex min-w-0 items-center gap-3">
         <span
-          className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-9 shrink-0 text-[13px] font-bold")}
+          className={clsx(
+            APP_SHORTCUT_ICON_FRAME_CLASS,
+            "size-9 shrink-0 text-[13px] font-bold",
+          )}
           style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >
           <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
         </span>
         <div className="min-w-0">
-          <p className="truncate text-body-md font-bold text-on-surface">{shortcut.profileName}</p>
-          <p className="truncate font-mono text-code-md uppercase text-outline">{shortcut.appKind}</p>
+          <p className="truncate text-body-md font-bold text-on-surface">
+            {shortcut.profileName}
+          </p>
+          <p className="truncate font-mono text-code-md uppercase text-outline">
+            {shortcut.appKind}
+          </p>
         </div>
       </div>
 
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.icon")}</span>
+        <span className="text-label-caps uppercase text-outline">
+          {t("settings.shortcuts.icon")}
+        </span>
         <div className="flex h-9 min-w-0 items-center gap-2">
           <Button
             aria-pressed={usesAppIcon}
-            className={clsx("h-9 shrink-0 px-3", usesAppIcon && "border-primary-strong/50 bg-theme-control-hover text-primary")}
+            className={clsx(
+              "h-9 shrink-0 px-3",
+              usesAppIcon &&
+                "border-primary-strong/50 bg-theme-control-hover text-primary",
+            )}
             disabled={!canUseAppIcon}
             onClick={() => {
               if (appIconKey) {
@@ -1765,7 +2282,9 @@ function SortableShortcutEditRow({
               className="size-4"
               shortcut={{
                 ...shortcut,
-                displayIcon: (appIconKey ? appIconToken(appIconKey) : null) || shortcut.displayIcon,
+                displayIcon:
+                  (appIconKey ? appIconToken(appIconKey) : null) ||
+                  shortcut.displayIcon,
               }}
             />
             <span>{t("settings.shortcuts.appIcon")}</span>
@@ -1773,7 +2292,11 @@ function SortableShortcutEditRow({
           <Button
             aria-label={t("settings.shortcuts.editSvg")}
             aria-pressed={usesCustomIcon}
-            className={clsx("h-9 shrink-0 px-3", usesCustomIcon && "border-primary-strong/50 bg-theme-control-hover text-primary")}
+            className={clsx(
+              "h-9 shrink-0 px-3",
+              usesCustomIcon &&
+                "border-primary-strong/50 bg-theme-control-hover text-primary",
+            )}
             onClick={onIconSvgEdit}
             title={t("settings.shortcuts.editSvg")}
             type="button"
@@ -1786,7 +2309,9 @@ function SortableShortcutEditRow({
       </div>
 
       <label className="flex min-w-0 flex-col gap-1">
-        <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.color")}</span>
+        <span className="text-label-caps uppercase text-outline">
+          {t("settings.shortcuts.color")}
+        </span>
         <div className="flex h-9 items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-2 transition-colors focus-within:border-primary-strong/60">
           <input
             aria-label={t("settings.shortcuts.color")}
@@ -1820,9 +2345,15 @@ function SortableShortcutEditRow({
 
       <div className="flex items-center gap-2">
         <span className="w-12 text-right text-body-sm text-on-surface-variant">
-          {shortcut.enabled ? t("settings.menu.visible") : t("settings.menu.hidden")}
+          {shortcut.enabled
+            ? t("settings.menu.visible")
+            : t("settings.menu.hidden")}
         </span>
-        <SwitchControl checked={shortcut.enabled} label={t("settings.menu.visible")} onChange={onEnabledChange} />
+        <SwitchControl
+          checked={shortcut.enabled}
+          label={t("settings.menu.visible")}
+          onChange={onEnabledChange}
+        />
       </div>
     </div>
   );
@@ -1869,7 +2400,10 @@ function ShortcutIconSvgDialog({
       footerClassName="justify-between"
       icon={
         <span
-          className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-10 text-[13px] font-bold")}
+          className={clsx(
+            APP_SHORTCUT_ICON_FRAME_CLASS,
+            "size-10 text-[13px] font-bold",
+          )}
           style={appShortcutIconFrameStyle(shortcut.accentColor)}
           aria-hidden="true"
         >
@@ -1884,9 +2418,13 @@ function ShortcutIconSvgDialog({
       title={t("settings.shortcuts.svgEditorTitle")}
     >
       <div className="flex min-h-0 flex-col gap-3">
-        <p className="text-body-sm text-on-surface-variant">{t("settings.shortcuts.svgEditorDescription")}</p>
+        <p className="text-body-sm text-on-surface-variant">
+          {t("settings.shortcuts.svgEditorDescription")}
+        </p>
         <div className="flex min-w-0 flex-col gap-2">
-          <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.icon")}</span>
+          <span className="text-label-caps uppercase text-outline">
+            {t("settings.shortcuts.icon")}
+          </span>
           <div className="flex flex-wrap items-center gap-1.5">
             {appShortcutIconCatalog.map(({ appKind, asset }) => (
               <Button
@@ -1899,14 +2437,20 @@ function ShortcutIconSvgDialog({
                 type="button"
                 variant="outline"
               >
-                <AppShortcutIcon appKind={appKind} className="size-3.5" displayIcon={`app:${appKind}`} />
+                <AppShortcutIcon
+                  appKind={appKind}
+                  className="size-3.5"
+                  displayIcon={`app:${appKind}`}
+                />
                 <span>{appKind}</span>
               </Button>
             ))}
           </div>
         </div>
         <label className="flex min-h-0 flex-1 flex-col gap-2">
-          <span className="text-label-caps uppercase text-outline">{t("settings.shortcuts.svgInput")}</span>
+          <span className="text-label-caps uppercase text-outline">
+            {t("settings.shortcuts.svgInput")}
+          </span>
           <textarea
             aria-label={t("settings.shortcuts.svgInput")}
             className="min-h-72 resize-y rounded-lg border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-colors placeholder:text-outline focus:border-primary-strong/60"
@@ -1922,12 +2466,24 @@ function ShortcutIconSvgDialog({
   );
 }
 
-function SettingRow({ children, icon, label }: { children: ReactNode; icon: ReactNode; label: string }) {
+function SettingRow({
+  children,
+  icon,
+  label,
+}: {
+  children: ReactNode;
+  icon: ReactNode;
+  label: string;
+}) {
   return (
     <div className="flex min-h-16 items-center justify-between gap-5 border-b border-theme-card-border px-4 py-3 last:border-b-0">
       <div className="flex min-w-0 items-center gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">{icon}</span>
-        <span className="min-w-0 truncate text-body-md font-semibold text-on-surface">{label}</span>
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl border border-theme-control-border bg-theme-control text-primary">
+          {icon}
+        </span>
+        <span className="min-w-0 truncate text-body-md font-semibold text-on-surface">
+          {label}
+        </span>
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -1942,7 +2498,8 @@ function MemoryAgentAssignmentRow({
   settings,
   t,
 }: {
-  actionId: "memory.extraction" | "memory.project" | "memory.global" | "memory.recall";
+  actionId:
+    "memory.extraction" | "memory.project" | "memory.global" | "memory.recall";
   appShortcuts: AppShortcut[];
   label: string;
   onOpen: () => void;
@@ -1989,7 +2546,14 @@ function MemoryExclusionInput({
 }
 
 function parseMemoryExclusions(value: string): string[] {
-  return [...new Set(value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean))].slice(0, 2_000);
+  return [
+    ...new Set(
+      value
+        .split(/[\n,]/)
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ].slice(0, 2_000);
 }
 
 function SettingsPathRow({
@@ -2039,7 +2603,10 @@ function DataBackupDirectoryRow({
     : t("settings.storage.dataBackupDirEmpty");
 
   return (
-    <SettingRow icon={<Database size={18} />} label={t("settings.storage.customDataBackupDir")}>
+    <SettingRow
+      icon={<Database size={18} />}
+      label={t("settings.storage.customDataBackupDir")}
+    >
       <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
         <span
           className={clsx(
@@ -2090,7 +2657,9 @@ function CliToolsInstallRow({
   status: CliToolsStatus | null;
   t: Translator;
 }) {
-  const ready = Boolean(status?.bundled && status.installed && status.path_configured);
+  const ready = Boolean(
+    status?.bundled && status.installed && status.path_configured,
+  );
   const statusText = !status
     ? t("settings.cli.loading")
     : ready
@@ -2100,7 +2669,9 @@ function CliToolsInstallRow({
         : status.bundled
           ? t("settings.cli.notInstalled")
           : t("settings.cli.notBundled");
-  const installLabel = status?.installed ? t("settings.cli.repair") : t("settings.cli.install");
+  const installLabel = status?.installed
+    ? t("settings.cli.repair")
+    : t("settings.cli.install");
   const detail = error || status?.message || t("settings.cli.loading");
 
   return (
@@ -2111,24 +2682,46 @@ function CliToolsInstallRow({
             <span
               className={clsx(
                 "size-2 shrink-0 rounded-full",
-                ready ? "bg-status-create" : error ? "bg-status-remove" : "bg-status-update",
+                ready
+                  ? "bg-status-create"
+                  : error
+                    ? "bg-status-remove"
+                    : "bg-status-update",
               )}
               aria-hidden="true"
             />
-            <span className="truncate text-body-sm font-semibold text-on-surface">{statusText}</span>
+            <span className="truncate text-body-sm font-semibold text-on-surface">
+              {statusText}
+            </span>
           </div>
-          <p className={clsx("mt-1 truncate text-body-sm", error ? "text-status-remove" : "text-on-surface-variant")} title={detail}>
+          <p
+            className={clsx(
+              "mt-1 truncate text-body-sm",
+              error ? "text-status-remove" : "text-on-surface-variant",
+            )}
+            title={detail}
+          >
             {detail}
           </p>
           {status?.install_dir && (
-            <code className="mt-1 block truncate text-code-md text-on-surface-variant" title={status.install_dir}>
+            <code
+              className="mt-1 block truncate text-code-md text-on-surface-variant"
+              title={status.install_dir}
+            >
               {status.install_dir}
             </code>
           )}
         </div>
-        <Button disabled={installing || status?.bundled === false} onClick={onInstall} type="button" variant="outline">
+        <Button
+          disabled={installing || status?.bundled === false}
+          onClick={onInstall}
+          type="button"
+          variant="outline"
+        >
           <Terminal size={15} />
-          <span>{installing ? t("settings.cli.installing") : installLabel}</span>
+          <span>
+            {installing ? t("settings.cli.installing") : installLabel}
+          </span>
         </Button>
       </div>
     </SettingRow>
@@ -2164,10 +2757,15 @@ function RangeSettingControl({
         step={step}
         type="range"
         value={value}
-        style={{ "--range-progress": `${((value - min) / (max - min)) * 100}%` } as CSSProperties}
+        style={
+          {
+            "--range-progress": `${((value - min) / (max - min)) * 100}%`,
+          } as CSSProperties
+        }
       />
       <output className="w-16 rounded-xl border border-theme-control-border/70 bg-theme-control/70 px-2 py-1 text-center font-mono text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)]">
-        {value}{unit}
+        {value}
+        {unit}
       </output>
     </div>
   );
@@ -2186,11 +2784,14 @@ function FontFamilyControl({
   t: Translator;
   value: FontFamilyValue;
 }) {
-  const presetOption = value.preset === "custom"
-    ? null
-    : fontFamilyOptions.find((option) => option.id === value.preset);
+  const presetOption =
+    value.preset === "custom"
+      ? null
+      : fontFamilyOptions.find((option) => option.id === value.preset);
   const customSelected = value.preset === "custom";
-  const inputValue = customSelected ? value.customFontFamily : presetOption?.value ?? "";
+  const inputValue = customSelected
+    ? value.customFontFamily
+    : (presetOption?.value ?? "");
 
   return (
     <div className="grid w-[min(34rem,100%)] grid-cols-[minmax(9rem,0.42fr)_minmax(0,1fr)] gap-2 max-[760px]:grid-cols-1">
@@ -2236,7 +2837,13 @@ function FontFamilyControl({
   );
 }
 
-const builtInConversationCardKinds = ["answer", "tool", "command", "code", "result"];
+const builtInConversationCardKinds = [
+  "answer",
+  "tool",
+  "command",
+  "code",
+  "result",
+];
 
 function ConversationContentCardColorControl({
   onChange,
@@ -2249,13 +2856,20 @@ function ConversationContentCardColorControl({
 }) {
   const { definitions } = useConversationCardKindRegistry();
   const [draftKind, setDraftKind] = useState("");
-  const fields = Array.from(new Set([
-    ...builtInConversationCardKinds,
-    ...Array.from(definitions.entries())
-      .filter(([kind, definition]) => !isRedundantConversationCardKind(kind, definition))
-      .map(([kind]) => kind),
-    ...Object.keys(value),
-  ])).filter((kind) => !isRedundantConversationCardKind(kind, definitions.get(kind)));
+  const fields = Array.from(
+    new Set([
+      ...builtInConversationCardKinds,
+      ...Array.from(definitions.entries())
+        .filter(
+          ([kind, definition]) =>
+            !isRedundantConversationCardKind(kind, definition),
+        )
+        .map(([kind]) => kind),
+      ...Object.keys(value),
+    ]),
+  ).filter(
+    (kind) => !isRedundantConversationCardKind(kind, definitions.get(kind)),
+  );
 
   function commitColor(key: string, color: string) {
     const nextColor = color.trim();
@@ -2282,7 +2896,9 @@ function ConversationContentCardColorControl({
         {fields.map((kind) => (
           <ConversationContentCardColorField
             key={kind}
-            label={definitions.get(kind)?.label ?? conversationCardLabel(kind, t)}
+            label={
+              definitions.get(kind)?.label ?? conversationCardLabel(kind, t)
+            }
             onCommit={(color) => commitColor(kind, color)}
             value={conversationCardColor(kind, value)}
           />
@@ -2371,7 +2987,10 @@ function ConversationRuntimeOverrideRow({
   t,
   value,
 }: {
-  onChange: (key: keyof ConversationRuntimeOverrideSettings, value: string) => void;
+  onChange: (
+    key: keyof ConversationRuntimeOverrideSettings,
+    value: string,
+  ) => void;
   t: Translator;
   value: ConversationRuntimeOverrideSettings;
 }) {
@@ -2386,11 +3005,19 @@ function ConversationRuntimeOverrideRow({
   ];
 
   return (
-    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.runtimeOverrides")}>
+    <SettingRow
+      icon={<Terminal size={18} />}
+      label={t("settings.conversation.runtimeOverrides")}
+    >
       <div className="grid w-[min(38rem,52vw)] gap-2">
         {runtimes.map((runtime) => (
-          <label className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-center gap-2" key={runtime.key}>
-            <span className="text-body-sm font-semibold text-on-surface">{runtime.label}</span>
+          <label
+            className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-center gap-2"
+            key={runtime.key}
+          >
+            <span className="text-body-sm font-semibold text-on-surface">
+              {runtime.label}
+            </span>
             <Input
               aria-label={`${runtime.label} ${t("settings.conversation.runtimePath")}`}
               className="font-mono text-code-md"
@@ -2411,7 +3038,9 @@ function ConversationRuntimeOverrideRow({
             </Button>
           </label>
         ))}
-        <p className="text-body-sm text-on-surface-variant">{t("settings.conversation.runtimeOverridesHint")}</p>
+        <p className="text-body-sm text-on-surface-variant">
+          {t("settings.conversation.runtimeOverridesHint")}
+        </p>
       </div>
     </SettingRow>
   );
@@ -2430,7 +3059,8 @@ function AdapterRuntimeStatusRow({
   statuses: ConversationAdapterRuntimeStatus[];
   t: Translator;
 }) {
-  const allAvailable = statuses.length > 0 && statuses.every((status) => status.available);
+  const allAvailable =
+    statuses.length > 0 && statuses.every((status) => status.available);
   const statusText = loading
     ? t("settings.conversation.runtimeLoading")
     : error
@@ -2440,7 +3070,10 @@ function AdapterRuntimeStatusRow({
         : t("settings.conversation.runtimeMissing");
 
   return (
-    <SettingRow icon={<Terminal size={18} />} label={t("settings.conversation.runtimeStatus")}>
+    <SettingRow
+      icon={<Terminal size={18} />}
+      label={t("settings.conversation.runtimeStatus")}
+    >
       <div className="flex w-[min(38rem,52vw)] min-w-0 items-start gap-2">
         <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-theme-control-border bg-theme-control">
           <div className="flex min-h-10 items-center justify-between gap-3 border-b border-theme-control-border px-3 py-2">
@@ -2448,14 +3081,30 @@ function AdapterRuntimeStatusRow({
               <span
                 className={clsx(
                   "size-2 shrink-0 rounded-full",
-                  error ? "bg-status-remove" : loading ? "bg-status-update" : allAvailable ? "bg-status-create" : "bg-status-remove",
+                  error
+                    ? "bg-status-remove"
+                    : loading
+                      ? "bg-status-update"
+                      : allAvailable
+                        ? "bg-status-create"
+                        : "bg-status-remove",
                 )}
                 aria-hidden="true"
               />
-              <span className="truncate text-body-sm font-semibold text-on-surface">{statusText}</span>
+              <span className="truncate text-body-sm font-semibold text-on-surface">
+                {statusText}
+              </span>
             </div>
-            <Button disabled={loading} onClick={onRefresh} size="sm" type="button" variant="ghost">
-              <RefreshCw className={clsx("size-4", loading && "animate-spin")} />
+            <Button
+              disabled={loading}
+              onClick={onRefresh}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <RefreshCw
+                className={clsx("size-4", loading && "animate-spin")}
+              />
               <span>{t("settings.conversation.runtimeRefresh")}</span>
             </Button>
           </div>
@@ -2463,34 +3112,66 @@ function AdapterRuntimeStatusRow({
             <p className="px-3 py-2 text-body-sm text-status-remove">{error}</p>
           ) : (
             <div className="divide-y divide-theme-control-border">
-              {(statuses.length > 0 ? statuses : runtimeStatusPlaceholders()).map((status) => (
-                <div className="grid min-h-11 grid-cols-[96px_1fr_auto] items-center gap-3 px-3 py-2" key={status.kind}>
-                  <span className="font-mono text-code-md font-semibold uppercase text-on-surface">{status.kind}</span>
+              {(statuses.length > 0
+                ? statuses
+                : runtimeStatusPlaceholders()
+              ).map((status) => (
+                <div
+                  className="grid min-h-11 grid-cols-[96px_1fr_auto] items-center gap-3 px-3 py-2"
+                  key={status.kind}
+                >
+                  <span className="font-mono text-code-md font-semibold uppercase text-on-surface">
+                    {status.kind}
+                  </span>
                   <div className="min-w-0">
-                    <p className="truncate font-mono text-code-md text-on-surface-variant" title={status.program}>
+                    <p
+                      className="truncate font-mono text-code-md text-on-surface-variant"
+                      title={status.program}
+                    >
                       {status.program}
                     </p>
                     {status.required_version && (
-                      <p className="mt-0.5 truncate text-body-sm text-on-surface-variant" title={status.required_version}>
-                        {t("settings.conversation.runtimeRequires")} {status.required_version}
+                      <p
+                        className="mt-0.5 truncate text-body-sm text-on-surface-variant"
+                        title={status.required_version}
+                      >
+                        {t("settings.conversation.runtimeRequires")}{" "}
+                        {status.required_version}
                       </p>
                     )}
                     {(status.version || status.error) && (
                       <p
-                        className={clsx("mt-0.5 truncate text-body-sm", status.available ? "text-on-surface-variant" : "text-status-remove")}
+                        className={clsx(
+                          "mt-0.5 truncate text-body-sm",
+                          status.available
+                            ? "text-on-surface-variant"
+                            : "text-status-remove",
+                        )}
                         title={status.version ?? status.error ?? undefined}
                       >
                         {status.version ?? status.error}
                       </p>
                     )}
                     {!status.available && status.hint && (
-                      <p className="mt-0.5 text-body-sm text-on-surface-variant" title={status.hint}>
+                      <p
+                        className="mt-0.5 text-body-sm text-on-surface-variant"
+                        title={status.hint}
+                      >
                         {status.hint}
                       </p>
                     )}
                   </div>
-                  <span className={clsx("text-body-sm font-semibold", status.available ? "text-status-create" : "text-status-remove")}>
-                    {status.available ? t("settings.conversation.runtimeAvailable") : t("settings.conversation.runtimeUnavailable")}
+                  <span
+                    className={clsx(
+                      "text-body-sm font-semibold",
+                      status.available
+                        ? "text-status-create"
+                        : "text-status-remove",
+                    )}
+                  >
+                    {status.available
+                      ? t("settings.conversation.runtimeAvailable")
+                      : t("settings.conversation.runtimeUnavailable")}
                   </span>
                 </div>
               ))}
@@ -2524,7 +3205,11 @@ function ThemePaletteControl({
   value: ThemeId;
 }) {
   return (
-    <div className="grid w-[420px] grid-cols-2 gap-2" role="radiogroup" aria-label={t("settings.theme")}>
+    <div
+      className="grid w-[420px] grid-cols-2 gap-2"
+      role="radiogroup"
+      aria-label={t("settings.theme")}
+    >
       {themeOptions.map((option) => {
         const selected = value === option.id;
 
@@ -2542,12 +3227,17 @@ function ThemePaletteControl({
             role="radio"
             type="button"
           >
-            <span className="grid h-8 w-14 shrink-0 grid-cols-4 overflow-hidden rounded-lg border border-theme-control-border" aria-hidden="true">
+            <span
+              className="grid h-8 w-14 shrink-0 grid-cols-4 overflow-hidden rounded-lg border border-theme-control-border"
+              aria-hidden="true"
+            >
               {option.swatches.map((color) => (
                 <span key={color} style={{ backgroundColor: color }} />
               ))}
             </span>
-            <span className="min-w-0 truncate text-body-sm font-semibold">{t(option.labelKey)}</span>
+            <span className="min-w-0 truncate text-body-sm font-semibold">
+              {t(option.labelKey)}
+            </span>
           </button>
         );
       })}
@@ -2555,13 +3245,16 @@ function ThemePaletteControl({
   );
 }
 
-function setLocalizedNavigationLabel(labels: LocalizedNavigationLabels | undefined, locale: Locale, label: string): LocalizedNavigationLabels {
+function setLocalizedNavigationLabel(
+  labels: LocalizedNavigationLabels | undefined,
+  locale: Locale,
+  label: string,
+): LocalizedNavigationLabels {
   return {
     ...labels,
     [locale]: label,
   };
 }
-
 
 function stringifyIconSvg(iconSvg: AppShortcutIconSvg) {
   return JSON.stringify(iconSvg, null, 2);
@@ -2587,7 +3280,12 @@ function parseIconSvgInput(value: string) {
 
 function isPlainShortcutIconInput(value: string) {
   const input = value.trim();
-  return Boolean(input) && !input.startsWith("<") && !input.startsWith("{") && !input.startsWith("[");
+  return (
+    Boolean(input) &&
+    !input.startsWith("<") &&
+    !input.startsWith("{") &&
+    !input.startsWith("[")
+  );
 }
 
 function parseSvgMarkup(value: string): AppShortcutIconSvg | null {
@@ -2611,8 +3309,12 @@ function parseSvgMarkup(value: string): AppShortcutIconSvg | null {
       return [];
     }
 
-    const fillRule = normalizeSvgRule(path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"));
-    const clipRule = normalizeSvgRule(path.getAttribute("clip-rule") ?? path.getAttribute("clipRule"));
+    const fillRule = normalizeSvgRule(
+      path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"),
+    );
+    const clipRule = normalizeSvgRule(
+      path.getAttribute("clip-rule") ?? path.getAttribute("clipRule"),
+    );
     return [
       {
         d,
@@ -2665,7 +3367,9 @@ function normalizeIconSvgCandidate(value: unknown): AppShortcutIconSvg | null {
 
   return {
     paths,
-    ...(typeof value.viewBox === "string" && value.viewBox.trim() ? { viewBox: value.viewBox.trim() } : {}),
+    ...(typeof value.viewBox === "string" && value.viewBox.trim()
+      ? { viewBox: value.viewBox.trim() }
+      : {}),
   };
 }
 
@@ -2689,7 +3393,11 @@ function SegmentedControl({
   value: string;
 }) {
   return (
-    <div className="aurora-segmented-control flex h-9 items-center gap-1 rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md" aria-label={label} role="group">
+    <div
+      className="aurora-segmented-control flex h-9 items-center gap-1 rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md"
+      aria-label={label}
+      role="group"
+    >
       {options.map((option) => (
         <Button
           className={clsx(
@@ -2721,11 +3429,7 @@ function SwitchControl({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <Switch
-      aria-label={label}
-      checked={checked}
-      onCheckedChange={onChange}
-    />
+    <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
   );
 }
 

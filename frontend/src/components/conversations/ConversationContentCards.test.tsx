@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode, useState, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,10 +27,7 @@ import type {
   ConversationCardTranslationRequest,
   ConversationPartTranslationUpdateRequest,
 } from "../../services/cardTranslation";
-import type {
-  ConversationContentNode,
-  ConversationPart,
-} from "../../types";
+import type { ConversationContentNode, ConversationPart } from "../../types";
 
 const revealPath = vi.hoisted(() => vi.fn());
 vi.mock("../../services/catalog", () => ({ revealPath }));
@@ -37,7 +40,11 @@ type TestConversationContentCardsProps = Omit<
   nodes?: ComponentProps<typeof ProductionConversationContentCards>["nodes"];
 };
 
-function ConversationContentCards({ blocks = [], nodes, ...props }: TestConversationContentCardsProps) {
+function ConversationContentCards({
+  blocks = [],
+  nodes,
+  ...props
+}: TestConversationContentCardsProps) {
   return (
     <ProductionConversationContentCards
       {...props}
@@ -115,25 +122,32 @@ describe("ConversationContentCards", () => {
   });
 
   it("hides a standalone status-only successful result part", () => {
-    const blocks = buildConversationContentBlocks([{
-      id: "part-status-only-result",
-      turn_id: "turn-1",
-      part_index: 0,
-      role: "tool",
-      kind: "tool",
-      text: null,
-      status: "completed",
-      exit_code: 0,
-      metadata_json: JSON.stringify({
-        content_card: {
-          type: "result",
-          format: "plain",
-        },
-      }),
-    }]);
+    const blocks = buildConversationContentBlocks([
+      {
+        id: "part-status-only-result",
+        turn_id: "turn-1",
+        part_index: 0,
+        role: "tool",
+        kind: "tool",
+        text: null,
+        status: "completed",
+        exit_code: 0,
+        metadata_json: JSON.stringify({
+          content_card: {
+            type: "result",
+            format: "plain",
+          },
+        }),
+      },
+    ]);
 
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toMatchObject({ type: "result", text: "", exitCode: 0, status: "completed" });
+    expect(blocks[0]).toMatchObject({
+      type: "result",
+      text: "",
+      exitCode: 0,
+      status: "completed",
+    });
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -149,18 +163,23 @@ describe("ConversationContentCards", () => {
   });
 
   it("renders an unknown namespaced kind through its Core renderer and stable card id", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-stable",
-      part_id: "conversation-part-stable",
-      adapter_id: "claude-code",
-      kind: "claude-code.reasoning",
-      semantic_role: "reasoning",
-      renderer: "markdown",
-      role: "assistant",
-      body: "## Adapter reasoning",
-      translated_body: null,
-      legacy_anchor_ids: ["conversation-part-stable-reasoning"],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-stable",
+          part_id: "conversation-part-stable",
+          adapter_id: "claude-code",
+          kind: "claude-code.reasoning",
+          semantic_role: "reasoning",
+          renderer: "markdown",
+          role: "assistant",
+          body: "## Adapter reasoning",
+          translated_body: null,
+          legacy_anchor_ids: ["conversation-part-stable-reasoning"],
+        },
+      ],
+    );
 
     expect(blocks[0]).toMatchObject({
       id: "conversation-part-stable",
@@ -168,7 +187,9 @@ describe("ConversationContentCards", () => {
       renderer: "markdown",
       type: "claude-code.reasoning",
     });
-    expect(conversationCardColor("claude-code.reasoning", {})).toMatch(/^#[0-9a-f]{6}$/);
+    expect(conversationCardColor("claude-code.reasoning", {})).toMatch(
+      /^#[0-9a-f]{6}$/,
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -189,17 +210,22 @@ describe("ConversationContentCards", () => {
   it("renders a path card as a clickable local path", async () => {
     revealPath.mockResolvedValue(undefined);
     const skillPath = "/Users/test/.codex/skills/session-exporter/SKILL.md";
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-skill",
-      part_id: "conversation-part-skill",
-      adapter_id: "codex",
-      kind: "codex.skill",
-      semantic_role: "skill",
-      renderer: "path",
-      role: "system",
-      body: skillPath,
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-skill",
+          part_id: "conversation-part-skill",
+          adapter_id: "codex",
+          kind: "codex.skill",
+          semantic_role: "skill",
+          renderer: "path",
+          role: "system",
+          body: skillPath,
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     render(
       <ConversationContentCards
@@ -214,24 +240,33 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    const pathButton = screen.getByRole("button", { name: "在文件管理器中显示 Skill 路径" });
-    expect(pathButton.textContent).toContain("~/.codex/skills/session-exporter/SKILL.md");
+    const pathButton = screen.getByRole("button", {
+      name: "在文件管理器中显示 Skill 路径",
+    });
+    expect(pathButton.textContent).toContain(
+      "~/.codex/skills/session-exporter/SKILL.md",
+    );
     fireEvent.click(pathButton);
     await waitFor(() => expect(revealPath).toHaveBeenCalledWith(skillPath));
   });
 
   it("collapses namespaced built-in semantics to the existing card presentation type", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-answer",
-      part_id: "conversation-part-answer",
-      adapter_id: "claude-code",
-      kind: "claude-code.answer",
-      semantic_role: "answer",
-      renderer: "markdown",
-      role: "assistant",
-      body: "Canonical answer",
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-answer",
+          part_id: "conversation-part-answer",
+          adapter_id: "claude-code",
+          kind: "claude-code.answer",
+          semantic_role: "answer",
+          renderer: "markdown",
+          role: "assistant",
+          body: "Canonical answer",
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     expect(blocks[0]).toMatchObject({
       kind: "claude-code.answer",
@@ -240,11 +275,18 @@ describe("ConversationContentCards", () => {
   });
 
   it("shows the derived id fragment for every card type while retaining full block ids", () => {
-    const partId = "conversation-part-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+    const partId =
+      "conversation-part-1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
     const cardTypes = ["answer", "tool", "command", "code", "result"] as const;
-    const blocks = buildConversationContentBlocks(cardTypes.map((cardType, index) => (
-      declaredPart(`${partId}-${index}`, cardType, `Fragment-targeted ${cardType}`)
-    )));
+    const blocks = buildConversationContentBlocks(
+      cardTypes.map((cardType, index) =>
+        declaredPart(
+          `${partId}-${index}`,
+          cardType,
+          `Fragment-targeted ${cardType}`,
+        ),
+      ),
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -262,7 +304,9 @@ describe("ConversationContentCards", () => {
 
     expect(html.match(/>12345678</g)).toHaveLength(cardTypes.length);
     cardTypes.forEach((cardType, index) => {
-      expect(html).toContain(`data-conversation-card-id="${partId}-${index}-${cardType}"`);
+      expect(html).toContain(
+        `data-conversation-card-id="${partId}-${index}-${cardType}"`,
+      );
     });
   });
 
@@ -287,14 +331,19 @@ describe("ConversationContentCards", () => {
   });
 
   it("filters adapter browse truncation markers from every declared card type", () => {
-    const marker = "[AssetIWeave adapter truncated 10363 characters for browsing.]";
+    const marker =
+      "[AssetIWeave adapter truncated 10363 characters for browsing.]";
     const blocks = buildConversationContentBlocks([
       declaredPart("part-answer-marker", "answer", marker),
       declaredPart("part-tool-marker", "tool", marker),
       declaredPart("part-command-marker", "command", marker),
       declaredPart("part-code-marker", "code", marker),
       declaredPart("part-result-marker", "result", marker),
-      declaredPart("part-result-useful", "result", `useful result\n\n${marker}`),
+      declaredPart(
+        "part-result-useful",
+        "result",
+        `useful result\n\n${marker}`,
+      ),
     ]);
 
     expect(blocks).toHaveLength(1);
@@ -308,22 +357,24 @@ describe("ConversationContentCards", () => {
   it("keeps adapter-declared command output as one plain result", () => {
     const blocks = buildConversationContentBlocks([
       commandPart(),
-      resultPart([
-        "Chunk ID: 0e43bd",
-        "Wall time: 0.0000 seconds",
-        "Process exited with code 0",
-        "Original token count: 2387",
-        "Output:",
-        'import { invoke } from "@tauri-apps/api/core";',
-        "import type {",
-        "  ConversationAdapter,",
-        "  ConversationMutationResult,",
-        "} from \"../types\";",
-        "",
-        "export interface ConversationSessionListParams {",
-        "  adapter_id?: string | null;",
-        "}",
-      ].join("\n")),
+      resultPart(
+        [
+          "Chunk ID: 0e43bd",
+          "Wall time: 0.0000 seconds",
+          "Process exited with code 0",
+          "Original token count: 2387",
+          "Output:",
+          'import { invoke } from "@tauri-apps/api/core";',
+          "import type {",
+          "  ConversationAdapter,",
+          "  ConversationMutationResult,",
+          '} from "../types";',
+          "",
+          "export interface ConversationSessionListParams {",
+          "  adapter_id?: string | null;",
+          "}",
+        ].join("\n"),
+      ),
     ]);
 
     expect(blocks.map((block) => block.type)).toEqual(["command", "result"]);
@@ -332,7 +383,9 @@ describe("ConversationContentCards", () => {
       type: "result",
     });
     expect(blocks[1].text).toContain("Output:");
-    expect(blocks[1].text).toContain('import { invoke } from "@tauri-apps/api/core";');
+    expect(blocks[1].text).toContain(
+      'import { invoke } from "@tauri-apps/api/core";',
+    );
   });
 
   it("builds Execution parents from backend indices without rematching interleaved results", () => {
@@ -354,15 +407,23 @@ describe("ConversationContentCards", () => {
         type: "execution",
         turnId: "turn-1",
         sourceExecutionId: "call-a",
-        commands: [expect.objectContaining({ id: "command-a", text: "pnpm typecheck" })],
-        results: [expect.objectContaining({ id: "result-a", text: "types passed" })],
+        commands: [
+          expect.objectContaining({ id: "command-a", text: "pnpm typecheck" }),
+        ],
+        results: [
+          expect.objectContaining({ id: "result-a", text: "types passed" }),
+        ],
       },
       {
         type: "execution",
         turnId: "turn-1",
         sourceExecutionId: "call-b",
-        commands: [expect.objectContaining({ id: "command-b", text: "pnpm test" })],
-        results: [expect.objectContaining({ id: "result-b", text: "tests passed" })],
+        commands: [
+          expect.objectContaining({ id: "command-b", text: "pnpm test" }),
+        ],
+        results: [
+          expect.objectContaining({ id: "result-b", text: "tests passed" }),
+        ],
       },
     ]);
   });
@@ -394,7 +455,9 @@ describe("ConversationContentCards", () => {
     expect(html).not.toContain('title="call-a"');
     expect(html).toContain("pnpm typecheck");
     expect(html).toContain("types passed");
-    expect(html.indexOf("pnpm typecheck")).toBeLessThan(html.indexOf("types passed"));
+    expect(html.indexOf("pnpm typecheck")).toBeLessThan(
+      html.indexOf("types passed"),
+    );
   });
 
   it("folds projected command groups without exposing the raw block or an Execution wrapper", () => {
@@ -410,13 +473,15 @@ describe("ConversationContentCards", () => {
     render(
       <ConversationContentCards
         blocks={[]}
-        nodes={[{
-          type: "execution",
-          turnId: "turn-1",
-          sourceExecutionId: "call-a",
-          commands,
-          results: [],
-        }]}
+        nodes={[
+          {
+            type: "execution",
+            turnId: "turn-1",
+            sourceExecutionId: "call-a",
+            commands,
+            results: [],
+          },
+        ]}
         t={t}
         visibility={{ command: true, result: true }}
       />,
@@ -424,8 +489,12 @@ describe("ConversationContentCards", () => {
 
     expect(screen.getByText("command-1")).toBeTruthy();
     expect(screen.queryByText("command-2")).toBeNull();
-    expect(screen.queryByRole("button", { name: "查看后端保存的原始命令块" })).toBeNull();
-    expect(document.querySelector("[data-conversation-execution-id]")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "查看后端保存的原始命令块" }),
+    ).toBeNull();
+    expect(
+      document.querySelector("[data-conversation-execution-id]"),
+    ).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "展开其余 7 条命令" }));
     expect(screen.getByText("command-6")).toBeTruthy();
     expect(screen.queryByText("command-7")).toBeNull();
@@ -446,20 +515,24 @@ describe("ConversationContentCards", () => {
     render(
       <ConversationContentCards
         blocks={[]}
-        nodes={[{
-          type: "execution",
-          turnId: "turn-1",
-          sourceExecutionId: "call-many-results",
-          commands: [{
-            id: "command-1",
-            partId: "command-part",
-            type: "command",
-            renderer: "command",
-            role: "tool",
-            text: "run checks",
-          }],
-          results,
-        }]}
+        nodes={[
+          {
+            type: "execution",
+            turnId: "turn-1",
+            sourceExecutionId: "call-many-results",
+            commands: [
+              {
+                id: "command-1",
+                partId: "command-part",
+                type: "command",
+                renderer: "command",
+                role: "tool",
+                text: "run checks",
+              },
+            ],
+            results,
+          },
+        ]}
         t={t}
         visibility={{ command: true, result: true }}
       />,
@@ -497,22 +570,29 @@ describe("ConversationContentCards", () => {
 
     expect(screen.getByText("raw-command-12")).toBeTruthy();
     expect(screen.queryByText("raw-command-13")).toBeNull();
-    await waitFor(() => expect(onCommandPartsVisible).toHaveBeenCalledWith(
-      Array.from({ length: 12 }, (_, index) => `part-${index + 1}`),
-    ));
+    await waitFor(() =>
+      expect(onCommandPartsVisible).toHaveBeenCalledWith(
+        Array.from({ length: 12 }, (_, index) => `part-${index + 1}`),
+      ),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "继续加载活动记录" }));
     expect(screen.getByText("raw-command-20")).toBeTruthy();
-    await waitFor(() => expect(onCommandPartsVisible).toHaveBeenLastCalledWith(
-      Array.from({ length: 20 }, (_, index) => `part-${index + 1}`),
-    ));
+    await waitFor(() =>
+      expect(onCommandPartsVisible).toHaveBeenLastCalledWith(
+        Array.from({ length: 20 }, (_, index) => `part-${index + 1}`),
+      ),
+    );
   });
 
   it("renders backend-split commands as independent cards with header labels", () => {
-    const blocks = buildConversationContentBlocks([], [
-      projectedCard("command-first", "command", "cat first.md"),
-      projectedCard("command-second", "command", "cat second.md", "DEBUG"),
-    ]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        projectedCard("command-first", "command", "cat first.md"),
+        projectedCard("command-second", "command", "cat second.md", "DEBUG"),
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -568,23 +648,25 @@ describe("ConversationContentCards", () => {
   it("does not infer markdown formatting from declared plain command output", () => {
     const blocks = buildConversationContentBlocks([
       commandPart(),
-      resultPart([
-        "Chunk ID: 089b2c",
-        "Wall time: 0.0000 seconds",
-        "Process exited with code 0",
-        "Original token count: 2116",
-        "Output:",
-        "---",
-        "name: api-and-interface-design",
-        "description: Guides stable API and interface design.",
-        "---",
-        "",
-        "# API and Interface Design",
-        "",
-        "## Overview",
-        "",
-        "Design stable, well-documented interfaces.",
-      ].join("\n")),
+      resultPart(
+        [
+          "Chunk ID: 089b2c",
+          "Wall time: 0.0000 seconds",
+          "Process exited with code 0",
+          "Original token count: 2116",
+          "Output:",
+          "---",
+          "name: api-and-interface-design",
+          "description: Guides stable API and interface design.",
+          "---",
+          "",
+          "# API and Interface Design",
+          "",
+          "## Overview",
+          "",
+          "Design stable, well-documented interfaces.",
+        ].join("\n"),
+      ),
     ]);
 
     expect(blocks.map((block) => block.type)).toEqual(["command", "result"]);
@@ -617,24 +699,29 @@ describe("ConversationContentCards", () => {
   });
 
   it("renders diff-language code cards with the unified diff viewer", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-diff",
-      part_id: "conversation-part-diff",
-      adapter_id: "codex",
-      kind: "codex.code",
-      semantic_role: "code",
-      renderer: "diff",
-      role: "assistant",
-      body: [
-        "--- a/src/value.ts",
-        "+++ b/src/value.ts",
-        "@@ -1 +1 @@",
-        "-export const value = 1;",
-        "+export const value = 2;",
-      ].join("\n"),
-      language: "diff",
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-diff",
+          part_id: "conversation-part-diff",
+          adapter_id: "codex",
+          kind: "codex.code",
+          semantic_role: "code",
+          renderer: "diff",
+          role: "assistant",
+          body: [
+            "--- a/src/value.ts",
+            "+++ b/src/value.ts",
+            "@@ -1 +1 @@",
+            "-export const value = 1;",
+            "+export const value = 2;",
+          ].join("\n"),
+          language: "diff",
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -646,41 +733,45 @@ describe("ConversationContentCards", () => {
 
     expect(html).toContain('data-conversation-diff="unified"');
     expect(html).toContain('data-diff-file="src/value.ts"');
-    expect(html).toContain('diff-code-delete');
-    expect(html).toContain('diff-code-insert');
+    expect(html).toContain("diff-code-delete");
+    expect(html).toContain("diff-code-insert");
   });
 
   it("renders an adapter-defined file change as a standalone Diff card", () => {
-    const cards: ConversationContentBlockSeed[] = [{
-      node_id: "conversation-part-file-change",
-      part_id: "conversation-part-file-change",
-      adapter_id: "codex",
-      kind: "codex.file-change",
-      semantic_role: "file-change",
-      renderer: "diff",
-      role: "tool",
-      body: [
-        "--- a/src/value.ts",
-        "+++ b/src/value.ts",
-        "@@ -1 +1 @@",
-        "-export const value = 1;",
-        "+export const value = 2;",
-      ].join("\n"),
-      legacy_anchor_ids: [],
-    }];
+    const cards: ConversationContentBlockSeed[] = [
+      {
+        node_id: "conversation-part-file-change",
+        part_id: "conversation-part-file-change",
+        adapter_id: "codex",
+        kind: "codex.file-change",
+        semantic_role: "file-change",
+        renderer: "diff",
+        role: "tool",
+        body: [
+          "--- a/src/value.ts",
+          "+++ b/src/value.ts",
+          "@@ -1 +1 @@",
+          "-export const value = 1;",
+          "+export const value = 2;",
+        ].join("\n"),
+        legacy_anchor_ids: [],
+      },
+    ];
     const blocks = buildConversationContentBlocks([], cards);
     const nodes = buildConversationDisplayNodesFromNodes([
       projectedNodeFromSeed(cards[0], undefined, 0),
     ]);
 
-    expect(nodes).toMatchObject([{
-      type: "card",
-      block: {
-        kind: "codex.file-change",
-        renderer: "diff",
-        type: "codex.file-change",
+    expect(nodes).toMatchObject([
+      {
+        type: "card",
+        block: {
+          kind: "codex.file-change",
+          renderer: "diff",
+          type: "codex.file-change",
+        },
       },
-    }]);
+    ]);
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -693,31 +784,36 @@ describe("ConversationContentCards", () => {
 
     expect(html).toContain('data-content-type="codex.file-change"');
     expect(html).toContain('data-conversation-diff="unified"');
-    expect(html).not.toContain('data-conversation-execution-id=');
-    expect(html).not.toContain('data-result-summary=');
+    expect(html).not.toContain("data-conversation-execution-id=");
+    expect(html).not.toContain("data-result-summary=");
   });
 
   it("keeps standalone Diff statistics accurate when the collapsed preview is truncated", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-collapsed-file-change",
-      part_id: "conversation-part-collapsed-file-change",
-      adapter_id: "codex",
-      kind: "codex.file-change",
-      semantic_role: "file-change",
-      renderer: "diff",
-      role: "tool",
-      body: [
-        "diff --git a/src/value.ts b/src/value.ts",
-        "--- a/src/value.ts",
-        "+++ b/src/value.ts",
-        "@@ -1,2 +1,4 @@",
-        " export const before = true;",
-        "+export const value = 1;",
-        "+export const valueAgain = 2;",
-        " export const after = true;",
-      ].join("\n"),
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-collapsed-file-change",
+          part_id: "conversation-part-collapsed-file-change",
+          adapter_id: "codex",
+          kind: "codex.file-change",
+          semantic_role: "file-change",
+          renderer: "diff",
+          role: "tool",
+          body: [
+            "diff --git a/src/value.ts b/src/value.ts",
+            "--- a/src/value.ts",
+            "+++ b/src/value.ts",
+            "@@ -1,2 +1,4 @@",
+            " export const before = true;",
+            "+export const value = 1;",
+            "+export const valueAgain = 2;",
+            " export const after = true;",
+          ].join("\n"),
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -733,25 +829,29 @@ describe("ConversationContentCards", () => {
     expect(html).toContain(">-0<");
   });
 
-
   it("summarizes terminal output cards whose body is a unified diff", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-terminal-diff",
-      part_id: "conversation-part-terminal-diff",
-      adapter_id: "opencode",
-      kind: "opencode.result",
-      semantic_role: "result",
-      renderer: "diff",
-      role: "tool",
-      body: [
-        "--- a/frontend/src/App.tsx",
-        "+++ b/frontend/src/App.tsx",
-        "@@ -1,2 +1,2 @@",
-        "-<OldView />",
-        "+<NewView />",
-      ].join("\n"),
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-terminal-diff",
+          part_id: "conversation-part-terminal-diff",
+          adapter_id: "opencode",
+          kind: "opencode.result",
+          semantic_role: "result",
+          renderer: "diff",
+          role: "tool",
+          body: [
+            "--- a/frontend/src/App.tsx",
+            "+++ b/frontend/src/App.tsx",
+            "@@ -1,2 +1,2 @@",
+            "-<OldView />",
+            "+<NewView />",
+          ].join("\n"),
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -796,7 +896,11 @@ describe("ConversationContentCards", () => {
 
     expect(screen.queryByTestId("conversation-diff")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "查看 Diff" }));
-    await waitFor(() => expect(document.querySelector('[data-conversation-diff="unified"]')).not.toBeNull());
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-conversation-diff="unified"]'),
+      ).not.toBeNull(),
+    );
   });
 
   it("splits one persisted multi-file result diff into separate visual file sections", async () => {
@@ -833,25 +937,38 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(document.querySelectorAll("[data-diff-summary-file]")).toHaveLength(2);
+    expect(document.querySelectorAll("[data-diff-summary-file]")).toHaveLength(
+      2,
+    );
     fireEvent.click(screen.getByRole("button", { name: "查看 Diff" }));
-    await waitFor(() => expect(document.querySelectorAll("[data-diff-file]")).toHaveLength(2));
-    expect(document.querySelector('[data-diff-file="src/first.ts"]')).not.toBeNull();
-    expect(document.querySelector('[data-diff-file="src/second.ts"]')).not.toBeNull();
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-diff-file]")).toHaveLength(2),
+    );
+    expect(
+      document.querySelector('[data-diff-file="src/first.ts"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-diff-file="src/second.ts"]'),
+    ).not.toBeNull();
   });
 
   it("keeps ordinary plain output and shell transcripts in the plain viewer", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-plain-output",
-      part_id: "conversation-part-plain-output",
-      adapter_id: "claude-code",
-      kind: "claude-code.result",
-      semantic_role: "result",
-      renderer: "plain",
-      role: "tool",
-      body: "Claude Code checked 18 files and produced 2 file changes.\nAll checks passed before finishing.",
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-plain-output",
+          part_id: "conversation-part-plain-output",
+          adapter_id: "claude-code",
+          kind: "claude-code.result",
+          semantic_role: "result",
+          renderer: "plain",
+          role: "tool",
+          body: "Claude Code checked 18 files and produced 2 file changes.\nAll checks passed before finishing.",
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -866,27 +983,32 @@ describe("ConversationContentCards", () => {
   });
 
   it("does not treat git show transcripts with commit headers as unified diffs", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-git-show",
-      part_id: "conversation-part-git-show",
-      adapter_id: "opencode",
-      kind: "opencode.result",
-      semantic_role: "result",
-      renderer: "plain",
-      role: "tool",
-      body: [
-        "commit 4996af406f992b1777b58e7255338376087554df",
-        "Author: Util6",
-        "",
-        "    fix: refresh mount state",
-        "",
-        "diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx",
-        "index 1234567..7654321 100644",
-        "--- a/frontend/src/App.tsx",
-        "+++ b/frontend/src/App.tsx",
-      ].join("\n"),
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-git-show",
+          part_id: "conversation-part-git-show",
+          adapter_id: "opencode",
+          kind: "opencode.result",
+          semantic_role: "result",
+          renderer: "plain",
+          role: "tool",
+          body: [
+            "commit 4996af406f992b1777b58e7255338376087554df",
+            "Author: Util6",
+            "",
+            "    fix: refresh mount state",
+            "",
+            "diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx",
+            "index 1234567..7654321 100644",
+            "--- a/frontend/src/App.tsx",
+            "+++ b/frontend/src/App.tsx",
+          ].join("\n"),
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -900,25 +1022,30 @@ describe("ConversationContentCards", () => {
     expect(html).toContain("fix: refresh mount state");
   });
   it("summarizes plain result cards whose body is a unified diff", () => {
-    const blocks = buildConversationContentBlocks([], [{
-      node_id: "conversation-part-git-diff",
-      part_id: "conversation-part-git-diff",
-      adapter_id: "claude-code",
-      kind: "claude-code.result",
-      semantic_role: "result",
-      renderer: "diff",
-      role: "tool",
-      body: [
-        "diff --git a/cli/cmd/conversation.go b/cli/cmd/conversation.go",
-        "--- a/cli/cmd/conversation.go",
-        "+++ b/cli/cmd/conversation.go",
-        "@@ -12,3 +12,3 @@ func main() {",
-        "-  legacy := runLegacy()",
-        "+  updated := runUpdated()",
-        " }",
-      ].join("\n"),
-      legacy_anchor_ids: [],
-    }]);
+    const blocks = buildConversationContentBlocks(
+      [],
+      [
+        {
+          node_id: "conversation-part-git-diff",
+          part_id: "conversation-part-git-diff",
+          adapter_id: "claude-code",
+          kind: "claude-code.result",
+          semantic_role: "result",
+          renderer: "diff",
+          role: "tool",
+          body: [
+            "diff --git a/cli/cmd/conversation.go b/cli/cmd/conversation.go",
+            "--- a/cli/cmd/conversation.go",
+            "+++ b/cli/cmd/conversation.go",
+            "@@ -12,3 +12,3 @@ func main() {",
+            "-  legacy := runLegacy()",
+            "+  updated := runUpdated()",
+            " }",
+          ].join("\n"),
+          legacy_anchor_ids: [],
+        },
+      ],
+    );
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -937,19 +1064,24 @@ describe("ConversationContentCards", () => {
   it("renders successful result cards as status summaries instead of stdout", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
-        blocks={buildConversationContentBlocks([], [{
-          node_id: "conversation-part-success-result",
-          part_id: "conversation-part-success-result",
-          adapter_id: "opencode",
-          kind: "opencode.result",
-          semantic_role: "result",
-          renderer: "terminal_output",
-          role: "tool",
-          body: "large stdout that should stay out of the result card",
-          status: "completed",
-          exit_code: 0,
-          legacy_anchor_ids: [],
-        }])}
+        blocks={buildConversationContentBlocks(
+          [],
+          [
+            {
+              node_id: "conversation-part-success-result",
+              part_id: "conversation-part-success-result",
+              adapter_id: "opencode",
+              kind: "opencode.result",
+              semantic_role: "result",
+              renderer: "terminal_output",
+              role: "tool",
+              body: "large stdout that should stay out of the result card",
+              status: "completed",
+              exit_code: 0,
+              legacy_anchor_ids: [],
+            },
+          ],
+        )}
         t={t}
         visibility={{ result: true }}
       />,
@@ -964,19 +1096,24 @@ describe("ConversationContentCards", () => {
   it("hides placeholder-only successful result cards", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
-        blocks={buildConversationContentBlocks([], [{
-          node_id: "conversation-part-empty-object-result",
-          part_id: "conversation-part-empty-object-result",
-          adapter_id: "codex",
-          kind: "codex.result",
-          semantic_role: "result",
-          renderer: "terminal_output",
-          role: "tool",
-          body: "{}",
-          status: "completed",
-          exit_code: 0,
-          legacy_anchor_ids: [],
-        }])}
+        blocks={buildConversationContentBlocks(
+          [],
+          [
+            {
+              node_id: "conversation-part-empty-object-result",
+              part_id: "conversation-part-empty-object-result",
+              adapter_id: "codex",
+              kind: "codex.result",
+              semantic_role: "result",
+              renderer: "terminal_output",
+              role: "tool",
+              body: "{}",
+              status: "completed",
+              exit_code: 0,
+              legacy_anchor_ids: [],
+            },
+          ],
+        )}
         t={t}
         visibility={{ result: true }}
       />,
@@ -990,29 +1127,35 @@ describe("ConversationContentCards", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={[]}
-        nodes={[{
-          type: "execution",
-          turnId: "turn-1",
-          sourceExecutionId: "call-1",
-          commands: [{
-            id: "command-1",
-            type: "command",
-            renderer: "command",
-            role: "tool",
-            text: "pnpm test",
-            status: "completed",
-            exitCode: 0,
-          }],
-          results: [{
-            id: "result-1",
-            type: "result",
-            renderer: "terminal_output",
-            role: "tool",
-            text: "",
-            status: "completed",
-            exitCode: 0,
-          }],
-        }]}
+        nodes={[
+          {
+            type: "execution",
+            turnId: "turn-1",
+            sourceExecutionId: "call-1",
+            commands: [
+              {
+                id: "command-1",
+                type: "command",
+                renderer: "command",
+                role: "tool",
+                text: "pnpm test",
+                status: "completed",
+                exitCode: 0,
+              },
+            ],
+            results: [
+              {
+                id: "result-1",
+                type: "result",
+                renderer: "terminal_output",
+                role: "tool",
+                text: "",
+                status: "completed",
+                exitCode: 0,
+              },
+            ],
+          },
+        ]}
         t={t}
         visibility={{ command: true, result: true }}
       />,
@@ -1025,18 +1168,22 @@ describe("ConversationContentCards", () => {
   });
 
   it("inserts translated content for a custom target language after opencode is available", async () => {
-    const translator = vi.fn().mockResolvedValue({ translated_text: "Ejecuta `pnpm test`." });
+    const translator = vi
+      .fn()
+      .mockResolvedValue({ translated_text: "Ejecuta `pnpm test`." });
     const translationSaver = vi.fn().mockResolvedValue(undefined);
 
     render(
       <ConversationContentCards
-        blocks={[{
-          id: "part-answer-answer",
-          partId: "part-answer",
-          role: "assistant",
-          text: "Run `pnpm test`.",
-          type: "answer",
-        }]}
+        blocks={[
+          {
+            id: "part-answer-answer",
+            partId: "part-answer",
+            role: "assistant",
+            text: "Run `pnpm test`.",
+            type: "answer",
+          },
+        ]}
         t={t}
         translationAvailabilityChecker={async () => ({
           available: true,
@@ -1062,7 +1209,9 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    const translateButton = await screen.findByRole("button", { name: "翻译回答文字为Spanish (Latin America)" });
+    const translateButton = await screen.findByRole("button", {
+      name: "翻译回答文字为Spanish (Latin America)",
+    });
     fireEvent.click(translateButton);
 
     await waitFor(() =>
@@ -1080,7 +1229,9 @@ describe("ConversationContentCards", () => {
       recordKind: "session",
       translatedText: "Ejecuta `pnpm test`.",
     });
-    expect(await screen.findByText("译文 · Spanish (Latin America)")).toBeTruthy();
+    expect(
+      await screen.findByText("译文 · Spanish (Latin America)"),
+    ).toBeTruthy();
     expect(await screen.findByText(/Ejecuta/)).toBeTruthy();
   });
 
@@ -1095,17 +1246,28 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "翻译回答文字为简体中文" }),
+    );
     await waitFor(() => expect(startTask).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("等待执行");
-    expect((screen.getByRole("button", { name: "其他操作" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      screen.getByTestId("translation-progress-part-answer-answer").textContent,
+    ).toContain("等待执行");
+    expect(
+      (screen.getByRole("button", { name: "其他操作" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "模拟翻译中" }));
-    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("正在翻译");
+    expect(
+      screen.getByTestId("translation-progress-part-answer-answer").textContent,
+    ).toContain("正在翻译");
     fireEvent.click(screen.getByRole("button", { name: "取消当前翻译" }));
 
     await waitFor(() => expect(cancelTask).toHaveBeenCalledWith("ai-task-1"));
-    expect(screen.getByTestId("translation-progress-part-answer-answer").textContent).toContain("正在取消");
+    expect(
+      screen.getByTestId("translation-progress-part-answer-answer").textContent,
+    ).toContain("正在取消");
   });
 
   it("persists a successful task result and renders the translation", async () => {
@@ -1118,16 +1280,20 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "翻译回答文字为简体中文" }),
+    );
     await screen.findByTestId("translation-progress-part-answer-answer");
     fireEvent.click(screen.getByRole("button", { name: "完成任务" }));
 
     expect(await screen.findByText(/运行测试/)).toBeTruthy();
-    await waitFor(() => expect(translationSaver).toHaveBeenCalledWith({
-      partId: "part-answer",
-      recordKind: "session",
-      translatedText: "运行测试。",
-    }));
+    await waitFor(() =>
+      expect(translationSaver).toHaveBeenCalledWith({
+        partId: "part-answer",
+        recordKind: "session",
+        translatedText: "运行测试。",
+      }),
+    );
   });
 
   it("keeps a successful AI result visible when persistence fails", async () => {
@@ -1142,12 +1308,18 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "翻译回答文字为简体中文" }),
+    );
     await screen.findByTestId("translation-progress-part-answer-answer");
     fireEvent.click(screen.getByRole("button", { name: "完成任务" }));
 
     expect(await screen.findByText(/运行测试/)).toBeTruthy();
-    await waitFor(() => expect(onTranslationError).toHaveBeenCalledWith("保存译文失败：disk full"));
+    await waitFor(() =>
+      expect(onTranslationError).toHaveBeenCalledWith(
+        "保存译文失败：disk full",
+      ),
+    );
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
@@ -1160,15 +1332,25 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "翻译回答文字为简体中文" }),
+    );
     await screen.findByTestId("translation-progress-part-answer-answer");
     fireEvent.click(screen.getByRole("button", { name: "任务已取消" }));
 
     await waitFor(() => {
-      expect(screen.queryByTestId("translation-progress-part-answer-answer")).toBeNull();
+      expect(
+        screen.queryByTestId("translation-progress-part-answer-answer"),
+      ).toBeNull();
     });
     expect(screen.queryByRole("alert")).toBeNull();
-    expect((screen.getByRole("button", { name: "翻译回答文字为简体中文" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "翻译回答文字为简体中文",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it("does not cancel a running task when the card page unmounts", async () => {
@@ -1181,7 +1363,9 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "翻译回答文字为简体中文" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "翻译回答文字为简体中文" }),
+    );
     await screen.findByTestId("translation-progress-part-answer-answer");
     view.unmount();
 
@@ -1239,13 +1423,15 @@ describe("ConversationContentCards", () => {
     render(
       <StrictMode>
         <ConversationContentCards
-          blocks={[{
-            id: "part-answer-answer",
-            partId: "part-answer",
-            role: "assistant",
-            text: "Run `pnpm test`.",
-            type: "answer",
-          }]}
+          blocks={[
+            {
+              id: "part-answer-answer",
+              partId: "part-answer",
+              role: "assistant",
+              text: "Run `pnpm test`.",
+              type: "answer",
+            },
+          ]}
           t={t}
           translationAvailabilityChecker={availabilityChecker}
           visibility={{
@@ -1259,7 +1445,9 @@ describe("ConversationContentCards", () => {
       </StrictMode>,
     );
 
-    const translateButton = await screen.findByRole("button", { name: "翻译回答文字为简体中文" });
+    const translateButton = await screen.findByRole("button", {
+      name: "翻译回答文字为简体中文",
+    });
 
     expect((translateButton as HTMLButtonElement).disabled).toBe(false);
   });
@@ -1267,13 +1455,15 @@ describe("ConversationContentCards", () => {
   it("disables translation when opencode is unavailable", async () => {
     render(
       <ConversationContentCards
-        blocks={[{
-          id: "part-answer-answer",
-          partId: "part-answer",
-          role: "assistant",
-          text: "Run tests.",
-          type: "answer",
-        }]}
+        blocks={[
+          {
+            id: "part-answer-answer",
+            partId: "part-answer",
+            role: "assistant",
+            text: "Run tests.",
+            type: "answer",
+          },
+        ]}
         t={t}
         translationAvailabilityChecker={async () => ({
           available: false,
@@ -1297,11 +1487,14 @@ describe("ConversationContentCards", () => {
   });
 });
 
-const t: Translator = (key, params) => interpolate(messages.zh[key] ?? key, params);
+const t: Translator = (key, params) =>
+  interpolate(messages.zh[key] ?? key, params);
 
 function interpolate(template: string, params?: TranslationParams) {
   if (!params) return template;
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
+    String(params[key] ?? ""),
+  );
 }
 
 function commandPart(): ConversationPart {
@@ -1425,7 +1618,9 @@ function TaskTranslationHarness({
   cancelTask: (taskId: string) => unknown;
   onTranslationError?: (message: string) => void;
   startTask: (request: ConversationCardTranslationRequest) => unknown;
-  translationSaver: (request: ConversationPartTranslationUpdateRequest) => Promise<void>;
+  translationSaver: (
+    request: ConversationPartTranslationUpdateRequest,
+  ) => Promise<void>;
 }) {
   const [tasks, setTasks] = useState<AiExecutionTaskSnapshot[]>([]);
   const controller: ConversationTranslationTaskController = {
@@ -1453,7 +1648,9 @@ function TaskTranslationHarness({
         模拟翻译中
       </button>
       <button
-        onClick={() => setTasks([aiTask("succeeded", "cleaning_up", "运行测试。")])}
+        onClick={() =>
+          setTasks([aiTask("succeeded", "cleaning_up", "运行测试。")])
+        }
         type="button"
       >
         完成任务
@@ -1466,13 +1663,15 @@ function TaskTranslationHarness({
       </button>
       <button type="button">其他操作</button>
       <ConversationContentCards
-        blocks={[{
-          id: "part-answer-answer",
-          partId: "part-answer",
-          role: "assistant",
-          text: "Run tests.",
-          type: "answer",
-        }]}
+        blocks={[
+          {
+            id: "part-answer-answer",
+            partId: "part-answer",
+            role: "assistant",
+            text: "Run tests.",
+            type: "answer",
+          },
+        ]}
         onTranslationError={onTranslationError}
         t={t}
         translationAvailabilityChecker={async () => ({

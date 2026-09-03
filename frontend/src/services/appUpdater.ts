@@ -1,6 +1,7 @@
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 
-export const ASSETIWEAVE_RELEASES_URL = "https://github.com/util6/assetiweave/releases/latest";
+export const ASSETIWEAVE_RELEASES_URL =
+  "https://github.com/util6/assetiweave/releases/latest";
 
 export interface AppUpdateInfo {
   currentVersion: string;

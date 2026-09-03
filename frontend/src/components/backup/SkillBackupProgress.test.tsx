@@ -13,7 +13,11 @@ describe("SkillBackupProgress", () => {
     const html = renderToStaticMarkup(
       <>
         <SkillBackupBackgroundTaskIndicator task={runningTask} t={translator} />
-        <SkillBackupInlineProgress assetIds={["skill-b"]} task={runningTask} t={translator} />
+        <SkillBackupInlineProgress
+          assetIds={["skill-b"]}
+          task={runningTask}
+          t={translator}
+        />
       </>,
     );
 

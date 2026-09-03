@@ -1,7 +1,10 @@
 import * as React from "react";
 
 import { SkeletonShell } from "./SkeletonShell";
-import { skeletonRecipes, type AnySkeletonRecipeProps } from "./skeletonRecipes";
+import {
+  skeletonRecipes,
+  type AnySkeletonRecipeProps,
+} from "./skeletonRecipes";
 import type {
   SkeletonLayoutName,
   SkeletonRecipeDefinition,
@@ -24,13 +27,22 @@ export type AppSkeletonProps = {
 }[SkeletonLayoutName];
 
 export function AppSkeleton(props: AppSkeletonProps): React.ReactElement {
-  const { children, className, label, layout, layoutProps, scope = "page" } = props;
+  const {
+    children,
+    className,
+    label,
+    layout,
+    layoutProps,
+    scope = "page",
+  } = props;
 
   if (!label.trim()) {
     throw new Error("AppSkeleton requires a non-empty label");
   }
 
-  const definition = skeletonRecipes[layout] as SkeletonRecipeDefinition<AnySkeletonRecipeProps>;
+  const definition = skeletonRecipes[
+    layout
+  ] as SkeletonRecipeDefinition<AnySkeletonRecipeProps>;
   const Recipe = definition.component;
   const recipeProps = {
     ...definition.defaults,

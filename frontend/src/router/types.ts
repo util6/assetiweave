@@ -19,7 +19,9 @@ export type NavigationIcon =
 
 export type MenuScope = "global" | "asset-catalog" | "profile" | "settings";
 export type NavigationLocale = "zh" | "en";
-export type LocalizedNavigationLabels = Partial<Record<NavigationLocale, string>>;
+export type LocalizedNavigationLabels = Partial<
+  Record<NavigationLocale, string>
+>;
 
 export interface RailMenuItem {
   id: string;

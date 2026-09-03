@@ -46,10 +46,12 @@ describe("appLifecycle", () => {
     const listener = vi.fn();
     await subscribeAppCloseRequested(listener);
 
-    expect(listenMock).toHaveBeenCalledWith(APP_CLOSE_REQUESTED_EVENT, expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith(
+      APP_CLOSE_REQUESTED_EVENT,
+      expect.any(Function),
+    );
     const callback = listenMock.mock.calls[0][1];
     callback();
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
-
