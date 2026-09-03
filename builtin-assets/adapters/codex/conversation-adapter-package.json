@@ -2,7 +2,7 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
@@ -14,6 +14,14 @@
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.6.3",
+      "date": "2026-09-01",
+      "notes": [
+        "Keep list_sessions output bounded by excluding titles and query only the requested thread during incremental reads.",
+        "Raise the sqlite3 output buffer for large full-sync result sets."
+      ]
+    },
     {
       "version": "1.6.2",
       "date": "2026-08-29",

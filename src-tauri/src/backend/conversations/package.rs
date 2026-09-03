@@ -581,7 +581,7 @@ mod tests {
         );
         assert_eq!(
             inspected.identity.version,
-            semver::Version::parse("1.6.2").unwrap()
+            semver::Version::parse("1.6.3").unwrap()
         );
         assert_eq!(inspected.compatibility.protocol_version, 1);
         assert_eq!(

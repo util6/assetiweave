@@ -44,6 +44,9 @@ const BROWSE_OUTPUT_CONTEXT_LINES = 2;
 /** 浏览窗口中单行终端文本的最大允许字符数上限 (1200 字符) */
 const MAX_BROWSE_OUTPUT_LINE_CHARS = 1200;
 
+/** sqlite3 子进程标准输出上限 (64MB)，用于兼容标题或全量读取中的较大结果集 */
+const SQLITE_OUTPUT_BUFFER_BYTES = 64 * 1024 * 1024;
+
 /**
  * 识别关键错误、异常与高信号日志信息的正则表达式模式；
  * 当终端输出文本超长时，低信号压缩算法会优先保留匹配此正则的行及其前后上下文。
@@ -129,7 +132,10 @@ function readStableFile(filePath, updatedAt = null) {
  * @returns {Array<object>} 查询结果对象数组
  */
 function sqliteJson(dbPath, sql) {
-  const result = spawnSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8" });
+  const result = spawnSync("sqlite3", ["-json", dbPath, sql], {
+    encoding: "utf8",
+    maxBuffer: SQLITE_OUTPUT_BUFFER_BYTES,
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error((result.stderr || `sqlite3 exited with ${result.status}`).trim());
@@ -145,6 +151,15 @@ function sqliteJson(dbPath, sql) {
  */
 function quoteIdent(name) {
   return `"${String(name).replaceAll("\"", "\"\"")}"`;
+}
+
+/**
+ * 将 SQL 字符串值转义为 SQLite 字面量。
+ * @param {unknown} value - SQL 查询参数值
+ * @returns {string} 单引号包裹并转义后的字面量
+ */
+function quoteSqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
 }
 
 /**
@@ -1547,7 +1562,7 @@ function normalizeTurns(text) {
  * 查询 Codex 的 SQLite 数据库 (`state_5.sqlite`) 表中的 `threads` 基础会话元数据列表
  * @returns {Array<object>} 查到的 Session 数据库元数据行对象列表
  */
-function sessionRows() {
+function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   let location = expandPath(input.source?.location);
   if (!location) return [];
   let dbPath = location;
@@ -1565,7 +1580,12 @@ function sessionRows() {
   if (!idCol || !rolloutCol) return [];
   const titleCol = pick(columns, ["title", "name"]);
   const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleCol ? quoteIdent(titleCol) : "NULL"} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads ORDER BY rowid DESC`;
+  const titleProjection = includeTitle && titleCol ? quoteIdent(titleCol) : "NULL";
+  const sessionFilter = sessionId == null
+    ? ""
+    : ` WHERE ${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`;
+  const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads${sessionFilter}${orderClause}`;
   return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
 }
 
@@ -1574,7 +1594,7 @@ function sessionRows() {
  * @returns {Array<object>} 包含 external_id, updated_at, source_locator, version_token 的描述符列表
  */
 function listSessions() {
-  return sessionRows().flatMap((row) => {
+  return sessionRows({ includeTitle: false }).flatMap((row) => {
     if (!row.rollout_path || !existsSync(row.rollout_path)) return [];
     return [{
       external_id: String(row.id),
@@ -1599,7 +1619,7 @@ function readSession() {
   const requestedSessionId = input.params?.session_id ?? null;
 
   // 2. 查询 SQLite 获取数据库会话行，按请求 ID 过滤后，对每个 Session 执行格式化流水线
-  return sessionRows().filter((row) => !requestedSessionId || String(row.id) === String(requestedSessionId)).flatMap((row) => {
+  return sessionRows({ sessionId: requestedSessionId }).flatMap((row) => {
     // 3. 展开并校验 `.jsonl` 会话日志文件的绝对路径，不存在则忽略
     const rolloutPath = expandPath(row.rollout_path);
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
