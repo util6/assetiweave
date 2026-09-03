@@ -1,6 +1,6 @@
 # A-F09：Zustand 接管共享UI状态
 
-> **Status: PLANNED**。执行时使用 `superpowers:executing-plans`，只执行本卡。
+> **Status: VERIFIED**。执行时使用 `superpowers:executing-plans`，只执行本卡。
 
 **Goal:** 删除跨组件弹窗/面板状态的层层传递，后台数据仍由Query持有。
 **Architecture:** 小型明确的UI store + selector订阅；局部表单与领域projection不迁入store。
@@ -58,11 +58,11 @@ it("打开设置不改其他共享UI状态", () => {
 
 ## 步骤
 
-- [ ] **Baseline**：保存设置开启到指定panel、更新dialog关闭/重开、日志viewer测试green。
-- [ ] **Red**：添加store测试；加入AppRouter不再自持 `settingsOpen/logViewerOpen` useState 的接管guard。
-- [ ] **Migrate**：安装库、创建store并迁移这三个真实UI消费者；删除只为转发open/close的中间props。
-- [ ] **Clean**：删除旧共享UI state/effects；保留更新下载状态机、设置存储副作用与局部草稿。无需Provider包装store。
-- [ ] **Verify**：下列命令通过；主题/locale等持久值未进入store。
+- [x] **Baseline**：保存设置开启到指定panel、更新dialog关闭/重开、日志viewer测试green。
+- [x] **Red**：添加store测试；加入AppRouter不再自持 `settingsOpen/logViewerOpen` useState 的接管guard。
+- [x] **Migrate**：安装库、创建store并迁移这三个真实UI消费者；删除只为转发open/close的中间props。
+- [x] **Clean**：删除旧共享UI state/effects；保留更新下载状态机、设置存储副作用与局部草稿。无需Provider包装store。
+- [x] **Verify**：下列命令通过；主题/locale等持久值未进入store。
 
 ```sh
 pnpm exec vitest run --config frontend/vite.config.ts frontend/src/store/ui/appUiStore.test.ts frontend/src/router/AppRouter.test.tsx frontend/src/app/updates/AppUpdateDialog.test.tsx frontend/src/hooks/settings/useSettingsPanelController.test.tsx

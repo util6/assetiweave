@@ -40,13 +40,18 @@ import {
   Puzzle,
   RefreshCw,
   RotateCcw,
+  Search,
   Settings,
+  Shield,
   Sparkles,
   Terminal,
   Type,
+  Trash2,
+  Workflow,
   X,
   type LucideIcon,
 } from "lucide-react";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 import {
   useEffect,
   useMemo,
@@ -174,7 +179,7 @@ function normalizeSettingsPanelId(panelId: SettingsPanelId): SettingsPanelId {
 
 export function GlobalSettingsDialog({
   appShortcuts,
-  initialPanel = "general.appearance",
+  initialPanel,
   navigationModel,
   onClose,
   onAppShortcutsChange,
@@ -185,12 +190,18 @@ export function GlobalSettingsDialog({
   appShortcuts: AppShortcut[];
   initialPanel?: SettingsPanelId;
   navigationModel: NavigationModel;
-  onClose: () => void;
+  onClose?: () => void;
   onAppShortcutsChange: (shortcuts: AppShortcut[]) => void;
   onNavigationModelChange: (model: NavigationModel) => void;
   onSkillBackupLibraryChange?: () => Promise<void> | void;
-  open: boolean;
+  open?: boolean;
 }) {
+  const storeSettingsPanel = useAppUiStore((state) => state.settingsPanel);
+  const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
+  const resolvedOpen = open ?? (storeSettingsPanel !== null);
+  const resolvedInitialPanel =
+    initialPanel ?? storeSettingsPanel ?? "general.appearance";
+  const handleDialogClose = onClose ?? storeCloseSettings;
   const { locale, setLocale, t } = useI18n();
   const settingGroups = useMemo<SettingsGroupConfig[]>(
     () => [
@@ -292,9 +303,9 @@ export function GlobalSettingsDialog({
   const { activePanel, collapsedGroups, openPanel, toggleGroupCollapsed } =
     useSettingsPanelController({
       groups: settingGroups,
-      initialPanel,
+      initialPanel: resolvedInitialPanel,
       normalizePanel: normalizeSettingsPanelId,
-      open,
+      open: resolvedOpen,
     });
   const [editingShortcutIconId, setEditingShortcutIconId] = useState<
     string | null
@@ -820,7 +831,7 @@ export function GlobalSettingsDialog({
       aria-label={t("settings.title")}
       className="bg-background text-on-surface"
       hideHeader
-      onClose={onClose}
+      onClose={handleDialogClose}
       title={t("settings.title")}
     >
       <div className="grid h-full w-full grid-cols-[288px_minmax(0,1fr)] overflow-hidden bg-theme-card-header">
@@ -921,8 +932,7 @@ export function GlobalSettingsDialog({
             </div>
             <Button
               className="text-on-surface-variant hover:text-on-surface"
-              onClick={onClose}
-              aria-label={t("settings.close")}
+              onClick={handleDialogClose}
               size="icon"
               type="button"
               variant="ghost"

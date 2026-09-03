@@ -32,6 +32,7 @@ import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
 import { WindowTitleBar } from "./WindowTitleBar";
 import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 
 const GlobalSettingsDialog = lazy(() =>
   import("../../components/settings/GlobalSettingsDialog").then((module) => ({
@@ -64,22 +65,22 @@ export function AppLayout({
   activeSubNavId: string;
   appShortcuts: AppShortcut[];
   children: ReactNode;
-  logViewerOpen: boolean;
+  logViewerOpen?: boolean;
   navigationModel: NavigationModel;
   notification: NotificationMessage | null;
   onAppShortcutsChange: (shortcuts: AppShortcut[]) => void;
   onDismissNotification: (id: string) => void;
-  onLogViewerOpen: () => void;
+  onLogViewerOpen?: () => void;
   onHeaderTabSelect: (tab: HeaderTabItem) => void;
   onHeaderTabPrefetch?: (tab: HeaderTabItem) => void;
   onNavigationModelChange: (navigationModel: NavigationModel) => void;
   onSkillBackupLibraryChange?: () => Promise<void> | void;
-  onSettingsClose: () => void;
-  onSettingsOpen: () => void;
+  onSettingsClose?: () => void;
+  onSettingsOpen?: () => void;
   onSubNavSelect: (id: string) => void;
   onSubNavPrefetch?: (id: string) => void;
-  settingsPanel: SettingsPanelId;
-  settingsOpen: boolean;
+  settingsPanel?: SettingsPanelId;
+  settingsOpen?: boolean;
   tenantControls: {
     activeTenant: Tenant | null;
     busy: boolean;
@@ -90,6 +91,24 @@ export function AppLayout({
     tenants: Tenant[];
   };
 }) {
+  const storeLogViewerOpen = useAppUiStore((state) => state.logViewerOpen);
+  const storeSetLogViewerOpen = useAppUiStore(
+    (state) => state.setLogViewerOpen,
+  );
+  const storeSettingsPanel = useAppUiStore((state) => state.settingsPanel);
+  const storeOpenSettings = useAppUiStore((state) => state.openSettings);
+  const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
+
+  const effectiveLogViewerOpen = logViewerOpen ?? storeLogViewerOpen;
+  const effectiveSettingsOpen = settingsOpen ?? (storeSettingsPanel !== null);
+  const effectiveSettingsPanel =
+    settingsPanel ?? storeSettingsPanel ?? "general.appearance";
+  const handleOpenSettings =
+    onSettingsOpen ?? (() => storeOpenSettings("general.appearance"));
+  const handleCloseSettings = onSettingsClose ?? storeCloseSettings;
+  const handleOpenLogViewer =
+    onLogViewerOpen ?? (() => storeSetLogViewerOpen(true));
+
   const { t } = useI18n();
   const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();
   const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
@@ -110,12 +129,12 @@ export function AppLayout({
 
   function handleRailItemSelect(item: RailMenuItem) {
     if (item.id === "settings") {
-      onSettingsOpen();
+      handleOpenSettings();
       return;
     }
 
     if (item.id === "logs") {
-      onLogViewerOpen();
+      handleOpenLogViewer();
     }
   }
 
@@ -128,9 +147,9 @@ export function AppLayout({
       <div className="grid-texture flex min-h-screen pt-[var(--app-window-titlebar-height)]">
         <SideRail
           activeId={
-            logViewerOpen
+            effectiveLogViewerOpen
               ? "logs"
-              : settingsOpen
+              : effectiveSettingsOpen
                 ? "settings"
                 : navigationModel.activeRailId
           }
@@ -182,17 +201,17 @@ export function AppLayout({
         />
       ) : null}
 
-      {settingsOpen ? (
+      {effectiveSettingsOpen ? (
         <Suspense fallback={null}>
           <GlobalSettingsDialog
             appShortcuts={appShortcuts}
-            initialPanel={settingsPanel}
+            initialPanel={effectiveSettingsPanel}
             navigationModel={navigationModel}
             onAppShortcutsChange={onAppShortcutsChange}
-            onClose={onSettingsClose}
+            onClose={handleCloseSettings}
             onNavigationModelChange={onNavigationModelChange}
             onSkillBackupLibraryChange={onSkillBackupLibraryChange}
-            open={settingsOpen}
+            open={effectiveSettingsOpen}
           />
         </Suspense>
       ) : null}

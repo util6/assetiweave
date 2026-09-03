@@ -11,9 +11,12 @@ import { Button } from "../../components/ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { cn } from "../../lib/utils";
 import { useAppUpdater } from "./AppUpdateProvider";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 
 export function AppUpdateDialog() {
   const { locale, t } = useI18n();
+  const storeDialogMode = useAppUiStore((state) => state.updateDialogMode);
+  const closeUpdateDialog = useAppUiStore((state) => state.closeUpdateDialog);
   const {
     checkForUpdates,
     closeDialog,
@@ -25,11 +28,12 @@ export function AppUpdateDialog() {
     state,
   } = useAppUpdater();
 
-  if (!dialogOpen || !state.supported) {
+  const effectiveMode = storeDialogMode ?? (dialogOpen ? dialogMode : null);
+  if (!effectiveMode || !state.supported) {
     return null;
   }
 
-  const introMode = dialogMode === "intro";
+  const introMode = effectiveMode === "intro";
   const busy =
     !introMode &&
     (state.status === "checking" ||
@@ -47,6 +51,7 @@ export function AppUpdateDialog() {
 
   function handleClose() {
     if (canClose) {
+      closeUpdateDialog();
       closeDialog();
     }
   }

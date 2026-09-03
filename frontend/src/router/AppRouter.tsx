@@ -26,6 +26,7 @@ import {
   createConversationNavigationTarget,
   type ConversationNavigationTarget,
 } from "./navigationTargets";
+import { useAppUiStore } from "../store/ui/appUiStore";
 
 const LogViewerModal = lazy(() =>
   import("../components/logs/LogViewerModal").then((module) => ({
@@ -53,13 +54,12 @@ export function AppRouter() {
   const [activeSubNavId, setActiveSubNavId] = useState(
     catalog.navigationModel.activeSubNavId,
   );
-  const [logViewerOpen, setLogViewerOpen] = useState(false);
   const [manualRouteKey, setManualRouteKey] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPanel, setSettingsPanel] =
-    useState<SettingsPanelId>("general.appearance");
   const [conversationNavigationTarget, setConversationNavigationTarget] =
     useState<ConversationNavigationTarget | null>(null);
+  const logViewerOpen = useAppUiStore((state) => state.logViewerOpen);
+  const setLogViewerOpen = useAppUiStore((state) => state.setLogViewerOpen);
+  const openSettings = useAppUiStore((state) => state.openSettings);
 
   const initialPath = useMemo(
     () =>
@@ -172,10 +172,6 @@ export function AppRouter() {
     persistNavigationModel(nextModel);
   }
 
-  function openSettings(panel: SettingsPanelId = "general.appearance") {
-    setSettingsPanel(panel);
-    setSettingsOpen(true);
-  }
 
   function handleSubNavSelect(id: string) {
     if (id === activeSubNavId) {
@@ -252,7 +248,8 @@ export function AppRouter() {
     conversationNavigationTarget,
     handleMemoryNavigation,
     onManualOpen: openCurrentManual,
-    onOpenSettings: openSettings,
+    onOpenSettings: (panel?: SettingsPanelId) =>
+      openSettings(panel ?? "general.appearance"),
     setConversationNavigationTarget,
   };
 
@@ -261,7 +258,6 @@ export function AppRouter() {
       <AppLayout
         activeSubNavId={activeSubNavId}
         appShortcuts={catalog.appShortcuts}
-        logViewerOpen={logViewerOpen}
         navigationModel={catalog.navigationModel}
         notification={catalog.notification}
         onAppShortcutsChange={(shortcuts) =>
@@ -270,17 +266,12 @@ export function AppRouter() {
         onDismissNotification={catalog.dismissNotification}
         onHeaderTabSelect={handleHeaderTabSelect}
         onHeaderTabPrefetch={handleHeaderTabPrefetch}
-        onLogViewerOpen={() => setLogViewerOpen(true)}
         onNavigationModelChange={(navigationModel) =>
           void catalog.saveNavigationModel(navigationModel)
         }
         onSkillBackupLibraryChange={() => catalog.refreshOverview()}
-        onSettingsClose={() => setSettingsOpen(false)}
-        onSettingsOpen={() => openSettings()}
         onSubNavSelect={handleSubNavSelect}
         onSubNavPrefetch={handleSubNavPrefetch}
-        settingsPanel={settingsPanel}
-        settingsOpen={settingsOpen}
         tenantControls={{
           activeTenant: catalog.activeTenant,
           busy: catalog.tenantBusy,

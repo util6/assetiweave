@@ -26,6 +26,7 @@ import {
   UPDATE_CHECK_RETRY_DELAYS_MS,
   UPDATE_DOWNLOAD_RETRY_DELAYS_MS,
 } from "../../utils/updaterRetry";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 
 const AUTO_CHECK_DELAY_MS = 5000;
 const AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -80,8 +81,9 @@ function createInitialState(): AppUpdateState {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
-  const [dialogMode, setDialogMode] = useState<AppUpdateDialogMode>("update");
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const updateDialogMode = useAppUiStore((state) => state.updateDialogMode);
+  const openUpdateDialog = useAppUiStore((state) => state.openUpdateDialog);
+  const closeUpdateDialog = useAppUiStore((state) => state.closeUpdateDialog);
   const [state, setStateValue] = useState<AppUpdateState>(() =>
     createInitialState(),
   );
@@ -132,8 +134,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       if (source === "manual") {
-        setDialogMode("update");
-        setDialogOpen(true);
+        openUpdateDialog("update");
       }
       setState((previous) => ({
         ...previous,
@@ -201,8 +202,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           source,
           status: "available",
         }));
-        setDialogMode("update");
-        setDialogOpen(true);
+        openUpdateDialog("update");
       } catch (error) {
         if (requestIdRef.current !== requestId) {
           return;
@@ -218,8 +218,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           status: "error",
         }));
         if (source === "manual") {
-          setDialogMode("update");
-          setDialogOpen(true);
+          openUpdateDialog("update");
         }
       }
     },
@@ -239,8 +238,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setDialogMode("update");
-    setDialogOpen(true);
+    openUpdateDialog("update");
     setState((previous) => ({
       ...previous,
       error: undefined,
@@ -345,8 +343,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         retryTotal: undefined,
         status: "error",
       }));
-      setDialogMode("update");
-      setDialogOpen(true);
+      openUpdateDialog("update");
     }
   }, [setState]);
 
@@ -397,13 +394,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppUpdateContextValue>(
     () => ({
       checkForUpdates,
-      closeDialog: () => setDialogOpen(false),
-      dialogMode,
-      dialogOpen,
+      closeDialog: closeUpdateDialog,
+      dialogMode: updateDialogMode ?? "update",
+      dialogOpen: updateDialogMode !== null,
       downloadAndInstall,
       openDialog: (mode: AppUpdateDialogMode = "update") => {
-        setDialogMode(mode);
-        setDialogOpen(true);
+        openUpdateDialog(mode);
       },
       openReleases: openReleasePage,
       restartApp,
@@ -411,11 +407,12 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     }),
     [
       checkForUpdates,
-      dialogMode,
-      dialogOpen,
+      closeUpdateDialog,
       downloadAndInstall,
+      openUpdateDialog,
       restartApp,
       state,
+      updateDialogMode,
     ],
   );
 
