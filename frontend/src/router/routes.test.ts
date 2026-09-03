@@ -1,125 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
-import { normalizeNavigationModelRoutes, resolveAppRoute } from "./routes";
-import { routeRegistry } from "./routeLoaders";
+import { normalizeNavigationModelRoutes } from "./routes";
+import { createAppRouter } from "./createAppRouter";
 
 describe("app route resolution", () => {
-  it("keeps every implemented route on the registry path", () => {
-    expect(routeRegistry.catalog.loader).toBeTypeOf("function");
-    expect(routeRegistry.conversations.loader).toBeTypeOf("function");
-    expect(routeRegistry["web-records"].loader).toBe(
-      routeRegistry.conversations.loader,
-    );
-    expect(routeRegistry.memory.loader).toBeTypeOf("function");
-    expect(routeRegistry["under-construction"].loader).toBeUndefined();
-  });
-
-  it("routes the existing skills groups tab to the skill groups page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "skills",
-          activeSubNavId: "groups",
-        },
-        "groups",
-      ),
-    ).toBe("skill-groups");
-  });
-
-  it("keeps the existing skill sources route", () => {
-    expect(resolveAppRoute(fallbackNavigationModel, "sources")).toBe("sources");
-  });
-
-  it("routes the skills mounts tab to the app-centered mount page", () => {
-    expect(resolveAppRoute(fallbackNavigationModel, "mounts")).toBe(
-      "skill-mounts",
-    );
-  });
-
-  it("keeps the default skills overview route on the catalog page", () => {
-    expect(resolveAppRoute(fallbackNavigationModel, "overview")).toBe(
-      "catalog",
-    );
-  });
-
-  it("routes the conversations tab to the conversations page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "conversations",
-          activeSubNavId: "sessions",
-        },
-        "sessions",
-      ),
-    ).toBe("conversations");
-  });
-
-  it("routes web records to the independent web record page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "conversations",
-          activeSubNavId: "web-records",
-        },
-        "web-records",
-      ),
-    ).toBe("web-records");
-  });
-
-  it("routes the prompt overview tab to the prompt notes page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "prompts",
-          activeSubNavId: "overview",
-        },
-        "overview",
-      ),
-    ).toBe("prompts-overview");
-  });
-
-  it.each(["recent", "recall"])(
-    "routes the memory %s entry to the independent memory module",
-    (activeSubNavId) => {
-      expect(
-        resolveAppRoute(
-          {
-            ...fallbackNavigationModel,
-            activeHeaderTabId: "memory",
-            activeSubNavId,
-          },
-          activeSubNavId,
-        ),
-      ).toBe("memory");
-    },
-  );
-
-  it("does not route retired conversation source and adapter tabs to the conversations page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "conversations",
-          activeSubNavId: "sources",
-        },
-        "sources",
-      ),
-    ).toBe("under-construction");
-
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "conversations",
-          activeSubNavId: "adapters",
-        },
-        "adapters",
-      ),
-    ).toBe("under-construction");
+  it("keeps every implemented route on the router", () => {
+    const router = createAppRouter();
+    const routePaths = Object.keys(router.routesByPath);
+    expect(routePaths).toContain("/skills/overview");
+    expect(routePaths).toContain("/skills/sources");
+    expect(routePaths).toContain("/skills/groups");
+    expect(routePaths).toContain("/skills/mounts");
+    expect(routePaths).toContain("/conversations/sessions");
+    expect(routePaths).toContain("/conversations/web-records");
+    expect(routePaths).toContain("/prompts/overview");
+    expect(routePaths).toContain("/memory/recent");
+    expect(routePaths).toContain("/memory/recall");
+    expect(routePaths).toContain("/team/overview");
+    expect(routePaths).toContain("/under-construction");
   });
 
   it("normalizes retired conversation sub-navigation entries to the sessions tab", () => {
@@ -162,29 +60,5 @@ describe("app route resolution", () => {
     expect(
       normalized.subNavItems.conversations.map((item) => item.routeKey),
     ).toEqual(["conversations.sessions", "conversations.web-records"]);
-  });
-
-  it("routes enabled but unimplemented navigation entries to the under-construction page", () => {
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "mcp",
-          activeSubNavId: "servers",
-        },
-        "servers",
-      ),
-    ).toBe("under-construction");
-
-    expect(
-      resolveAppRoute(
-        {
-          ...fallbackNavigationModel,
-          activeHeaderTabId: "prompts",
-          activeSubNavId: "templates",
-        },
-        "templates",
-      ),
-    ).toBe("under-construction");
   });
 });

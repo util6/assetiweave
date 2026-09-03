@@ -17,19 +17,6 @@ const retiredRouteKeys = new Set([
   "conversations.adapters",
 ]);
 
-const implementedRoutes: Record<string, AppRouteId> = {
-  "conversations.sessions": "conversations",
-  "conversations.web-records": "web-records",
-  "prompts.overview": "prompts-overview",
-  "memory.recent": "memory",
-  "memory.recall": "memory",
-  "team.overview": "team",
-  "skills.groups": "skill-groups",
-  "skills.mounts": "skill-mounts",
-  "skills.overview": "catalog",
-  "skills.sources": "sources",
-};
-
 export function normalizeNavigationModelRoutes(
   navigationModel: NavigationModel,
 ): NavigationModel {
@@ -63,15 +50,4 @@ export function normalizeNavigationModelRoutes(
     activeSubNavId,
     subNavItems,
   };
-}
-
-export function resolveAppRoute(
-  navigationModel: NavigationModel,
-  activeSubNavId: string,
-): AppRouteId {
-  return (
-    implementedRoutes[
-      `${navigationModel.activeHeaderTabId}.${activeSubNavId}`
-    ] ?? "under-construction"
-  );
 }
