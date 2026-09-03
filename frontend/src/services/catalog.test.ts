@@ -3,6 +3,12 @@ import { fallbackNavigationModel } from "../mock/catalog";
 import {
   backupSkills,
   getNavigationModel,
+  getOverview,
+  listAppShortcutSettings,
+  listAssetMountStatuses,
+  listAssets,
+  listProfiles,
+  listSources,
   scanSources,
   startSkillBackupTask,
 } from "./catalog";
@@ -124,6 +130,66 @@ describe("catalog services", () => {
       "Desktop source scans must use startSourceScan",
     );
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  describe("desktop error handling and preview fallback", () => {
+    it("rejects listAssets in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAssets("skill")).rejects.toThrow("tauri error");
+    });
+
+    it("falls back to mock data for listAssets in browser preview environment", async () => {
+      vi.stubGlobal("window", {});
+      invokeMock.mockRejectedValueOnce(new Error("no tauri"));
+
+      const assets = await listAssets("skill");
+      expect(assets.length).toBeGreaterThan(0);
+      expect(assets.every((a) => a.kind === "skill")).toBe(true);
+    });
+
+    it("rejects getOverview in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(getOverview()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSources in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSources()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listProfiles in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listProfiles()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listAppShortcutSettings in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAppShortcutSettings()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listAssetMountStatuses in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAssetMountStatuses()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects getNavigationModel in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(getNavigationModel()).rejects.toThrow("tauri error");
+    });
   });
 });
 

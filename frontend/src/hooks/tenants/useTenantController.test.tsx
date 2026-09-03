@@ -1,5 +1,7 @@
 /* @vitest-environment jsdom */
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
 import {
   cleanup,
   fireEvent,
@@ -8,6 +10,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryScopeProvider } from "../../app/query/QueryScopeProvider";
 import { useTenantController } from "./useTenantController";
 import type { Tenant } from "../../types";
 
@@ -26,10 +29,14 @@ vi.mock("../../services/tenants", () => ({
 afterEach(cleanup);
 
 describe("useTenantController", () => {
+  let queryClient: QueryClient;
   const defaultTenant = tenant("default", "Default Workspace");
   const clientTenant = tenant("client-a", "Client A");
 
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     listTenantsMock.mockReset();
     getActiveTenantMock.mockReset();
     createTenantMock.mockReset();
@@ -38,8 +45,16 @@ describe("useTenantController", () => {
     getActiveTenantMock.mockResolvedValue(defaultTenant);
   });
 
+  function renderWithProviders(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <QueryScopeProvider>{ui}</QueryScopeProvider>
+      </QueryClientProvider>,
+    );
+  }
+
   it("loads tenants and the active tenant", async () => {
-    render(<Fixture />);
+    renderWithProviders(<Fixture />);
 
     await screen.findByText("Default Workspace");
     expect(screen.getByText("2 tenants")).toBeTruthy();
@@ -49,7 +64,7 @@ describe("useTenantController", () => {
     const onTenantChanged = vi.fn();
     switchTenantMock.mockResolvedValue(clientTenant);
 
-    render(<Fixture onTenantChanged={onTenantChanged} />);
+    renderWithProviders(<Fixture onTenantChanged={onTenantChanged} />);
     await screen.findByText("Default Workspace");
     fireEvent.click(screen.getByRole("button", { name: "Switch client" }));
 
@@ -64,7 +79,8 @@ describe("useTenantController", () => {
     const createdTenant = tenant("new-client", "New Client");
     createTenantMock.mockResolvedValue(createdTenant);
 
-    render(<Fixture onTenantChanged={onTenantChanged} />);
+    renderWithProviders(<Fixture onTenantChanged={onTenantChanged} />);
+
     await screen.findByText("Default Workspace");
     fireEvent.click(screen.getByRole("button", { name: "Create tenant" }));
 

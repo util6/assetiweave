@@ -77,7 +77,10 @@ import {
 export async function getOverview(): Promise<AppOverview> {
   try {
     return await invoke<AppOverview>("get_app_overview");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return {
       source_count: 2,
       asset_count: fallbackAssets.length,
@@ -90,7 +93,10 @@ export async function getOverview(): Promise<AppOverview> {
 export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   try {
     return await invoke<Asset[]>("list_assets", { kind: kind ?? null });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return kind
       ? fallbackAssets.filter((asset) => asset.kind === kind)
       : fallbackAssets;
@@ -438,7 +444,10 @@ export async function deleteAsset(
 export async function listSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_sources");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return fallbackSources;
   }
 }
@@ -489,7 +498,10 @@ export async function deleteSource(id: string): Promise<void> {
 export async function listProfiles(): Promise<TargetProfile[]> {
   try {
     return await invoke<TargetProfile[]>("list_profiles");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackProfiles();
   }
 }
@@ -595,7 +607,10 @@ export async function getNavigationModel(): Promise<NavigationModel> {
     return normalizeNavigationModelRoutes(
       await invoke<NavigationModel>("get_navigation_model"),
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackNavigationModel();
   }
 }
@@ -632,7 +647,10 @@ export async function listAppShortcuts(): Promise<AppShortcut[]> {
 export async function listAppShortcutSettings(): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("list_app_shortcut_settings");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackAppShortcuts();
   }
 }
@@ -663,7 +681,10 @@ export async function listAssetMountStatuses(
     return await invoke<AssetMountStatus[]>("list_asset_mount_statuses", {
       assetId,
     });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const statuses = getStoredFallbackMountStatuses();
     return assetId
       ? statuses.filter((status) => status.asset_id === assetId)

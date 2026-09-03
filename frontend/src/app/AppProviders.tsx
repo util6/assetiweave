@@ -1,4 +1,7 @@
 import type { ReactNode } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { createAppQueryClient } from "./query/queryClient";
+import { QueryScopeProvider } from "./query/QueryScopeProvider";
 import { I18nProvider } from "../i18n/I18nProvider";
 import { AppSettingsProvider } from "../store/settings/AppSettingsProvider";
 import { ConversationSyncProvider } from "./backgroundTasks/ConversationSyncProvider";
@@ -13,32 +16,40 @@ import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
 import { ConversationDataMaintenanceProvider } from "./backgroundTasks/ConversationDataMaintenanceProvider";
 import { TeamTaskProvider } from "./backgroundTasks/TeamTaskProvider";
 
+const appQueryClient = createAppQueryClient();
+
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider>
-      <AppSettingsProvider>
-        <ConversationCardKindRegistryProvider>
-          <ConversationSyncProvider>
-            <ConversationDataMaintenanceProvider>
-              <AiExecutionTaskProvider>
-                <AgentLifecycleTaskProvider>
-                  <MemoryTaskProvider>
-                    <SearchIndexProvider>
-                      <SkillBackupProvider>
-                        <CatalogTaskProvider>
-                          <TeamTaskProvider>
-                            <AppUpdateProvider>{children}</AppUpdateProvider>
-                          </TeamTaskProvider>
-                        </CatalogTaskProvider>
-                      </SkillBackupProvider>
-                    </SearchIndexProvider>
-                  </MemoryTaskProvider>
-                </AgentLifecycleTaskProvider>
-              </AiExecutionTaskProvider>
-            </ConversationDataMaintenanceProvider>
-          </ConversationSyncProvider>
-        </ConversationCardKindRegistryProvider>
-      </AppSettingsProvider>
-    </I18nProvider>
+    <QueryClientProvider client={appQueryClient}>
+      <QueryScopeProvider>
+        <I18nProvider>
+          <AppSettingsProvider>
+            <ConversationCardKindRegistryProvider>
+              <ConversationSyncProvider>
+                <ConversationDataMaintenanceProvider>
+                  <AiExecutionTaskProvider>
+                    <AgentLifecycleTaskProvider>
+                      <MemoryTaskProvider>
+                        <SearchIndexProvider>
+                          <SkillBackupProvider>
+                            <CatalogTaskProvider>
+                              <TeamTaskProvider>
+                                <AppUpdateProvider>
+                                  {children}
+                                </AppUpdateProvider>
+                              </TeamTaskProvider>
+                            </CatalogTaskProvider>
+                          </SkillBackupProvider>
+                        </SearchIndexProvider>
+                      </MemoryTaskProvider>
+                    </AgentLifecycleTaskProvider>
+                  </AiExecutionTaskProvider>
+                </ConversationDataMaintenanceProvider>
+              </ConversationSyncProvider>
+            </ConversationCardKindRegistryProvider>
+          </AppSettingsProvider>
+        </I18nProvider>
+      </QueryScopeProvider>
+    </QueryClientProvider>
   );
 }
