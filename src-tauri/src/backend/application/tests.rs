@@ -379,7 +379,20 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
             }],
         }
     };
+    let mut internal_agent_session = fixture_session(
+        "internal-agent-execution",
+        "Internal Agent execution payload",
+        now - ChronoDuration::minutes(20),
+        now - ChronoDuration::minutes(10),
+        Some(&root.join("agent-executions/execution-fixture")),
+    );
+    internal_agent_session.project_path = Some(
+        root.join("agent-executions/execution-fixture")
+            .to_string_lossy()
+            .to_string(),
+    );
     let sessions = vec![
+        internal_agent_session,
         fixture_session(
             "old-but-active",
             "Old but active",
@@ -436,7 +449,23 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
             now - ChronoDuration::hours(4),
             Some(&plain_directory.join("nested")),
         ),
+        fixture_session(
+            "unix-seconds",
+            "Unix seconds session",
+            now - ChronoDuration::hours(3),
+            now - ChronoDuration::minutes(90),
+            Some(&registered_worktree.join("src")),
+        ),
+        fixture_session(
+            "unix-milliseconds",
+            "Unix milliseconds session",
+            now - ChronoDuration::hours(3),
+            now - ChronoDuration::minutes(100),
+            Some(&registered_worktree.join("src")),
+        ),
     ];
+    let unix_seconds = (now - ChronoDuration::minutes(90)).timestamp();
+    let unix_milliseconds = (now - ChronoDuration::minutes(100)).timestamp_millis();
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
     let adapter_for_default = adapter.clone();
@@ -463,8 +492,24 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
                 &sessions,
                 false,
             )
+            .await?;
+            sqlx::query(
+                "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-seconds'",
+            )
+            .bind(unix_seconds)
+            .bind(&tenant_id)
+            .execute(&pool)
             .await
-            .map(|_| ())
+            .map_err(AppError::Db)?;
+            sqlx::query(
+                "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-milliseconds'",
+            )
+            .bind(unix_milliseconds)
+            .bind(&tenant_id)
+            .execute(&pool)
+            .await
+            .map_err(AppError::Db)?;
+            Ok::<_, AppError>(())
         })
         .expect("import recent conversation fixtures");
 
@@ -531,6 +576,9 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
     assert_eq!(project_ids, time_ids);
     assert!(!project_ids.contains("recently-imported-old"));
     assert!(project_ids.contains("old-but-active"));
+    assert!(project_ids.contains("unix-seconds"));
+    assert!(project_ids.contains("unix-milliseconds"));
+    assert!(!project_ids.contains("internal-agent-execution"));
 
     fn by_id<'a>(
         items: &'a [RecentConversationSession],

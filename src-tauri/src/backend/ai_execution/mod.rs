@@ -25,11 +25,21 @@ pub(crate) use types::{
 use crate::backend::agents::types::{
     AgentConnectionCheckMode, AgentConnectionResult, AgentId, AgentModelsResult,
 };
-#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 
 const MAX_PROMPT_BYTES: usize = 1_000_000;
+
+pub(crate) fn agent_execution_workspace_root(db_path: &Path) -> String {
+    db_path
+        .parent()
+        .map(|parent| parent.join("agent-executions"))
+        // Conversation adapters persist their native cwd/project path. Keep the
+        // exclusion prefix native too; converting it to an @config/@data token
+        // would no longer match imported Agent execution sessions.
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default()
+}
 
 #[cfg(test)]
 pub(crate) fn agent_runtime_manager(

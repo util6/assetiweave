@@ -1528,14 +1528,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
         .collect()
 }
 
-pub(crate) async fn list_recent_conversation_sessions_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    cutoff: &str,
-    now: &str,
-) -> AppResult<Vec<RecentConversationSessionRecord>> {
-    let rows = sqlx::query(
-        r#"
+const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
@@ -1552,11 +1545,12 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
                s.updated_at AS last_activity_at,
                (
                    SELECT p.cwd
-                   FROM conversation_parts p
-                   JOIN conversation_turns t
-                     ON t.tenant_id = p.tenant_id AND t.id = p.turn_id
-                   WHERE p.tenant_id = s.tenant_id
+                   FROM conversation_turns t
+                   CROSS JOIN conversation_parts p INDEXED BY idx_conversation_parts_tenant_turn
+                   WHERE t.tenant_id = s.tenant_id
                      AND t.session_id = s.id
+                     AND p.tenant_id = t.tenant_id
+                     AND p.turn_id = t.id
                      AND p.cwd IS NOT NULL
                      AND trim(p.cwd) <> ''
                    ORDER BY COALESCE(t.ended_at, t.started_at) DESC,
@@ -1575,18 +1569,69 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
           ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
         WHERE s.tenant_id = ?1
           AND s.missing = 0
+          AND (
+                ?4 = ''
+                OR s.project_path IS NULL
+                OR (
+                    s.project_path <> ?4
+                    AND instr(s.project_path, ?4 || '/') <> 1
+                )
+              )
           AND s.updated_at IS NOT NULL
-          AND datetime(s.updated_at) >= datetime(?2)
-          AND datetime(s.updated_at) <= datetime(?3)
-        ORDER BY s.updated_at DESC, s.id ASC
-        "#,
-    )
-    .bind(tenant_id)
-    .bind(cutoff)
-    .bind(now)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::external)?;
+          AND CASE
+                WHEN trim(s.updated_at) GLOB '[0-9]*'
+                 AND trim(s.updated_at) NOT GLOB '*[^0-9]*'
+                THEN datetime(
+                    CASE WHEN length(trim(s.updated_at)) >= 12
+                         THEN CAST(trim(s.updated_at) AS REAL) / 1000.0
+                         ELSE CAST(trim(s.updated_at) AS REAL)
+                    END,
+                    'unixepoch'
+                )
+                ELSE datetime(s.updated_at)
+              END >= datetime(?2)
+          AND CASE
+                WHEN trim(s.updated_at) GLOB '[0-9]*'
+                 AND trim(s.updated_at) NOT GLOB '*[^0-9]*'
+                THEN datetime(
+                    CASE WHEN length(trim(s.updated_at)) >= 12
+                         THEN CAST(trim(s.updated_at) AS REAL) / 1000.0
+                         ELSE CAST(trim(s.updated_at) AS REAL)
+                    END,
+                    'unixepoch'
+                )
+                ELSE datetime(s.updated_at)
+              END <= datetime(?3)
+        ORDER BY CASE
+                   WHEN trim(s.updated_at) GLOB '[0-9]*'
+                    AND trim(s.updated_at) NOT GLOB '*[^0-9]*'
+                   THEN datetime(
+                       CASE WHEN length(trim(s.updated_at)) >= 12
+                            THEN CAST(trim(s.updated_at) AS REAL) / 1000.0
+                            ELSE CAST(trim(s.updated_at) AS REAL)
+                       END,
+                       'unixepoch'
+                   )
+                   ELSE datetime(s.updated_at)
+                 END DESC,
+                 s.id ASC
+        "#;
+
+pub(crate) async fn list_recent_conversation_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    cutoff: &str,
+    now: &str,
+    excluded_project_root: &str,
+) -> AppResult<Vec<RecentConversationSessionRecord>> {
+    let rows = sqlx::query(LIST_RECENT_CONVERSATION_SESSIONS_SQL)
+        .bind(tenant_id)
+        .bind(cutoff)
+        .bind(now)
+        .bind(excluded_project_root)
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::external)?;
 
     rows.iter()
         .map(|row| {
@@ -5045,8 +5090,13 @@ fn conversation_session_search_time(session: &ConversationSession) -> Option<Dat
     session
         .started_at
         .as_deref()
-        .and_then(parse_rfc3339_utc)
-        .or_else(|| session.updated_at.as_deref().and_then(parse_rfc3339_utc))
+        .and_then(crate::backend::models::parse_conversation_timestamp)
+        .or_else(|| {
+            session
+                .updated_at
+                .as_deref()
+                .and_then(crate::backend::models::parse_conversation_timestamp)
+        })
         .or_else(|| parse_rfc3339_utc(&session.imported_at))
 }
 
@@ -5299,6 +5349,137 @@ mod tests {
     use uuid::Uuid;
 
     const TEST_TENANT_ID: &str = "default";
+
+    #[test]
+    fn sqlx_sync_import_reports_progress_and_rolls_back_cancelled_batch() {
+        let db_path =
+            std::env::temp_dir().join(format!("assetiweave-sync-cancel-{}.sqlite", Uuid::new_v4()));
+        let database = Database::open(&db_path).unwrap();
+        let adapter = test_conversation_adapter(
+            "sync-cancel",
+            ConversationAdapterKind::External,
+            ConversationAdapterTrustState::Trusted,
+        );
+        let source = test_conversation_source(&adapter.id);
+        database.block_on(async {
+            let pool = database.pool();
+            upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
+                .await
+                .unwrap();
+            upsert_conversation_source_sqlx(pool, TEST_TENANT_ID, &source)
+                .await
+                .unwrap();
+            let mut session = fixture_session("v1");
+            session.source_fingerprint = Some("original".to_string());
+            import_conversation_sessions_sqlx(
+                pool,
+                TEST_TENANT_ID,
+                &source,
+                &[session.clone()],
+                false,
+            )
+            .await
+            .unwrap();
+            let mut changed = fixture_session("v2");
+            changed.source_fingerprint = Some("changed".to_string());
+            let mut second = changed.clone();
+            second.external_id = "session-2".to_string();
+            let sessions = vec![changed, second];
+            let discovered = sessions
+                .iter()
+                .map(|s| s.external_id.clone())
+                .collect::<BTreeSet<_>>();
+            for presence in [None, Some(&discovered)] {
+                let cancellation = tokio_util::sync::CancellationToken::new();
+                let mut progress = Vec::new();
+                let result = import_conversation_sessions_with_control_sqlx(
+                    pool,
+                    TEST_TENANT_ID,
+                    &source,
+                    &sessions,
+                    presence,
+                    false,
+                    Some(&cancellation),
+                    &mut |done, total| {
+                        progress.push((done, total));
+                        if done == 1 {
+                            cancellation.cancel();
+                        }
+                    },
+                )
+                .await;
+                assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+                assert_eq!(progress, vec![(0, 2), (1, 2)]);
+                let fingerprints: Vec<Option<String>> = sqlx::query_scalar(
+                    "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = ?1",
+                )
+                .bind(TEST_TENANT_ID)
+                .fetch_all(pool)
+                .await
+                .unwrap();
+                assert_eq!(fingerprints, vec![Some("original".to_string())]);
+                let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conversation_sync_runs")
+                    .fetch_one(pool)
+                    .await
+                    .unwrap();
+                assert_eq!(runs, 1, "cancelled sync must not be marked complete");
+            }
+            let mut progress = Vec::new();
+            import_conversation_sessions_with_control_sqlx(
+                pool,
+                TEST_TENANT_ID,
+                &source,
+                &sessions,
+                Some(&discovered),
+                false,
+                None,
+                &mut |done, total| progress.push((done, total)),
+            )
+            .await
+            .unwrap();
+            assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
+        });
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-recent-session-query-plan-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let explain = format!("EXPLAIN QUERY PLAN {LIST_RECENT_CONVERSATION_SESSIONS_SQL}");
+        let details = database
+            .block_on(async {
+                let rows = sqlx::query(AssertSqlSafe(explain))
+                    .bind(TEST_TENANT_ID)
+                    .bind("2026-08-29T00:00:00Z")
+                    .bind("2026-09-01T00:00:00Z")
+                    .bind("")
+                    .fetch_all(database.pool())
+                    .await
+                    .map_err(AppError::external)?;
+                rows.iter()
+                    .map(|row| row.try_get::<String, _>(3).map_err(AppError::external))
+                    .collect::<AppResult<Vec<_>>>()
+            })
+            .expect("explain recent query");
+        let plan = details.join("\n");
+
+        assert!(
+            plan.contains("idx_conversation_turns_tenant_session"),
+            "{plan}"
+        );
+        assert!(
+            plan.contains("idx_conversation_parts_tenant_turn"),
+            "{plan}"
+        );
+
+        drop(database);
+        let _ = std::fs::remove_file(db_path);
+    }
 
     #[test]
     fn question_aggregate_excludes_tool_result_and_diff_bodies() {

@@ -1,6 +1,24 @@
+use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
+
+pub(crate) fn parse_conversation_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    let value = value.trim();
+    if let Ok(timestamp) = DateTime::parse_from_rfc3339(value) {
+        return Some(timestamp.with_timezone(&Utc));
+    }
+    let raw = value.parse::<i64>().ok()?;
+    let (seconds, nanoseconds) = if raw.unsigned_abs() >= 100_000_000_000 {
+        (
+            raw.div_euclid(1_000),
+            u32::try_from(raw.rem_euclid(1_000)).ok()? * 1_000_000,
+        )
+    } else {
+        (raw, 0)
+    };
+    DateTime::from_timestamp(seconds, nanoseconds)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

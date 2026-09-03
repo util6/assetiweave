@@ -52,10 +52,13 @@ impl DomainEventConsumer for SessionMemoryConsumer {
     }
 
     fn backfill(&self, cx: &ConsumerCx) -> Result<(), AppError> {
+        let internal_agent_workspace =
+            crate::backend::ai_execution::agent_execution_workspace_root(&cx.db_path);
         cx.database
             .run_sync(crate::backend::store::backfill_session_memory_jobs_sqlx(
                 &cx.pool,
                 &cx.tenant_id,
+                &internal_agent_workspace,
                 &chrono::Utc::now().to_rfc3339(),
             ))?;
         Ok(())
@@ -66,6 +69,8 @@ impl DomainEventConsumer for SessionMemoryConsumer {
     }
 
     fn handle(&self, batch: &[SequencedEvent], cx: &ConsumerCx) -> Result<(), AppError> {
+        let internal_agent_workspace =
+            crate::backend::ai_execution::agent_execution_workspace_root(&cx.db_path);
         for item in batch {
             let DomainEvent::ConversationSourceCommitted {
                 event_id,
@@ -93,6 +98,7 @@ impl DomainEventConsumer for SessionMemoryConsumer {
                     *revision_end,
                     event_id,
                     changed_session_ids.as_deref(),
+                    &internal_agent_workspace,
                     &chrono::Utc::now().to_rfc3339(),
                 ))?;
         }

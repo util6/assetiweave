@@ -91,6 +91,10 @@ Use concise, imperative Conventional Commit subjects, for example `feat: add sou
 
 ## Agent skills
 
+### Memory rewrite
+
+执行 Issue #20、Recent Work、Session/Project/Global Memory、Context Resolver、Recall Agent 或旧 Memory 切换时，先读取 `agent-docs/feature-plans/memory-rewrite/00-execution-router.md`。
+
 ### Issue tracker
 
 问题与规格通过本仓库的 GitHub Issues 跟踪。详见 `agent-docs/governance/issue-tracker.md`。

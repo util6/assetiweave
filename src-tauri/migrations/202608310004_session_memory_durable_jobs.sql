@@ -1,5 +1,5 @@
 -- Extend the Phase 1 queue with recoverable ownership and retry state.
--- This is an append-only migration: existing jobs remain valid and are preserved.
+-- This is an append-only migration: existing jobs remain valid and queued.
 
 DROP INDEX IF EXISTS idx_session_memory_jobs_ready;
 DROP INDEX IF EXISTS idx_session_memory_jobs_session;

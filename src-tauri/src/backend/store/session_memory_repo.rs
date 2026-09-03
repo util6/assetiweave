@@ -88,6 +88,7 @@ pub(crate) async fn enqueue_session_memory_jobs_sqlx(
     source_revision: i64,
     source_event_id: &str,
     changed_session_ids: Option<&[String]>,
+    excluded_project_root: &str,
     now: &str,
 ) -> AppResult<usize> {
     let policy = load_memory_generation_policy_sqlx(pool).await?;
@@ -105,11 +106,17 @@ pub(crate) async fn enqueue_session_memory_jobs_sqlx(
         .await
         .map_err(AppError::Db)?,
     };
-    let candidates = load_session_candidates_sqlx(pool, tenant_id, source_id, &session_ids)
-        .await?
-        .into_iter()
-        .filter(|candidate| !policy.excluded_session_ids.contains(&candidate.id))
-        .collect::<Vec<_>>();
+    let candidates = load_session_candidates_sqlx(
+        pool,
+        tenant_id,
+        source_id,
+        &session_ids,
+        excluded_project_root,
+    )
+    .await?
+    .into_iter()
+    .filter(|candidate| !policy.excluded_session_ids.contains(&candidate.id))
+    .collect::<Vec<_>>();
     let mut inserted = 0usize;
     for candidate in candidates {
         inserted += insert_job_sqlx(
@@ -129,6 +136,7 @@ pub(crate) async fn enqueue_session_memory_jobs_sqlx(
 pub(crate) async fn backfill_session_memory_jobs_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
+    excluded_project_root: &str,
     now: &str,
 ) -> AppResult<usize> {
     let policy = load_memory_generation_policy_sqlx(pool).await?;
@@ -145,9 +153,10 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     .flatten()
     .unwrap_or(0);
     let sources = sqlx::query(
-        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 ORDER BY id ASC",
+        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1)) ORDER BY id ASC",
     )
     .bind(tenant_id)
+    .bind(excluded_project_root)
     .fetch_all(pool)
     .await
     .map_err(AppError::Db)?;
@@ -218,6 +227,7 @@ async fn load_session_candidates_sqlx(
     tenant_id: &str,
     source_id: &str,
     session_ids: &[String],
+    excluded_project_root: &str,
 ) -> AppResult<Vec<SessionMemorySourceCandidate>> {
     if session_ids.is_empty() {
         return Ok(Vec::new());
@@ -228,7 +238,13 @@ async fn load_session_candidates_sqlx(
     query.push_bind(tenant_id);
     query.push(" AND source_id = ");
     query.push_bind(source_id);
-    query.push(" AND missing = 0 AND id IN (");
+    query.push(" AND missing = 0 AND (");
+    query.push_bind(excluded_project_root);
+    query.push(" = '' OR project_path IS NULL OR (project_path <> ");
+    query.push_bind(excluded_project_root);
+    query.push(" AND instr(project_path, ");
+    query.push_bind(excluded_project_root);
+    query.push(" || '/') <> 1)) AND id IN (");
     {
         let mut separated = query.separated(", ");
         for id in session_ids {
@@ -263,8 +279,8 @@ fn candidate_with_not_before(
     let not_before = candidate
         .updated_at
         .as_deref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| (value.with_timezone(&Utc) + SESSION_IDLE_DELAY).to_rfc3339())
+        .and_then(crate::backend::models::parse_conversation_timestamp)
+        .map(|value| (value + SESSION_IDLE_DELAY).to_rfc3339())
         .unwrap_or_else(|| now.to_string());
     SessionMemoryJobCandidate {
         session_id: candidate.id.clone(),
@@ -573,7 +589,7 @@ pub(crate) async fn list_session_memory_job_ids_for_scheduler_sqlx(
     limit: i64,
 ) -> AppResult<Vec<String>> {
     sqlx::query_scalar(
-        "SELECT id FROM session_memory_jobs WHERE tenant_id = ?1 AND (status = 'queued' OR (status = 'failed' AND retry_at IS NOT NULL AND retry_at <= ?2)) ORDER BY CASE WHEN status = 'failed' OR not_before <= ?2 THEN 0 ELSE 1 END, created_at ASC, id ASC LIMIT ?3",
+        "SELECT id FROM session_memory_jobs WHERE tenant_id = ?1 AND (status = 'queued' OR (status = 'failed' AND retry_at IS NOT NULL AND retry_at <= ?2)) ORDER BY CASE WHEN status = 'failed' OR not_before <= ?2 THEN 0 ELSE 1 END, not_before DESC, created_at DESC, id ASC LIMIT ?3",
     )
     .bind(tenant_id)
     .bind(now)
@@ -1162,6 +1178,76 @@ mod tests {
     }
 
     #[test]
+    fn scheduler_prioritizes_the_most_recent_ready_session() {
+        let path = std::env::temp_dir().join(format!(
+            "assetiweave-session-memory-scheduler-priority-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let database = crate::backend::store::Database::open_initialized(&path)
+            .expect("open scheduler priority fixture");
+        let old = SessionMemoryJobCandidate {
+            session_id: "old-session".to_string(),
+            source_id: "source".to_string(),
+            source_revision: 1,
+            source_fingerprint: "old-fingerprint".to_string(),
+            not_before: "2026-08-01T00:30:00Z".to_string(),
+        };
+        let recent = SessionMemoryJobCandidate {
+            session_id: "recent-session".to_string(),
+            source_fingerprint: "recent-fingerprint".to_string(),
+            not_before: "2026-08-31T23:30:00Z".to_string(),
+            ..old.clone()
+        };
+        database
+            .run_sync(insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &old,
+                "event-old",
+                "sync-old",
+                "2026-08-01T00:00:00Z",
+            ))
+            .expect("insert old job");
+        database
+            .run_sync(insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &recent,
+                "event-recent",
+                "sync-recent",
+                "2026-08-31T23:00:00Z",
+            ))
+            .expect("insert recent job");
+
+        let jobs = database
+            .run_sync(list_session_memory_job_ids_for_scheduler_sqlx(
+                database.pool(),
+                "default",
+                "2026-09-01T00:00:00Z",
+                2,
+            ))
+            .expect("list scheduler jobs");
+        let sessions = jobs
+            .iter()
+            .map(|job_id| {
+                database
+                    .run_sync(load_session_memory_job_sqlx(
+                        database.pool(),
+                        "default",
+                        job_id,
+                    ))
+                    .expect("load scheduler job")
+                    .expect("scheduler job exists")
+                    .session_id
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sessions, vec!["recent-session", "old-session"]);
+
+        drop(database);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-durable-red-{}.sqlite",
@@ -1200,6 +1286,7 @@ mod tests {
                     1,
                     "durable-event",
                     Some(&["durable-session".to_string()]),
+                    "",
                     now,
                 ))
                 .expect("enqueue durable job"),

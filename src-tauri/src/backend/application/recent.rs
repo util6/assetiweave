@@ -67,9 +67,15 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let cutoff = (now - chrono::Duration::hours(RECENT_WINDOW_HOURS)).to_rfc3339();
         let now_text = now.to_rfc3339();
+        let internal_agent_workspace =
+            crate::backend::ai_execution::agent_execution_workspace_root(&self.db_path);
         let (records, registered_roots) = self.runtime.run_sync(async move {
             let mut records = crate::backend::store::list_recent_conversation_sessions_sqlx(
-                &pool, &tenant_id, &cutoff, &now_text,
+                &pool,
+                &tenant_id,
+                &cutoff,
+                &now_text,
+                &internal_agent_workspace,
             )
             .await?;
             let session_ids = records
@@ -103,9 +109,8 @@ impl AppService {
         let mut sessions = records
             .into_iter()
             .filter_map(|record| {
-                let last_activity_at = DateTime::parse_from_rfc3339(&record.last_activity_at)
-                    .ok()?
-                    .with_timezone(&Utc);
+                let last_activity_at =
+                    crate::backend::models::parse_conversation_timestamp(&record.last_activity_at)?;
                 if last_activity_at < cutoff || last_activity_at > now {
                     return None;
                 }

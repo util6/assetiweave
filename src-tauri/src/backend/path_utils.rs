@@ -55,6 +55,18 @@ pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
     Ok(home.join(".assetiweave").join("library").join("skills"))
 }
 
+pub(crate) fn memory_legacy_archive_root() -> AppResult<PathBuf> {
+    if let Some(home) = std::env::var_os("ASSETIWEAVE_HOME").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(home).join("library").join("memory-legacy"));
+    }
+    let home =
+        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
+    Ok(home
+        .join(".assetiweave")
+        .join("library")
+        .join("memory-legacy"))
+}
+
 pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
     let home =
         dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;

@@ -40,6 +40,8 @@ describe("MemoryTaskProvider", () => {
     });
     expect(screen.getByTestId("status").textContent).toBe("succeeded");
     expect(listMock).toHaveBeenCalledTimes(2);
+    expect(listMock).toHaveBeenNthCalledWith(1, true);
+    expect(listMock).toHaveBeenNthCalledWith(2, true);
   });
 
   it("refreshes immediately when the desktop task event arrives", async () => {

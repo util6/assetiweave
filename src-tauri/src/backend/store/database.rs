@@ -608,6 +608,16 @@ mod tests {
     }
 
     #[test]
+    fn released_session_memory_durable_jobs_migration_remains_immutable() {
+        let migration =
+            include_str!("../../../migrations/202608310004_session_memory_durable_jobs.sql");
+        assert_eq!(
+            format!("{:x}", Sha384::digest(migration.as_bytes())),
+            "d786fd5e32cc28a7864c23b44c332452a50d78c7fd78ae4cc1958105ac710b0b5a7bbbd5db6a57f69f0510ceaeaf91d4"
+        );
+    }
+
+    #[test]
     fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
         let db_path = temp_database_path("memory-recall-index-upgrade");
         migrate_database(&db_path).expect("create current database");

@@ -22,12 +22,12 @@ export function MemoryTaskProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<MemoryTaskView[]>([]);
 
   const refresh = useCallback(async () => {
-    setTasks(await listMemoryPublicTasks());
+    setTasks(await listMemoryPublicTasks(true));
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const refreshTasks = () => void listMemoryPublicTasks().then((nextTasks) => {
+    const refreshTasks = () => void listMemoryPublicTasks(true).then((nextTasks) => {
       if (!cancelled) setTasks(nextTasks);
     }).catch(() => undefined);
     void refreshTasks();

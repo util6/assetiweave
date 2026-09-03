@@ -156,6 +156,8 @@ impl AppService {
     ) -> AppResult<usize> {
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
+        let internal_agent_workspace =
+            crate::backend::ai_execution::agent_execution_workspace_root(&self.db_path);
         self.runtime
             .run_sync(store::enqueue_session_memory_jobs_sqlx(
                 &pool,
@@ -165,6 +167,7 @@ impl AppService {
                 source_revision,
                 source_event_id,
                 changed_session_ids,
+                &internal_agent_workspace,
                 &now.to_rfc3339(),
             ))
     }
@@ -890,8 +893,8 @@ fn session_idle_ready(detail: &ConversationSessionDetail, now: DateTime<Utc>) ->
         .session
         .updated_at
         .as_deref()
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .is_some_and(|updated| now >= updated.with_timezone(&Utc) + Duration::minutes(30))
+        .and_then(crate::backend::models::parse_conversation_timestamp)
+        .is_some_and(|updated| now >= updated + Duration::minutes(30))
 }
 
 fn strip_json_fence(value: &str) -> &str {
@@ -971,6 +974,38 @@ mod tests {
         let pending = serde_json::json!({ "status": "completed-command" });
         assert!(value_marks_completion(&completed));
         assert!(!value_marks_completion(&pending));
+    }
+
+    #[test]
+    fn unix_activity_timestamps_reach_the_idle_gate() {
+        let last_activity = DateTime::parse_from_rfc3339("2026-08-31T10:00:00Z")
+            .expect("parse last activity")
+            .with_timezone(&Utc);
+        let now = last_activity + Duration::minutes(30);
+        for updated_at in [
+            last_activity.timestamp().to_string(),
+            last_activity.timestamp_millis().to_string(),
+        ] {
+            let detail = ConversationSessionDetail {
+                session: crate::backend::models::ConversationSession {
+                    id: "session".to_string(),
+                    source_id: "source".to_string(),
+                    adapter_id: "adapter".to_string(),
+                    external_id: "external".to_string(),
+                    title: "Session".to_string(),
+                    project_path: None,
+                    started_at: None,
+                    updated_at: Some(updated_at),
+                    source_locator: None,
+                    source_fingerprint: None,
+                    missing: false,
+                    created_at: now.to_rfc3339(),
+                    imported_at: now.to_rfc3339(),
+                },
+                questions: Vec::new(),
+            };
+            assert!(session_idle_ready(&detail, now));
+        }
     }
 
     #[test]

@@ -80,11 +80,29 @@ _Avoid_: 对话目录、日志仓库
 负责将不同宿主的专有记录格式解析并规范化为会话与轮次标准的扩展协议包。
 _Avoid_: 读取插件、解析脚本
 
+## 记忆（Memory）
+
+**项目目录（Project Directory）**：
+Conversation Session 的工作目录归属，也是 Memory 聚合同一项目下多个宿主 Agent 对话的边界。
+_Avoid_: 工作线、主题线
+
+**近期工作（Recent Work）**：
+按项目目录聚合多个宿主 Agent 的近期 Conversation Session 后形成的工作概览。
+_Avoid_: 工作线、Dream、会话列表
+
+**回忆 Agent（Recall Agent）**：
+多 Agent 对话系统中专门根据用户的碎片化线索检索 Conversation 事实，并返回回答与可定位内容引用的 Agent。
+_Avoid_: 搜索框、Recall 页面、检索器
+
 ## 扩展生态与运行时（Extension & Runtime）
 
+**应用插件（Application Plugin）**：
+实现 AssetIWeave 某项可替换业务能力的应用扩展；内置实现与外部实现遵守对应的能力契约。它不是被 AssetIWeave 管理或挂载的 Skill、Rule 等资产。
+_Avoid_: 资产、技能资产、插件资产
+
 **扩展内核（Extension Kernel）**：
-统管所有扩展包（Agent 与 Adapter）的身份标识、版本兼容性、沙箱进程调用与生命周期探活的底层运行时基座。
-_Avoid_: 插件系统、调度器
+负责应用插件接入与生命周期管理的共享基座；Agent 与 Conversation Adapter 的扩展接入属于其覆盖场景，而非全部范围。
+_Avoid_: 领域业务服务、任务调度器
 
 **Agent 市场（Agent Market）**：
 发现、安装与管理可执行 AI 智能体（Agent Package）的声明式目录与分发通道。
