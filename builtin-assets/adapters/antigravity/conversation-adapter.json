@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "antigravity",
   "name": "Antigravity",
-  "version": "1.3.10",
+  "version": "1.3.12",
   "protocol_version": 1,
   "runtime": {
     "type": "node",

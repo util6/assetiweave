@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -437,6 +437,173 @@ test("Antigravity treats a repeated write as an update instead of a new file", (
     assert.match(fileChanges[1].text, /--- a\/tmp\/project\/repeated\.py\n\+\+\+ b\/tmp\/project\/repeated\.py/);
     assert.match(fileChanges[1].text, /-print\(1\)\n\+print\(2\)/);
     assert.doesNotMatch(fileChanges[1].text, /new file mode 100644/);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+
+test("Antigravity automatically discovers sibling IDE and CLI brain directories", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-multibrain-"));
+  try {
+    const ideDir = path.join(fixtureRoot, "antigravity-ide", "brain", "11111111-1111-1111-1111-111111111111", ".system_generated", "logs");
+    const cliDir = path.join(fixtureRoot, "antigravity-cli", "brain", "22222222-2222-2222-2222-222222222222", ".system_generated", "logs");
+    mkdirSync(ideDir, { recursive: true });
+    mkdirSync(cliDir, { recursive: true });
+
+    writeFileSync(path.join(ideDir, "transcript_full.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-05T00:00:00Z",
+        content: "<USER_REQUEST>IDE session request</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-05T00:00:01Z",
+        content: "IDE response",
+      }),
+    ].join("\n"));
+
+    writeFileSync(path.join(cliDir, "transcript_full.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-05T00:00:00Z",
+        content: "<USER_REQUEST>CLI session request</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-05T00:00:01Z",
+        content: "CLI response",
+      }),
+    ].join("\n"));
+
+    // Pointing to antigravity-ide/brain should discover both ide and cli sessions
+    const ideBrainPath = path.join(fixtureRoot, "antigravity-ide", "brain");
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: ideBrainPath }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const items = messages.filter((message) => message.type === "item");
+    assert.equal(items.length, 2);
+    const titles = items.map((i) => i.item.session.title).sort();
+    assert.deepEqual(titles, ["CLI session request", "IDE session request"]);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+
+test("Antigravity parses SQLite conversation database (.db) from Antigravity ACP", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-acp-db-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "33333333-3333-3333-3333-333333333333.db");
+    const metaPath = path.join(fixtureRoot, "33333333-3333-3333-3333-333333333333.meta");
+    writeFileSync(metaPath, JSON.stringify({ cwd: "/Users/test/projects/acp-demo", mode_id: "yolo" }));
+
+    // User payload: "Hello from ACP!"
+    const userHex = "9a0111120f48656c6c6f2066726f6d2041435021";
+    // Assistant payload: "Response from ACP assistant"
+    const asstHex = "a2011d0a1b526573706f6e73652066726f6d2041435020617373697374616e74";
+
+    spawnSync("sqlite3", [
+      dbPath,
+      `CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB);
+       INSERT INTO steps VALUES (0, 14, X'${userHex}');
+       INSERT INTO steps VALUES (1, 15, X'${asstHex}');`,
+    ]);
+
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const items = messages.filter((m) => m.type === "item");
+    assert.equal(items.length, 1);
+    const session = items[0].item.session;
+    assert.equal(session.external_id, "33333333-3333-3333-3333-333333333333");
+    assert.equal(session.title, "Hello from ACP!");
+    assert.equal(session.project_path, "/Users/test/projects/acp-demo");
+    assert.equal(session.turns.length, 1);
+    assert.equal(session.turns[0].user_text, "Hello from ACP!");
+    assert.equal(session.turns[0].parts[0].text, "Response from ACP assistant");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Antigravity automatically discovers sibling ACP SQLite conversation databases alongside IDE and CLI", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-antigravity-all-envs-"));
+  try {
+    const ideDir = path.join(fixtureRoot, "antigravity-ide", "brain", "11111111-1111-1111-1111-111111111111", ".system_generated", "logs");
+    const cliDir = path.join(fixtureRoot, "antigravity-cli", "brain", "22222222-2222-2222-2222-222222222222", ".system_generated", "logs");
+    const acpConvDir = path.join(fixtureRoot, "antigravity-acp", "conversations");
+    mkdirSync(ideDir, { recursive: true });
+    mkdirSync(cliDir, { recursive: true });
+    mkdirSync(acpConvDir, { recursive: true });
+
+    writeFileSync(path.join(ideDir, "transcript_full.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-05T00:00:00Z",
+        content: "<USER_REQUEST>IDE session request</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-05T00:00:01Z",
+        content: "IDE response",
+      }),
+    ].join("\n"));
+
+    writeFileSync(path.join(cliDir, "transcript_full.jsonl"), [
+      JSON.stringify({
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        created_at: "2026-08-05T00:00:00Z",
+        content: "<USER_REQUEST>CLI session request</USER_REQUEST>",
+      }),
+      JSON.stringify({
+        source: "MODEL",
+        type: "PLANNER_RESPONSE",
+        created_at: "2026-08-05T00:00:01Z",
+        content: "CLI response",
+      }),
+    ].join("\n"));
+
+    const acpDbPath = path.join(acpConvDir, "33333333-3333-3333-3333-333333333333.db");
+    const userHex = "9a0111120f48656c6c6f2066726f6d2041435021";
+    const asstHex = "a2011d0a1b526573706f6e73652066726f6d2041435020617373697374616e74";
+    spawnSync("sqlite3", [
+      acpDbPath,
+      `CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB);
+       INSERT INTO steps VALUES (0, 14, X'${userHex}');
+       INSERT INTO steps VALUES (1, 15, X'${asstHex}');`,
+    ]);
+
+    // Pointing to antigravity-ide/brain should discover all 3 environments: IDE, CLI, and ACP
+    const ideBrainPath = path.join(fixtureRoot, "antigravity-ide", "brain");
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({ method: "read_session", source: { location: ideBrainPath }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const items = messages.filter((message) => message.type === "item");
+    assert.equal(items.length, 3);
+    const ids = items.map((i) => i.item.session.external_id).sort();
+    assert.deepEqual(ids, [
+      "11111111-1111-1111-1111-111111111111",
+      "22222222-2222-2222-2222-222222222222",
+      "33333333-3333-3333-3333-333333333333",
+    ]);
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

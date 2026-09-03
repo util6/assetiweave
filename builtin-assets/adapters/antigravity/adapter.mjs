@@ -2,6 +2,7 @@
 import { normalizeSessionPayload } from "./payload-policy.mjs";
 import shellProjector from "./shell-projector.cjs";
 const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -320,11 +321,13 @@ function extractUserRequestText(content) {
   const openTag = "<USER_REQUEST>";
   const closeTag = "</USER_REQUEST>";
   const startIndex = content.indexOf(openTag);
-  if (startIndex < 0) return null;
-  const textStart = startIndex + openTag.length;
-  const endIndex = content.indexOf(closeTag, textStart);
-  const text = endIndex < 0 ? content.slice(textStart) : content.slice(textStart, endIndex);
-  return text.trim() || null;
+  if (startIndex >= 0) {
+    const textStart = startIndex + openTag.length;
+    const endIndex = content.indexOf(closeTag, textStart);
+    const text = endIndex < 0 ? content.slice(textStart) : content.slice(textStart, endIndex);
+    return text.trim() || null;
+  }
+  return String(content).trim() || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -690,7 +693,7 @@ const IGNORED_STEP_TYPES = new Set([
   "SYSTEM_MESSAGE",
 ]);
 
-function parseTranscript(text) {
+function buildTurnsFromSteps(steps) {
   const turns = [];
   let current = null;
   let projectPath = null;
@@ -698,15 +701,8 @@ function parseTranscript(text) {
   const pendingExecutionIds = [];
   const knownFileContents = new Map();
 
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    let step;
-    try {
-      step = JSON.parse(line);
-    } catch {
-      continue;
-    }
-
+  for (const step of steps) {
+    if (!step) continue;
     const source = step.source ?? "";
     const type = step.type ?? "";
     const timestamp = step.created_at ?? null;
@@ -776,6 +772,237 @@ function parseTranscript(text) {
   return { turns, projectPath };
 }
 
+function parseTranscript(text) {
+  const steps = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      steps.push(JSON.parse(line));
+    } catch {
+      continue;
+    }
+  }
+  return buildTurnsFromSteps(steps);
+}
+
+function decodeProto(buf) {
+  if (!buf || !Buffer.isBuffer(buf)) return {};
+  let pos = 0;
+  const fields = {};
+  while (pos < buf.length) {
+    let key = 0, shift = 0;
+    while (pos < buf.length) {
+      const b = buf[pos++];
+      key |= (b & 0x7f) << shift;
+      if (!(b & 0x80)) break;
+      shift += 7;
+    }
+    const fieldNum = key >> 3;
+    const wireType = key & 0x07;
+    if (wireType === 0) {
+      let val = 0n, vShift = 0n;
+      while (pos < buf.length) {
+        const b = BigInt(buf[pos++]);
+        val |= (b & 0x7fn) << vShift;
+        if (!(b & 0x80n)) break;
+        vShift += 7n;
+      }
+      fields[fieldNum] = fields[fieldNum] || [];
+      fields[fieldNum].push({ type: "varint", val });
+    } else if (wireType === 2) {
+      let len = 0, lShift = 0;
+      while (pos < buf.length) {
+        const b = buf[pos++];
+        len |= (b & 0x7f) << lShift;
+        if (!(b & 0x80)) break;
+        lShift += 7;
+      }
+      const slice = buf.subarray(pos, pos + len);
+      pos += len;
+      fields[fieldNum] = fields[fieldNum] || [];
+      fields[fieldNum].push({ type: "bytes", len, buf: slice });
+    } else if (wireType === 1) {
+      pos += 8;
+    } else if (wireType === 5) {
+      pos += 4;
+    } else {
+      break;
+    }
+  }
+  return fields;
+}
+
+function getProtoTimestamp(top) {
+  const f5 = top[5]?.[0];
+  if (!f5) return null;
+  const sub5 = decodeProto(f5.buf);
+  const f1 = sub5[1]?.[0];
+  if (!f1) return null;
+  const sub1 = decodeProto(f1.buf);
+  const sec = sub1[1]?.[0]?.val;
+  const nanos = sub1[2]?.[0]?.val || 0n;
+  if (sec != null) {
+    return new Date(Number(sec) * 1000 + Math.round(Number(nanos) / 1e6)).toISOString();
+  }
+  return null;
+}
+
+function parseSqliteSteps(dbPath) {
+  let rows = [];
+  try {
+    const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, step_type, hex(step_payload) as hex_payload FROM steps ORDER BY idx ASC;"], {
+      encoding: "utf8",
+      maxBuffer: 100 * 1024 * 1024,
+    });
+    rows = JSON.parse(raw || "[]");
+  } catch {
+    return [];
+  }
+  const steps = [];
+  for (const r of rows) {
+    if (!r.hex_payload) continue;
+    const buf = Buffer.from(r.hex_payload, "hex");
+    const top = decodeProto(buf);
+    const ts = getProtoTimestamp(top);
+
+    if (r.step_type === 14) {
+      const f19 = top[19]?.[0];
+      let userText = "";
+      if (f19) {
+        const sub19 = decodeProto(f19.buf);
+        userText = sub19[2]?.[0]?.buf?.toString("utf8") || sub19[3]?.[0]?.buf?.toString("utf8") || "";
+      }
+      if (userText) {
+        steps.push({
+          source: "USER_EXPLICIT",
+          type: "USER_INPUT",
+          content: userText,
+          created_at: ts,
+        });
+      }
+    } else if (r.step_type === 15) {
+      const f20 = top[20]?.[0];
+      if (!f20) continue;
+      const sub20 = decodeProto(f20.buf);
+      const textBuf = sub20[1]?.[0]?.buf || sub20[8]?.[0]?.buf;
+      const responseText = textBuf ? textBuf.toString("utf8") : "";
+      const toolCalls = [];
+      const tcList = sub20[7] || [];
+      for (const tc of tcList) {
+        const stc = decodeProto(tc.buf);
+        const callId = stc[1]?.[0]?.buf?.toString("utf8") || "";
+        const toolName = stc[2]?.[0]?.buf?.toString("utf8") || stc[9]?.[0]?.buf?.toString("utf8") || "";
+        const argsRaw = stc[3]?.[0]?.buf?.toString("utf8") || "{}";
+        let parsedArgs = {};
+        try { parsedArgs = JSON.parse(argsRaw); } catch {}
+        toolCalls.push({
+          id: callId,
+          name: toolName,
+          args: parsedArgs,
+          type: "function",
+          function: { name: toolName, arguments: argsRaw },
+        });
+      }
+      if (responseText || toolCalls.length > 0) {
+        steps.push({
+          source: "MODEL",
+          type: "PLANNER_RESPONSE",
+          content: responseText,
+          tool_calls: toolCalls,
+          created_at: ts,
+        });
+      }
+    } else if (r.step_type === 21) {
+      const f28 = top[28]?.[0];
+      let output = "";
+      if (f28) {
+        const sub28 = decodeProto(f28.buf);
+        output = sub28[21]?.[0]?.buf?.toString("utf8") || "";
+      }
+      steps.push({
+        source: "MODEL",
+        type: "RUN_COMMAND",
+        content: output,
+        status: "DONE",
+        created_at: ts,
+      });
+    } else if (r.step_type === 103) {
+      const f116 = top[116]?.[0];
+      let toolName = "";
+      let resText = "";
+      if (f116) {
+        const sub116 = decodeProto(f116.buf);
+        toolName = sub116[2]?.[0]?.buf?.toString("utf8") || "";
+        const resRaw = sub116[4]?.[0];
+        if (resRaw) {
+          const subRes = decodeProto(resRaw.buf);
+          const resSub2 = subRes[2]?.[0];
+          if (resSub2) {
+            const subResSub2 = decodeProto(resSub2.buf);
+            resText = subResSub2[2]?.[0]?.buf?.toString("utf8") || "";
+          }
+        }
+      }
+      let type = "GENERIC";
+      if (toolName === "view_file") type = "VIEW_FILE";
+      else if (toolName === "grep_search") type = "GREP_SEARCH";
+      else if (toolName === "list_dir") type = "LIST_DIRECTORY";
+      else if (toolName.includes("file") || toolName.includes("patch") || toolName.includes("edit") || toolName.includes("write")) type = "CODE_ACTION";
+      steps.push({
+        source: "MODEL",
+        type,
+        content: resText,
+        status: "DONE",
+        created_at: ts,
+      });
+    } else if (r.step_type === 7) {
+      const sub13 = decodeProto(top[13]?.[0]?.buf);
+      const matches = sub13[4] || [];
+      const lines = [];
+      for (const m of matches) {
+        const sm = decodeProto(m.buf);
+        const file = sm[1]?.[0]?.buf?.toString("utf8") || "";
+        const lineNo = sm[2]?.[0]?.val != null ? String(sm[2][0].val) : "";
+        const content = sm[3]?.[0]?.buf?.toString("utf8") || "";
+        if (file || content) lines.push(`${file}:${lineNo}:${content}`);
+      }
+      steps.push({
+        source: "MODEL",
+        type: "GREP_SEARCH",
+        content: lines.join("\n"),
+        status: "DONE",
+        created_at: ts,
+      });
+    } else if (r.step_type === 17) {
+      const errorStr = buf.toString("utf8");
+      steps.push({
+        source: "MODEL",
+        type: "ERROR_MESSAGE",
+        content: errorStr,
+        status: "ERROR",
+        created_at: ts,
+      });
+    }
+  }
+  return steps;
+}
+
+function parseSqliteDb(dbPath) {
+  const steps = parseSqliteSteps(dbPath);
+  let metaProjectPath = null;
+  try {
+    const metaPath = dbPath.replace(/\.db$/, ".meta");
+    if (existsSync(metaPath)) {
+      const meta = JSON.parse(readFileSync(metaPath, "utf8"));
+      if (meta.cwd && typeof meta.cwd === "string") {
+        metaProjectPath = meta.cwd;
+      }
+    }
+  } catch {}
+  const { turns, projectPath } = buildTurnsFromSteps(steps);
+  return { turns, projectPath: metaProjectPath || projectPath };
+}
+
 // ---------------------------------------------------------------------------
 // Session discovery
 // ---------------------------------------------------------------------------
@@ -809,6 +1036,116 @@ function discoverConversationDirs(brainDir) {
   return dirs;
 }
 
+function discoverBrainDirs(startLocation) {
+  if (!startLocation) return [];
+  const resolved = path.resolve(expandPath(startLocation));
+  const candidateDirs = new Set();
+
+  function scanForBrains(targetDir) {
+    if (!existsSync(targetDir)) return;
+    try {
+      const stat = statSync(targetDir);
+      if (!stat.isDirectory()) return;
+    } catch {
+      return;
+    }
+
+    try {
+      const entries = readdirSync(targetDir, { withFileTypes: true });
+      const hasUuid = entries.some((e) => e.isDirectory() && isUuidDir(e.name));
+      if (hasUuid) {
+        candidateDirs.add(targetDir);
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name === "brain") {
+          candidateDirs.add(path.join(targetDir, "brain"));
+        } else if (entry.name.toLowerCase().includes("antigravity")) {
+          const subDir = path.join(targetDir, entry.name);
+          const subBrain = path.join(subDir, "brain");
+          if (existsSync(subBrain)) {
+            candidateDirs.add(subBrain);
+          } else {
+            candidateDirs.add(subDir);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 1. Scan the start location
+  scanForBrains(resolved);
+
+  // 2. Scan parent and grandparent for sibling environments (e.g. ~/.gemini/antigravity-ide/brain -> ~/.gemini)
+  const parent = path.dirname(resolved);
+  const grandParent = path.dirname(parent);
+  for (const ancestor of [parent, grandParent]) {
+    if (ancestor && ancestor !== "/" && ancestor !== path.dirname(ancestor)) {
+      scanForBrains(ancestor);
+    }
+  }
+
+  // Filter only those containing actual UUID conversation directories
+  const validBrainDirs = [];
+  for (const dir of candidateDirs) {
+    if (!existsSync(dir)) continue;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      if (entries.some((e) => e.isDirectory() && isUuidDir(e.name))) {
+        validBrainDirs.push(dir);
+      }
+    } catch {}
+  }
+
+  if (validBrainDirs.length === 0 && existsSync(resolved) && statSync(resolved).isDirectory()) {
+    return [resolved];
+  }
+  return validBrainDirs;
+}
+
+function discoverConversationDbFiles(startLocation) {
+  if (!startLocation) return [];
+  const resolved = path.resolve(expandPath(startLocation));
+  const dbFiles = new Set();
+
+  function scanDir(targetDir) {
+    if (!existsSync(targetDir)) return;
+    try {
+      const stat = statSync(targetDir);
+      if (!stat.isDirectory()) return;
+    } catch { return; }
+
+    try {
+      const entries = readdirSync(targetDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith(".db")) {
+          const baseName = entry.name.slice(0, -3);
+          if (isUuidDir(baseName)) {
+            dbFiles.add(path.join(targetDir, entry.name));
+          }
+        } else if (entry.isDirectory()) {
+          if (entry.name === "conversations") {
+            scanDir(path.join(targetDir, "conversations"));
+          } else if (entry.name.toLowerCase().includes("antigravity")) {
+            scanDir(path.join(targetDir, entry.name));
+          }
+        }
+      }
+    } catch {}
+  }
+
+  scanDir(resolved);
+  const parent = path.dirname(resolved);
+  const grandParent = path.dirname(parent);
+  for (const ancestor of [parent, grandParent]) {
+    if (ancestor && ancestor !== "/" && ancestor !== path.dirname(ancestor)) {
+      scanDir(ancestor);
+    }
+  }
+
+  return Array.from(dbFiles);
+}
+
 function inferProjectPath(turns) {
   for (const turn of turns) {
     for (const part of turn.parts) {
@@ -829,11 +1166,26 @@ function readSession() {
   let location = expandPath(input.source?.location);
   if (!location) return [];
 
-  // Determine the brain directory
-  let brainDir = location;
+  // Determine if location points directly to a transcript file or sqlite db
   try {
     const stat = statSync(location);
     if (stat.isFile()) {
+      if (location.endsWith(".db")) {
+        const parsed = parseSqliteDb(location);
+        const turns = displayTurns(parsed.turns);
+        if (!turns.length) return [];
+        const externalId = path.basename(location, ".db");
+        return [applyTextBudgets(finalizeStructuredContentCards({
+          external_id: externalId,
+          title: titleFromUserText(turns[0]?.user_text),
+          project_path: parsed.projectPath ?? inferProjectPath(turns),
+          started_at: turns[0]?.started_at ?? null,
+          updated_at: turns.at(-1)?.ended_at ?? null,
+          source_locator: location,
+          source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+          turns,
+        }))];
+      }
       // Pointing to a transcript file directly
       const text = readFileSync(location, "utf8");
       const parsed = parseTranscript(text);
@@ -856,13 +1208,13 @@ function readSession() {
   }
 
   // Check if this is a single conversation dir (contains .system_generated)
-  const transcriptInDir = findTranscriptFile(brainDir);
+  const transcriptInDir = findTranscriptFile(location);
   if (transcriptInDir) {
     const text = readFileSync(transcriptInDir, "utf8");
     const parsed = parseTranscript(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
-    const externalId = path.basename(brainDir) || "antigravity-session";
+    const externalId = path.basename(location) || "antigravity-session";
     return [applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: titleFromUserText(turns[0]?.user_text),
@@ -875,33 +1227,71 @@ function readSession() {
     }))];
   }
 
-  // Brain directory: enumerate conversation subdirectories
-  const conversationDirs = discoverConversationDirs(brainDir);
+  // Brain directories: enumerate conversation subdirectories across all discovered brain directories
+  const brainDirs = discoverBrainDirs(location);
+  const seenDirPaths = new Set();
+  const seenExternalIds = new Set();
   const sessions = [];
-  for (const convDir of conversationDirs) {
-    const transcriptPath = findTranscriptFile(convDir);
-    if (!transcriptPath) continue;
-    let text;
-    try {
-      text = readFileSync(transcriptPath, "utf8");
-    } catch {
-      continue;
+
+  for (const bDir of brainDirs) {
+    const conversationDirs = discoverConversationDirs(bDir);
+    for (const convDir of conversationDirs) {
+      const canonicalConvDir = path.resolve(convDir);
+      if (seenDirPaths.has(canonicalConvDir)) continue;
+      seenDirPaths.add(canonicalConvDir);
+
+      const transcriptPath = findTranscriptFile(convDir);
+      if (!transcriptPath) continue;
+      let text;
+      try {
+        text = readFileSync(transcriptPath, "utf8");
+      } catch {
+        continue;
+      }
+      const parsed = parseTranscript(text);
+      const turns = displayTurns(parsed.turns);
+      if (!turns.length) continue;
+      const externalId = path.basename(convDir);
+      if (seenExternalIds.has(externalId)) continue;
+      seenExternalIds.add(externalId);
+
+      sessions.push(applyTextBudgets(finalizeStructuredContentCards({
+        external_id: externalId,
+        title: titleFromUserText(turns[0]?.user_text),
+        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        started_at: turns[0]?.started_at ?? null,
+        updated_at: turns.at(-1)?.ended_at ?? null,
+        source_locator: transcriptPath,
+        source_fingerprint: sourceFingerprint(text),
+        turns,
+      })));
     }
-    const parsed = parseTranscript(text);
-    const turns = displayTurns(parsed.turns);
-    if (!turns.length) continue;
-    const externalId = path.basename(convDir);
-    sessions.push(applyTextBudgets(finalizeStructuredContentCards({
-      external_id: externalId,
-      title: titleFromUserText(turns[0]?.user_text),
-      project_path: parsed.projectPath ?? inferProjectPath(turns),
-      started_at: turns[0]?.started_at ?? null,
-      updated_at: turns.at(-1)?.ended_at ?? null,
-      source_locator: transcriptPath,
-      source_fingerprint: sourceFingerprint(text),
-      turns,
-    })));
   }
+
+  // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)
+  const dbFiles = discoverConversationDbFiles(location);
+  for (const dbPath of dbFiles) {
+    const externalId = path.basename(dbPath, ".db");
+    if (seenExternalIds.has(externalId)) continue;
+    try {
+      const parsed = parseSqliteDb(dbPath);
+      const turns = displayTurns(parsed.turns);
+      if (!turns.length) continue;
+      seenExternalIds.add(externalId);
+      const stat = statSync(dbPath);
+      sessions.push(applyTextBudgets(finalizeStructuredContentCards({
+        external_id: externalId,
+        title: titleFromUserText(turns[0]?.user_text),
+        project_path: parsed.projectPath ?? inferProjectPath(turns),
+        started_at: turns[0]?.started_at ?? null,
+        updated_at: turns.at(-1)?.ended_at ?? null,
+        source_locator: dbPath,
+        source_fingerprint: sourceFingerprint(`${stat.size}:${stat.mtimeMs}`),
+        turns,
+      })));
+    } catch {}
+  }
+
   return sessions;
 }
 
