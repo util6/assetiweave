@@ -112,9 +112,26 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
     Ok(())
 }
 
+fn init_app_logging() -> Option<backend::logging::LoggingGuard> {
+    match backend::runtime::config::runtime_config() {
+        Ok(config) => match backend::logging::init_logging(&config) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                eprintln!("failed to initialize logging: {error}");
+                None
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to load runtime config for logging: {error}");
+            None
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     setup_panic_hook();
+    let _logging_guard = init_app_logging();
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     if has_startup_self_check_arg(std::env::args()) {
         match run_startup_self_check(context) {
@@ -124,6 +141,7 @@ pub fn run() {
                 log_error("app.startup.self_check", "启动自检失败", &error, &[]);
                 crate::backend::logs::record_fatal_panic(&message);
                 eprintln!("{message}");
+                drop(_logging_guard);
                 std::process::exit(1);
             }
         }
@@ -525,8 +543,10 @@ pub(crate) fn sync_before_close_with_runtime(
 }
 
 pub fn run_engine_stdio() {
+    let _logging_guard = init_app_logging();
     if let Err(error) = backend::builtin_skills::install_builtin_skills() {
         eprintln!("failed to install AssetIWeave system Skills: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
     let engine_db_path = backend::path_utils::app_db_path();
@@ -535,26 +555,31 @@ pub fn run_engine_stdio() {
             Ok(runtime) => {
                 if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
                     eprintln!("failed to install Engine AppRuntime: {error}");
+                    drop(_logging_guard);
                     std::process::exit(1);
                 }
                 runtime.agent_runtime()
             }
             Err(error) => {
                 eprintln!("failed to initialize Engine AppRuntime: {error}");
+                drop(_logging_guard);
                 std::process::exit(1);
             }
         },
         Err(error) => {
             eprintln!("failed to initialize Engine agent runtime: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Err(error) = install_engine_termination_handlers(runtime) {
         eprintln!("failed to install Engine termination handlers: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
     if let Err(error) = adapters::engine::run_stdio() {
         eprintln!("{error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }
@@ -563,6 +588,7 @@ pub fn run_engine_stdio() {
 /// The bridge is a separate process with only a tenant/member-scoped opaque
 /// credential in its environment; every operation still crosses AppService.
 pub fn run_team_mcp_stdio() {
+    let _logging_guard = init_app_logging();
     let db_path = backend::path_utils::app_db_path();
     let runtime = match db_path.and_then(|path| {
         backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
@@ -570,12 +596,14 @@ pub fn run_team_mcp_stdio() {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("failed to initialize Team MCP runtime: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_TEAM_TOOL_TENANT_ID") {
         if let Err(error) = runtime.activate_tenant(&tenant_id) {
             eprintln!("failed to activate Team MCP tenant: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     }
@@ -584,10 +612,12 @@ pub fn run_team_mcp_stdio() {
     let member_id = std::env::var("ASSETIWEAVE_TEAM_TOOL_MEMBER_ID").unwrap_or_default();
     if credential.trim().is_empty() || member_id.trim().is_empty() {
         eprintln!("Team MCP credentials are missing");
+        drop(_logging_guard);
         std::process::exit(1);
     }
     if let Err(error) = run_team_mcp_loop(&service, &credential, &member_id) {
         eprintln!("Team MCP bridge stopped: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }
@@ -596,6 +626,7 @@ pub fn run_team_mcp_stdio() {
 /// The bridge intentionally exposes search and locator reads only; mutation
 /// commands are not part of this protocol surface.
 pub fn run_memory_recall_mcp_stdio() {
+    let _logging_guard = init_app_logging();
     let db_path = backend::path_utils::app_db_path();
     let runtime = match db_path.and_then(|path| {
         backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
@@ -603,12 +634,14 @@ pub fn run_memory_recall_mcp_stdio() {
         Ok(runtime) => runtime,
         Err(error) => {
             eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
         if let Err(error) = runtime.activate_tenant(&tenant_id) {
             eprintln!("failed to activate Memory Recall MCP tenant: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     }
@@ -616,10 +649,12 @@ pub fn run_memory_recall_mcp_stdio() {
     let session_id = std::env::var("ASSETIWEAVE_MEMORY_RECALL_SESSION_ID").unwrap_or_default();
     if session_id.trim().is_empty() {
         eprintln!("Memory Recall MCP session is missing");
+        drop(_logging_guard);
         std::process::exit(1);
     }
     if let Err(error) = run_memory_recall_mcp_loop(&service, &session_id) {
         eprintln!("Memory Recall MCP bridge stopped: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }

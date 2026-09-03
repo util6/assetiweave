@@ -69,12 +69,13 @@ pub struct LogSnapshot {
 }
 
 pub(crate) fn write_startup_log() -> Result<(), String> {
-    write_operation_log(
+    record_operation(
         OperationLogLevel::Info,
         "app.startup",
         "AssetIWeave 启动",
         &[],
-    )
+    );
+    Ok(())
 }
 
 pub(crate) fn record_operation(
@@ -83,15 +84,41 @@ pub(crate) fn record_operation(
     message: &str,
     fields: &[(&str, String)],
 ) {
-    #[cfg(test)]
-    {
-        let timestamp = Local::now().to_rfc3339();
-        let _ = format_operation_log_line(&timestamp, level, operation, message, fields);
-    }
+    let operation = sanitize_log_key(operation);
+    let message = sanitize_log_text(message);
+    let fields: Vec<(String, String)> = fields
+        .iter()
+        .map(|(key, value)| (sanitize_log_key(key), sanitize_log_value(value)))
+        .collect();
 
-    #[cfg(not(test))]
-    if let Err(error) = write_operation_log(level, operation, message, fields) {
-        eprintln!("failed to write AssetIWeave operation log: {error}");
+    match level {
+        OperationLogLevel::Info => {
+            tracing::info!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields,
+                "{}",
+                message
+            );
+        }
+        OperationLogLevel::Warn => {
+            tracing::warn!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields,
+                "{}",
+                message
+            );
+        }
+        OperationLogLevel::Error => {
+            tracing::error!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields,
+                "{}",
+                message
+            );
+        }
     }
 }
 
@@ -180,17 +207,14 @@ pub(crate) fn logs_write_operation(
     fields: Option<BTreeMap<String, String>>,
 ) -> Result<(), String> {
     let level = OperationLogLevel::from_str(&level)?;
-    let field_pairs = fields
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(key, value)| (key, value))
-        .collect::<Vec<_>>();
+    let field_pairs = fields.unwrap_or_default().into_iter().collect::<Vec<_>>();
     let borrowed_fields = field_pairs
         .iter()
         .map(|(key, value)| (key.as_str(), value.clone()))
         .collect::<Vec<_>>();
 
-    write_operation_log(level, &operation, &message, &borrowed_fields)
+    record_operation(level, &operation, &message, &borrowed_fields);
+    Ok(())
 }
 
 fn get_log_dir() -> Result<PathBuf, String> {
@@ -361,33 +385,6 @@ fn to_unix_millis(time: std::time::SystemTime) -> Option<i64> {
         .and_then(|value| i64::try_from(value).ok())
 }
 
-fn write_operation_log(
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> Result<(), String> {
-    let log_dir = get_log_dir()?;
-    write_operation_log_to_dir(&log_dir, level, operation, message, fields)
-}
-
-fn write_operation_log_to_dir(
-    log_dir: &Path,
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> Result<(), String> {
-    let line = format_operation_log_line(
-        &Local::now().to_rfc3339(),
-        level,
-        operation,
-        message,
-        fields,
-    );
-    append_app_log_line(log_dir, &line)
-}
-
 fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), String> {
     let mut errors = Vec::new();
     for path in paths {
@@ -418,43 +415,6 @@ fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), String>
     } else {
         Err(errors.join("; "))
     }
-}
-
-fn append_app_log_line(log_dir: &Path, line: &str) -> Result<(), String> {
-    let log_file = log_dir.join(APP_LOG_FILE_PREFIX);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .map_err(|error| format!("打开日志文件失败: {error}"))?;
-
-    writeln!(file, "{line}").map_err(|error| format!("写入日志文件失败: {error}"))
-}
-
-fn format_operation_log_line(
-    timestamp: &str,
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> String {
-    let mut line = format!(
-        "{} {} [{}] {}",
-        sanitize_log_text(timestamp),
-        level.as_str(),
-        sanitize_log_key(operation),
-        sanitize_log_text(message)
-    );
-
-    for (key, value) in fields {
-        line.push(' ');
-        line.push_str(&sanitize_log_key(key));
-        line.push_str("=\"");
-        line.push_str(&sanitize_log_value(value));
-        line.push('"');
-    }
-
-    line
 }
 
 fn sanitize_log_key(value: &str) -> String {
@@ -531,23 +491,16 @@ mod tests {
     static LOG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn operation_log_line_escapes_multiline_fields() {
-        let line = format_operation_log_line(
-            "2026-06-01T15:00:00+08:00",
-            OperationLogLevel::Error,
-            "skill mount!",
-            "挂载失败\n需要查看异常",
-            &[
-                ("skill name", "frontend-ui\nengineering".to_string()),
-                ("error", "path contains \"target\"".to_string()),
-            ],
-        );
-
+    fn sanitize_log_helpers_escape_properly() {
         assert_eq!(
-            line,
-            "2026-06-01T15:00:00+08:00 ERROR [skill_mount] 挂载失败\\n需要查看异常 skill_name=\"frontend-ui\\nengineering\" error=\"path contains \\\"target\\\"\""
+            sanitize_log_text("挂载失败\n需要查看异常"),
+            "挂载失败\\n需要查看异常"
         );
-        assert!(!line.contains('\n'));
+        assert_eq!(sanitize_log_key("skill mount!"), "skill_mount");
+        assert_eq!(
+            sanitize_log_value("path contains \"target\""),
+            "path contains \\\"target\\\""
+        );
     }
 
     #[test]
@@ -594,51 +547,8 @@ mod tests {
     }
 
     #[test]
-    fn operation_log_writer_appends_to_log_viewer_file() {
-        let log_dir = std::env::temp_dir().join(format!(
-            "assetiweave-log-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&log_dir).expect("create log dir");
-
-        write_operation_log_to_dir(
-            &log_dir,
-            OperationLogLevel::Info,
-            "source.create",
-            "添加数据来源成功",
-            &[
-                ("source_id", "source-a".to_string()),
-                ("root_path", "/tmp/skills".to_string()),
-            ],
-        )
-        .expect("write operation log");
-
-        let content =
-            read_log_tail_lines(&log_dir.join(APP_LOG_FILE_PREFIX), 20).expect("read log tail");
-        assert!(content.contains("INFO [source.create] 添加数据来源成功"));
-        assert!(content.contains("source_id=\"source-a\""));
-        assert!(content.contains("root_path=\"/tmp/skills\""));
-
-        fs::remove_dir_all(log_dir).expect("remove log dir");
-    }
-
-    #[test]
-    fn write_operation_command_is_read_by_snapshot_command() {
-        let _guard = LOG_ENV_LOCK.lock().expect("lock log env");
-        let log_dir = std::env::temp_dir().join(format!(
-            "assetiweave-log-command-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&log_dir).expect("create log dir");
-        std::env::set_var("ASSETIWEAVE_LOG_DIR", &log_dir);
-
-        logs_write_operation(
+    fn write_operation_command_validates_level_and_accepts_payload() {
+        assert!(logs_write_operation(
             "INFO".to_string(),
             "source.create".to_string(),
             "添加数据来源成功".to_string(),
@@ -647,18 +557,21 @@ mod tests {
                 ("root_path".to_string(), "/tmp/skills".to_string()),
             ])),
         )
-        .expect("write operation command");
-        let snapshot = logs_get_snapshot(Some(APP_LOG_FILE_PREFIX.to_string()), Some(20))
-            .expect("get log snapshot command");
+        .is_ok());
 
-        assert!(snapshot
-            .content
-            .contains("INFO [source.create] 添加数据来源成功"));
-        assert!(snapshot.content.contains("source_id=\"source-a\""));
-        assert!(snapshot.content.contains("root_path=\"/tmp/skills\""));
-        assert_eq!(snapshot.log_file_name, APP_LOG_FILE_PREFIX);
+        assert!(logs_write_operation(
+            "UNKNOWN".to_string(),
+            "source.create".to_string(),
+            "添加数据来源成功".to_string(),
+            None,
+        )
+        .is_err());
+    }
 
-        std::env::remove_var("ASSETIWEAVE_LOG_DIR");
-        fs::remove_dir_all(log_dir).expect("remove log dir");
+    #[test]
+    fn ordinary_logs_no_longer_open_file_for_each_event() {
+        let source = include_str!("logs.rs");
+        assert!(!source.contains(concat!("fn append_app_", "log_line(")));
+        assert!(!source.contains(concat!("fn format_operation_", "log_line(")));
     }
 }

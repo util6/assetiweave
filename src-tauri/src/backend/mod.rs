@@ -17,6 +17,7 @@ pub(crate) mod extension_kernel;
 pub(crate) mod host_filesystem;
 pub(crate) mod host_paths;
 pub(crate) mod host_process;
+pub(crate) mod logging;
 pub(crate) mod logs;
 pub(crate) mod memory_redaction;
 pub(crate) mod models;

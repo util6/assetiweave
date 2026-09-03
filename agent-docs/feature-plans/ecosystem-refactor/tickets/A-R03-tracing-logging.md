@@ -6,7 +6,7 @@
 
 ## 执行规则
 
-- 状态：`PLANNED`。本文件只授权本卡范围；实施前读取 `../00-execution-router.md`、本卡 Contract IDs、`../02-dependencies.md` 和 `../05-playbook.md`。
+- 状态：`VERIFIED`。本文件只授权本卡范围；实施前读取 `../00-execution-router.md`、本卡 Contract IDs、`../02-dependencies.md` 和 `../05-playbook.md`。
 - 版本/features 只取依赖锁定表；本卡列出的新签名是**待创建接口**，不是已实现事实。
 - 原有正确行为先 characterization green；随后运行本卡 adoption/deletion guard 得到 red，再替换实现。编译错误只可证明新接口未创建，不能冒充行为回归证据。
 - 测试只用临时目录、内存库或 loopback fixture；不读写真实用户数据库。筛选测试先 `-- --list` 确认命中；零测试不算 green。
