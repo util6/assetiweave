@@ -18,8 +18,11 @@ export interface QueryScope {
 export const catalogKeys = {
   root: (scope: QueryScope) =>
     ["tenant", scope.tenantId, scope.epoch, "catalog"] as const,
+  assetsPrefix: (scope: QueryScope) =>
+    [...catalogKeys.root(scope), "assets"] as const,
   assets: (scope: QueryScope, kind?: AssetKind) =>
     [...catalogKeys.root(scope), "assets", kind ?? "all"] as const,
+
   sources: (scope: QueryScope) =>
     [...catalogKeys.root(scope), "sources"] as const,
   profiles: (scope: QueryScope) =>

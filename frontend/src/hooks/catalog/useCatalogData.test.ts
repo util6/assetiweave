@@ -65,6 +65,15 @@ describe("useCatalogData navigation persistence", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    queryClient.setQueryData(["tenants", "active"], {
+      id: "default",
+      name: "Default Workspace",
+      slug: "default",
+      kind: "local_workspace",
+      status: "active",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
     updateNavigationModelMock
       .mockReset()
       .mockImplementation(async (model) => model);

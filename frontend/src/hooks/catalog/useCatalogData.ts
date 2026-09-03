@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+import {
+  invalidateCatalog,
+  useSaveNavigation,
+} from "../../app/query/catalogMutations";
 import {
   assetsQueryOptions,
   catalogKeys,
@@ -16,7 +21,6 @@ import type { NavigationModel } from "../../router/types";
 import {
   refreshAssetMountStatuses,
   updateAppShortcuts,
-  updateNavigationModel,
 } from "../../services/catalog";
 import type {
   AppOverview,
@@ -33,8 +37,29 @@ export function useCatalogData() {
   const scope = useQueryScope();
   const activeScope = scope ?? { tenantId: "default", epoch: 1 };
   const enabled = Boolean(scope);
+
   const [optimisticNavigation, setOptimisticNavigation] =
     useState<NavigationModel | null>(null);
+
+  const { save: saveNav, schedule: scheduleNav } =
+    useSaveNavigation(activeScope);
+
+  const saveNavigationModel = async (nextModel: NavigationModel) => {
+    setOptimisticNavigation(nextModel);
+    try {
+      const saved = await saveNav(nextModel);
+      setOptimisticNavigation(null);
+      return saved;
+    } catch (err) {
+      setOptimisticNavigation(null);
+      throw err;
+    }
+  };
+
+  const deferNavigationModelSave = (nextModel: NavigationModel) => {
+    setOptimisticNavigation(nextModel);
+    scheduleNav(nextModel);
+  };
 
   const navigationQuery = useQuery({
     ...navigationQueryOptions(activeScope),
@@ -92,24 +117,15 @@ export function useCatalogData() {
     mountStatusesQuery.isLoading ||
     navigationQuery.isLoading;
 
-  const navigationSaveSequence = useRef(0);
-  const deferredNavigationSaveTimer = useRef<ReturnType<
-    typeof setTimeout
-  > | null>(null);
-
-  useEffect(
-    () => () => {
-      if (deferredNavigationSaveTimer.current !== null) {
-        clearTimeout(deferredNavigationSaveTimer.current);
-      }
-    },
-    [],
-  );
-
   async function loadCatalogData() {
-    await queryClient.invalidateQueries({
-      queryKey: catalogKeys.root(activeScope),
-    });
+    await invalidateCatalog(queryClient, activeScope, [
+      "assets",
+      "sources",
+      "profiles",
+      "overview",
+      "shortcuts",
+      "mountStatuses",
+    ]);
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
@@ -118,23 +134,19 @@ export function useCatalogData() {
         catalogKeys.assets(activeScope, activeAssetKind),
         nextAssets,
       );
+      await invalidateCatalog(queryClient, activeScope, [
+        "sources",
+        "overview",
+        "mountStatuses",
+      ]);
+    } else {
+      await invalidateCatalog(queryClient, activeScope, [
+        "assets",
+        "sources",
+        "overview",
+        "mountStatuses",
+      ]);
     }
-    await Promise.all([
-      !nextAssets
-        ? queryClient.refetchQueries({
-            queryKey: catalogKeys.assets(activeScope, activeAssetKind),
-          })
-        : Promise.resolve(),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.sources(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.overview(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.mountStatuses(activeScope),
-      }),
-    ]);
   }
 
   async function refreshMountState() {
@@ -152,34 +164,20 @@ export function useCatalogData() {
       catalogKeys.mountStatuses(activeScope),
       mountStatusList,
     );
-    await Promise.all([
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.assets(activeScope, activeAssetKind),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.sources(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.overview(activeScope),
-      }),
+    await invalidateCatalog(queryClient, activeScope, [
+      "assets",
+      "sources",
+      "overview",
     ]);
     return mountStatusList;
   }
 
   async function refreshProfiles() {
-    await Promise.all([
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.profiles(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.shortcuts(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.overview(activeScope),
-      }),
-      queryClient.refetchQueries({
-        queryKey: catalogKeys.mountStatuses(activeScope),
-      }),
+    await invalidateCatalog(queryClient, activeScope, [
+      "profiles",
+      "shortcuts",
+      "overview",
+      "mountStatuses",
     ]);
   }
 
@@ -221,59 +219,6 @@ export function useCatalogData() {
           ? { ...current, asset_count: Math.max(0, current.asset_count - 1) }
           : current,
     );
-  }
-
-  function cancelDeferredNavigationSave() {
-    if (deferredNavigationSaveTimer.current !== null) {
-      clearTimeout(deferredNavigationSaveTimer.current);
-      deferredNavigationSaveTimer.current = null;
-    }
-  }
-
-  async function saveNavigationModel(nextNavigationModel: NavigationModel) {
-    cancelDeferredNavigationSave();
-    const sequence = navigationSaveSequence.current + 1;
-    navigationSaveSequence.current = sequence;
-    setOptimisticNavigation(nextNavigationModel);
-    queryClient.setQueryData(
-      catalogKeys.navigation(activeScope),
-      nextNavigationModel,
-    );
-    const savedNavigationModel =
-      await updateNavigationModel(nextNavigationModel);
-    if (navigationSaveSequence.current === sequence) {
-      setOptimisticNavigation(null);
-      queryClient.setQueryData(
-        catalogKeys.navigation(activeScope),
-        savedNavigationModel,
-      );
-    }
-    return savedNavigationModel;
-  }
-
-  function deferNavigationModelSave(nextNavigationModel: NavigationModel) {
-    const sequence = navigationSaveSequence.current + 1;
-    navigationSaveSequence.current = sequence;
-    setOptimisticNavigation(nextNavigationModel);
-    queryClient.setQueryData(
-      catalogKeys.navigation(activeScope),
-      nextNavigationModel,
-    );
-    cancelDeferredNavigationSave();
-    deferredNavigationSaveTimer.current = setTimeout(() => {
-      deferredNavigationSaveTimer.current = null;
-      void updateNavigationModel(nextNavigationModel)
-        .then((savedNavigationModel) => {
-          if (navigationSaveSequence.current === sequence) {
-            setOptimisticNavigation(null);
-            queryClient.setQueryData(
-              catalogKeys.navigation(activeScope),
-              savedNavigationModel,
-            );
-          }
-        })
-        .catch(() => undefined);
-    }, 120);
   }
 
   async function saveAppShortcuts(nextAppShortcuts: AppShortcut[]) {
