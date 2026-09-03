@@ -249,17 +249,26 @@ pub(crate) fn run_program_with_cancellation(
         stderr_limit: stderr_cap,
     };
 
-    let Some(cancellation) = cancellation else {
-        return run_host_command_blocking(spec).map(|output| HostProcessOutput {
-            status: output.status,
-            stdout: output.stdout,
-            stderr: output.stderr,
-            stdout_truncated: output.stdout_truncated,
-            stderr_truncated: output.stderr_truncated,
-        });
-    };
+    run_host_command_with_cancellation(spec, cancellation).map(|output| HostProcessOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+    })
+}
 
-    let cancellation_flag = Arc::new(AtomicBool::new(cancellation.is_cancelled()));
+pub(crate) fn run_host_command_with_cancellation(
+    spec: HostCommandSpec,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<HostCommandOutput, HostProcessError> {
+    let Some(cancellation) = cancellation else {
+        return run_host_command_blocking(spec);
+    };
+    if cancellation.is_cancelled() {
+        return Err(HostProcessError::Cancelled);
+    }
+    let cancellation_flag = Arc::new(AtomicBool::new(false));
     let watcher_done = Arc::new(AtomicBool::new(false));
     let watcher_flag = cancellation_flag.clone();
     let watcher_done_flag = watcher_done.clone();
@@ -273,16 +282,7 @@ pub(crate) fn run_program_with_cancellation(
             thread::sleep(Duration::from_millis(10));
         }
     });
-    let result =
-        run_host_command_blocking_with_cancellation(spec, Some(&cancellation_flag)).map(|output| {
-            HostProcessOutput {
-                status: output.status,
-                stdout: output.stdout,
-                stderr: output.stderr,
-                stdout_truncated: output.stdout_truncated,
-                stderr_truncated: output.stderr_truncated,
-            }
-        });
+    let result = run_host_command_blocking_with_cancellation(spec, Some(&cancellation_flag));
     watcher_done.store(true, Ordering::Release);
     let _ = watcher.join();
     result

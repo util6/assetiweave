@@ -1054,7 +1054,9 @@ export function ConversationsPage({
               : undefined
           }
           recordKind={currentRecordKind}
-          state={syncProgress}
+          state={syncRunning && syncTask?.progress?.current_source_name
+            ? { ...syncProgress, sourceLabel: syncTask.progress.current_source_name }
+            : syncProgress}
           t={t}
         />
       ) : null}

@@ -1741,6 +1741,77 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 
 #[cfg(unix)]
 #[test]
+fn conversation_sync_reports_read_and_import_progress_in_full_and_incremental_modes() {
+    let root = std::env::temp_dir().join(format!("assetiweave-sync-progress-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db")).unwrap();
+    let script = write_executable_script(
+        &root,
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"export-session","version_token":"v1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"export-session","source_fingerprint":"v1","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Sync this","parts":[]}]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["list_sessions".to_string(), "read_session".to_string()],
+        Some(&script),
+        false,
+    );
+    let source_id: String = service.db.block_on(async {
+        sqlx::query_scalar(
+            "SELECT source_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(service.tenant_id())
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .unwrap()
+    });
+    for (mode, active_count) in [
+        (ConversationSyncMode::Full, 1),
+        (ConversationSyncMode::Incremental, 0),
+        (ConversationSyncMode::Full, 1),
+    ] {
+        let mut progress = Vec::new();
+        let result = service
+            .sync_conversations_with_progress(
+                ConversationSyncParams {
+                    source_id: Some(source_id.clone()),
+                    adapter_id: None,
+                    record_kind: Some("session".to_string()),
+                    mode,
+                    dry_run: false,
+                },
+                |done, total, label| progress.push((done, total, label)),
+            )
+            .unwrap();
+        assert_eq!(result["results"][0]["active_session_count"], active_count);
+        assert!(progress
+            .iter()
+            .any(|(_, _, label)| label.as_ref().is_some_and(|s| s.contains("读取会话"))));
+        assert!(progress
+            .iter()
+            .any(|(_, _, label)| label.as_ref().is_some_and(|s| s.contains("写入会话"))));
+        assert_eq!(progress.last(), Some(&(1, 1, None)));
+    }
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[test]
 fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-dry-run-{}",

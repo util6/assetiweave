@@ -1,20 +1,121 @@
 use super::prelude::*;
 
+/// One source sync shares runtime discovery/probing, not mutable adapter output.
+/// Revalidate package contents on each call so mid-sync edits still invalidate trust.
+pub(super) struct ExternalAdapterSourceReader<'a> {
+    adapter: &'a ConversationAdapter,
+    source: &'a ConversationSource,
+    invocation: AdapterCommandInvocation,
+    content_hash: String,
+    source_value: Value,
+    cancellation: Option<&'a tokio_util::sync::CancellationToken>,
+}
+
+impl<'a> ExternalAdapterSourceReader<'a> {
+    pub(super) fn new(
+        adapter: &'a ConversationAdapter,
+        source: &'a ConversationSource,
+        settings: &Value,
+        cancellation: Option<&'a tokio_util::sync::CancellationToken>,
+    ) -> AppResult<Self> {
+        ensure_read_not_cancelled(cancellation)?;
+        validate_external_adapter_for_method(adapter, source, "read_session")?;
+        let manifest_path = adapter
+            .manifest_path
+            .as_deref()
+            .ok_or_else(|| AppError::external("conversation adapter has no manifest"))?;
+        let validation = validate_external_adapter_manifest(manifest_path)?;
+        validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
+        let source_value = json!({
+            "location": resolve_source_location_for_adapter(source)?,
+            "config": source_config_value(source)?,
+        });
+        let invocation = prepare_adapter_invocation(&validation, settings)?;
+        Ok(Self {
+            adapter,
+            source,
+            invocation,
+            content_hash: validation.content_hash,
+            source_value,
+            cancellation,
+        })
+    }
+
+    pub(super) fn discover(&self) -> AppResult<Option<ExternalAdapterRunResult>> {
+        if !self
+            .adapter
+            .capabilities
+            .iter()
+            .any(|cap| cap == "list_sessions")
+        {
+            return Ok(None);
+        }
+        let result = self.run(
+            "list_sessions",
+            json!({"cursor": null}),
+            DEFAULT_LIST_TIMEOUT_MS,
+        )?;
+        Ok(result.snapshot_complete.then_some(result))
+    }
+
+    pub(super) fn read(&self, session_id: Option<&str>) -> AppResult<ExternalAdapterRunResult> {
+        self.run(
+            "read_session",
+            json!({"session_id": session_id}),
+            DEFAULT_READ_TIMEOUT_MS,
+        )
+    }
+
+    fn run(
+        &self,
+        method: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> AppResult<ExternalAdapterRunResult> {
+        ensure_read_not_cancelled(self.cancellation)?;
+        validate_external_adapter_for_method(self.adapter, self.source, method)?;
+        let validation =
+            validate_external_adapter_manifest(self.adapter.manifest_path.as_deref().unwrap())?;
+        validate_external_adapter_manifest_for_method(self.adapter, &validation, method)?;
+        if validation.content_hash != self.content_hash {
+            return Err(AppError::Conflict(
+                "conversation adapter changed during sync".to_string(),
+            ));
+        }
+        run_prepared_adapter(
+            &validation,
+            &self.invocation,
+            method,
+            json!({
+                "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+                "request_id": format!("sync-{}-{}", self.source.id, Utc::now().timestamp_millis()),
+                "method": method,
+                "source": self.source_value,
+                "params": params,
+            }),
+            Duration::from_millis(timeout_ms),
+            self.cancellation,
+        )
+    }
+}
+
+pub(super) fn ensure_read_not_cancelled(
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Err(AppError::Canceled(
+            "conversation sync cancelled".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
     run_external_adapter_read_session(adapter, source, None, settings)
-}
-
-pub(super) fn read_external_adapter_session(
-    adapter: &ConversationAdapter,
-    source: &ConversationSource,
-    session_id: &str,
-    settings: &Value,
-) -> AppResult<ExternalAdapterRunResult> {
-    run_external_adapter_read_session(adapter, source, Some(session_id), settings)
 }
 
 pub(super) fn discover_external_adapter_sessions(
@@ -1037,6 +1138,14 @@ pub(super) fn run_external_adapter_with_settings(
     timeout: Duration,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
+    let invocation = prepare_adapter_invocation(validation, settings)?;
+    run_prepared_adapter(validation, &invocation, method, request, timeout, None)
+}
+
+fn prepare_adapter_invocation(
+    validation: &ExternalAdapterValidationResult,
+    settings: &Value,
+) -> AppResult<AdapterCommandInvocation> {
     let manifest = &validation.manifest;
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
@@ -1044,17 +1153,35 @@ pub(super) fn run_external_adapter_with_settings(
             AppError::external({ "adapter manifest path has no parent directory".to_string() })
         })?;
     let execution_runtime = adapter_execution_runtime(manifest);
-    let invocation = match execution_runtime.as_ref() {
+    let mut invocation = match execution_runtime.as_ref() {
         Some(runtime) => {
             build_adapter_runtime_invocation_with_settings(manifest_dir, runtime, &[], settings)
         }
         None => build_adapter_invocation_with_settings(manifest_dir, manifest, settings)?,
     };
+    if invocation.program.components().count() == 1 {
+        invocation.program = crate::backend::host_process::resolve_host_executable(
+            &invocation.program.to_string_lossy(),
+        )
+        .ok_or_else(|| AppError::external("adapter runtime program was not found"))?;
+    }
     if let Some(runtime) = execution_runtime.as_ref() {
         ensure_adapter_runtime_available(runtime, &invocation)?;
     }
+    Ok(invocation)
+}
+
+fn run_prepared_adapter(
+    validation: &ExternalAdapterValidationResult,
+    invocation: &AdapterCommandInvocation,
+    method: &str,
+    request: Value,
+    timeout: Duration,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<ExternalAdapterRunResult> {
+    let manifest = &validation.manifest;
     let request_text = serde_json::to_vec(&request).map_err(AppError::external)?;
-    let output = crate::backend::host_process::run_host_command_blocking(
+    let output = crate::backend::host_process::run_host_command_with_cancellation(
         crate::backend::host_process::HostCommandSpec {
             program: invocation.program.clone(),
             args: invocation.args.clone(),
@@ -1067,6 +1194,7 @@ pub(super) fn run_external_adapter_with_settings(
             stdout_limit: DEFAULT_MAX_TOTAL_BYTES,
             stderr_limit: 1024 * 1024,
         },
+        cancellation,
     )
     .map_err(|error| match error {
         crate::backend::host_process::HostProcessError::MissingProgram { program } => {
@@ -1097,7 +1225,13 @@ pub(super) fn run_external_adapter_with_settings(
             "adapter output exceeded configured limit".to_string()
         }
     })
-    .map_err(AppError::external)?;
+    .map_err(|error| {
+        if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+            AppError::Canceled("conversation sync cancelled".to_string())
+        } else {
+            AppError::external(error)
+        }
+    })?;
     if output.stdout_truncated || output.stderr_truncated {
         return Err(AppError::external(format!(
             "adapter output exceeded configured cap (stdout={} bytes, stderr={} bytes)",

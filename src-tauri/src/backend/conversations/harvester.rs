@@ -26,7 +26,7 @@ pub(crate) fn run_conversation_harvester_for_source_with_settings(
 ) -> AppResult<()> {
     let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
     let work_dir = resolve_harvester_work_dir(&source_dir);
-    run_conversation_harvester_in_dir(&work_dir, false, settings).map(|_| ())
+    run_conversation_harvester_in_dir(&work_dir, false, settings, None).map(|_| ())
 }
 
 pub(crate) fn run_conversation_harvester_for_adapter_source_with_settings(
@@ -35,11 +35,22 @@ pub(crate) fn run_conversation_harvester_for_adapter_source_with_settings(
     full_reparse: bool,
     settings: &Value,
 ) -> AppResult<()> {
+    run_conversation_harvester_with_control(adapter, source, full_reparse, settings, None)
+}
+
+pub(crate) fn run_conversation_harvester_with_control(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+    full_reparse: bool,
+    settings: &Value,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    super::external::ensure_read_not_cancelled(cancellation)?;
     let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
     let work_dir = resolve_harvester_work_dir(&source_dir);
 
     if work_dir.join(HARVESTER_MANIFEST_FILE).is_file() {
-        if run_conversation_harvester_in_dir(&work_dir, full_reparse, settings)? {
+        if run_conversation_harvester_in_dir(&work_dir, full_reparse, settings, cancellation)? {
             return Ok(());
         }
     }
@@ -51,13 +62,14 @@ pub(crate) fn run_conversation_harvester_for_adapter_source_with_settings(
                 &work_dir,
                 full_reparse,
                 settings,
+                cancellation,
             )? {
                 return Ok(());
             }
         }
     }
 
-    run_conversation_harvester_in_dir(&source_dir, full_reparse, settings).map(|_| ())
+    run_conversation_harvester_in_dir(&source_dir, full_reparse, settings, cancellation).map(|_| ())
 }
 
 #[cfg(test)]
@@ -102,12 +114,14 @@ fn run_conversation_harvester_in_dir(
     work_dir: &Path,
     full_reparse: bool,
     settings: &Value,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<bool> {
     run_conversation_harvester_with_manifest_root_and_work_dir(
         work_dir,
         work_dir,
         full_reparse,
         settings,
+        cancellation,
     )
 }
 
@@ -116,6 +130,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
     work_dir: &Path,
     full_reparse: bool,
     settings: &Value,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<bool> {
     let manifest_path = manifest_root.join(HARVESTER_MANIFEST_FILE);
     if !manifest_path.is_file() {
@@ -143,7 +158,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
     if full_reparse {
         env.push(("ASSETIWEAVE_FULL_REPARSE".to_string(), "1".to_string()));
     }
-    let output = match crate::backend::host_process::run_host_command_blocking(
+    let output = match crate::backend::host_process::run_host_command_with_cancellation(
         crate::backend::host_process::HostCommandSpec {
             program: invocation.program.clone(),
             args: invocation.args.clone(),
@@ -154,6 +169,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
             stdout_limit: OUTPUT_CAPTURE_LIMIT,
             stderr_limit: OUTPUT_CAPTURE_LIMIT,
         },
+        cancellation,
     ) {
         Ok(output) => output,
         Err(crate::backend::host_process::HostProcessError::MissingProgram { program }) => {
@@ -190,7 +206,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
             return Err(AppError::external(message));
         }
         Err(crate::backend::host_process::HostProcessError::Cancelled) => {
-            return Err(AppError::external(format!(
+            return Err(AppError::Canceled(format!(
                 "harvester {} was cancelled",
                 manifest.id
             )));

@@ -21,7 +21,7 @@ pub(crate) use external::{
 pub(crate) use external::{
     list_conversation_adapter_runtime_statuses, register_external_adapter, try_run_external_adapter,
 };
-pub(crate) use harvester::run_conversation_harvester_for_adapter_source_with_settings;
+pub(crate) use harvester::run_conversation_harvester_with_control;
 #[cfg(test)]
 pub(crate) use harvester::{
     run_conversation_harvester_for_adapter_source, run_conversation_harvester_for_source,
@@ -40,7 +40,8 @@ pub(crate) use readers::{
 #[allow(unused_imports)]
 pub(crate) use readers::{
     read_source_sessions_incrementally_with_adapter_with_settings,
-    read_source_sessions_with_adapter_with_settings, ConversationSourceReadResult,
+    read_source_sessions_with_adapter_with_settings, read_source_sessions_with_control,
+    ConversationSourceReadResult,
 };
 #[allow(unused_imports)]
 pub(crate) use types::{

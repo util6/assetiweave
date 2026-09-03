@@ -1,4 +1,4 @@
-use super::external::resolve_source_location_for_adapter;
+use super::external::{discover_external_adapter_sessions, resolve_source_location_for_adapter};
 use super::prelude::*;
 use super::{
     project_external_adapter_command_parts_with_settings,
@@ -151,6 +151,152 @@ fn adapter_output_rejects_oversized_line() {
     let error = parse_external_adapter_output("probe", line.into_bytes(), Vec::new()).unwrap_err();
 
     assert!(error.contains("exceeds max control line size"));
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_sync_cancels_an_in_flight_adapter_read() {
+    let fixture = TempFixture::new("assetiweave-sync-cancellation");
+    let adapter = adapter_with_manifest_runtime(
+        fixture.path(),
+        "slow",
+        ConversationAdapterRuntimeKind::Executable,
+        ">=1",
+    );
+    let dir = fixture.path().join("slow");
+    write_executable_script(&dir, "adapter", "#!/bin/sh\ncat >/dev/null\ntouch \"$(dirname \"$0\")/started\"\nsleep 4\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"session_count\":0}}'\n");
+    let source = source_fixture(
+        "slow",
+        ConversationSourceKind::Directory,
+        &dir.to_string_lossy(),
+    );
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let token = cancellation.clone();
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !dir.join("started").exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        token.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({}),
+        Some(&cancellation),
+        &mut |_, _| {},
+    );
+    worker.join().unwrap();
+    assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "cancellation waited for the adapter timeout"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_sync_probes_runtime_once_per_source() {
+    let fixture = TempFixture::new("assetiweave-sync-runtime-reuse");
+    let mut adapter = adapter_with_manifest_runtime(
+        fixture.path(),
+        "runtime-reuse",
+        ConversationAdapterRuntimeKind::Node,
+        ">=18",
+    );
+    adapter.capabilities.push("list_sessions".to_string());
+    let manifest_path = adapter.manifest_path.as_ref().unwrap();
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(manifest_path).unwrap()).unwrap();
+    manifest["capabilities"] = json!(adapter.capabilities);
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    fs::write(fixture.path().join("runtime-reuse/adapter"), "fixture").unwrap();
+    let runner = write_executable_script(
+        fixture.path(),
+        "node",
+        r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo probe >> "$(dirname "$0")/probes"
+  echo v22.0.0
+  exit 0
+fi
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"one","version_token":"1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"two","version_token":"1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *) printf '%s\n' '{"type":"complete","item":{"session_count":0}}' ;;
+esac
+"#,
+    );
+    let source = source_fixture(
+        "runtime-reuse",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({"conversationRuntimeOverrides": {"node": runner}}),
+        None,
+        &mut |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(result.discovered_session_count, 2);
+    assert_eq!(
+        fs::read_to_string(fixture.path().join("probes"))
+            .unwrap()
+            .lines()
+            .count(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
+    let fixture = TempFixture::new("assetiweave-harvester-cancellation");
+    write_executable_script(
+        fixture.path(),
+        "harvest.sh",
+        "#!/bin/sh\ntouch started\nsleep 4\n",
+    );
+    fs::write(
+        fixture.path().join("harvester.json"),
+        json!({"id": "fixture", "entrypoint": ["harvest.sh"]}).to_string(),
+    )
+    .unwrap();
+    let source = source_fixture(
+        "fixture",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let token = cancellation.clone();
+    let marker = fixture.path().join("started");
+    let worker = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !marker.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        token.cancel();
+    });
+    let started = std::time::Instant::now();
+    let result = super::harvester::run_conversation_harvester_with_control(
+        None,
+        &source,
+        true,
+        &json!({}),
+        Some(&cancellation),
+    );
+    worker.join().unwrap();
+    assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(3));
 }
 
 #[test]
@@ -1689,6 +1835,150 @@ esac
 
 #[cfg(unix)]
 #[test]
+fn conversation_incremental_discovery_bounds_initial_hydration_by_session() {
+    let fixture = TempFixture::new("assetiweave-bounded-initial-hydration");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":"fixture://session-1","version_token":"version-1"}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-2","updated_at":null,"source_locator":"fixture://session-2","version_token":"version-2"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":2,"snapshot_complete":true}}'
+    ;;
+  *'"session_id":null'*)
+    printf '%s\n' '{"type":"error","message":"unbounded full read"}'
+    printf '%s\n' '{"type":"complete","item":{}}'
+    ;;
+  *session-1*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"One","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-1","source_fingerprint":"version-1","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+  *session-2*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-2","title":"Two","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-2","source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let mut progress = Vec::new();
+    let result = super::readers::read_source_sessions_with_control(
+        Some(&adapter),
+        &source,
+        &BTreeMap::new(),
+        &json!({}),
+        None,
+        &mut |done, total| progress.push((done, total)),
+    )
+    .expect("hydrate discovered sessions through bounded reads");
+
+    assert!(result.incremental);
+    assert_eq!(result.discovered_session_count, 2);
+    assert_eq!(result.active_session_count, 2);
+    assert_eq!(result.sessions.len(), 2);
+    assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
+}
+
+#[cfg(unix)]
+#[test]
+fn conversation_incremental_skips_a_session_that_changes_after_discovery() {
+    let fixture = TempFixture::new("assetiweave-changing-session-hydration");
+    write_executable_script(
+        fixture.path(),
+        "adapter.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"session-1","updated_at":null,"source_locator":"fixture://session-1","version_token":"version-1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"session-1","title":"Changing","project_path":null,"started_at":null,"updated_at":null,"source_locator":"fixture://session-1","source_fingerprint":"version-2","turns":[]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+    let manifest = write_manifest(fixture.path(), vec!["adapter.sh".to_string()]);
+    let adapter = ConversationAdapter {
+        id: "fixture-external".to_string(),
+        name: "Fixture External".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest.to_string_lossy().to_string()),
+        executable_path: Some(
+            fixture
+                .path()
+                .join("adapter.sh")
+                .to_string_lossy()
+                .to_string(),
+        ),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(EXTERNAL_ADAPTER_PROTOCOL_VERSION),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    let source = source_fixture(
+        "fixture-external",
+        ConversationSourceKind::Directory,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let result =
+        read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .expect("defer a session whose descriptor became stale");
+
+    assert!(result.incremental);
+    assert_eq!(result.discovered_session_count, 1);
+    assert_eq!(result.active_session_count, 0);
+    assert_eq!(result.skipped_session_count, 1);
+    assert!(result.sessions.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
 fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_session() {
     if !command_available("node") {
         return;
@@ -2034,6 +2324,57 @@ fn official_adapter_manifests_use_runtime_without_legacy_command() {
             "{manifest_relative_path} still declares legacy command"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn official_codex_session_discovery_does_not_buffer_titles() {
+    if !command_available("node") || !command_available("sqlite3") {
+        return;
+    }
+    let fixture = TempFixture::new("assetiweave-codex-large-title-discovery");
+    let rollout = fixture.path().join("rollout.jsonl");
+    fs::write(&rollout, "{}\n").unwrap();
+    let db_path = fixture.path().join("state_5.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, title TEXT, updated_at INTEGER)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, rollout_path, title, updated_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![
+                "codex-session-large-title",
+                rollout.to_string_lossy().to_string(),
+                "x".repeat(2 * 1024 * 1024),
+                1_i64,
+            ],
+        )
+        .unwrap();
+    }
+    let adapter = official_adapter_fixture(
+        "codex",
+        "Codex",
+        "../builtin-assets/adapters/codex/conversation-adapter.json",
+        vec![ConversationSourceKind::Live, ConversationSourceKind::File],
+    );
+    let source = source_fixture(
+        "codex",
+        ConversationSourceKind::Live,
+        &fixture.path().to_string_lossy(),
+    );
+
+    let discovery = discover_external_adapter_sessions(&adapter, &source, &json!({}))
+        .expect("discover Codex sessions")
+        .expect("Codex declares snapshot discovery");
+
+    assert_eq!(discovery.session_descriptors.len(), 1);
+    assert_eq!(
+        discovery.session_descriptors[0].external_id,
+        "codex-session-large-title"
+    );
 }
 
 #[test]

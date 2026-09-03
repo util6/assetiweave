@@ -30,12 +30,35 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
     known_versions: &BTreeMap<String, String>,
     settings: &Value,
 ) -> AppResult<ConversationSourceReadResult> {
+    read_source_sessions_with_control(
+        adapter,
+        source,
+        known_versions,
+        settings,
+        None,
+        &mut |_, _| {},
+    )
+}
+
+pub(crate) fn read_source_sessions_with_control(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+    known_versions: &BTreeMap<String, String>,
+    settings: &Value,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    on_progress: &mut dyn FnMut(usize, usize),
+) -> AppResult<ConversationSourceReadResult> {
     let adapter = adapter.ok_or_else(|| {
         AppError::external({ format!("conversation adapter not found: {}", source.adapter_id) })
     })?;
-    let Some(discovery) = discover_external_adapter_sessions(adapter, source, settings)? else {
-        let result = read_external_adapter_sessions(adapter, source, settings)?;
+    let reader =
+        super::external::ExternalAdapterSourceReader::new(adapter, source, settings, cancellation)?;
+    let Some(discovery) = reader.discover()? else {
+        on_progress(0, 0);
+        let result = reader.read(None)?;
         let sessions = result.sessions;
+        on_progress(sessions.len(), sessions.len());
+        super::external::ensure_read_not_cancelled(cancellation)?;
         return Ok(ConversationSourceReadResult {
             session_descriptors: Vec::new(),
             discovered_session_count: sessions.len(),
@@ -48,6 +71,8 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
     };
     let descriptors = deduplicate_session_descriptors(&discovery.session_descriptors)?;
     let active = select_active_session_descriptors(&descriptors, known_versions)?;
+    on_progress(0, active.len());
+    super::external::ensure_read_not_cancelled(cancellation)?;
     if active.is_empty() {
         let discovered_session_count = descriptors.len();
         return Ok(ConversationSourceReadResult {
@@ -61,57 +86,41 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
         });
     }
 
-    let (sessions, empty_session_count, legacy_cards_upgraded) = if known_versions.is_empty()
-        && active.len() == descriptors.len()
-    {
-        let result = read_external_adapter_sessions(adapter, source, settings)?;
-        (result.sessions, 0usize, result.legacy_cards_upgraded)
-    } else {
-        let mut sessions = Vec::with_capacity(active.len());
-        let mut empty_count = 0usize;
-        let mut legacy_cards_upgraded = 0usize;
-        for descriptor in &active {
-            let result =
-                read_external_adapter_session(adapter, source, &descriptor.external_id, settings)?;
-            legacy_cards_upgraded += result.legacy_cards_upgraded;
-            let mut read = result.sessions;
-            if read.is_empty() {
-                // Session was discovered by list_sessions but has no readable
-                // content yet (e.g. an active session that just started and has
-                // no complete turns).  Skip it — the next sync will pick it up
-                // once content is available.
-                empty_count += 1;
-                continue;
-            }
-            if read.len() != 1 || read[0].external_id != descriptor.external_id {
-                return Err(AppError::external(format!(
-                    "conversation adapter {} returned {} sessions for active session {}",
-                    adapter.id,
-                    read.len(),
-                    descriptor.external_id
-                )));
-            }
-            sessions.append(&mut read);
+    let mut sessions = Vec::with_capacity(active.len());
+    let mut empty_session_count = 0usize;
+    let mut legacy_cards_upgraded = 0usize;
+    for (index, descriptor) in active.iter().enumerate() {
+        let result = reader.read(Some(&descriptor.external_id))?;
+        on_progress(index + 1, active.len());
+        super::external::ensure_read_not_cancelled(cancellation)?;
+        legacy_cards_upgraded += result.legacy_cards_upgraded;
+        let mut read = result.sessions;
+        if read.is_empty() {
+            // Session was discovered by list_sessions but has no readable
+            // content yet (e.g. an active session that just started and has
+            // no complete turns). Skip it — the next sync will pick it up
+            // once content is available.
+            empty_session_count += 1;
+            continue;
         }
-        (sessions, empty_count, legacy_cards_upgraded)
-    };
-
-    let descriptors_by_id = descriptors
-        .iter()
-        .map(|descriptor| (descriptor.external_id.as_str(), descriptor))
-        .collect::<BTreeMap<_, _>>();
-    for session in &sessions {
-        let descriptor = descriptors_by_id
-            .get(session.external_id.as_str())
-            .ok_or_else(|| {
-                AppError::external({
-                    format!(
-                        "conversation adapter {} returned undiscovered session {}",
-                        adapter.id, session.external_id
-                    )
-                })
-            })?;
-        validate_session_matches_descriptor(session, descriptor)?;
+        if read.len() != 1 || read[0].external_id != descriptor.external_id {
+            return Err(AppError::external(format!(
+                "conversation adapter {} returned {} sessions for active session {}",
+                adapter.id,
+                read.len(),
+                descriptor.external_id
+            )));
+        }
+        if !session_matches_descriptor(&read[0], descriptor) {
+            // Discovery and hydration are separate adapter calls. A live
+            // session can advance between them, so importing this snapshot
+            // would pair new content with a stale discovery token. Leave it
+            // dirty and let the next incremental sync retry it instead of
+            // failing the entire source.
+            empty_session_count += 1;
+            continue;
+        }
+        sessions.append(&mut read);
     }
 
     let discovered_session_count = descriptors.len();
@@ -149,19 +158,11 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
     )
 }
 
-fn validate_session_matches_descriptor(
+fn session_matches_descriptor(
     session: &NormalizedConversationSession,
     descriptor: &ConversationSessionDescriptor,
-) -> AppResult<()> {
-    if session.source_fingerprint.as_deref() != Some(descriptor.version_token.as_str()) {
-        return Err(AppError::external(format!(
-            "conversation session {} changed while it was being read; expected version {}, got {}",
-            descriptor.external_id,
-            descriptor.version_token,
-            session.source_fingerprint.as_deref().unwrap_or("<missing>")
-        )));
-    }
-    Ok(())
+) -> bool {
+    session.source_fingerprint.as_deref() == Some(descriptor.version_token.as_str())
 }
 
 fn deduplicate_session_descriptors(
@@ -277,9 +278,6 @@ mod tests {
             turns: Vec::new(),
         };
 
-        let error = validate_session_matches_descriptor(&session, &descriptor)
-            .expect_err("content read from another version must remain dirty");
-
-        assert!(error.contains("changed while it was being read"));
+        assert!(!session_matches_descriptor(&session, &descriptor));
     }
 }

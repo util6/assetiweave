@@ -1206,8 +1206,47 @@ async fn import_conversation_sessions_with_presence_sqlx(
     discovered_external_ids: Option<&BTreeSet<String>>,
     dry_run: bool,
 ) -> AppResult<ConversationImportResult> {
+    import_conversation_sessions_with_control_sqlx(
+        pool,
+        tenant_id,
+        source,
+        sessions,
+        discovered_external_ids,
+        dry_run,
+        None,
+        &mut |_, _| {},
+    )
+    .await
+}
+
+fn ensure_sync_import_active(
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+) -> AppResult<()> {
+    if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
+        return Err(AppError::Canceled(
+            "conversation sync cancelled".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) async fn import_conversation_sessions_with_control_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &ConversationSource,
+    sessions: &[NormalizedConversationSession],
+    discovered_external_ids: Option<&BTreeSet<String>>,
+    dry_run: bool,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    on_progress: &mut impl FnMut(usize, usize),
+) -> AppResult<ConversationImportResult> {
+    ensure_sync_import_active(cancellation)?;
+    on_progress(0, sessions.len());
+    ensure_sync_import_active(cancellation)?;
     let turn_count = sessions.iter().map(|session| session.turns.len()).sum();
     if dry_run {
+        on_progress(sessions.len(), sessions.len());
+        ensure_sync_import_active(cancellation)?;
         return Ok(ConversationImportResult {
             source_id: source.id.clone(),
             adapter_id: source.adapter_id.clone(),
@@ -1246,10 +1285,12 @@ async fn import_conversation_sessions_with_presence_sqlx(
                 .collect::<BTreeSet<_>>()
         });
 
+    let mut completed_session_count = 0;
     for batch in sessions.chunks(CONVERSATION_IMPORT_BATCH_SIZE) {
         let mut tx = pool.begin().await.map_err(AppError::external)?;
         let mut batch_changed_session_ids = Vec::new();
         for normalized in batch {
+            ensure_sync_import_active(cancellation)?;
             let session = conversation_session_from_normalized(source, normalized, &now);
             let change_kind =
                 if conversation_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
@@ -1261,6 +1302,8 @@ async fn import_conversation_sessions_with_presence_sqlx(
                 .await?
             {
                 skipped_session_count += 1;
+                completed_session_count += 1;
+                on_progress(completed_session_count, sessions.len());
                 continue;
             }
             sqlx::query(
@@ -1274,6 +1317,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
             .map_err(AppError::external)?;
             upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
             for turn in &normalized.turns {
+                ensure_sync_import_active(cancellation)?;
                 if turn.user_text.trim().is_empty() {
                     warning_count += 1;
                     continue;
@@ -1305,7 +1349,10 @@ async fn import_conversation_sessions_with_presence_sqlx(
             .await?;
             changed_session_count += 1;
             batch_changed_session_ids.push(session.id);
+            completed_session_count += 1;
+            on_progress(completed_session_count, sessions.len());
         }
+        ensure_sync_import_active(cancellation)?;
         let revision =
             super::bump_conversation_search_source_revision_sqlx_tx(&mut *tx, tenant_id).await?;
         crate::backend::events::append_outbox_event_sqlx_tx(
@@ -1319,9 +1366,11 @@ async fn import_conversation_sessions_with_presence_sqlx(
             ),
         )
         .await?;
+        ensure_sync_import_active(cancellation)?;
         tx.commit().await.map_err(AppError::external)?;
     }
 
+    ensure_sync_import_active(cancellation)?;
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let missing_or_restored_session_ids = mark_missing_conversation_sessions_sqlx_tx(
         &mut tx,
@@ -1375,6 +1424,7 @@ async fn import_conversation_sessions_with_presence_sqlx(
         ),
     )
     .await?;
+    ensure_sync_import_active(cancellation)?;
     tx.commit().await.map_err(AppError::external)?;
 
     Ok(ConversationImportResult {

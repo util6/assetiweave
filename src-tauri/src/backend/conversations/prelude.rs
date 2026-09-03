@@ -1,6 +1,5 @@
 pub(super) use super::external::{
-    discover_external_adapter_sessions, read_external_adapter_session,
-    read_external_adapter_sessions,
+    discover_external_adapter_sessions, read_external_adapter_sessions,
 };
 #[cfg(test)]
 pub(super) use super::external::{

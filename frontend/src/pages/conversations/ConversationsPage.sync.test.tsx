@@ -857,6 +857,35 @@ describe("ConversationsPage sync scope", () => {
     });
   });
 
+  it("shows progress updates within the same running source without refreshing the catalog", async () => {
+    conversationSyncTaskMock.current = {
+      id: "live-progress", status: "running", record_kind: "session", source_id: null,
+      progress: { current_source_name: "Codex · 读取会话 1/3" },
+    };
+    const view = renderConversationsPage("session");
+    expect(await screen.findByText(/Codex · 读取会话 1\/3/)).toBeTruthy();
+    const refreshCount = listConversationSessionsMock.mock.calls.length;
+    conversationSyncTaskMock.current = {
+      ...conversationSyncTaskMock.current,
+      progress: { current_source_name: "Codex · 写入会话 2/3" },
+    };
+    view.rerender(
+      <I18nProvider>
+        <ConversationsPage
+          appShortcuts={[]}
+          onManualOpen={vi.fn()}
+          onNotify={() => undefined}
+          onNotifyError={vi.fn()}
+          onOpenSettings={vi.fn()}
+          recordKind="session"
+        />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText(/Codex · 写入会话 2\/3/)).toBeTruthy();
+    expect(screen.queryByText(/Codex · 读取会话 1\/3/)).toBeNull();
+    expect(listConversationSessionsMock.mock.calls.length).toBe(refreshCount);
+  });
+
   it("does not leave a non-dismissible sync summary after the completed progress is dismissed", async () => {
     const summary = "Added/updated 1 web records and 3 content items, skipped 0 unchanged records across 1 sources.";
     conversationSyncTaskMock.current = {

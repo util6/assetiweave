@@ -516,6 +516,20 @@ impl AppService {
             } else {
                 BTreeMap::new()
             };
+            if !params.dry_run && web_record_source {
+                on_progress(
+                    completed_source_count,
+                    total_source_count,
+                    Some(format!("{} · 采集网页记录", source.name)),
+                );
+            }
+            let mut on_read_progress = |done, total| {
+                on_progress(
+                    completed_source_count,
+                    total_source_count,
+                    Some(format!("{} · 读取会话 {done}/{total}", source.name,)),
+                );
+            };
             let read_result = adapter
                 .as_ref()
                 .map(|adapter| {
@@ -525,28 +539,33 @@ impl AppService {
                 .unwrap_or(Ok(()))
                 .and_then(|_| {
                     if !params.dry_run && web_record_source {
-                        crate::backend::conversations::run_conversation_harvester_for_adapter_source_with_settings(
+                        crate::backend::conversations::run_conversation_harvester_with_control(
                             adapter.as_ref(),
                             &source,
                             matches!(params.mode, ConversationSyncMode::Full),
                             &settings,
+                            cancellation,
                         )
                         .map_err(conversation_external_error)
                         .and_then(|_| {
-                            crate::backend::conversations::read_source_sessions_incrementally_with_adapter_with_settings(
+                            crate::backend::conversations::read_source_sessions_with_control(
                                 adapter.as_ref(),
                                 &source,
                                 &known_versions,
                                 &settings,
+                                cancellation,
+                                &mut on_read_progress,
                             )
                             .map_err(conversation_external_error)
                         })
                     } else {
-                        crate::backend::conversations::read_source_sessions_incrementally_with_adapter_with_settings(
+                        crate::backend::conversations::read_source_sessions_with_control(
                             adapter.as_ref(),
                             &source,
                             &known_versions,
                             &settings,
+                            cancellation,
+                            &mut on_read_progress,
                         )
                         .map_err(conversation_external_error)
                     }
@@ -590,34 +609,36 @@ impl AppService {
                     let pool = self.db.pool().clone();
                     let tenant_id = self.tenant_id().to_string();
                     let import_source = source.clone();
+                    let on_progress = &mut *on_progress;
                     self.db.block_on(async move {
-                        let result = if read.incremental {
-                            let discovered_external_ids = read
-                                .session_descriptors
+                        let discovered_external_ids = read.incremental.then(|| {
+                            read.session_descriptors
                                 .iter()
                                 .map(|descriptor| descriptor.external_id.clone())
-                                .collect::<std::collections::BTreeSet<_>>();
-                            crate::backend::store::import_incremental_conversation_sessions_sqlx(
+                                .collect::<std::collections::BTreeSet<_>>()
+                        });
+                        let result =
+                            crate::backend::store::import_conversation_sessions_with_control_sqlx(
                                 &pool,
                                 &tenant_id,
                                 &import_source,
                                 &read.sessions,
-                                &discovered_external_ids,
+                                discovered_external_ids.as_ref(),
                                 params.dry_run,
+                                cancellation,
+                                &mut |done, total| {
+                                    on_progress(
+                                        completed_source_count,
+                                        total_source_count,
+                                        Some(format!(
+                                            "{} · 写入会话 {done}/{total}",
+                                            import_source.name,
+                                        )),
+                                    )
+                                },
                             )
                             .await
-                            .map_err(conversation_storage_error)?
-                        } else {
-                            crate::backend::store::import_conversation_sessions_sqlx(
-                                &pool,
-                                &tenant_id,
-                                &import_source,
-                                &read.sessions,
-                                params.dry_run,
-                            )
-                            .await
-                            .map_err(conversation_storage_error)?
-                        };
+                            .map_err(conversation_storage_error)?;
                         let retained_session_count = persist_successful_conversation_observation(
                             &pool,
                             &tenant_id,
