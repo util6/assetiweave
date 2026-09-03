@@ -450,58 +450,29 @@ pub(crate) enum AcpOperation {
     DeleteSession,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum AcpError {
-    InitializeTimeout {
-        timeout: Duration,
-    },
+    #[error("ACP initialize timed out after {} milliseconds", timeout.as_millis())]
+    InitializeTimeout { timeout: Duration },
+    #[error("ACP initialize failed")]
     InitializeFailed,
+    #[error("ACP connection closed during initialize")]
     ActorClosedDuringInitialize,
+    #[error("ACP {operation:?} timed out after {} milliseconds", timeout.as_millis())]
     RequestTimeout {
         operation: AcpOperation,
         timeout: Duration,
     },
+    #[error("ACP {operation:?} failed: {message}")]
     RequestFailed {
         operation: AcpOperation,
         message: String,
     },
+    #[error("ACP {0} state is unavailable")]
     StateUnavailable(&'static str),
-    ShutdownTimeout {
-        timeout: Duration,
-    },
+    #[error("ACP shutdown timed out after {} milliseconds", timeout.as_millis())]
+    ShutdownTimeout { timeout: Duration },
 }
-
-impl fmt::Display for AcpError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InitializeTimeout { timeout } => write!(
-                formatter,
-                "ACP initialize timed out after {} milliseconds",
-                timeout.as_millis()
-            ),
-            Self::InitializeFailed => formatter.write_str("ACP initialize failed"),
-            Self::ActorClosedDuringInitialize => {
-                formatter.write_str("ACP connection closed during initialize")
-            }
-            Self::RequestTimeout { operation, timeout } => write!(
-                formatter,
-                "ACP {operation:?} timed out after {} milliseconds",
-                timeout.as_millis()
-            ),
-            Self::RequestFailed { operation, message } => {
-                write!(formatter, "ACP {operation:?} failed: {message}")
-            }
-            Self::StateUnavailable(state) => write!(formatter, "ACP {state} state is unavailable"),
-            Self::ShutdownTimeout { timeout } => write!(
-                formatter,
-                "ACP shutdown timed out after {} milliseconds",
-                timeout.as_millis()
-            ),
-        }
-    }
-}
-
-impl std::error::Error for AcpError {}
 
 fn request_failed(operation: AcpOperation, error: agent_client_protocol::Error) -> AcpError {
     let summary = sanitize_protocol_error_message(&error.message);

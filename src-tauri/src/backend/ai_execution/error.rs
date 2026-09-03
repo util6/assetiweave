@@ -7,67 +7,60 @@ use crate::backend::agents::types::AgentId;
 
 use super::{AgentSessionMode, AiExecutionPhase};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum AiExecutionError {
-    UnsupportedSessionMode {
-        mode: AgentSessionMode,
-    },
+    #[error("Agent session mode {mode:?} is not supported yet")]
+    UnsupportedSessionMode { mode: AgentSessionMode },
+    #[error("persistent execution requires a context key")]
     InvalidContextKey,
+    #[error("history replay requires a persistent session")]
     InvalidReplayMode,
+    #[error("the saved AI execution session is unavailable")]
     ResumeUnavailable,
+    #[error("the selected AI agent has no Team tool capability")]
     TeamToolsUnavailable,
+    #[error("Recall execution requires an ACP agent with read-only Recall tools")]
     RecallToolsUnavailable,
-    AgentNotFound {
-        agent_id: AgentId,
-    },
-    RuntimeUnavailable {
-        command_name: String,
-    },
-    Spawn {
-        program: PathBuf,
-        message: String,
-    },
-    Output {
-        message: String,
-    },
-    Timeout {
-        program: PathBuf,
-        timeout: Duration,
-    },
-    Cancelled {
-        program: PathBuf,
-    },
-    OutputLimit {
-        limit: usize,
-    },
-    EmptyOutput {
-        program: Option<PathBuf>,
-    },
+    #[error("AI agent '{agent_id}' is not registered")]
+    AgentNotFound { agent_id: AgentId },
+    #[error("{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell.")]
+    RuntimeUnavailable { command_name: String },
+    #[error("failed to start {}: {message}", program.display())]
+    Spawn { program: PathBuf, message: String },
+    #[error("{message}")]
+    Output { message: String },
+    #[error("{} timed out after {} seconds", program.display(), timeout.as_secs())]
+    Timeout { program: PathBuf, timeout: Duration },
+    #[error("{} was cancelled", program.display())]
+    Cancelled { program: PathBuf },
+    #[error("the AI agent exceeded the configured output limit of {limit} bytes")]
+    OutputLimit { limit: usize },
+    #[error("{}", match program { Some(p) => format!("{} returned empty output", p.display()), None => "the AI agent returned empty output".to_string() })]
+    EmptyOutput { program: Option<PathBuf> },
+    #[error("the AI agent requested a denied permission")]
     PermissionDenied,
+    #[error("the AI agent attempted denied tool use")]
     ToolUseDenied,
-    Protocol {
-        operation: &'static str,
-    },
+    #[error("the ACP {operation} operation failed")]
+    Protocol { operation: &'static str },
+    #[error("the ACP {operation} operation failed: {detail}")]
     ProtocolDetail {
         operation: &'static str,
         detail: String,
     },
-    ModelSelectionFailed {
-        detail: Option<String>,
-    },
-    ModelUnavailable {
-        detail: String,
-    },
-    AgentExited {
-        code: Option<i32>,
-    },
-    Workspace {
-        operation: &'static str,
-    },
-    CleanupFailed {
-        failures: Vec<String>,
-    },
+    #[error("{}", match detail { Some(d) => format!("the requested AI model could not be selected: {d}"), None => "the requested AI model could not be selected".to_string() })]
+    ModelSelectionFailed { detail: Option<String> },
+    #[error("the selected AI model is unavailable: {detail}")]
+    ModelUnavailable { detail: String },
+    #[error("{}", match code { Some(c) => format!("the AI agent exited with code {c}"), None => "the AI agent exited before execution completed".to_string() })]
+    AgentExited { code: Option<i32> },
+    #[error("the isolated workspace {operation} operation failed")]
+    Workspace { operation: &'static str },
+    #[error("AI agent cleanup failed in {} step(s)", failures.len())]
+    CleanupFailed { failures: Vec<String> },
+    #[error("{0}")]
     InvalidPrompt(String),
+    #[error("{0}")]
     InvalidModel(String),
 }
 
@@ -208,91 +201,6 @@ impl AiExecutionError {
         }
     }
 }
-
-impl fmt::Display for AiExecutionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnsupportedSessionMode { mode } => {
-                write!(formatter, "Agent session mode {mode:?} is not supported yet")
-            }
-            Self::InvalidContextKey => formatter.write_str("persistent execution requires a context key"),
-            Self::InvalidReplayMode => formatter.write_str("history replay requires a persistent session"),
-            Self::ResumeUnavailable => formatter.write_str("the saved AI execution session is unavailable"),
-            Self::TeamToolsUnavailable => formatter.write_str("the selected AI agent has no Team tool capability"),
-            Self::RecallToolsUnavailable => formatter.write_str("Recall execution requires an ACP agent with read-only Recall tools"),
-            Self::AgentNotFound { agent_id } => {
-                write!(formatter, "AI agent '{agent_id}' is not registered")
-            }
-            Self::RuntimeUnavailable { command_name } => write!(
-                formatter,
-                "{command_name} was not found on this host. Install it and make `{command_name}` available on PATH or from a login shell."
-            ),
-            Self::Spawn { program, message } => {
-                write!(formatter, "failed to start {}: {message}", program.display())
-            }
-            Self::Output { message } => formatter.write_str(message),
-            Self::Timeout { program, timeout } => write!(
-                formatter,
-                "{} timed out after {} seconds",
-                program.display(),
-                timeout.as_secs()
-            ),
-            Self::Cancelled { program } => {
-                write!(formatter, "{} was cancelled", program.display())
-            }
-            Self::OutputLimit { limit } => write!(
-                formatter,
-                "the AI agent exceeded the configured output limit of {limit} bytes"
-            ),
-            Self::EmptyOutput {
-                program: Some(program),
-            } => write!(formatter, "{} returned empty output", program.display()),
-            Self::EmptyOutput { program: None } => {
-                formatter.write_str("the AI agent returned empty output")
-            }
-            Self::PermissionDenied => {
-                formatter.write_str("the AI agent requested a denied permission")
-            }
-            Self::ToolUseDenied => {
-                formatter.write_str("the AI agent attempted denied tool use")
-            }
-            Self::Protocol { operation } => {
-                write!(formatter, "the ACP {operation} operation failed")
-            }
-            Self::ProtocolDetail { operation, detail } => {
-                write!(formatter, "the ACP {operation} operation failed: {detail}")
-            }
-            Self::ModelSelectionFailed { detail: Some(detail) } => {
-                write!(formatter, "the requested AI model could not be selected: {detail}")
-            }
-            Self::ModelSelectionFailed { detail: None } => {
-                formatter.write_str("the requested AI model could not be selected")
-            }
-            Self::ModelUnavailable { detail } => {
-                write!(formatter, "the selected AI model is unavailable: {detail}")
-            }
-            Self::AgentExited { code: Some(code) } => {
-                write!(formatter, "the AI agent exited with code {code}")
-            }
-            Self::AgentExited { code: None } => {
-                formatter.write_str("the AI agent exited before execution completed")
-            }
-            Self::Workspace { operation } => {
-                write!(formatter, "the isolated workspace {operation} operation failed")
-            }
-            Self::CleanupFailed { failures } => write!(
-                formatter,
-                "AI agent cleanup failed in {} step(s)",
-                failures.len()
-            ),
-            Self::InvalidPrompt(message) | Self::InvalidModel(message) => {
-                formatter.write_str(message)
-            }
-        }
-    }
-}
-
-impl std::error::Error for AiExecutionError {}
 
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -6,7 +6,7 @@
 
 ## 执行规则
 
-状态：`PLANNED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
+状态：`VERIFIED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
 
 ## 文件
 
@@ -22,8 +22,8 @@ Produces：全部既有公有/模块可见函数签名保持；`AiExecutionError
 
 ## 步骤
 
-- [ ] 为每个被迁移类型选各错误variant的 Display 样本，并用既有 `to_view/view` 快照确认 code/retryable/details，先 green；不把手写Display生成文字当作可随意修改的提示文案。
-- [ ] 新增 derive/source gate；derive缺口测试用编译契约、source用运行断言：
+- [x] 为每个被迁移类型选各错误variant的 Display 样本，并用既有 `to_view/view` 快照确认 code/retryable/details，先 green；不把手写Display生成文字当作可随意修改的提示文案。
+- [x] 新增 derive/source gate；derive缺口测试用编译契约、source用运行断言：
 
 ```rust
 #[test]
@@ -46,7 +46,7 @@ fn ai_execution_error_uses_derive_instead_of_manual_error_impl() {
 
 第一个测试可在旧实现已绿，是保真测试；第二个在旧实现必须红。
 
-- [ ] 按旧 match 分支逐个转换为 `#[error(...)]`；例如保持 InstallError 文案时从其当前 Display 原样复制格式串。保留 domain `to_view()` 的分类与脱敏，禁止用 Display 直接序列化对外。
+- [x] 按旧 match 分支逐个转换为 `#[error(...)]`；例如保持 InstallError 文案时从其当前 Display 原样复制格式串。保留 domain `to_view()` 的分类与脱敏，禁止用 Display 直接序列化对外。
 
 ```rust
 #[derive(Debug, thiserror::Error)]
@@ -65,9 +65,9 @@ Io(#[from] std::io::Error),
 Db(#[from] sqlx::Error),
 ```
 
-- [ ] 手动 Error::source 实现若存在，将其映射到对应字段 `#[source]`；如 error variant 当前只有 String，就保留公开分类，不假称已能还原丢失源。只对构造点仍有原始 `io::Error/sqlx::Error` 的路径移除多余 `to_string`；若这会改变 `external_error` 为 `storage_error`，保持原外部code并停止扩大该替换。
-- [ ] anyhow 限于 `RuntimeConfig::from_environment` 内部启动defaults装配，使用 `dirs::home_dir().context("system home directory is unavailable")?` 和 data_dir 对应Context；边界记录诊断链后转换现有 AppError，调用者仍拿 typed AppResult。
-- [ ] 删除每个已迁移类型的手写 Display 与空 Error impl；保留 ID 等非错误类型的 Display，不做全目录正则删除。
+- [x] 手动 Error::source 实现若存在，将其映射到对应字段 `#[source]`；如 error variant 当前只有 String，就保留公开分类，不假称已能还原丢失源。只对构造点仍有原始 `io::Error/sqlx::Error` 的路径移除多余 `to_string`；若这会改变 `external_error` 为 `storage_error`，保持原外部code并停止扩大该替换。
+- [x] anyhow 限于 `RuntimeConfig::from_environment` 内部启动defaults装配，使用 `dirs::home_dir().context("system home directory is unavailable")?` 和 data_dir 对应Context；边界记录诊断链后转换现有 AppError，调用者仍拿 typed AppResult。
+- [x] 删除每个已迁移类型的手写 Display 与空 Error impl；保留 ID 等非错误类型的 Display，不做全目录正则删除。
 
 ## 验证
 

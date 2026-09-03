@@ -298,4 +298,24 @@ mod tests {
             .unwrap()
             .contains("/Users/util6"));
     }
+
+    #[test]
+    fn io_error_keeps_source_while_wire_message_is_sanitized() {
+        use std::error::Error;
+        let error = AppError::from(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "/private/token-file",
+        ));
+        assert!(error.source().is_some());
+        let wire = error.view();
+        assert_eq!(wire.code, "storage_error");
+        assert!(!wire.message.contains("token-file"));
+    }
+
+    #[test]
+    fn ai_execution_error_uses_derive_instead_of_manual_error_impl() {
+        let source = include_str!("../ai_execution/error.rs");
+        assert!(!source.contains(concat!("impl fmt::Display for ", "AiExecutionError")));
+        assert!(source.contains("thiserror::Error"));
+    }
 }

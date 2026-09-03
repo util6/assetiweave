@@ -110,30 +110,26 @@ pub(crate) struct AgentAvailability {
     pub(crate) error: Option<AgentProbeError>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum AgentProbeError {
-    AgentNotFound {
-        agent_id: AgentId,
-    },
+    #[error("agent '{agent_id}' was not found")]
+    AgentNotFound { agent_id: AgentId },
+    #[error("agent '{agent_id}' has no {kind} probe")]
     ProbeNotConfigured {
         agent_id: AgentId,
         kind: &'static str,
     },
-    ExecutableNotFound {
-        command_name: String,
-    },
-    Timeout {
-        kind: &'static str,
-    },
-    SpawnFailed {
-        kind: &'static str,
-    },
-    OutputFailed {
-        kind: &'static str,
-    },
-    OutputLimit {
-        kind: &'static str,
-    },
+    #[error("{command_name} was not found on this host")]
+    ExecutableNotFound { command_name: String },
+    #[error("agent {kind} probe timed out")]
+    Timeout { kind: &'static str },
+    #[error("agent {kind} probe could not start")]
+    SpawnFailed { kind: &'static str },
+    #[error("agent {kind} probe output could not be read")]
+    OutputFailed { kind: &'static str },
+    #[error("agent {kind} probe exceeded its output limit")]
+    OutputLimit { kind: &'static str },
+    #[error("{}", match code { Some(c) => format!("agent {kind} probe exited with code {c}"), None => format!("agent {kind} probe exited unsuccessfully") })]
     ProbeFailed {
         kind: &'static str,
         code: Option<i32>,
@@ -450,41 +446,6 @@ fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-impl fmt::Display for AgentProbeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AgentNotFound { agent_id } => {
-                write!(formatter, "agent '{agent_id}' was not found")
-            }
-            Self::ProbeNotConfigured { agent_id, kind } => {
-                write!(formatter, "agent '{agent_id}' has no {kind} probe")
-            }
-            Self::ExecutableNotFound { command_name } => {
-                write!(formatter, "{command_name} was not found on this host")
-            }
-            Self::Timeout { kind } => write!(formatter, "agent {kind} probe timed out"),
-            Self::SpawnFailed { kind } => write!(formatter, "agent {kind} probe could not start"),
-            Self::OutputFailed { kind } => {
-                write!(formatter, "agent {kind} probe output could not be read")
-            }
-            Self::OutputLimit { kind } => {
-                write!(formatter, "agent {kind} probe exceeded its output limit")
-            }
-            Self::ProbeFailed {
-                kind,
-                code: Some(code),
-            } => {
-                write!(formatter, "agent {kind} probe exited with code {code}")
-            }
-            Self::ProbeFailed { kind, code: None } => {
-                write!(formatter, "agent {kind} probe exited unsuccessfully")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentProbeError {}
-
 impl AgentProbeError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
@@ -500,40 +461,16 @@ impl AgentProbeError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum AgentRegistryError {
+    #[error("invalid definition for agent '{agent_id}': {source}")]
     InvalidDefinition {
         agent_id: AgentId,
+        #[source]
         source: AgentDefinitionError,
     },
-    DuplicateId {
-        agent_id: AgentId,
-    },
-}
-
-impl fmt::Display for AgentRegistryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDefinition { agent_id, source } => {
-                write!(
-                    formatter,
-                    "invalid definition for agent '{agent_id}': {source}"
-                )
-            }
-            Self::DuplicateId { agent_id } => {
-                write!(formatter, "duplicate agent id '{agent_id}'")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentRegistryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidDefinition { source, .. } => Some(source),
-            Self::DuplicateId { .. } => None,
-        }
-    }
+    #[error("duplicate agent id '{agent_id}'")]
+    DuplicateId { agent_id: AgentId },
 }
 
 #[cfg(test)]

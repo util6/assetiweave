@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 agent-client-protocol = { version = "=2.0.0", default-features = false }
+anyhow = "=1.0.104"
 arc-swap = "1.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

@@ -775,7 +775,8 @@ impl AgentInstallation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{message}")]
 pub(crate) struct AgentMarketError {
     pub(crate) code: String,
     pub(crate) message: String,
@@ -799,14 +800,6 @@ impl AgentMarketError {
         }
     }
 }
-
-impl fmt::Display for AgentMarketError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for AgentMarketError {}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

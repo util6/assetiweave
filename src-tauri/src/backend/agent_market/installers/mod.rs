@@ -55,36 +55,25 @@ pub(crate) trait Installer: Send + Sync {
     ) -> Result<MaterializedRuntime, InstallError>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum InstallError {
+    #[error("{0}")]
     Unsupported(String),
+    #[error("{0}")]
     RuntimeMissing(String),
+    #[error("{0}")]
     Spawn(String),
+    #[error("{0}")]
     Failed(String),
+    #[error("installation was cancelled")]
     Cancelled,
+    #[error("installation timed out")]
     Timeout,
+    #[error("artifact integrity verification failed")]
     IntegrityMismatch,
+    #[error("{0}")]
     ArchiveInvalid(String),
 }
-
-impl std::fmt::Display for InstallError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unsupported(message)
-            | Self::RuntimeMissing(message)
-            | Self::Spawn(message)
-            | Self::Failed(message)
-            | Self::ArchiveInvalid(message) => formatter.write_str(message),
-            Self::Cancelled => formatter.write_str("installation was cancelled"),
-            Self::Timeout => formatter.write_str("installation timed out"),
-            Self::IntegrityMismatch => {
-                formatter.write_str("artifact integrity verification failed")
-            }
-        }
-    }
-}
-
-impl std::error::Error for InstallError {}
 
 pub(crate) fn ensure_staging_root(path: &Path) -> Result<(), InstallError> {
     std::fs::create_dir_all(path).map_err(|error| InstallError::Failed(error.to_string()))

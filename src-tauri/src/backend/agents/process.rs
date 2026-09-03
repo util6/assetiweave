@@ -335,51 +335,28 @@ impl fmt::Debug for SafeSpawnPreview {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum ManagedAgentProcessError {
-    InvalidDefinition(AgentDefinitionError),
-    ExecutableNotFound {
-        command_name: String,
-    },
+    #[error("invalid agent definition: {0}")]
+    InvalidDefinition(#[source] AgentDefinitionError),
+    #[error("{command_name} was not found on this host")]
+    ExecutableNotFound { command_name: String },
+    #[error("agent executable resolution worker failed")]
     ExecutableResolutionFailed,
+    #[error("failed to spawn {preview:?}: {message}")]
     Spawn {
         preview: SafeSpawnPreview,
         message: String,
     },
+    #[error("spawned process has no process id")]
     MissingProcessId,
+    #[error("spawned process has no piped {0}")]
     MissingStdio(&'static str),
+    #[error("process stdio was already taken")]
     StdioAlreadyTaken,
+    #[error("process {0} state is unavailable")]
     StateUnavailable(&'static str),
 }
-
-impl fmt::Display for ManagedAgentProcessError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDefinition(error) => {
-                write!(formatter, "invalid agent definition: {error}")
-            }
-            Self::ExecutableNotFound { command_name } => {
-                write!(formatter, "{command_name} was not found on this host")
-            }
-            Self::ExecutableResolutionFailed => {
-                formatter.write_str("agent executable resolution worker failed")
-            }
-            Self::Spawn { preview, message } => {
-                write!(formatter, "failed to spawn {preview:?}: {message}")
-            }
-            Self::MissingProcessId => formatter.write_str("spawned process has no process id"),
-            Self::MissingStdio(stream) => {
-                write!(formatter, "spawned process has no piped {stream}")
-            }
-            Self::StdioAlreadyTaken => formatter.write_str("process stdio was already taken"),
-            Self::StateUnavailable(state) => {
-                write!(formatter, "process {state} state is unavailable")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ManagedAgentProcessError {}
 
 struct BoundedByteTail {
     bytes: VecDeque<u8>,

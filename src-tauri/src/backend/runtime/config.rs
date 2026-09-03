@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
+
 use crate::backend::runtime::{AppError, AppResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,10 +25,12 @@ pub(crate) struct RuntimeConfigDefaults {
 impl RuntimeConfigDefaults {
     #[allow(dead_code)]
     pub(crate) fn from_dirs() -> AppResult<Self> {
-        let home_dir =
-            dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
+        let home_dir = dirs::home_dir()
+            .context("discovering user home directory")
+            .map_err(|e| AppError::NotFound(format!("{e:#}")))?;
         let data_dir = dirs::data_dir()
-            .ok_or_else(|| AppError::NotFound("无法确定系统数据目录".to_string()))?;
+            .context("discovering system data directory")
+            .map_err(|e| AppError::NotFound(format!("{e:#}")))?;
         Ok(Self { home_dir, data_dir })
     }
 }
@@ -286,6 +290,20 @@ mod tests {
         let old_home = concat!("var(\"ASSETIWEAVE_", "HOME\")");
         assert!(sources.iter().all(|source| !source.contains(old_read)));
         assert!(sources.iter().all(|source| !source.contains(old_home)));
+    }
+
+    #[test]
+    fn runtime_config_defaults_from_dirs_succeeds_or_returns_app_error() {
+        let res = RuntimeConfigDefaults::from_dirs();
+        match res {
+            Ok(defaults) => {
+                assert!(!defaults.home_dir.as_os_str().is_empty());
+                assert!(!defaults.data_dir.as_os_str().is_empty());
+            }
+            Err(err) => {
+                assert_eq!(err.code(), "not_found");
+            }
+        }
     }
 }
 
