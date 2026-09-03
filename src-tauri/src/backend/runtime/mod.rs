@@ -18,7 +18,8 @@ pub(crate) use app_runtime::{
     RuntimeRole, ShutdownReport, ShutdownState,
 };
 pub(crate) use error::{
-    sanitize_details, sanitize_public_message, AppError, AppErrorView, AppResult, WireError,
+    sanitize_details, sanitize_public_message, validation_error, AppError, AppErrorView, AppResult,
+    WireError,
 };
 #[allow(unused_imports)]
 pub(crate) use memory_legacy_archive::archive_legacy_memory_once;

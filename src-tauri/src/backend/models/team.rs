@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use validator::Validate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -37,28 +38,33 @@ pub struct TeamDetail {
     pub members: Vec<TeamMember>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, validator::Validate)]
 pub struct TeamMemberInput {
     pub id: Option<String>,
     pub role: TeamRole,
     pub sort_order: Option<i32>,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
     pub agent_id: String,
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, validator::Validate)]
 pub struct CreateTeamInput {
     pub id: Option<String>,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
     pub name: String,
     pub description: Option<String>,
+    #[validate(nested)]
     pub members: Vec<TeamMemberInput>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, validator::Validate)]
 pub struct UpdateTeamInput {
     pub team_id: String,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
     pub name: String,
     pub description: Option<String>,
+    #[validate(nested)]
     pub members: Vec<TeamMemberInput>,
 }
 
@@ -328,4 +334,22 @@ pub struct TeamTaskUpdateInput {
     pub state: TeamTaskState,
     pub result: Option<String>,
     pub error_code: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn team_name_field_uses_validator_without_changing_whitespace_semantics() {
+        use validator::Validate;
+        let input = CreateTeamInput {
+            id: None,
+            name: "  ".into(),
+            description: None,
+            members: vec![],
+        };
+        let errors = input.validate().unwrap_err();
+        assert!(errors.field_errors().contains_key("name"));
+    }
 }

@@ -31,3 +31,4 @@ pub(crate) mod search;
 pub(crate) mod store;
 pub(crate) mod target_catalog;
 pub(crate) mod targeting;
+pub(crate) mod validation;

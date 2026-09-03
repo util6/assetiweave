@@ -5,6 +5,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
+use validator::Validate;
 
 const MAX_ID_BYTES: usize = 64;
 const MAX_TEXT_BYTES: usize = 500;
@@ -503,19 +504,27 @@ impl Distribution {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, validator::Validate)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CatalogItem {
     pub(crate) id: String,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
+    #[validate(custom(function = "crate::backend::validation::validate_max_120_bytes"))]
     pub(crate) display_name: String,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
+    #[validate(custom(function = "crate::backend::validation::validate_max_500_bytes"))]
     pub(crate) description: String,
     pub(crate) protocol: AgentMarketProtocol,
+    #[validate(custom(function = "crate::backend::validation::validate_non_blank"))]
+    #[validate(custom(function = "crate::backend::validation::validate_max_120_bytes"))]
+    #[validate(custom(function = "crate::backend::validation::validate_no_null_bytes"))]
     pub(crate) version: String,
     #[serde(default)]
     pub(crate) core_compatibility: CoreCompatibility,
     pub(crate) capabilities: CatalogCapabilities,
     pub(crate) verification: Verification,
     pub(crate) upstream: UpstreamSource,
+    #[validate(length(min = 1))]
     pub(crate) distributions: Vec<Distribution>,
 }
 
@@ -973,18 +982,24 @@ impl CatalogItem {
         if !is_valid_id(&self.id) {
             return Err(format!("invalid catalog item id: {}", self.id));
         }
-        if self.display_name.trim().is_empty() || self.display_name.len() > 120 {
-            return Err(format!("invalid display name for {}", self.id));
-        }
-        if self.description.trim().is_empty() || self.description.len() > MAX_TEXT_BYTES {
-            return Err(format!("invalid description for {}", self.id));
-        }
-        if self.version.trim().is_empty() || self.version.len() > 120 || self.version.contains('\0')
-        {
-            return Err(format!("invalid observed version for {}", self.id));
-        }
-        if self.distributions.is_empty() {
-            return Err(format!("catalog item has no distributions: {}", self.id));
+        if let Err(errors) = self.validate() {
+            let field_errors = errors.field_errors();
+            if field_errors.contains_key("display_name") {
+                return Err(format!("invalid display name for {}", self.id));
+            }
+            if field_errors.contains_key("description") {
+                return Err(format!("invalid description for {}", self.id));
+            }
+            if field_errors.contains_key("version") {
+                return Err(format!("invalid observed version for {}", self.id));
+            }
+            if field_errors.contains_key("distributions") {
+                return Err(format!("catalog item has no distributions: {}", self.id));
+            }
+            let err_msg = crate::backend::runtime::validation_error(errors)
+                .view()
+                .message;
+            return Err(format!("{}: {}", self.id, err_msg));
         }
         let mut ids = std::collections::HashSet::new();
         for distribution in &self.distributions {
@@ -1423,5 +1438,52 @@ mod tests {
         assert_eq!(view.details.as_ref().unwrap()["phase"], "cleaning_up");
         assert!(!serialized.contains("/Users/util6"));
         assert!(!serialized.contains("secret"));
+    }
+
+    #[test]
+    fn catalog_item_uses_validator_for_common_fields() {
+        let mut item = item();
+        item.display_name = "   ".to_string();
+        let err = item.validate_basic().unwrap_err();
+        assert_eq!(err, format!("invalid display name for {}", item.id));
+
+        item.display_name = "Valid Name".to_string();
+        item.description = "a".repeat(501);
+        let err = item.validate_basic().unwrap_err();
+        assert_eq!(err, format!("invalid description for {}", item.id));
+
+        item.description = "Valid description".to_string();
+        item.version = "1.0\0.0".to_string();
+        let err = item.validate_basic().unwrap_err();
+        assert_eq!(err, format!("invalid observed version for {}", item.id));
+
+        item.version = "1.0.0".to_string();
+        item.distributions = vec![];
+        let err = item.validate_basic().unwrap_err();
+        assert_eq!(
+            err,
+            format!("catalog item has no distributions: {}", item.id)
+        );
+    }
+
+    #[test]
+    fn catalog_item_source_guard_ensures_manual_if_replaced_and_business_rules_preserved() {
+        let source = include_str!("types.rs");
+        assert!(!source.contains(concat!(
+            "self.display_name",
+            ".trim().is_empty() || self.display_name.len() > 120"
+        )));
+        assert!(!source.contains(concat!(
+            "self.description",
+            ".trim().is_empty() || self.description.len() > MAX_TEXT_BYTES"
+        )));
+        assert!(!source.contains(concat!(
+            "self.version",
+            ".trim().is_empty() || self.version.len() > 120"
+        )));
+        assert!(source.contains("if let Err(errors) = self.validate()"));
+        // business rules preserved:
+        assert!(source.contains("if !is_valid_id(&self.id)"));
+        assert!(source.contains("duplicate distribution id"));
     }
 }

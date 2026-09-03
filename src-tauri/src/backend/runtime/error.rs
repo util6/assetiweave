@@ -232,6 +232,43 @@ impl fmt::Display for AppErrorView {
     }
 }
 
+pub(crate) fn validation_error(errors: validator::ValidationErrors) -> AppError {
+    fn collect_codes(prefix: &str, errors: &validator::ValidationErrors, out: &mut Vec<String>) {
+        for (field, kind) in errors.errors() {
+            let path = if prefix.is_empty() {
+                field.to_string()
+            } else {
+                format!("{prefix}.{field}")
+            };
+            match kind {
+                validator::ValidationErrorsKind::Field(errs) => {
+                    for err in errs {
+                        out.push(format!("{path}: {}", err.code));
+                    }
+                }
+                validator::ValidationErrorsKind::Struct(nested) => {
+                    collect_codes(&path, nested, out);
+                }
+                validator::ValidationErrorsKind::List(items) => {
+                    for (index, nested) in items {
+                        collect_codes(&format!("{path}[{index}]"), nested, out);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut details = Vec::new();
+    collect_codes("", &errors, &mut details);
+    details.sort();
+    let message = if details.is_empty() {
+        "validation failed".to_string()
+    } else {
+        format!("validation failed: {}", details.join(", "))
+    };
+    AppError::Validation(message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +354,24 @@ mod tests {
         let source = include_str!("../ai_execution/error.rs");
         assert!(!source.contains(concat!("impl fmt::Display for ", "AiExecutionError")));
         assert!(source.contains("thiserror::Error"));
+    }
+
+    #[test]
+    fn validation_error_maps_controlled_field_codes_without_leaking_params() {
+        use validator::ValidationError;
+        let mut err = ValidationError::new("length_bytes");
+        err.add_param(std::borrow::Cow::Borrowed("secret"), &"token=12345");
+        let mut errors = validator::ValidationErrors::new();
+        errors.add("display_name", err);
+
+        let app_err = validation_error(errors);
+        let wire = app_err.view();
+        assert_eq!(wire.code, "validation_error");
+        assert_eq!(
+            wire.message,
+            "validation failed: display_name: length_bytes"
+        );
+        assert!(!wire.message.contains("12345"));
+        assert!(!wire.message.contains("token"));
     }
 }

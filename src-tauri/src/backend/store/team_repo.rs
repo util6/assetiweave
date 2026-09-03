@@ -1,6 +1,7 @@
 use chrono::Utc;
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::backend::{
     models::{CreateTeamInput, Team, TeamDetail, TeamMember, TeamRole, UpdateTeamInput},
@@ -8,6 +9,27 @@ use crate::backend::{
 };
 
 use super::codec::{decode_enum_app, encode_enum_app};
+
+fn map_team_validation_error(errors: validator::ValidationErrors) -> AppError {
+    if errors.field_errors().contains_key("name") {
+        return AppError::Validation("Team name must not be empty".to_string());
+    }
+    for (field, kind) in errors.errors() {
+        if field == "members" {
+            if let validator::ValidationErrorsKind::List(items) = kind {
+                for (index, member_errors) in items {
+                    if member_errors.field_errors().contains_key("agent_id") {
+                        return AppError::Validation(format!(
+                            "Team member at index {} requires a valid agent_id",
+                            index
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    crate::backend::runtime::validation_error(errors)
+}
 
 pub(crate) fn validate_team_roster_members(
     members: &[crate::backend::models::TeamMemberInput],
@@ -20,13 +42,7 @@ pub(crate) fn validate_team_roster_members(
     let mut teammate_count = 0;
 
     let mut member_ids = std::collections::HashSet::new();
-    for (index, member) in members.iter().enumerate() {
-        if member.agent_id.trim().is_empty() {
-            return Err(AppError::Validation(format!(
-                "Team member at index {} requires a valid agent_id",
-                index
-            )));
-        }
+    for (_index, member) in members.iter().enumerate() {
         if let Some(id) = member
             .id
             .as_deref()
@@ -104,14 +120,10 @@ pub(crate) async fn create_team_sqlx(
     tenant_id: &str,
     input: &CreateTeamInput,
 ) -> AppResult<TeamDetail> {
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err(AppError::Validation(
-            "Team name must not be empty".to_string(),
-        ));
-    }
-
+    input.validate().map_err(map_team_validation_error)?;
     validate_team_roster_members(&input.members)?;
+
+    let name = input.name.trim();
 
     let team_id = input
         .id
@@ -305,14 +317,10 @@ pub(crate) async fn update_team_sqlx(
     tenant_id: &str,
     input: &UpdateTeamInput,
 ) -> AppResult<TeamDetail> {
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err(AppError::Validation(
-            "Team name must not be empty".to_string(),
-        ));
-    }
-
+    input.validate().map_err(map_team_validation_error)?;
     validate_team_roster_members(&input.members)?;
+
+    let name = input.name.trim();
 
     let mut tx = pool.begin().await.map_err(AppError::external)?;
 
@@ -1417,4 +1425,128 @@ pub(crate) async fn authenticate_team_tool_sqlx(
         .bind(tenant_id).bind(credential_hash).bind(team_id).bind(run_id).bind(member_id).bind(now)
         .fetch_optional(pool).await.map_err(AppError::external)?;
     Ok(found.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::models::{CreateTeamInput, TeamMemberInput, TeamRole};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn create_team_validation_fails_before_touching_database() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE TABLE teams (
+                tenant_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id)
+            );
+            CREATE TABLE team_members (
+                tenant_id TEXT NOT NULL,
+                id TEXT NOT NULL,
+                team_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                agent_id TEXT NOT NULL,
+                model TEXT,
+                execution_context_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, id)
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let blank_name_input = CreateTeamInput {
+            id: None,
+            name: "   ".to_string(),
+            description: None,
+            members: vec![
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Leader,
+                    sort_order: Some(0),
+                    agent_id: "agent-1".to_string(),
+                    model: None,
+                },
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Teammate,
+                    sort_order: Some(1),
+                    agent_id: "agent-2".to_string(),
+                    model: None,
+                },
+            ],
+        };
+
+        let err = create_team_sqlx(&pool, "tenant-default", &blank_name_input)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "validation_error");
+        assert_eq!(err.view().message, "Team name must not be empty");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        let blank_member_input = CreateTeamInput {
+            id: None,
+            name: "Valid Name".to_string(),
+            description: None,
+            members: vec![
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Leader,
+                    sort_order: Some(0),
+                    agent_id: "   ".to_string(),
+                    model: None,
+                },
+                TeamMemberInput {
+                    id: None,
+                    role: TeamRole::Teammate,
+                    sort_order: Some(1),
+                    agent_id: "agent-2".to_string(),
+                    model: None,
+                },
+            ],
+        };
+
+        let err = create_team_sqlx(&pool, "tenant-default", &blank_member_input)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), "validation_error");
+        assert_eq!(
+            err.view().message,
+            "Team member at index 0 requires a valid agent_id"
+        );
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teams")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn team_repo_uses_validator_and_deletes_manual_whitespace_checks() {
+        let source = include_str!("team_repo.rs");
+        assert!(!source.contains(concat!("if member.", "agent_id.trim().is_empty()")));
+        assert!(source.contains("input.validate().map_err(map_team_validation_error)"));
+    }
 }
