@@ -1,10 +1,5 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelBatchMount,
   cancelSourceScan,
@@ -18,12 +13,12 @@ import {
   type SourceScanScope,
   type SourceScanTaskSnapshot,
 } from "../../services/catalog";
-import {
-  useBackgroundTaskRuntime,
-  type BackgroundTaskRuntimeAdapter,
-} from "./BackgroundTaskRuntime";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
-interface CatalogTaskContextValue {
+export interface CatalogTaskContextValue {
   sourceScan: SourceScanTaskSnapshot | null;
   batchMount: BatchMountTaskSnapshot | null;
   startSourceScan: (
@@ -37,116 +32,158 @@ interface CatalogTaskContextValue {
   cancelBatchMount: (taskId: string) => Promise<BatchMountTaskSnapshot>;
 }
 
-const CatalogTaskContext = createContext<CatalogTaskContextValue | null>(null);
+export function sourceScanQueryOptions(scope: QueryScope) {
+  return queryOptions<SourceScanTaskSnapshot | null>({
+    queryKey: taskKeys.resource(scope, "catalog-source-scan"),
+    queryFn: async () => selectLatest(await listSourceScanTasks()),
+    structuralSharing: (oldData, newData) =>
+      (newData as SourceScanTaskSnapshot | null) ??
+      (oldData as SourceScanTaskSnapshot | null) ??
+      null,
+    staleTime: 1000,
+  });
+}
 
-export function CatalogTaskProvider({ children }: { children: ReactNode }) {
-  const sourceAdapter = useMemo<
-    BackgroundTaskRuntimeAdapter<
-      SourceScanTaskSnapshot | null,
-      SourceScanTaskSnapshot
-    >
-  >(
-    () => ({
-      initialState: null,
-      isRunning: (state) =>
-        state?.status === "running" || state?.status === "cancelling",
-      merge: (_, incoming) =>
-        Array.isArray(incoming) ? selectLatest(incoming) : incoming,
-      refresh: async () => selectLatest(await listSourceScanTasks()),
-      subscribe: (listener) => subscribeSourceScanTasks(listener),
-      pollIntervalMs: 750,
-    }),
-    [],
+export function batchMountQueryOptions(scope: QueryScope) {
+  return queryOptions<BatchMountTaskSnapshot | null>({
+    queryKey: taskKeys.resource(scope, "catalog-batch-mount"),
+    queryFn: async () => selectLatest(await listBatchMountTasks()),
+    structuralSharing: (oldData, newData) =>
+      (newData as BatchMountTaskSnapshot | null) ??
+      (oldData as BatchMountTaskSnapshot | null) ??
+      null,
+    staleTime: 1000,
+  });
+}
+
+export function CatalogTaskProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const scanQueryKey = taskKeys.resource(activeScope, "catalog-source-scan");
+  const mountQueryKey = taskKeys.resource(activeScope, "catalog-batch-mount");
+
+  useQuery({
+    ...sourceScanQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      return state?.status === "running" || state?.status === "cancelling"
+        ? 1000
+        : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  useQuery({
+    ...batchMountQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      return state?.status === "running" || state?.status === "cancelling"
+        ? 1000
+        : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<SourceScanTaskSnapshot | null, SourceScanTaskSnapshot>
+        merge={(_, incoming) =>
+          Array.isArray(incoming) ? selectLatest(incoming) : incoming
+        }
+        queryKey={scanQueryKey}
+        subscribe={subscribeSourceScanTasks}
+      />
+      <TaskEventBridge<BatchMountTaskSnapshot | null, BatchMountTaskSnapshot>
+        merge={(_, incoming) =>
+          Array.isArray(incoming) ? selectLatest(incoming) : incoming
+        }
+        queryKey={mountQueryKey}
+        subscribe={subscribeBatchMountTasks}
+      />
+      {children ?? null}
+    </>
   );
-  const batchAdapter = useMemo<
-    BackgroundTaskRuntimeAdapter<
-      BatchMountTaskSnapshot | null,
-      BatchMountTaskSnapshot
-    >
-  >(
-    () => ({
-      initialState: null,
-      isRunning: (state) =>
-        state?.status === "running" || state?.status === "cancelling",
-      merge: (_, incoming) =>
-        Array.isArray(incoming) ? selectLatest(incoming) : incoming,
-      refresh: async () => selectLatest(await listBatchMountTasks()),
-      subscribe: (listener) => subscribeBatchMountTasks(listener),
-      pollIntervalMs: 750,
-    }),
-    [],
-  );
-  const sourceRuntime = useBackgroundTaskRuntime(sourceAdapter);
-  const batchRuntime = useBackgroundTaskRuntime(batchAdapter);
+}
+
+export function useCatalogTasks(): CatalogTaskContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const scanQueryKey = taskKeys.resource(activeScope, "catalog-source-scan");
+  const mountQueryKey = taskKeys.resource(activeScope, "catalog-batch-mount");
+
+  const scanQuery = useQuery({
+    ...sourceScanQueryOptions(activeScope),
+  });
+  const mountQuery = useQuery({
+    ...batchMountQueryOptions(activeScope),
+  });
 
   const startScan = useCallback(
     async (
       kind?: "skill" | "prompt" | "rule",
-      scope: SourceScanScope = "all",
+      scanScope: SourceScanScope = "all",
     ) => {
-      const snapshot = await startSourceScan(kind, scope);
-      sourceRuntime.merge(snapshot);
+      const snapshot = await startSourceScan(kind, scanScope);
+      queryClient.setQueryData<SourceScanTaskSnapshot | null>(
+        scanQueryKey,
+        snapshot,
+      );
       return snapshot;
     },
-    [sourceRuntime.merge],
+    [queryClient, scanQueryKey],
   );
+
   const cancelScan = useCallback(
     async (taskId: string) => {
       const snapshot = await cancelSourceScan(taskId);
-      sourceRuntime.merge(snapshot);
+      queryClient.setQueryData<SourceScanTaskSnapshot | null>(
+        scanQueryKey,
+        snapshot,
+      );
       return snapshot;
     },
-    [sourceRuntime.merge],
+    [queryClient, scanQueryKey],
   );
+
   const startMount = useCallback(
     async (params: Parameters<typeof startBatchMount>[0]) => {
       const snapshot = await startBatchMount(params);
-      batchRuntime.merge(snapshot);
+      queryClient.setQueryData<BatchMountTaskSnapshot | null>(
+        mountQueryKey,
+        snapshot,
+      );
       return snapshot;
     },
-    [batchRuntime.merge],
+    [mountQueryKey, queryClient],
   );
+
   const cancelMount = useCallback(
     async (taskId: string) => {
       const snapshot = await cancelBatchMount(taskId);
-      batchRuntime.merge(snapshot);
+      queryClient.setQueryData<BatchMountTaskSnapshot | null>(
+        mountQueryKey,
+        snapshot,
+      );
       return snapshot;
     },
-    [batchRuntime.merge],
+    [mountQueryKey, queryClient],
   );
 
-  const value = useMemo<CatalogTaskContextValue>(
-    () => ({
-      sourceScan: sourceRuntime.state,
-      batchMount: batchRuntime.state,
-      startSourceScan: startScan,
-      cancelSourceScan: cancelScan,
-      startBatchMount: startMount,
-      cancelBatchMount: cancelMount,
-    }),
-    [
-      batchRuntime.state,
-      cancelMount,
-      cancelScan,
-      sourceRuntime.state,
-      startMount,
-      startScan,
-    ],
-  );
-
-  return (
-    <CatalogTaskContext.Provider value={value}>
-      {children}
-    </CatalogTaskContext.Provider>
-  );
-}
-
-export function useCatalogTasks() {
-  const context = useContext(CatalogTaskContext);
-  if (!context) {
-    throw new Error("useCatalogTasks must be used inside CatalogTaskProvider");
-  }
-  return context;
+  return {
+    batchMount: mountQuery.data ?? null,
+    cancelBatchMount: cancelMount,
+    cancelSourceScan: cancelScan,
+    sourceScan: scanQuery.data ?? null,
+    startBatchMount: startMount,
+    startSourceScan: startScan,
+  };
 }
 
 function selectLatest<T extends { started_at: string }>(tasks: T[]): T | null {

@@ -7,6 +7,7 @@ import {
   render,
   screen,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryTaskProvider, useMemoryTasks } from "./MemoryTaskProvider";
 
@@ -22,7 +23,12 @@ vi.mock("../../services/memory", () => ({
 }));
 
 describe("MemoryTaskProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     vi.useFakeTimers();
     listMock.mockReset().mockResolvedValue([]);
     cancelMock.mockReset();
@@ -32,6 +38,7 @@ describe("MemoryTaskProvider", () => {
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
+    queryClient.clear();
   });
 
   it("polls the public TaskRuntime without disabling unrelated controls", async () => {
@@ -40,11 +47,15 @@ describe("MemoryTaskProvider", () => {
       .mockResolvedValueOnce([running])
       .mockResolvedValueOnce([task("succeeded")]);
     render(
-      <MemoryTaskProvider>
-        <Harness />
-      </MemoryTaskProvider>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryTaskProvider>
+          <Harness />
+        </MemoryTaskProvider>
+      </QueryClientProvider>,
     );
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("status").textContent).toBe("running");
     expect(
       (screen.getByRole("button", { name: "Other" }) as HTMLButtonElement)
@@ -52,6 +63,7 @@ describe("MemoryTaskProvider", () => {
     ).toBe(false);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(screen.getByTestId("status").textContent).toBe("succeeded");
     expect(listMock).toHaveBeenCalledTimes(2);
@@ -72,15 +84,20 @@ describe("MemoryTaskProvider", () => {
       .mockResolvedValueOnce([completed]);
 
     render(
-      <MemoryTaskProvider>
-        <Harness />
-      </MemoryTaskProvider>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryTaskProvider>
+          <Harness />
+        </MemoryTaskProvider>
+      </QueryClientProvider>,
     );
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("status").textContent).toBe("running");
 
     await act(async () => {
       notify?.();
+      await vi.advanceTimersByTimeAsync(0);
     });
     expect(screen.getByTestId("status").textContent).toBe("succeeded");
   });
@@ -91,14 +108,20 @@ describe("MemoryTaskProvider", () => {
     cancelMock.mockResolvedValue({ ...failed, status: "cancelling" });
     retryMock.mockResolvedValue({ ...failed, status: "pending" });
     render(
-      <MemoryTaskProvider>
-        <ActionHarness />
-      </MemoryTaskProvider>,
+      <QueryClientProvider client={queryClient}>
+        <MemoryTaskProvider>
+          <ActionHarness />
+        </MemoryTaskProvider>
+      </QueryClientProvider>,
     );
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(cancelMock).toHaveBeenCalledWith(failed.id);
     expect(retryMock).toHaveBeenCalledWith(failed.id);
   });

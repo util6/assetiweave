@@ -6,7 +6,9 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationSyncProvider,
@@ -26,7 +28,12 @@ vi.mock("../../services/conversations", () => ({
 }));
 
 describe("ConversationSyncProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     subscribeConversationSyncTasksMock.mockReset().mockResolvedValue(vi.fn());
     listConversationSyncTasksMock.mockReset().mockResolvedValue([]);
     syncConversationsMock.mockReset();
@@ -37,7 +44,16 @@ describe("ConversationSyncProvider", () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+    queryClient.clear();
   });
+
+  function renderWithClient(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ConversationSyncProvider>{ui}</ConversationSyncProvider>
+      </QueryClientProvider>,
+    );
+  }
 
   it("keeps the rest of the app interactive while receiving background sync events", async () => {
     const runningTask = {
@@ -60,14 +76,12 @@ describe("ConversationSyncProvider", () => {
       },
     );
 
-    render(
-      <ConversationSyncProvider>
-        <ProviderHarness />
-      </ConversationSyncProvider>,
-    );
+    renderWithClient(<ProviderHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Start sync" }));
-    await act(async () => {});
+    await waitFor(() => {
+      expect(screen.getByTestId("sync-status").textContent).toBe("running");
+    });
     expect(
       (
         screen.getByRole("button", {
@@ -75,7 +89,6 @@ describe("ConversationSyncProvider", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(false);
-    expect(screen.getByTestId("sync-status").textContent).toBe("running");
 
     await act(async () => {
       syncListener?.({
@@ -85,7 +98,9 @@ describe("ConversationSyncProvider", () => {
         result: { results: [] },
       });
     });
-    expect(screen.getByTestId("sync-status").textContent).toBe("completed");
+    await waitFor(() => {
+      expect(screen.getByTestId("sync-status").textContent).toBe("completed");
+    });
   });
 
   it("cancels a running sync through the shared task runtime", async () => {
@@ -107,19 +122,16 @@ describe("ConversationSyncProvider", () => {
       status: "cancelling",
     });
 
-    render(
-      <ConversationSyncProvider>
-        <CancelSyncHarness />
-      </ConversationSyncProvider>,
-    );
+    renderWithClient(<CancelSyncHarness />);
 
     fireEvent.click(
       screen.getByRole("button", { name: "Start and cancel sync" }),
     );
-    await act(async () => {});
-    expect(screen.getByTestId("cancel-sync-status").textContent).toBe(
-      "cancelling",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("cancel-sync-status").textContent).toBe(
+        "cancelling",
+      );
+    });
     expect(cancelConversationSyncMock).toHaveBeenCalledWith("sync-cancel");
   });
 
@@ -149,18 +161,17 @@ describe("ConversationSyncProvider", () => {
         },
       ]);
 
-    render(
-      <ConversationSyncProvider>
-        <ProviderHarness />
-      </ConversationSyncProvider>,
-    );
+    renderWithClient(<ProviderHarness />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start sync" }));
-    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start sync" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("sync-status").textContent).toBe("running");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(screen.getByTestId("sync-status").textContent).toBe("completed");
   });
@@ -181,20 +192,17 @@ describe("ConversationSyncProvider", () => {
       }),
     );
 
-    render(
-      <ConversationSyncProvider>
-        <IndependentSyncHarness />
-      </ConversationSyncProvider>,
-    );
+    renderWithClient(<IndependentSyncHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Start session sync" }));
     fireEvent.click(screen.getByRole("button", { name: "Start web sync" }));
-    await act(async () => {});
 
-    expect(screen.getByTestId("session-sync-status").textContent).toBe(
-      "running",
-    );
-    expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+    await waitFor(() => {
+      expect(screen.getByTestId("session-sync-status").textContent).toBe(
+        "running",
+      );
+      expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+    });
     expect(syncConversationsMock).toHaveBeenCalledTimes(2);
   });
 
@@ -213,20 +221,17 @@ describe("ConversationSyncProvider", () => {
       error: null,
     });
 
-    render(
-      <ConversationSyncProvider>
-        <FullSyncHarness />
-      </ConversationSyncProvider>,
-    );
+    renderWithClient(<FullSyncHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Start full sync" }));
-    await act(async () => {});
 
-    expect(screen.getByTestId("full-sync-status").textContent).toBe("running");
-    expect(screen.getByTestId("session-sync-status").textContent).toBe(
-      "running",
-    );
-    expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+    await waitFor(() => {
+      expect(screen.getByTestId("full-sync-status").textContent).toBe("running");
+      expect(screen.getByTestId("session-sync-status").textContent).toBe(
+        "running",
+      );
+      expect(screen.getByTestId("web-sync-status").textContent).toBe("running");
+    });
   });
 });
 

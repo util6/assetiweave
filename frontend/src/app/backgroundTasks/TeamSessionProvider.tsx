@@ -7,6 +7,7 @@ import {
   useRef,
   type ReactNode,
 } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelTeamMemberTurn,
   getTeamMemberStreamSnapshot,
@@ -31,10 +32,10 @@ import {
   selectTeamMemberSessions,
   teamSessionStateFromSnapshots,
 } from "./TeamSessionStore";
-import {
-  useBackgroundTaskRuntime,
-  type BackgroundTaskRuntimeAdapter,
-} from "./BackgroundTaskRuntime";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
 const MAX_REPLAY_CONCURRENCY = 2;
 
@@ -89,6 +90,43 @@ export interface TeamSessionView {
 
 const TeamSessionContext = createContext<TeamSessionContextValue | null>(null);
 
+export function teamSessionQueryKey(scope: QueryScope, teamId: string | null) {
+  return [...taskKeys.resource(scope, "team-session"), teamId ?? "all"] as const;
+}
+
+const BACKEND_STATE_FLAG = Symbol("BACKEND_STATE_FLAG");
+
+interface BackendTeamSessionStoreState extends TeamSessionStoreState {
+  [BACKEND_STATE_FLAG]?: boolean;
+}
+
+export function teamSessionQueryOptions(
+  scope: QueryScope,
+  teamId: string | null,
+) {
+  return queryOptions<TeamSessionStoreState>({
+    queryKey: teamSessionQueryKey(scope, teamId),
+    queryFn: async () => {
+      const state = (await loadTeamSessionState(teamId)) as BackendTeamSessionStoreState;
+      state[BACKEND_STATE_FLAG] = true;
+      return state;
+    },
+    structuralSharing: (oldData, newData) => {
+      if (!oldData) return newData;
+      if (!newData) return oldData;
+      if ((newData as BackendTeamSessionStoreState)[BACKEND_STATE_FLAG]) {
+        return mergeTeamSessionState(
+          oldData as TeamSessionStoreState,
+          newData as TeamSessionStoreState,
+        );
+      }
+      return newData;
+    },
+    staleTime: 1000,
+  });
+}
+
+
 export function TeamSessionProvider({
   activeMemberId = null,
   autoRestore = false,
@@ -102,31 +140,24 @@ export function TeamSessionProvider({
   memberIds?: string[];
   teamId?: string | null;
 }) {
-  const adapter = useMemo<
-    BackgroundTaskRuntimeAdapter<
-      TeamSessionStoreState,
-      TeamMemberStreamSnapshot
-    >
-  >(
-    () => ({
-      initialState: createTeamSessionStoreState(teamId),
-      isRunning: isTeamSessionRunning,
-      merge: (current, incoming) =>
-        isTeamSessionStoreState(incoming)
-          ? mergeTeamSessionState(current, incoming)
-          : applyTeamMemberStreamSnapshot(current, incoming),
-      refresh: () => loadTeamSessionState(teamId),
-      subscribe: (listener) =>
-        subscribeTeamMemberSessions((snapshot) => {
-          if (teamId === null || snapshot.team_id === teamId)
-            listener(snapshot);
-        }),
-      pollIntervalMs: 1000,
-      reconnectDelayMs: 1000,
-    }),
-    [teamId],
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = useMemo(
+    () => teamSessionQueryKey(activeScope, teamId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeScope.tenantId, activeScope.epoch, teamId],
   );
-  const { merge, refresh, state, update } = useBackgroundTaskRuntime(adapter);
+  const queryClient = useQueryClient();
+
+  const query = useQuery({
+    ...teamSessionQueryOptions(activeScope, teamId),
+    enabled: true,
+    refetchInterval: (q) =>
+      q.state.data && isTeamSessionRunning(q.state.data) ? 1000 : 10000,
+    refetchIntervalInBackground: true,
+  });
+
+  const state = query.data ?? createTeamSessionStoreState(teamId);
 
   const startTurn = useCallback(
     async (currentTeamId: string, memberId: string, message: string) => {
@@ -136,10 +167,15 @@ export function TeamSessionProvider({
         message,
         replay: false,
       });
-      merge(snapshot);
+      queryClient.setQueryData<TeamSessionStoreState>(queryKey, (current) =>
+        applyTeamMemberStreamSnapshot(
+          current ?? createTeamSessionStoreState(teamId),
+          snapshot,
+        ),
+      );
       return snapshot;
     },
-    [merge],
+    [queryClient, queryKey, teamId],
   );
 
   const startReplay = useCallback(
@@ -147,10 +183,46 @@ export function TeamSessionProvider({
       const snapshot = await startTeamMemberReplay(currentTeamId, memberId);
       if (!snapshot)
         throw new Error("Team member replay did not return a snapshot.");
-      merge(snapshot);
+      queryClient.setQueryData<TeamSessionStoreState>(queryKey, (current) =>
+        applyTeamMemberStreamSnapshot(
+          current ?? createTeamSessionStoreState(teamId),
+          snapshot,
+        ),
+      );
       return snapshot;
     },
-    [merge],
+    [queryClient, queryKey, teamId],
+  );
+
+  const cancelTurn = useCallback(
+    async (currentTeamId: string, memberId: string, executionId: string) => {
+      const snapshot = await cancelTeamMemberTurn(
+        currentTeamId,
+        memberId,
+        executionId,
+      );
+      queryClient.setQueryData<TeamSessionStoreState>(queryKey, (current) =>
+        applyTeamMemberStreamSnapshot(
+          current ?? createTeamSessionStoreState(teamId),
+          snapshot,
+        ),
+      );
+      return snapshot;
+    },
+    [queryClient, queryKey, teamId],
+  );
+
+  const markSeen = useCallback(
+    (currentTeamId: string, memberId: string) => {
+      queryClient.setQueryData<TeamSessionStoreState>(queryKey, (current) =>
+        markTeamMemberSessionSeen(
+          current ?? createTeamSessionStoreState(teamId),
+          currentTeamId,
+          memberId,
+        ),
+      );
+    },
+    [queryClient, queryKey, teamId],
   );
 
   const replaySchedulerRef = useRef<ReplaySchedulerState>({
@@ -204,9 +276,9 @@ export function TeamSessionProvider({
         .catch(() => {
           if (scheduler.teamId !== teamId) return;
           scheduler.running.delete(memberId);
-          update((current) =>
+          queryClient.setQueryData<TeamSessionStoreState>(queryKey, (current) =>
             markTeamMemberSessionUnavailable(
-              current,
+              current ?? createTeamSessionStoreState(teamId),
               teamId,
               memberId,
               "team_member_restore_unavailable",
@@ -218,40 +290,19 @@ export function TeamSessionProvider({
     activeMemberId,
     autoRestore,
     memberIds,
+    queryClient,
+    queryKey,
     startReplay,
     state,
     teamId,
-    update,
   ]);
-
-  const cancelTurn = useCallback(
-    async (currentTeamId: string, memberId: string, executionId: string) => {
-      const snapshot = await cancelTeamMemberTurn(
-        currentTeamId,
-        memberId,
-        executionId,
-      );
-      merge(snapshot);
-      return snapshot;
-    },
-    [merge],
-  );
-
-  const markSeen = useCallback(
-    (currentTeamId: string, memberId: string) => {
-      update((current) =>
-        markTeamMemberSessionSeen(current, currentTeamId, memberId),
-      );
-    },
-    [update],
-  );
 
   const value = useMemo<TeamSessionContextValue>(
     () => ({
       scopeTeamId: teamId,
       state,
       refresh: async () => {
-        await refresh();
+        await queryClient.refetchQueries({ exact: true, queryKey });
       },
       getMember: (currentTeamId, memberId) =>
         selectTeamMemberSession(state, currentTeamId, memberId),
@@ -260,11 +311,37 @@ export function TeamSessionProvider({
       startReplay,
       cancelTurn,
     }),
-    [cancelTurn, markSeen, refresh, startReplay, startTurn, state],
+    [
+      cancelTurn,
+      markSeen,
+      queryClient,
+      queryKey,
+      startReplay,
+      startTurn,
+      state,
+      teamId,
+    ],
   );
 
   return (
     <TeamSessionContext.Provider value={value}>
+      <TaskEventBridge<TeamSessionStoreState, TeamMemberStreamSnapshot>
+        key={queryKey.join(":")}
+        merge={(current, snapshot) =>
+          applyTeamMemberStreamSnapshot(
+            current ?? createTeamSessionStoreState(teamId),
+            snapshot,
+          )
+        }
+        queryKey={queryKey}
+        subscribe={(listener) =>
+          subscribeTeamMemberSessions((snapshot) => {
+            if (teamId === null || snapshot.team_id === teamId) {
+              listener(snapshot);
+            }
+          })
+        }
+      />
       {children}
     </TeamSessionContext.Provider>
   );
@@ -360,14 +437,6 @@ function snapshotFromTask(
     task,
     stream: { revision: 0, event_count: 0, items: [] },
   };
-}
-
-function isTeamSessionStoreState(
-  incoming: TeamSessionStoreState | TeamMemberStreamSnapshot,
-): incoming is TeamSessionStoreState {
-  return (
-    Boolean(incoming) && typeof incoming === "object" && "members" in incoming
-  );
 }
 
 function isTeamSessionRunning(state: TeamSessionStoreState): boolean {

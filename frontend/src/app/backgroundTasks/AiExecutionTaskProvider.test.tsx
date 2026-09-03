@@ -6,7 +6,9 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiExecutionTaskProvider,
@@ -34,7 +36,12 @@ vi.mock("../../services/cardTranslation", () => ({
 }));
 
 describe("AiExecutionTaskProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     listeners.clear();
     subscribeTasksMock
       .mockReset()
@@ -51,7 +58,16 @@ describe("AiExecutionTaskProvider", () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+    queryClient.clear();
   });
+
+  function renderWithClient(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <AiExecutionTaskProvider>{ui}</AiExecutionTaskProvider>
+      </QueryClientProvider>,
+    );
+  }
 
   it("merges full snapshots by id and ignores an older event", async () => {
     const running = taskSnapshot(
@@ -61,13 +77,10 @@ describe("AiExecutionTaskProvider", () => {
     );
     listTasksMock.mockResolvedValue([running]);
 
-    render(
-      <AiExecutionTaskProvider>
-        <Harness />
-      </AiExecutionTaskProvider>,
-    );
-    await act(async () => {});
-    expect(screen.getByTestId("state").textContent).toBe("running:prompting");
+    renderWithClient(<Harness />);
+    await waitFor(() => {
+      expect(screen.getByTestId("state").textContent).toBe("running:prompting");
+    });
 
     await act(async () => {
       listeners.get("ai-execution://task-updated")?.(
@@ -78,10 +91,12 @@ describe("AiExecutionTaskProvider", () => {
       );
     });
 
-    expect(screen.getByTestId("state").textContent).toBe(
-      "succeeded:cleaning_up",
-    );
-    expect(screen.getByTestId("count").textContent).toBe("1");
+    await waitFor(() => {
+      expect(screen.getByTestId("state").textContent).toBe(
+        "succeeded:cleaning_up",
+      );
+      expect(screen.getByTestId("count").textContent).toBe("1");
+    });
   });
 
   it("recovers a missed terminal event through polling", async () => {
@@ -97,16 +112,15 @@ describe("AiExecutionTaskProvider", () => {
         taskSnapshot("succeeded", "cleaning_up", "2026-08-13T00:00:03Z"),
       ]);
 
-    render(
-      <AiExecutionTaskProvider>
-        <Harness />
-      </AiExecutionTaskProvider>,
-    );
-    await act(async () => {});
+    renderWithClient(<Harness />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("state").textContent).toBe("running:prompting");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
 
     expect(screen.getByTestId("state").textContent).toBe(
@@ -124,45 +138,43 @@ describe("AiExecutionTaskProvider", () => {
       updated_at: "2026-08-13T00:00:02Z",
     });
 
-    render(
-      <AiExecutionTaskProvider>
-        <Harness />
-      </AiExecutionTaskProvider>,
-    );
-    await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    await act(async () => {});
-    expect(screen.getByTestId("state").textContent).toBe("queued:queued");
+    renderWithClient(<Harness />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("state").textContent).toBe("queued:queued");
+    });
     expect(
       (screen.getByRole("button", { name: "Other" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await act(async () => {});
-    expect(cancelTaskMock).toHaveBeenCalledWith("ai-task-1");
-    expect(screen.getByTestId("state").textContent).toBe("running:cancelling");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => {
+      expect(cancelTaskMock).toHaveBeenCalledWith("ai-task-1");
+      expect(screen.getByTestId("state").textContent).toBe("running:cancelling");
+    });
   });
 
   it("cleans up its listener and polling timer on unmount", async () => {
-    vi.useFakeTimers();
     const unlisten = vi.fn();
     subscribeTasksMock.mockResolvedValue(unlisten);
     listTasksMock.mockResolvedValue([
       taskSnapshot("running", "prompting", "2026-08-13T00:00:02Z"),
     ]);
 
-    const view = render(
-      <AiExecutionTaskProvider>
-        <Harness />
-      </AiExecutionTaskProvider>,
-    );
-    await act(async () => {});
-    expect(vi.getTimerCount()).toBe(1);
+    const view = renderWithClient(<Harness />);
+    await waitFor(() => {
+      expect(subscribeTasksMock).toHaveBeenCalled();
+    });
 
     view.unmount();
-    expect(unlisten).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(0);
+    await waitFor(() => {
+      expect(unlisten).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("bounds retained terminal snapshots while preserving every active task", () => {

@@ -6,7 +6,9 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationDataMaintenanceProvider,
@@ -28,7 +30,12 @@ vi.mock("../../services/conversations", () => ({
 }));
 
 describe("ConversationDataMaintenanceProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     subscribeMock.mockReset().mockResolvedValue(vi.fn());
     listMock.mockReset().mockResolvedValue([]);
     auditMock.mockReset();
@@ -40,7 +47,18 @@ describe("ConversationDataMaintenanceProvider", () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+    queryClient.clear();
   });
+
+  function renderWithClient(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ConversationDataMaintenanceProvider>
+          {ui}
+        </ConversationDataMaintenanceProvider>
+      </QueryClientProvider>,
+    );
+  }
 
   it("merges audit events and keeps unrelated controls interactive", async () => {
     const runningTask = maintenanceTask("audit-1", "running");
@@ -53,17 +71,14 @@ describe("ConversationDataMaintenanceProvider", () => {
       },
     );
 
-    render(
-      <ConversationDataMaintenanceProvider>
-        <MaintenanceHarness />
-      </ConversationDataMaintenanceProvider>,
-    );
+    renderWithClient(<MaintenanceHarness />);
 
     fireEvent.click(screen.getByRole("button", { name: "Start audit" }));
-    await act(async () => {});
-    expect(screen.getByTestId("maintenance-status").textContent).toBe(
-      "running",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("maintenance-status").textContent).toBe(
+        "running",
+      );
+    });
     expect(
       (
         screen.getByRole("button", {
@@ -75,9 +90,11 @@ describe("ConversationDataMaintenanceProvider", () => {
     await act(async () => {
       listener?.(maintenanceTask("audit-1", "completed"));
     });
-    expect(screen.getByTestId("maintenance-status").textContent).toBe(
-      "completed",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("maintenance-status").textContent).toBe(
+        "completed",
+      );
+    });
   });
 
   it("polls when an event is missed and exposes cancellation", async () => {
@@ -89,27 +106,28 @@ describe("ConversationDataMaintenanceProvider", () => {
       .mockResolvedValueOnce([maintenanceTask("repair-1", "completed")]);
     cancelMock.mockResolvedValue(maintenanceTask("repair-1", "cancelling"));
 
-    render(
-      <ConversationDataMaintenanceProvider>
-        <MaintenanceHarness />
-      </ConversationDataMaintenanceProvider>,
-    );
+    renderWithClient(<MaintenanceHarness />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
-    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start repair" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("maintenance-status").textContent).toBe(
       "running",
     );
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(screen.getByTestId("maintenance-status").textContent).toBe(
       "completed",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Cancel maintenance" }));
-    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel maintenance" }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(cancelMock).toHaveBeenCalledWith("repair-1");
     expect(screen.getByTestId("maintenance-status").textContent).toBe(
       "cancelling",
@@ -118,20 +136,17 @@ describe("ConversationDataMaintenanceProvider", () => {
 });
 
 function MaintenanceHarness() {
-  const { audit, repair, cancel, task } = useConversationDataMaintenance();
+  const { audit, cancel, repair, task } = useConversationDataMaintenance();
 
   return (
     <>
-      <button
-        onClick={() => void audit({ record_kind: "session" })}
-        type="button"
-      >
+      <button onClick={() => void audit()} type="button">
         Start audit
       </button>
-      <button onClick={() => void repair({ dry_run: true })} type="button">
+      <button onClick={() => void repair()} type="button">
         Start repair
       </button>
-      <button onClick={() => void (task && cancel(task.id))} type="button">
+      <button onClick={() => void cancel(task?.id ?? "")} type="button">
         Cancel maintenance
       </button>
       <button type="button">Other feature</button>
@@ -146,20 +161,15 @@ function maintenanceTask(
 ) {
   return {
     id,
+    action: "audit",
     status,
-    operation: id.startsWith("audit") ? "audit" : "repair",
-    source_id: null,
-    record_kind: null,
+    total: 10,
+    current: status === "completed" ? 10 : 3,
+    issues_found: 0,
+    issues_repaired: 0,
     dry_run: false,
-    progress: {
-      phase: status,
-      completed_stage: status === "completed" ? 10 : 1,
-      total_stage: 10,
-      note: null,
-    },
-    started_at: "2026-08-25T00:00:00Z",
-    finished_at: status === "completed" ? "2026-08-25T00:00:05Z" : null,
-    result: null,
+    started_at: "2026-06-15T00:00:00Z",
+    finished_at: status === "completed" ? "2026-06-15T00:00:10Z" : null,
     error: null,
   } as const;
 }

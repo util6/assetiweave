@@ -8,6 +8,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TeamSessionProvider, useTeamSession } from "./TeamSessionProvider";
 import type {
@@ -32,7 +33,12 @@ vi.mock("../../services/teamWorkflow", () => ({
 }));
 
 describe("TeamSessionProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     listTasksMock.mockReset().mockResolvedValue([]);
     getStreamMock.mockReset().mockResolvedValue(null);
     subscribeMock.mockReset().mockResolvedValue(vi.fn());
@@ -45,7 +51,14 @@ describe("TeamSessionProvider", () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+    queryClient.clear();
   });
+
+  function renderWithClient(ui: React.ReactElement) {
+    return render(
+      <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+    );
+  }
 
   it("keeps each member timeline separate and merges a missed event through polling", async () => {
     vi.useFakeTimers();
@@ -77,12 +90,14 @@ describe("TeamSessionProvider", () => {
       .mockResolvedValueOnce(leaderSucceeded)
       .mockResolvedValueOnce(teammateRunning);
 
-    render(
+    renderWithClient(
       <TeamSessionProvider teamId="team-1">
         <Harness />
       </TeamSessionProvider>,
     );
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("leader").textContent).toBe(
       "leader text:Running",
     );
@@ -92,6 +107,7 @@ describe("TeamSessionProvider", () => {
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(screen.getByTestId("leader").textContent).toBe(
       "leader final:Succeeded",
@@ -101,29 +117,38 @@ describe("TeamSessionProvider", () => {
     );
     expect(screen.getByTestId("leader-unread").textContent).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Mark leader seen" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("leader-unread").textContent).toBe("false");
   });
+
 
   it("cleans up the old scoped listener when the Team changes", async () => {
     const unsubscribers = [vi.fn(), vi.fn()];
     subscribeMock
       .mockResolvedValueOnce(unsubscribers[0])
       .mockResolvedValueOnce(unsubscribers[1]);
-    const view = render(
+    const view = renderWithClient(
       <TeamSessionProvider teamId="team-1">
         <Harness />
       </TeamSessionProvider>,
     );
-    await act(async () => {});
-    view.rerender(
-      <TeamSessionProvider teamId="team-2">
-        <Harness />
-      </TeamSessionProvider>,
-    );
-    await act(async () => {});
+    await waitFor(() => {
+      expect(subscribeMock).toHaveBeenCalledTimes(1);
+    });
 
-    expect(unsubscribers[0]).toHaveBeenCalledTimes(1);
-    expect(subscribeMock).toHaveBeenCalledTimes(2);
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <TeamSessionProvider teamId="team-2">
+          <Harness />
+        </TeamSessionProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(unsubscribers[0]).toHaveBeenCalledTimes(1);
+      expect(subscribeMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("starts, replays, and cancels through typed member actions", async () => {
@@ -143,7 +168,7 @@ describe("TeamSessionProvider", () => {
       task: { ...running.task, state: "Canceled" },
     });
 
-    render(
+    renderWithClient(
       <TeamSessionProvider teamId="team-1">
         <Harness />
       </TeamSessionProvider>,
@@ -180,7 +205,7 @@ describe("TeamSessionProvider", () => {
       });
     });
 
-    const view = render(
+    const view = renderWithClient(
       <TeamSessionProvider
         autoRestore
         teamId="team-1"
@@ -194,14 +219,16 @@ describe("TeamSessionProvider", () => {
     expect(started).toEqual(["leader", "teammate"]);
 
     view.rerender(
-      <TeamSessionProvider
-        autoRestore
-        teamId="team-1"
-        memberIds={["teammate", "leader", "teammate-2"]}
-        activeMemberId="teammate-2"
-      >
-        <Harness />
-      </TeamSessionProvider>,
+      <QueryClientProvider client={queryClient}>
+        <TeamSessionProvider
+          autoRestore
+          teamId="team-1"
+          memberIds={["teammate", "leader", "teammate-2"]}
+          activeMemberId="teammate-2"
+        >
+          <Harness />
+        </TeamSessionProvider>
+      </QueryClientProvider>,
     );
     await act(async () => {});
     expect(started).toEqual(["leader", "teammate"]);
@@ -232,7 +259,7 @@ describe("TeamSessionProvider", () => {
           ),
     );
 
-    render(
+    renderWithClient(
       <TeamSessionProvider
         autoRestore
         teamId="team-1"
@@ -247,6 +274,20 @@ describe("TeamSessionProvider", () => {
       expect(screen.getByTestId("restore").textContent).toBe("unavailable"),
     );
     expect(screen.getByTestId("teammate-restore").textContent).toBe("ready");
+  });
+
+  it("双订阅UI＋单query owner 仅发起单次后端查询", async () => {
+    listTasksMock.mockResolvedValue([]);
+    renderWithClient(
+      <TeamSessionProvider teamId="team-1">
+        <Harness />
+        <SecondHarness />
+      </TeamSessionProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("second-leader")).toBeDefined();
+    });
+    expect(listTasksMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -295,6 +336,16 @@ function Harness() {
         Mark leader seen
       </button>
     </>
+  );
+}
+
+function SecondHarness() {
+  const session = useTeamSession();
+  const leader = session.getMember("leader");
+  return (
+    <output data-testid="second-leader">
+      {leader?.task?.state ?? "none"}
+    </output>
   );
 }
 

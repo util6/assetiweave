@@ -9,6 +9,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
 import type {
@@ -98,16 +99,27 @@ const fixture = {
 let emitMemberSnapshot: ((snapshot: TeamMemberStreamSnapshot) => void) | null =
   null;
 
+let queryClient: QueryClient;
+
 function renderPage() {
   return render(
-    <I18nProvider>
-      <TeamPage />
-    </I18nProvider>,
+    <QueryClientProvider client={queryClient}>
+      <I18nProvider>
+        <TeamPage />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
 
 describe("TeamPage", () => {
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
     listTeamsMock.mockResolvedValue([fixture]);
     createTeamMock.mockResolvedValue({
       ...fixture,
@@ -184,7 +196,10 @@ describe("TeamPage", () => {
     getLatestTeamRunMock.mockResolvedValue(null);
   });
 
-  afterEach(() => cleanup());
+  afterEach(() => {
+    queryClient?.clear();
+    cleanup();
+  });
 
   it("loads a roster and moves a member before saving", async () => {
     renderPage();
@@ -295,8 +310,10 @@ describe("TeamPage", () => {
     expect(screen.getByTestId("team-active-recipient").textContent).toContain(
       "Leader",
     );
-    expect(screen.getByTestId("team-timeline").textContent).toContain(
-      "Leader timeline",
+    await waitFor(() =>
+      expect(screen.getByTestId("team-timeline").textContent).toContain(
+        "Leader timeline",
+      ),
     );
     expect(
       screen.getByTestId("team-member-teammate-status").textContent,
@@ -796,8 +813,10 @@ describe("TeamPage", () => {
         ),
       );
     });
-    expect(screen.getByTestId("team-timeline").textContent).toContain(
-      "First delta",
+    await waitFor(() =>
+      expect(screen.getByTestId("team-timeline").textContent).toContain(
+        "First delta",
+      ),
     );
     expect(screen.getByTestId("team-timeline").textContent).toContain(
       "Processing",
@@ -884,8 +903,10 @@ describe("TeamPage", () => {
       );
     });
 
-    expect(screen.getByTestId("team-timeline").textContent).toContain(
-      "Final delta",
+    await waitFor(() =>
+      expect(screen.getByTestId("team-timeline").textContent).toContain(
+        "Final delta",
+      ),
     );
     expect(screen.getByTestId("team-timeline").textContent).not.toContain(
       "First delta",

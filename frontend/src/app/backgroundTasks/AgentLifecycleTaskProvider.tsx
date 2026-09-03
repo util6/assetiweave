@@ -1,28 +1,19 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelAgentLifecycleTask,
   listAgentLifecycleTasks,
   subscribeAgentLifecycleTasks,
   type AgentLifecycleTaskSnapshot,
 } from "../../services/agentRuntime";
-import {
-  useBackgroundTaskRuntime,
-  type BackgroundTaskRuntimeAdapter,
-} from "./BackgroundTaskRuntime";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
 const TERMINAL_TASK_LIMIT = 100;
 
-interface AgentLifecycleRuntimeEvent {
-  snapshot: AgentLifecycleTaskSnapshot;
-}
-
-interface AgentLifecycleTaskContextValue {
+export interface AgentLifecycleTaskContextValue {
   tasks: AgentLifecycleTaskSnapshot[];
   cancelTask: (taskId: string) => Promise<AgentLifecycleTaskSnapshot>;
   getTask: (taskId: string) => AgentLifecycleTaskSnapshot | undefined;
@@ -30,43 +21,78 @@ interface AgentLifecycleTaskContextValue {
   mergeSnapshot: (snapshot: AgentLifecycleTaskSnapshot) => void;
 }
 
-const AgentLifecycleTaskContext =
-  createContext<AgentLifecycleTaskContextValue | null>(null);
+export function agentLifecycleQueryOptions(scope: QueryScope) {
+  return queryOptions<AgentLifecycleTaskSnapshot[]>({
+    queryKey: taskKeys.resource(scope, "agent-lifecycle"),
+    queryFn: listAgentLifecycleTasks,
+    structuralSharing: (oldData, newData) => {
+      const current =
+        (oldData as AgentLifecycleTaskSnapshot[] | undefined) ?? [];
+      const incoming =
+        (newData as AgentLifecycleTaskSnapshot[] | undefined) ?? [];
+      return mergeAgentLifecycleTaskSnapshots(current, incoming);
+    },
+    staleTime: 1000,
+  });
+}
 
 export function AgentLifecycleTaskProvider({
   children,
 }: {
-  children: ReactNode;
-}) {
-  const adapter = useMemo<
-    BackgroundTaskRuntimeAdapter<
-      AgentLifecycleTaskSnapshot[],
-      AgentLifecycleRuntimeEvent
-    >
-  >(
-    () => ({
-      initialState: [],
-      isRunning: (tasks) => tasks.some(isActiveAgentLifecycleTask),
-      merge: (current, incoming) =>
-        mergeAgentLifecycleTaskSnapshots(
-          current,
-          "snapshot" in incoming ? [incoming.snapshot] : incoming,
-        ),
-      refresh: listAgentLifecycleTasks,
-      subscribe: (listener) =>
-        subscribeAgentLifecycleTasks((snapshot) => listener({ snapshot })),
-    }),
-    [],
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = taskKeys.resource(activeScope, "agent-lifecycle");
+
+  useQuery({
+    ...agentLifecycleQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const tasks = query.state.data;
+      const isRunning = tasks && tasks.some(isActiveAgentLifecycleTask);
+      return isRunning ? 1000 : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<AgentLifecycleTaskSnapshot[], AgentLifecycleTaskSnapshot>
+        merge={(current, snapshot) =>
+          mergeAgentLifecycleTaskSnapshots(current ?? [], [snapshot])
+        }
+        queryKey={queryKey}
+        subscribe={subscribeAgentLifecycleTasks}
+      />
+      {children ?? null}
+    </>
   );
-  const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
+}
+
+export function useAgentLifecycleTasks(): AgentLifecycleTaskContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "agent-lifecycle");
+
+  const query = useQuery({
+    ...agentLifecycleQueryOptions(activeScope),
+  });
+
+  const tasks = query.data ?? [];
 
   const cancelTask = useCallback(
     async (taskId: string) => {
       const snapshot = await cancelAgentLifecycleTask(taskId);
-      merge({ snapshot });
+      queryClient.setQueryData<AgentLifecycleTaskSnapshot[]>(
+        queryKey,
+        (current) =>
+          mergeAgentLifecycleTaskSnapshots(current ?? [], [snapshot]),
+      );
       return snapshot;
     },
-    [merge],
+    [queryClient, queryKey],
   );
 
   const getTask = useCallback(
@@ -74,38 +100,36 @@ export function AgentLifecycleTaskProvider({
     [tasks],
   );
 
-  const value = useMemo<AgentLifecycleTaskContextValue>(
-    () => ({
-      tasks,
-      cancelTask,
-      getTask,
-      refresh: async () => {
-        await refresh();
-      },
-      mergeSnapshot: (snapshot) => merge({ snapshot }),
-    }),
-    [cancelTask, getTask, merge, refresh, tasks],
+  const mergeSnapshot = useCallback(
+    (snapshot: AgentLifecycleTaskSnapshot) => {
+      queryClient.setQueryData<AgentLifecycleTaskSnapshot[]>(
+        queryKey,
+        (current) =>
+          mergeAgentLifecycleTaskSnapshots(current ?? [], [snapshot]),
+      );
+    },
+    [queryClient, queryKey],
   );
 
-  return (
-    <AgentLifecycleTaskContext.Provider value={value}>
-      {children}
-    </AgentLifecycleTaskContext.Provider>
-  );
+  const refresh = useCallback(async () => {
+    await queryClient.refetchQueries({ exact: true, queryKey });
+  }, [queryClient, queryKey]);
+
+  return {
+    cancelTask,
+    getTask,
+    mergeSnapshot,
+    refresh,
+    tasks,
+  };
 }
 
-export function useAgentLifecycleTasks() {
-  const context = useContext(AgentLifecycleTaskContext);
-  if (!context) {
-    throw new Error(
-      "useAgentLifecycleTasks must be used inside AgentLifecycleTaskProvider",
-    );
+export function useOptionalAgentLifecycleTasks(): AgentLifecycleTaskContextValue | null {
+  try {
+    return useAgentLifecycleTasks();
+  } catch {
+    return null;
   }
-  return context;
-}
-
-export function useOptionalAgentLifecycleTasks() {
-  return useContext(AgentLifecycleTaskContext);
 }
 
 export function isActiveAgentLifecycleTask(task: AgentLifecycleTaskSnapshot) {
