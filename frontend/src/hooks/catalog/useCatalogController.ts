@@ -8,7 +8,7 @@ import {
   revealPath,
   type BatchMountTaskSnapshot,
 } from "../../services/catalog";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import { useTenantController } from "../tenants/useTenantController";
 import {
   countAssetsForProfileState,

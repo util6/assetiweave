@@ -7,7 +7,8 @@ import {
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
   type ResolvedConversationTranslationSettings,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import {
   useConversationContentController,
   type ConversationTranslationTaskController,

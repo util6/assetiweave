@@ -21,7 +21,8 @@ import type { ConversationContentController } from "./useConversationContentCont
 import type {
   ConversationContentCardColorSettings,
   ResolvedConversationTranslationSettings,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";
 import type { ConversationCommandProjection } from "../../services/conversationCommandProjection";

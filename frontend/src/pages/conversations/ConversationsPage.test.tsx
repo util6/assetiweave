@@ -27,7 +27,7 @@ import { DebouncedToolbarSearch } from "../../components/common/DataToolbar";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
-import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/AppSettingsProvider";
+import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/settingsSchema";
 import * as conversationCommandProjectionService from "../../services/conversationCommandProjection";
 import type {
   AppShortcut,

@@ -136,7 +136,6 @@ import {
   type AgentCapabilityServiceId,
   TRANSLATION_PROMPT_TEMPLATE_MAX_LENGTH,
   TRANSLATION_TARGET_LANGUAGE_MAX_LENGTH,
-  useAppSettings,
   type ConversationTranslationProvider,
   type ConversationRuntimeOverrideSettings,
   type ConversationContentCardColorSettings,
@@ -145,7 +144,9 @@ import {
   type FontFamilyValue,
   type InterfaceDensity,
   type SettingsPanelId,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+import { useAppSettings } from "../../store/settings/useAppSettings";
+
 import type {
   AppShortcut,
   AppShortcutIconSvg,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
 import { useSearchIndex } from "../../app/backgroundTasks/SearchIndexProvider";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
   type ConversationContentVisibility,

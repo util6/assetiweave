@@ -12,13 +12,31 @@ import {
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { AppSettingsProvider } from "../../store/settings/AppSettingsProvider";
 import {
   defaultSettings,
   defaultStorageInfo,
   type AppSettings,
 } from "../../store/settings/settingsSchema";
 import { parseTags, PromptOverviewPage } from "./PromptOverviewPage";
+
+vi.mock("../../store/settings/useAppSettings", () => ({
+  useAppSettings: () => ({
+    resetSettings: vi.fn(),
+    retrySave: vi.fn(),
+    setColumnLayout: vi.fn(),
+    setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
+    settings: appSettingsState.settings,
+    settingsError: null,
+    settingsLoaded: true,
+    storageInfo: defaultStorageInfo,
+    updateSetting: vi.fn((key: keyof AppSettings, val: unknown) => {
+      appSettingsState.settings = {
+        ...(appSettingsState.settings as AppSettings),
+        [key]: val,
+      };
+    }),
+  }),
+}));
 
 const selectTargetDirectoryMock = vi.hoisted(() =>
   vi.fn(async () => "/picked/project"),
@@ -29,7 +47,10 @@ const copyPromptImagesToClipboardMock = vi.hoisted(() =>
 const copyPromptTextToClipboardMock = vi.hoisted(() =>
   vi.fn(async () => undefined),
 );
-const appSettingsState = vi.hoisted(() => ({ settings: null as unknown }));
+const appSettingsState = vi.hoisted(() => ({
+  settings: null as unknown as AppSettings,
+}));
+
 const getAppSettingsMock = vi.hoisted(() => vi.fn());
 const saveAppSettingsMock = vi.hoisted(() => vi.fn());
 
@@ -957,9 +978,7 @@ function renderPromptPage({
   } as unknown as ComponentProps<typeof PromptOverviewPage>;
   return render(
     <I18nProvider>
-      <AppSettingsProvider>
-        <PromptOverviewPage {...pageProps} />
-      </AppSettingsProvider>
+      <PromptOverviewPage {...pageProps} />
     </I18nProvider>,
   );
 }

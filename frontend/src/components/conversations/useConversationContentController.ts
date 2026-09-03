@@ -13,11 +13,11 @@ import {
 import { useOptionalAiExecutionTasks } from "../../app/backgroundTasks/AiExecutionTaskProvider";
 import type { ConversationContentBlock } from "./ConversationContentCards";
 import type { ConversationRecordKind } from "../../types";
-import type { ResolvedConversationTranslationSettings } from "../../store/settings/AppSettingsProvider";
+import type { ResolvedConversationTranslationSettings } from "../../store/settings/settingsSchema";
 import {
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
 
 export type TranslationAvailabilityStatus =
   "idle" | "checking" | "available" | "unavailable";

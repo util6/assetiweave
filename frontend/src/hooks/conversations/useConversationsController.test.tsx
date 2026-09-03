@@ -20,14 +20,24 @@ vi.mock("../../app/backgroundTasks/SearchIndexProvider", () => ({
   }),
 }));
 
-vi.mock("../../store/settings/AppSettingsProvider", async (importOriginal) => {
+vi.mock("../../store/settings/useAppSettings", async (importOriginal) => {
   const actual =
     await importOriginal<
-      typeof import("../../store/settings/AppSettingsProvider")
+      typeof import("../../store/settings/useAppSettings")
     >();
   return {
     ...actual,
-    useAppSettings: () => ({ settings: { id: "settings" } }),
+    useAppSettings: () => ({
+      settings: { id: "settings" },
+      settingsError: null,
+      settingsLoaded: true,
+      storageInfo: {},
+      updateSetting: vi.fn(),
+      resetSettings: vi.fn(),
+      retrySave: vi.fn(),
+      setColumnLayout: vi.fn(),
+      setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
+    }),
   };
 });
 

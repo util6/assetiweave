@@ -26,7 +26,7 @@ import type {
   NavigationModel,
   RailMenuItem,
 } from "../../router/types";
-import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
+import type { SettingsPanelId } from "../../store/settings/settingsSchema";
 import type { AppShortcut, Tenant, TenantCreateParams } from "../../types";
 import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
 import { WindowTitleBar } from "./WindowTitleBar";

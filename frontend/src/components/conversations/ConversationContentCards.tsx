@@ -39,7 +39,8 @@ import {
   type ConversationContentCardColorSettings,
   type ResolvedConversationTranslationSettings,
   type ConversationTranslationTargetLanguage,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import { abbreviateHomePath } from "../../utils/path";
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";

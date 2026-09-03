@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 import type { CatalogController } from "../hooks/catalog/useCatalogController";
 import type { ConversationNavigationTarget } from "./navigationTargets";
-import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
+import type { SettingsPanelId } from "../store/settings/settingsSchema";
 import type { MemoryNavigationTarget } from "../types/memory";
 
 export interface WorkspaceContextValue {

@@ -10,7 +10,8 @@ import type {
 import {
   DEFAULT_CONVERSATION_CONTENT_CARD_COLORS,
   type ConversationContentCardColorSettings,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import { ToolbarCluster } from "../common/DataToolbar";
 import { Switch } from "../ui/switch";
 import type {

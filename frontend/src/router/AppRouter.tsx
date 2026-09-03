@@ -19,7 +19,7 @@ import {
   type WorkspaceContextValue,
 } from "./WorkspaceContext";
 import type { HeaderTabItem, NavigationModel } from "./types";
-import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
+import type { SettingsPanelId } from "../store/settings/settingsSchema";
 import type { MemoryNavigationTarget } from "../types/memory";
 import {
   conversationSubNavId,

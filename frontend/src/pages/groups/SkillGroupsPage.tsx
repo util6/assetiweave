@@ -42,7 +42,7 @@ import { SkillGroupEditDialog } from "../../components/groups/SkillGroupEditDial
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   createSkillGroup,
   deleteSkillGroup,

@@ -6,7 +6,7 @@ import {
   translateScanStatus,
 } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import type {
   AppShortcut,
   Asset,

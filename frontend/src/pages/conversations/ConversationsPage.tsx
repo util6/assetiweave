@@ -97,7 +97,8 @@ import {
   type ConversationContentCardColorSettings,
   type ResolvedConversationTranslationSettings,
   type SettingsPanelId,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import {
   exportConversationSession,
   exportWebRecordSession,

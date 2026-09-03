@@ -54,14 +54,17 @@ vi.mock("../../app/backgroundTasks/SearchIndexProvider", () => ({
   }),
 }));
 
-vi.mock("../../store/settings/AppSettingsProvider", async () => {
+vi.mock("../../store/settings/useAppSettings", async () => {
   const actual = await vi.importActual<
-    typeof import("../../store/settings/AppSettingsProvider")
-  >("../../store/settings/AppSettingsProvider");
+    typeof import("../../store/settings/useAppSettings")
+  >("../../store/settings/useAppSettings");
   return {
     ...actual,
     useAppSettings: () => ({
       resetSettings: vi.fn(),
+      retrySave: vi.fn(),
+      setColumnLayout: vi.fn(),
+      setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
       settings: defaultSettings,
       settingsError: null,
       settingsLoaded: true,

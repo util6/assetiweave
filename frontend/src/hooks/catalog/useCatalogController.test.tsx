@@ -19,9 +19,20 @@ vi.mock("../../app/backgroundTasks/CatalogTaskProvider", () => ({
     startSourceScan: vi.fn(),
   }),
 }));
-vi.mock("../../store/settings/AppSettingsProvider", () => ({
-  useAppSettings: () => ({ settings: { showStartupNotification: false } }),
+vi.mock("../../store/settings/useAppSettings", () => ({
+  useAppSettings: () => ({
+    settings: { showStartupNotification: false },
+    settingsError: null,
+    settingsLoaded: true,
+    storageInfo: {},
+    updateSetting: vi.fn(),
+    resetSettings: vi.fn(),
+    retrySave: vi.fn(),
+    setColumnLayout: vi.fn(),
+    setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
+
 vi.mock("../tenants/useTenantController", () => ({
   useTenantController: () => ({}),
 }));
