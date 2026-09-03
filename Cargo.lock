@@ -136,6 +136,7 @@ dependencies = [
  "base64 0.22.1",
  "bzip2",
  "chrono",
+ "config",
  "dirs",
  "flate2",
  "globset",
@@ -725,6 +726,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "config"
+version = "0.15.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b85f248a4de22d204ceabc6299d89d2c70fbd7f09fea53c06c852369652d8139"
+dependencies = [
+ "pathdiff",
+ "serde_core",
+ "winnow 1.0.3",
 ]
 
 [[package]]

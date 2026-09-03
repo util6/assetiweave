@@ -5,7 +5,9 @@
 //! 数据库 migration、默认数据 seed 或 Agent 恢复。
 
 mod app_runtime;
+pub(crate) mod config;
 mod error;
+
 mod memory_legacy_archive;
 pub(crate) mod session_streams;
 pub(crate) mod tasks;
