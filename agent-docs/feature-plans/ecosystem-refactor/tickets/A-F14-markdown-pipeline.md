@@ -1,6 +1,6 @@
 # A-F14：Markdown AST 生态替代手写解析器
 
-> **Status: PLANNED**。使用 `superpowers:executing-plans`，一轮只做本卡。
+> **Status: COMPLETED**。使用 `superpowers:executing-plans`，一轮只做本卡。
 
 **Goal:** 删除块/行内自研解析，保留 Conversation 的可信代码/图表/公式展示与性能边界。
 **Depends:** A-F13。
@@ -47,13 +47,13 @@ it("内容中的脚本不成为可执行 DOM", () => {
 
 ## 步骤
 
-- [ ] 建立旧行为 characterization：中英文段落、标题、表格、列表、引用、inline code、代码 fence、diff、Mermaid、数学和链接。正常行为可先 green；新增 native pipeline adoption 断言先 red。
-- [ ] `pnpm add -E react-markdown@10.1.0 remark-gfm@4.0.1 remark-math@6.0.0 rehype-katex@7.0.1`；复用现有 KaTeX CSS 与 Mermaid/Diff 依赖。
-- [ ] 提取原可信 renderer，接到 react-markdown components；默认不启用 rehype-raw，不创建新 MarkdownBlock/InlineMarkdownToken 解析体系。
-- [ ] 旧 `normalizeMarkdownSource` 中换行规范化/已支持数学分隔符转换若库无同义输入，可保留一个有单测的薄文本适配；不得保留原 tokenizer 作为 fallback parser。公式用 remark-math/rehype-katex 生成，不保留第二套通用 LaTeX 分段器。
-- [ ] Diff/Mermaid 保留原代码语言别名和错误降级；容器可视区/折叠策略不因新 AST 渲染提前执行所有大图表。对未展开的大内容证明没有启动 Mermaid 渲染。
-- [ ] 删除 parseMarkdownBlocks、手写 inline tokenizer/renderInlineMarkdown 及旧 token 类型；清理只为解析器存在的测试，业务断言在新入口上保留。
-- [ ] 运行以下命令与长会话手工验证，记录解析/渲染失败不影响导航。
+- [x] 建立旧行为 characterization：中英文段落、标题、表格、列表、引用、inline code、代码 fence、diff、Mermaid、数学和链接。正常行为可先 green；新增 native pipeline adoption 断言先 red。
+- [x] `pnpm add -E react-markdown@10.1.0 remark-gfm@4.0.1 remark-math@6.0.0 rehype-katex@7.0.1`；复用现有 KaTeX CSS 与 Mermaid/Diff 依赖。
+- [x] 提取原可信 renderer，接到 react-markdown components；默认不启用 rehype-raw，不创建新 MarkdownBlock/InlineMarkdownToken 解析体系。
+- [x] 旧 `normalizeMarkdownSource` 中换行规范化/已支持数学分隔符转换若库无同义输入，可保留一个有单测的薄文本适配；不得保留原 tokenizer 作为 fallback parser。公式用 remark-math/rehype-katex 生成，不保留第二套通用 LaTeX 分段器。
+- [x] Diff/Mermaid 保留原代码语言别名和错误降级；容器可视区/折叠策略不因新 AST 渲染提前执行所有大图表。对未展开的大内容证明没有启动 Mermaid 渲染。
+- [x] 删除 parseMarkdownBlocks、手写 inline tokenizer/renderInlineMarkdown 及旧 token 类型；清理只为解析器存在的测试，业务断言在新入口上保留。
+- [x] 运行以下命令与长会话手工验证，记录解析/渲染失败不影响导航。
 
 ```sh
 pnpm exec vitest run --config frontend/vite.config.ts frontend/src/components/conversations/ConversationMarkdown.test.tsx
