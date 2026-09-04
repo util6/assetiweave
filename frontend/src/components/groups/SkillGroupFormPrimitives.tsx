@@ -9,9 +9,11 @@ const ASSET_PICKER_SEARCH_COMMIT_DELAY_MS = 700;
 
 export function GroupField({
   children,
+  error,
   label,
 }: {
   children: ReactNode;
+  error?: ReactNode;
   label: string;
 }) {
   return (
@@ -20,6 +22,7 @@ export function GroupField({
         {label}
       </span>
       {children}
+      {error && <span className="text-body-sm text-status-remove">{error}</span>}
     </label>
   );
 }

@@ -73,6 +73,7 @@ export const catalogZh = {
   "group.editDialog.assets": "所有 Skill",
   "group.editDialog.submit": "保存修改",
   "group.form.error.nameRequired": "请输入分组名称。",
+  "group.form.error.colorInvalid": "请输入合法的6位十六进制颜色值。",
   "group.assets.selected": "已选 {{selected}} / {{total}}",
   "group.assets.toggleVisible": "切换当前列表",
   "group.assets.empty": "没有匹配的 Skill。",

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -184,9 +184,11 @@ describe("settingsQueries & useAppSettings", () => {
       }
     });
 
-    expect(result.current.settings.columnLayouts).toEqual({
-      explorer: [1, 2],
-      catalog: [1, 2, 1],
+    await waitFor(() => {
+      expect(result.current.settings.columnLayouts).toEqual({
+        explorer: [1, 2],
+        catalog: [1, 2, 1],
+      });
     });
   });
 });

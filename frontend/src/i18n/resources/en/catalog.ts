@@ -73,6 +73,7 @@ export const catalogEn = {
   "group.editDialog.assets": "All Skills",
   "group.editDialog.submit": "Save changes",
   "group.form.error.nameRequired": "Enter a group name.",
+  "group.form.error.colorInvalid": "Please enter a valid 6-digit hex color.",
   "group.assets.selected": "{{selected}} / {{total}} selected",
   "group.assets.toggleVisible": "Toggle visible",
   "group.assets.empty": "No matching skills.",

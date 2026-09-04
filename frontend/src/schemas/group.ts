@@ -21,7 +21,7 @@ import {
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-const assetGroupIconSvgSchema = z.strictObject({
+export const assetGroupIconSvgSchema = z.strictObject({
   paths: z
     .array(
       z.strictObject({
