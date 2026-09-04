@@ -10,7 +10,7 @@ use crate::backend::models::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Cursor, Read},
+    io::{Cursor, Read, Seek},
     time::Duration,
 };
 
@@ -327,43 +327,44 @@ fn download_and_extract_install_artifact(
                 "conversation adapter package artifact sha256 is required".to_string(),
             )
         })?;
-    let response = ureq::get(&spec.source.url)
-        .set(
-            "User-Agent",
-            "AssetIWeave/0.5 conversation-adapter-package-artifact",
-        )
-        .call()
-        .map_err(|error| {
-            AppError::External(format!(
-                "download conversation adapter package artifact failed: {error}"
-            ))
-        })?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(512 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            AppError::External(format!(
-                "read conversation adapter package artifact failed: {error}"
-            ))
-        })?;
-    if let Some(expected_size) = spec.artifact_size {
-        if bytes.len() as u64 != expected_size {
-            return Err(AppError::Validation(format!(
-                "conversation adapter package artifact size mismatch: expected {expected_size}, got {}",
-                bytes.len()
-            )));
+    let artifact_part = staging_dir.join("artifact.zip.part");
+    let client = crate::backend::http_client::shared_http_client()?;
+    let cancelled = || false;
+    let download_spec = crate::backend::http_client::DownloadSpec {
+        url: &spec.source.url,
+        path: &artifact_part,
+        max_bytes: 512 * 1024 * 1024,
+        expected_size: spec.artifact_size,
+        timeout: Duration::from_secs(60 * 5),
+    };
+    crate::backend::http_client::download_to_file(&client, download_spec, &cancelled)?;
+
+    let mut file =
+        fs::File::open(&artifact_part).map_err(|error| AppError::Storage(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| AppError::Storage(error.to_string()))?;
+        if count == 0 {
+            break;
         }
+        hasher.update(&buffer[..count]);
     }
-    let actual_hash = format!("{:x}", Sha256::digest(&bytes));
+    let actual_hash = format!("{:x}", hasher.finalize());
     if !actual_hash.eq_ignore_ascii_case(&expected_hash) {
+        let _ = fs::remove_file(&artifact_part);
         return Err(AppError::Validation(
             "conversation adapter package artifact hash mismatch".to_string(),
         ));
     }
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| AppError::Storage(error.to_string()))?;
 
-    extract_install_artifact_bytes(spec, bytes, staging_dir)
+    let result = extract_install_artifact_reader(spec, file, staging_dir);
+    let _ = fs::remove_file(&artifact_part);
+    result
 }
 
 pub(super) fn extract_install_artifact_bytes(
@@ -371,9 +372,17 @@ pub(super) fn extract_install_artifact_bytes(
     bytes: Vec<u8>,
     staging_dir: &Path,
 ) -> AppResult<PathBuf> {
+    extract_install_artifact_reader(spec, Cursor::new(bytes), staging_dir)
+}
+
+pub(super) fn extract_install_artifact_reader<R: Read + Seek>(
+    spec: &ConversationAdapterPackageInstallSpec,
+    reader: R,
+    staging_dir: &Path,
+) -> AppResult<PathBuf> {
     let extract_root = staging_dir.join("extracted");
     fs::create_dir_all(&extract_root).map_err(|error| AppError::Storage(error.to_string()))?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
+    let mut archive = zip::ZipArchive::new(reader).map_err(|error| {
         AppError::Validation(format!(
             "open conversation adapter package artifact failed: {error}"
         ))

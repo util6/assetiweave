@@ -48,7 +48,6 @@ tokio-util = { version = "0.7", features = ["compat", "rt"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 tracing-appender = "=0.2.5"
-ureq = { version = "2", features = ["json"] }
 url = "2"
 tar = "0.4"
 thiserror = "2"

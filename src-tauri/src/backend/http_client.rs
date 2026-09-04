@@ -81,6 +81,75 @@ pub(crate) fn get_with_redirects(
     }
 }
 
+pub(crate) struct DownloadSpec<'a> {
+    pub(crate) url: &'a str,
+    pub(crate) path: &'a std::path::Path,
+    pub(crate) max_bytes: u64,
+    pub(crate) expected_size: Option<u64>,
+    pub(crate) timeout: Duration,
+}
+
+pub(crate) fn download_to_file(
+    client: &reqwest::blocking::Client,
+    spec: DownloadSpec<'_>,
+    cancelled: &dyn Fn() -> bool,
+) -> AppResult<u64> {
+    if let Some(expected) = spec.expected_size {
+        if expected > spec.max_bytes {
+            return Err(AppError::Validation("artifact_size_invalid".into()));
+        }
+    }
+
+    let download_closure = || -> AppResult<u64> {
+        let mut response = get_with_redirects(
+            client,
+            spec.url,
+            reqwest::header::HeaderMap::new(),
+            spec.timeout,
+        )?
+        .error_for_status()
+        .map_err(AppError::external)?;
+
+        let mut file =
+            std::fs::File::create(spec.path).map_err(|e| AppError::Storage(e.to_string()))?;
+        let mut count = 0u64;
+        let mut buffer = [0u8; 8192];
+        loop {
+            if cancelled() {
+                return Err(AppError::Canceled("download cancelled".into()));
+            }
+            let read =
+                std::io::Read::read(&mut response, &mut buffer).map_err(AppError::external)?;
+            if cancelled() {
+                return Err(AppError::Canceled("download cancelled".into()));
+            }
+            if read == 0 {
+                break;
+            }
+            count += read as u64;
+            if count > spec.max_bytes {
+                return Err(AppError::Validation("artifact_size_invalid".into()));
+            }
+            std::io::Write::write_all(&mut file, &buffer[..read])
+                .map_err(|e| AppError::Storage(e.to_string()))?;
+        }
+
+        if let Some(expected) = spec.expected_size {
+            if count != expected {
+                return Err(AppError::Validation("artifact_size_invalid".into()));
+            }
+        }
+        std::io::Write::flush(&mut file).map_err(|e| AppError::Storage(e.to_string()))?;
+        Ok(count)
+    };
+
+    let result = download_closure();
+    if result.is_err() {
+        let _ = std::fs::remove_file(spec.path);
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +416,59 @@ mod tests {
         assert!(res.is_err());
 
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn download_to_file_loopback_and_cleanup_on_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let body = b"1234";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.write_all(body);
+                let _ = stream.flush();
+            }
+        });
+
+        let client = build_http_client().unwrap();
+        let temp_dir =
+            std::env::temp_dir().join(format!("assetiweave-dl-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let part_path = temp_dir.join("test.part");
+
+        let spec = DownloadSpec {
+            url: &format!("http://{addr}/test"),
+            path: &part_path,
+            max_bytes: 3,
+            expected_size: None,
+            timeout: Duration::from_secs(5),
+        };
+        let res = download_to_file(&client, spec, &|| false);
+        assert!(res.is_err());
+        assert!(
+            !part_path.exists(),
+            "partial file must be cleaned up on error"
+        );
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn artifact_production_paths_no_longer_use_ureq_or_buffered_extract() {
+        for source in [
+            include_str!("agent_market/lifecycle/install.rs"),
+            include_str!("application/conversation_adapter_installer.rs"),
+        ] {
+            assert!(!source.contains(concat!("ur", "eq::")));
+        }
+        let source = include_str!("agent_market/installers/binary.rs");
+        assert!(source.contains("materialize_file"));
     }
 }

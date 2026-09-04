@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs::{self, File},
-    io::{Cursor, Read},
+    io::{Read, Seek},
     path::PathBuf,
 };
 
@@ -18,11 +18,11 @@ use crate::backend::agent_market::types::{Distribution, MaterializedRuntime};
 pub(crate) struct BinaryInstaller;
 
 impl BinaryInstaller {
-    pub(crate) fn materialize_bytes(
+    pub(crate) fn materialize_file(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
-        bytes: &[u8],
+        artifact: &std::path::Path,
     ) -> Result<MaterializedRuntime, InstallError> {
         let Distribution::Binary {
             archive,
@@ -36,7 +36,13 @@ impl BinaryInstaller {
                 "binary installer received a non-binary distribution".to_string(),
             ));
         };
-        if bytes.len() as u64 > MAX_BINARY_BYTES {
+        let mut file =
+            File::open(artifact).map_err(|error| InstallError::Failed(error.to_string()))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| InstallError::Failed(error.to_string()))?;
+        let file_len = metadata.len();
+        if file_len > MAX_BINARY_BYTES {
             return Err(InstallError::ArchiveInvalid(
                 "binary artifact exceeds size limit".to_string(),
             ));
@@ -44,10 +50,27 @@ impl BinaryInstaller {
         if is_cancelled(context) {
             return Err(InstallError::Cancelled);
         }
-        let digest = Sha256::digest(bytes);
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            if is_cancelled(context) {
+                return Err(InstallError::Cancelled);
+            }
+            let count = file
+                .read(&mut buffer)
+                .map_err(|e| InstallError::Failed(e.to_string()))?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let digest = hasher.finalize();
         if hex_lower(&digest) != *sha256 {
             return Err(InstallError::IntegrityMismatch);
         }
+        file.seek(std::io::SeekFrom::Start(0))
+            .map_err(|e| InstallError::Failed(e.to_string()))?;
+
         ensure_staging_root(&context.staging_dir)?;
         match archive.as_str() {
             "none" => {
@@ -57,12 +80,15 @@ impl BinaryInstaller {
                     fs::create_dir_all(parent)
                         .map_err(|error| InstallError::Failed(error.to_string()))?;
                 }
-                fs::write(&path, bytes).map_err(|error| InstallError::Failed(error.to_string()))?;
+                let mut output =
+                    File::create(&path).map_err(|error| InstallError::Failed(error.to_string()))?;
+                std::io::copy(&mut file, &mut output)
+                    .map_err(|error| InstallError::Failed(error.to_string()))?;
                 make_executable(&path)?;
             }
-            "zip" => extract_zip(&context.staging_dir, bytes, context)?,
-            "tar.gz" | "tgz" => extract_tar_gz(&context.staging_dir, bytes, context)?,
-            "tar.bz2" | "tbz2" => extract_tar_bz2(&context.staging_dir, bytes, context)?,
+            "zip" => extract_zip(&context.staging_dir, file, context)?,
+            "tar.gz" | "tgz" => extract_tar_gz(&context.staging_dir, file, context)?,
+            "tar.bz2" | "tbz2" => extract_tar_bz2(&context.staging_dir, file, context)?,
             other => {
                 return Err(InstallError::Unsupported(format!(
                     "binary archive is not supported in this build: {other}"
@@ -74,8 +100,23 @@ impl BinaryInstaller {
             context,
             program,
             launch_args.clone(),
-            Some(serde_json::json!({ "sha256": sha256, "size": bytes.len() })),
+            Some(serde_json::json!({ "sha256": sha256, "size": file_len })),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialize_bytes(
+        &self,
+        distribution: &Distribution,
+        context: &InstallContext,
+        bytes: &[u8],
+    ) -> Result<MaterializedRuntime, InstallError> {
+        let temp_artifact = context.staging_dir.join(".test_artifact.tmp");
+        fs::write(&temp_artifact, bytes)
+            .map_err(|error| InstallError::Failed(error.to_string()))?;
+        let res = self.materialize_file(distribution, context, &temp_artifact);
+        let _ = fs::remove_file(&temp_artifact);
+        res
     }
 }
 
@@ -92,13 +133,13 @@ impl Installer for BinaryInstaller {
     }
 }
 
-fn extract_zip(
+fn extract_zip<R: Read + Seek>(
     root: &std::path::Path,
-    bytes: &[u8],
+    reader: R,
     context: &InstallContext,
 ) -> Result<(), InstallError> {
-    let mut archive = ZipArchive::new(Cursor::new(bytes))
-        .map_err(|error| InstallError::ArchiveInvalid(error.to_string()))?;
+    let mut archive =
+        ZipArchive::new(reader).map_err(|error| InstallError::ArchiveInvalid(error.to_string()))?;
     if archive.len() > MAX_FILE_COUNT {
         return Err(InstallError::ArchiveInvalid(
             "archive contains too many files".to_string(),
@@ -178,21 +219,21 @@ fn extract_zip(
     Ok(())
 }
 
-fn extract_tar_gz(
+fn extract_tar_gz<R: Read>(
     root: &std::path::Path,
-    bytes: &[u8],
+    reader: R,
     context: &InstallContext,
 ) -> Result<(), InstallError> {
-    let decoder = flate2::read::GzDecoder::new(Cursor::new(bytes));
+    let decoder = flate2::read::GzDecoder::new(reader);
     extract_tar(root, decoder, context)
 }
 
-fn extract_tar_bz2(
+fn extract_tar_bz2<R: Read>(
     root: &std::path::Path,
-    bytes: &[u8],
+    reader: R,
     context: &InstallContext,
 ) -> Result<(), InstallError> {
-    let decoder = bzip2::read::BzDecoder::new(Cursor::new(bytes));
+    let decoder = bzip2::read::BzDecoder::new(reader);
     extract_tar(root, decoder, context)
 }
 
