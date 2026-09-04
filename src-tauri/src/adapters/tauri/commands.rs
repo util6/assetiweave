@@ -280,19 +280,23 @@ pub(crate) async fn complete_app_close(
 }
 
 #[tauri::command]
-pub(crate) fn list_assets(
+pub(crate) async fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    AppService::from_runtime(&state.runtime).list_assets(ListAssetsParams { kind })
+    AppService::from_runtime(&state.runtime)
+        .list_assets(ListAssetsParams { kind })
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_source_assets(
+pub(crate) async fn list_source_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    AppService::from_runtime(&state.runtime).list_source_assets(kind)
+    AppService::from_runtime(&state.runtime)
+        .list_source_assets(kind)
+        .await
 }
 
 #[tauri::command]
@@ -828,15 +832,15 @@ pub(crate) fn check_skill_remote_sources(
 }
 
 #[tauri::command]
-pub(crate) fn update_asset_description(
+pub(crate) async fn update_asset_description(
     state: State<'_, AppState>,
     asset_id: String,
     description: Option<String>,
 ) -> RuntimeAppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).update_asset_description(asset_id, description)
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_asset_description(asset_id, description)
+        .await;
 
     match &result {
         Ok(asset) => log_info(
@@ -855,15 +859,15 @@ pub(crate) fn update_asset_description(
 }
 
 #[tauri::command]
-pub(crate) fn delete_asset(
+pub(crate) async fn delete_asset(
     state: State<'_, AppState>,
     asset_id: String,
     unmount: Option<bool>,
 ) -> RuntimeAppResult<Asset> {
     let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).delete_asset(asset_id, unmount.unwrap_or(false))
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_asset(asset_id, unmount.unwrap_or(false))
+        .await;
 
     match &result {
         Ok(asset) => log_info("asset.delete", "删除资产成功", &asset_log_fields(asset)),
@@ -873,22 +877,30 @@ pub(crate) fn delete_asset(
 }
 
 #[tauri::command]
-pub(crate) fn list_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
-    AppService::from_runtime(&state.runtime).list_sources()
+pub(crate) async fn list_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
+    AppService::from_runtime(&state.runtime)
+        .list_sources()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
-    AppService::from_runtime(&state.runtime).list_skill_sources()
+pub(crate) async fn list_skill_sources(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<Source>> {
+    AppService::from_runtime(&state.runtime)
+        .list_skill_sources()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_source(
+pub(crate) async fn create_source(
     state: State<'_, AppState>,
     source: SourceInput,
 ) -> RuntimeAppResult<Source> {
     let input_fields = source_input_log_fields(&source);
-    let result = (|| AppService::from_runtime(&state.runtime).add_source(source))();
+    let result = AppService::from_runtime(&state.runtime)
+        .add_source(source)
+        .await;
 
     match &result {
         Ok(source) => log_info(
@@ -902,12 +914,14 @@ pub(crate) fn create_source(
 }
 
 #[tauri::command]
-pub(crate) fn update_source(
+pub(crate) async fn update_source(
     state: State<'_, AppState>,
     source: Source,
 ) -> RuntimeAppResult<Source> {
     let input_fields = source_log_fields(&source);
-    let result = (|| AppService::from_runtime(&state.runtime).update_source(source))();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_source(source)
+        .await;
 
     match &result {
         Ok(source) => log_info(
@@ -921,17 +935,16 @@ pub(crate) fn update_source(
 }
 
 #[tauri::command]
-pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
+pub(crate) async fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
     let fields = vec![("source_id", id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime)
-            .remove_source(SourceRemoveParams {
-                id: id.clone(),
-                dry_run: false,
-                yes: true,
-            })
-            .map(|_| ())
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .remove_source(SourceRemoveParams {
+            id: id.clone(),
+            dry_run: false,
+            yes: true,
+        })
+        .await
+        .map(|_| ());
 
     match &result {
         Ok(()) => log_info("source.delete", "删除数据来源成功", &fields),
@@ -941,8 +954,12 @@ pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAp
 }
 
 #[tauri::command]
-pub(crate) fn list_profiles(state: State<'_, AppState>) -> RuntimeAppResult<Vec<TargetProfile>> {
-    AppService::from_runtime(&state.runtime).list_profiles()
+pub(crate) async fn list_profiles(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<TargetProfile>> {
+    AppService::from_runtime(&state.runtime)
+        .list_profiles()
+        .await
 }
 
 #[tauri::command]
@@ -960,7 +977,7 @@ pub(crate) fn refresh_target_profile_descriptors(
 }
 
 #[tauri::command]
-pub(crate) fn create_profile(
+pub(crate) async fn create_profile(
     state: State<'_, AppState>,
     input: TargetProfileInput,
 ) -> RuntimeAppResult<TargetProfile> {
@@ -971,7 +988,9 @@ pub(crate) fn create_profile(
     if let Some(app_kind) = input.app_kind {
         input_fields.push(("app_kind", format!("{app_kind:?}")));
     }
-    let result = (|| AppService::from_runtime(&state.runtime).create_profile(input))();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_profile(input)
+        .await;
 
     match &result {
         Ok(profile) => log_info(
@@ -990,12 +1009,14 @@ pub(crate) fn create_profile(
 }
 
 #[tauri::command]
-pub(crate) fn update_profile(
+pub(crate) async fn update_profile(
     state: State<'_, AppState>,
     profile: TargetProfile,
 ) -> RuntimeAppResult<TargetProfile> {
     let input_fields = profile_log_fields(&profile);
-    let result = (|| AppService::from_runtime(&state.runtime).update_profile(profile))();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_profile(profile)
+        .await;
 
     match &result {
         Ok(profile) => log_info(
@@ -1014,9 +1035,11 @@ pub(crate) fn update_profile(
 }
 
 #[tauri::command]
-pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
+pub(crate) async fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
     let fields = vec![("profile_id", id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).delete_profile(id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_profile(id)
+        .await;
 
     match &result {
         Ok(()) => log_info("profile.delete", "删除目标 APP 配置成功", &fields),
@@ -1026,14 +1049,16 @@ pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeA
 }
 
 #[tauri::command]
-pub(crate) fn get_navigation_model(
+pub(crate) async fn get_navigation_model(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<NavigationModel> {
-    AppService::from_runtime(&state.runtime).navigation_model()
+    AppService::from_runtime(&state.runtime)
+        .navigation_model()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_navigation_model(
+pub(crate) async fn update_navigation_model(
     state: State<'_, AppState>,
     model: NavigationModel,
 ) -> RuntimeAppResult<NavigationModel> {
@@ -1043,7 +1068,9 @@ pub(crate) fn update_navigation_model(
         ("active_sub_nav_id", model.active_sub_nav_id.clone()),
         ("rail_count", model.rail_items.len().to_string()),
     ];
-    let result = (|| AppService::from_runtime(&state.runtime).update_navigation_model(model))();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_navigation_model(model)
+        .await;
 
     match &result {
         Ok(_) => log_info("navigation.update", "更新导航配置成功", &fields),
@@ -1053,24 +1080,32 @@ pub(crate) fn update_navigation_model(
 }
 
 #[tauri::command]
-pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime).list_app_shortcuts()
-}
-
-#[tauri::command]
-pub(crate) fn list_app_shortcut_settings(
+pub(crate) async fn list_app_shortcuts(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime).list_app_shortcut_settings()
+    AppService::from_runtime(&state.runtime)
+        .list_app_shortcuts()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_app_shortcuts(
+pub(crate) async fn list_app_shortcut_settings(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<AppShortcut>> {
+    AppService::from_runtime(&state.runtime)
+        .list_app_shortcut_settings()
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn update_app_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<AppShortcut>,
 ) -> RuntimeAppResult<Vec<AppShortcut>> {
     let fields = vec![("shortcut_count", shortcuts.len().to_string())];
-    let result = (|| AppService::from_runtime(&state.runtime).update_app_shortcuts(shortcuts))();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_app_shortcuts(shortcuts)
+        .await;
 
     match &result {
         Ok(shortcuts) => log_info(
@@ -1089,11 +1124,13 @@ pub(crate) fn update_app_shortcuts(
 }
 
 #[tauri::command]
-pub(crate) fn list_asset_mounts(
+pub(crate) async fn list_asset_mounts(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMount>> {
-    AppService::from_runtime(&state.runtime).list_asset_mounts(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime)
+        .list_asset_mounts(asset_id.as_deref())
+        .await
 }
 
 #[tauri::command]
@@ -1297,13 +1334,14 @@ pub(crate) fn preview_skill_group_exclusive_mount(
 }
 
 #[tauri::command]
-pub(crate) fn toggle_asset_mount(
+pub(crate) async fn toggle_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMount> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).toggle_asset_mount(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .toggle_asset_mount(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
         log_error(
@@ -1424,33 +1462,26 @@ pub(crate) fn start_source_scan(
     let skill_sources_only = scope == SourceScanScope::Skills;
     let worker_app = app.clone();
     let worker_task_id = task_id.clone();
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("aiw-source-scan-{}", &task_id[..8]))
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let service = AppService::from_runtime(&runtime);
-                crate::backend::application::SourceScanWorkflow::run(
-                    &service,
-                    params,
-                    &task_context,
-                    skill_sources_only,
-                )
-            }))
-            .unwrap_or_else(|_| Err(AppError::Process("source scan worker panicked".to_string())));
-            if let Ok(snapshot) = tasks.finish_source_scan(&worker_task_id, result) {
-                let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
-            }
-        });
-    if let Err(error) = spawn_result {
-        let failure = state.background_tasks.finish_source_scan(
-            &task_id,
-            Err(AppError::Process(format!(
-                "启动 source scan worker 失败: {error}"
-            ))),
-        )?;
-        let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &failure);
-        return Ok(failure);
-    }
+    tauri::async_runtime::spawn(async move {
+        let result = match tokio::spawn(async move {
+            let service = AppService::from_runtime(&runtime);
+            crate::backend::application::SourceScanWorkflow::run(
+                &service,
+                params,
+                &task_context,
+                skill_sources_only,
+            )
+            .await
+        })
+        .await
+        {
+            Ok(inner_result) => inner_result,
+            Err(_) => Err(AppError::Process("source scan worker panicked".to_string())),
+        };
+        if let Ok(snapshot) = tasks.finish_source_scan(&worker_task_id, result) {
+            let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
+        }
+    });
     Ok(snapshot)
 }
 
@@ -3051,7 +3082,7 @@ pub(crate) fn update_conversation_part_translation(
 }
 
 #[tauri::command]
-pub(crate) fn create_plan(
+pub(crate) async fn create_plan(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> RuntimeAppResult<DeploymentPlan> {
@@ -3059,7 +3090,9 @@ pub(crate) fn create_plan(
         .as_ref()
         .map(|profile_id| vec![("profile_id", profile_id.clone())])
         .unwrap_or_default();
-    let result = (|| AppService::from_runtime(&state.runtime).create_plan(profile_id.as_deref()))();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_plan(profile_id.as_deref())
+        .await;
 
     match &result {
         Ok(plan) => {
@@ -3079,7 +3112,7 @@ pub(crate) fn create_plan(
 }
 
 #[tauri::command]
-pub(crate) fn execute_plan(
+pub(crate) async fn execute_plan(
     state: State<'_, AppState>,
     plan: DeploymentPlan,
     action_ids: Option<Vec<String>>,
@@ -3092,7 +3125,9 @@ pub(crate) fn execute_plan(
             action_ids.as_ref().map(Vec::len).unwrap_or(0).to_string(),
         ),
     ];
-    let result = (|| AppService::from_runtime(&state.runtime).execute_plan(plan, action_ids))();
+    let result = AppService::from_runtime(&state.runtime)
+        .execute_plan(plan, action_ids)
+        .await;
 
     match &result {
         Ok(result) => {
@@ -4060,6 +4095,89 @@ mod tests {
         crate::backend::store::Database::open_initialized(db_path).expect("open initialized db")
     }
 
+    async fn open_test_database_async(db_path: &Path) -> crate::backend::store::Database {
+        crate::backend::store::Database::open_initialized_async(db_path)
+            .await
+            .expect("open initialized db")
+    }
+
+    async fn upsert_test_source_async(db: &crate::backend::store::Database, source: &Source) {
+        crate::backend::store::upsert_source_sqlx(db.pool(), "default", source)
+            .await
+            .expect("insert source");
+    }
+
+    async fn load_test_sources_async(db: &crate::backend::store::Database) -> Vec<Source> {
+        crate::backend::store::load_sources_sqlx(db.pool(), "default")
+            .await
+            .expect("load sources")
+    }
+
+    async fn upsert_test_profile_async(
+        db: &crate::backend::store::Database,
+        profile: &TargetProfile,
+    ) {
+        crate::backend::store::upsert_profile_sqlx(db.pool(), "default", profile)
+            .await
+            .expect("insert profile");
+    }
+
+    async fn delete_test_profile_async(db: &crate::backend::store::Database, profile_id: &str) {
+        crate::backend::store::delete_profile_sqlx(db.pool(), "default", profile_id)
+            .await
+            .expect("delete profile");
+    }
+
+    async fn load_test_profiles_async(db: &crate::backend::store::Database) -> Vec<TargetProfile> {
+        crate::backend::store::load_profiles_sqlx(db.pool(), "default")
+            .await
+            .expect("load profiles")
+    }
+
+    async fn replace_test_source_assets_async(
+        db: &crate::backend::store::Database,
+        source_id: &str,
+        assets: &[Asset],
+    ) {
+        crate::backend::store::replace_source_assets_sqlx(db.pool(), "default", source_id, assets)
+            .await
+            .expect("insert assets");
+    }
+
+    async fn set_test_asset_mount_async(
+        db: &crate::backend::store::Database,
+        asset_id: &str,
+        profile_id: &str,
+        enabled: bool,
+        strategy: DeploymentStrategy,
+    ) -> AssetMount {
+        crate::backend::store::set_asset_mount_sqlx(
+            db.pool(),
+            "default",
+            asset_id,
+            profile_id,
+            enabled,
+            strategy,
+        )
+        .await
+        .expect("insert mount")
+    }
+
+    async fn load_test_assets_async(db: &crate::backend::store::Database) -> Vec<Asset> {
+        crate::backend::store::load_assets_sqlx(db.pool(), "default", None)
+            .await
+            .expect("load assets")
+    }
+
+    async fn load_test_mounts_async(
+        db: &crate::backend::store::Database,
+        asset_id: Option<&str>,
+    ) -> Vec<AssetMount> {
+        crate::backend::store::load_asset_mounts_sqlx(db.pool(), "default", asset_id)
+            .await
+            .expect("load mounts")
+    }
+
     fn upsert_test_source(db: &crate::backend::store::Database, source: &Source) {
         db.block_on(async move {
             crate::backend::store::upsert_source_sqlx(db.pool(), "default", source).await
@@ -4204,37 +4322,42 @@ mod tests {
         .expect("deployment state")
     }
 
-    #[test]
-    fn refresh_recorded_assets_prunes_missing_sources() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_recorded_assets_prunes_missing_sources() {
         let db_path = unique_temp_path("assetiweave-refresh-recorded");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_missing_source("missing-recorded-source");
-        upsert_test_source(&database, &source);
+        upsert_test_source_async(&database, &source).await;
 
-        refresh_recorded_assets(&database, "default").expect("refresh recorded assets");
+        refresh_recorded_assets(database.pool(), "default")
+            .await
+            .expect("refresh recorded assets");
 
-        assert!(!load_test_sources(&database)
+        assert!(!load_test_sources_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn source_scan_prunes_missing_sources_without_error_row() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn source_scan_prunes_missing_sources_without_error_row() {
         let db_path = unique_temp_path("assetiweave-scan-missing-source");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_missing_source("missing-scan-source");
-        upsert_test_source(&database, &source);
+        upsert_test_source_async(&database, &source).await;
 
         scan_selected_sources(
-            &database,
+            database.pool(),
             "default",
             vec![source.clone()],
             crate::backend::capabilities::scan_source,
         )
+        .await
         .expect("scan selected sources");
 
-        assert!(!load_test_sources(&database)
+        assert!(!load_test_sources_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
@@ -4268,10 +4391,10 @@ mod tests {
         assert!(!profile.safety.allow_overwrite);
     }
 
-    #[test]
-    fn target_profile_can_be_persisted_updated_and_deleted() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn target_profile_can_be_persisted_updated_and_deleted() {
         let db_path = unique_temp_path("assetiweave-profile-crud-db");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let mut profile = target_profile_from_input(TargetProfileInput {
             id: Some("team-app".to_string()),
             name: "Team App".to_string(),
@@ -4287,29 +4410,33 @@ mod tests {
         })
         .expect("build profile");
 
-        upsert_test_profile(&database, &profile);
+        upsert_test_profile_async(&database, &profile).await;
         profile.name = "Team App Edited".to_string();
-        upsert_test_profile(&database, &profile);
+        upsert_test_profile_async(&database, &profile).await;
 
-        assert!(load_test_profiles(&database)
+        assert!(load_test_profiles_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == profile.id && candidate.name == "Team App Edited"));
 
         ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+            .await
             .expect("profile delete guard");
-        delete_test_profile(&database, &profile.id);
-        assert!(!load_test_profiles(&database)
+        delete_test_profile_async(&database, &profile.id).await;
+        assert!(!load_test_profiles_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == profile.id));
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn default_app_profile_delete_is_blocked() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn default_app_profile_delete_is_blocked() {
         let db_path = unique_temp_path("assetiweave-default-profile-delete-db");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
 
         let error = ensure_profile_can_be_deleted_sqlx(&database, "default", "codex")
+            .await
             .expect_err("delete blocked");
 
         assert!(error.to_string().contains("default app cannot be deleted"));
@@ -4317,8 +4444,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn target_profile_delete_is_blocked_when_mount_exists() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn target_profile_delete_is_blocked_when_mount_exists() {
         let db_path = unique_temp_path("assetiweave-profile-delete-block-db");
         let source_root = unique_temp_path("assetiweave-profile-delete-block-source");
         let target_root = unique_temp_path("assetiweave-profile-delete-block-target");
@@ -4326,17 +4453,18 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("profile-delete-source", source_root.clone());
         let profile = test_profile("team-app", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
         mount_asset_mount_record(&database, "default", &asset.id, &profile.id)
             .expect("mount asset");
 
         let error = ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+            .await
             .expect_err("delete blocked");
 
         assert!(
@@ -4348,30 +4476,36 @@ mod tests {
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn refresh_recorded_assets_removes_mounts_for_deleted_assets() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_recorded_assets_removes_mounts_for_deleted_assets() {
         let db_path = unique_temp_path("assetiweave-refresh-deleted-mount");
         let source_root = unique_temp_path("assetiweave-existing-source");
         std::fs::create_dir_all(&source_root).expect("create source root");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-deleted-asset", source_root.clone());
         let asset = test_asset(&source, "deleted-asset", source_root.join("deleted-asset"));
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             "codex",
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        refresh_recorded_assets(&database, "default").expect("refresh recorded assets");
+        refresh_recorded_assets(database.pool(), "default")
+            .await
+            .expect("refresh recorded assets");
 
-        assert!(load_test_assets(&database)
+        assert!(load_test_assets_async(&database)
+            .await
             .iter()
             .all(|candidate| candidate.id != asset.id));
-        assert!(load_test_mounts(&database, Some(&asset.id)).is_empty());
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
+            .is_empty());
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_file(db_path).ok();
     }

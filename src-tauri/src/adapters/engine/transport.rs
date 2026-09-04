@@ -360,7 +360,7 @@ mod tests {
     };
     use uuid::Uuid;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn unknown_method_returns_structured_error() {
         let _guard = env_lock().lock().expect("env lock");
         let error = dispatch(EngineRequest {
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(engine_error.details, tauri_view.details);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn registered_handler_uses_the_bound_request_type() {
         let spec = command_registry::find("source.add").expect("source.add spec");
         let error = spec
@@ -418,7 +418,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn mismatched_wire_protocol_is_rejected_before_dispatch() {
         let error = handle_wire_request(WireEngineRequest {
             id: None,
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(error.code, "protocol_version_mismatch");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn version_probe_does_not_require_compatibility_fields() {
         let value = handle_wire_request(WireEngineRequest {
             id: Some("version".to_string()),
@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(value["contract_version"], json!(protocol::CONTRACT_VERSION));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn system_version_exposes_compatibility_contract() {
         let value = dispatch(EngineRequest {
             method: "system.version".to_string(),
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(meta["invocation"]["error_type"], json!("command_denied"));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn import_skill_dry_run_does_not_copy_to_library() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-home");
@@ -524,7 +524,7 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn import_skill_uses_configured_backup_downloaded_directory() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-import-home");
@@ -571,7 +571,7 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn acquire_skill_dry_run_plans_github_tree_without_cloning() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-acquire-home");
@@ -609,7 +609,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[cfg(unix)]
     async fn acquire_skill_imports_from_isolated_git_repo_and_records_remote_source() {
         let _guard = env_lock().lock().expect("env lock");
@@ -723,7 +723,7 @@ mod tests {
         fs::remove_dir_all(repo).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn backup_settings_migrate_custom_root_and_delete_old_custom_root() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-migration-home");
@@ -773,7 +773,7 @@ mod tests {
         fs::remove_dir_all(new_root).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn backup_skill_copies_app_target_skill_and_catalog_shows_backup_copy() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-backup-home");
@@ -862,7 +862,7 @@ mod tests {
         fs::remove_dir_all(app_source_root).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn source_add_dry_run_does_not_persist() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-source-home");
@@ -911,7 +911,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[cfg(unix)]
     async fn source_add_aliases_are_normalized_before_typed_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
@@ -950,7 +950,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn invalid_params_return_validation_error() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-invalid-params-home");
@@ -974,7 +974,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn tauri_command_aliases_are_callable_and_listed() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-alias-home");
@@ -1014,7 +1014,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn engine_search_index_rebuild_executes_the_canonical_workflow() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-search-index-home");
@@ -1070,7 +1070,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn command_registry_owns_engine_dispatch_handlers() {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -1146,7 +1146,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn high_risk_raw_method_requires_explicit_confirmation() {
         let error = dispatch(EngineRequest {
             method: "delete_source".to_string(),
@@ -1166,7 +1166,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn unsupported_dry_run_does_not_bypass_high_risk_confirmation() {
         let error = dispatch(EngineRequest {
             method: "delete_source".to_string(),
@@ -1179,7 +1179,7 @@ mod tests {
         assert_eq!(error.code, "confirmation_required");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn unknown_method_params_are_rejected_before_service_dispatch() {
         let error = dispatch(EngineRequest {
             method: "profile.list".to_string(),
@@ -1196,7 +1196,7 @@ mod tests {
             .is_some_and(|details| details["violations"].is_array()));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn nested_type_mismatch_is_rejected_before_service_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-nested-params-home");
@@ -1228,7 +1228,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn command_policy_denies_confirmed_high_risk_method_before_service_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-policy-home");
@@ -1255,7 +1255,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn invalid_command_policy_fails_closed_for_non_diagnostic_methods() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-invalid-policy-home");
@@ -1282,7 +1282,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn diagnostic_method_remains_available_when_command_policy_is_invalid() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-diagnostic-policy-home");
@@ -1335,7 +1335,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn newly_supported_tauri_write_command_is_not_unknown() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-create-profile-home");
@@ -1358,7 +1358,7 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn external_source_skill_delete_is_rejected() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-delete-home");
@@ -1415,7 +1415,7 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn default_library_source_remove_is_rejected() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-protected-source-home");

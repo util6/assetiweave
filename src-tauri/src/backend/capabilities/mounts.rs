@@ -44,13 +44,13 @@ fn load_mount_status_inputs_sqlx(
     db: &crate::backend::store::Database,
     tenant_id: &str,
 ) -> AppResult<(Vec<Asset>, Vec<TargetProfile>)> {
-    let assets = catalog_visible_assets_sqlx(db, tenant_id, None)?;
     let pool = db.pool().clone();
     let tenant_id = tenant_id.to_string();
-    let profiles =
-        db.block_on(
-            async move { crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await },
-        )?;
+    let (assets, profiles) = db.block_on(async move {
+        let assets = catalog_visible_assets_sqlx(&pool, &tenant_id, None).await?;
+        let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
+        AppResult::Ok((assets, profiles))
+    })?;
     Ok((assets, profiles))
 }
 

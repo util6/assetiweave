@@ -102,8 +102,13 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?
-            .join("staging")
+        let staging_dir = self
+            .db
+            .block_on(capabilities::skill_backup_root_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+            ))?
+            .join(".staging")
             .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 

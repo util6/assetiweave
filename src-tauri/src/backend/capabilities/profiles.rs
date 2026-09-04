@@ -76,7 +76,7 @@ pub(crate) fn normalize_target_profile_paths(
     Ok(profile)
 }
 
-pub(crate) fn ensure_profile_can_be_deleted_sqlx(
+pub(crate) async fn ensure_profile_can_be_deleted_sqlx(
     db: &crate::backend::store::Database,
     tenant_id: &str,
     profile_id: &str,
@@ -87,14 +87,12 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
         )));
     }
 
-    let deployment_count = db.block_on(async {
-        crate::backend::store::count_deployment_state_by_profile_sqlx(
-            db.pool(),
-            tenant_id,
-            profile_id,
-        )
-        .await
-    })?;
+    let deployment_count = crate::backend::store::count_deployment_state_by_profile_sqlx(
+        db.pool(),
+        tenant_id,
+        profile_id,
+    )
+    .await?;
     if deployment_count > 0 {
         return Err(AppError::Conflict(format!(
             "profile has managed deployments: {profile_id}"

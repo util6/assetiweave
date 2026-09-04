@@ -1113,12 +1113,14 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
 
     assert!(tenant_service
         .list_sources()
+        .await
         .expect("list tenant sources")
         .iter()
         .any(|source| source.id == capabilities::SKILL_BACKUP_SOURCE_ID
             && source.root_path == settings.root_path));
     assert!(!tenant_service
         .list_profiles()
+        .await
         .expect("list tenant profiles")
         .is_empty());
     let builtin_adapter_ids = tenant_service
@@ -1197,6 +1199,7 @@ async fn switching_tenant_rebinds_the_next_app_service_request() {
             enabled: true,
             priority: 0,
         })
+        .await
         .expect("create source in tenant B");
 
     let pool = service.db.pool().clone();
@@ -1263,8 +1266,8 @@ async fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn system_skill_source_cannot_be_edited_or_removed() {
+#[tokio::test(flavor = "multi_thread")]
+async fn system_skill_source_cannot_be_edited_or_removed() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-system-source-protection-{}",
         Uuid::new_v4()
@@ -1278,9 +1281,11 @@ fn system_skill_source_cannot_be_edited_or_removed() {
 
     let update_error = service
         .update_source(source)
+        .await
         .expect_err("system source update should fail");
     let remove_error = service
         .delete_source(crate::backend::builtin_skills::SYSTEM_SKILL_SOURCE_ID.to_string())
+        .await
         .expect_err("system source removal should fail");
 
     assert!(update_error.to_string().contains("cannot be edited"));
@@ -2648,18 +2653,22 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn navigation_model_updates_through_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn navigation_model_updates_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-navigation-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
     let service =
         AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    let mut model = service.navigation_model().expect("load navigation model");
+    let mut model = service
+        .navigation_model()
+        .await
+        .expect("load navigation model");
     model.active_sub_nav_id = "sqlx-updated-sub-nav".to_string();
     model.rail_items[0].label = "SQLx Rail".to_string();
 
     let updated = service
         .update_navigation_model(model)
+        .await
         .expect("update navigation model");
 
     assert_eq!(updated.active_sub_nav_id, "sqlx-updated-sub-nav");
@@ -2668,14 +2677,15 @@ fn navigation_model_updates_through_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn app_shortcuts_update_through_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn app_shortcuts_update_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-shortcuts-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
     let service =
         AppService::open_with_db_path(root.join("app.db")).expect("open application service");
     let mut settings = service
         .list_app_shortcut_settings()
+        .await
         .expect("load shortcut settings");
     settings[0].display_icon = "Q".to_string();
     settings[0].enabled = false;
@@ -2683,9 +2693,11 @@ fn app_shortcuts_update_through_sqlx_path() {
 
     let updated = service
         .update_app_shortcuts(settings)
+        .await
         .expect("update shortcuts");
     let enabled = service
         .list_app_shortcuts()
+        .await
         .expect("load enabled shortcuts");
 
     assert_eq!(updated[0].display_icon, "Q");
@@ -2697,8 +2709,8 @@ fn app_shortcuts_update_through_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn profile_delete_guard_blocks_sqlx_deployment_state() {
+#[tokio::test(flavor = "multi_thread")]
+async fn profile_delete_guard_blocks_sqlx_deployment_state() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-sqlx-profile-delete-{}",
         Uuid::new_v4()
@@ -2720,30 +2732,28 @@ fn profile_delete_guard_blocks_sqlx_deployment_state() {
             exclude: None,
             safety: None,
         })
+        .await
         .expect("create profile");
 
-    service
-        .db
-        .block_on(async {
-            crate::backend::store::upsert_deployment_state_sqlx(
-                service.db.pool(),
-                service.tenant_id(),
-                &DeploymentState {
-                    profile_id: profile.id.clone(),
-                    asset_id: "asset-a".to_string(),
-                    target_path: "/target/a".to_string(),
-                    strategy: DeploymentStrategy::SymlinkToSource,
-                    source_hash: "hash".to_string(),
-                    deployed_at: "2026-06-18T00:00:00Z".to_string(),
-                    managed_by: "assetiweave".to_string(),
-                },
-            )
-            .await
-        })
-        .expect("insert deployment state");
+    crate::backend::store::upsert_deployment_state_sqlx(
+        service.db.pool(),
+        service.tenant_id(),
+        &DeploymentState {
+            profile_id: profile.id.clone(),
+            asset_id: "asset-a".to_string(),
+            target_path: "/target/a".to_string(),
+            strategy: DeploymentStrategy::SymlinkToSource,
+            source_hash: "hash".to_string(),
+            deployed_at: "2026-06-18T00:00:00Z".to_string(),
+            managed_by: "assetiweave".to_string(),
+        },
+    )
+    .await
+    .expect("insert deployment state");
 
     let error = service
         .delete_profile(profile.id)
+        .await
         .expect_err("delete blocked by deployment state");
 
     assert!(error.to_string().contains("managed deployments"));
@@ -2751,8 +2761,8 @@ fn profile_delete_guard_blocks_sqlx_deployment_state() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn scan_skill_sources_reads_sqlx_sources() {
+#[tokio::test(flavor = "multi_thread")]
+async fn scan_skill_sources_reads_sqlx_sources() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-scan-skill-{}", Uuid::new_v4()));
     let source_root = root.join("skills");
     let skill_dir = source_root.join("skill-a");
@@ -2783,10 +2793,12 @@ fn scan_skill_sources_reads_sqlx_sources() {
             enabled: true,
             priority: 0,
         })
+        .await
         .expect("add source through service");
 
     let assets = service
         .scan_skill_sources()
+        .await
         .expect("scan skill sources through service");
 
     assert!(assets
@@ -2941,8 +2953,8 @@ fn skill_group_crud_and_members_use_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
+#[tokio::test(flavor = "multi_thread")]
+async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-sqlx-orphan-cleanup-{}",
         Uuid::new_v4()
@@ -2988,7 +3000,8 @@ fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
     )
     .expect("seed orphan records");
 
-    capabilities::cleanup_orphan_asset_records(&service.db, service.tenant_id())
+    capabilities::cleanup_orphan_asset_records(service.db.pool(), service.tenant_id())
+        .await
         .expect("cleanup orphan records");
 
     for table in [
@@ -3047,8 +3060,8 @@ fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn disabled_mount_preference_persists_through_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn disabled_mount_preference_persists_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-sqlx-disabled-mount-preference-{}",
         Uuid::new_v4()
@@ -3124,6 +3137,7 @@ fn disabled_mount_preference_persists_through_sqlx_path() {
             exclude: None,
             safety: None,
         })
+        .await
         .expect("create target profile");
 
     let mount = service
@@ -3139,6 +3153,7 @@ fn disabled_mount_preference_persists_through_sqlx_path() {
 
     let saved_mounts = service
         .list_asset_mounts(Some(&asset.id))
+        .await
         .expect("read SQLx mount preference");
     assert_eq!(saved_mounts, vec![mount]);
 
@@ -3146,8 +3161,8 @@ fn disabled_mount_preference_persists_through_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
     let root =
         std::env::temp_dir().join(format!("assetiweave-sqlx-mount-dry-run-{}", Uuid::new_v4()));
     let source_root = root.join("source");
@@ -3221,6 +3236,7 @@ fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
             exclude: None,
             safety: None,
         })
+        .await
         .expect("create target profile");
 
     let preview = service
@@ -3242,6 +3258,7 @@ fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
     assert!(!target_root.join("skill-a").exists());
     assert!(service
         .list_asset_mounts(Some(&asset.id))
+        .await
         .expect("load mounts after dry-run")
         .is_empty());
 
@@ -3337,8 +3354,8 @@ fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
+#[tokio::test(flavor = "multi_thread")]
+async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-skill-backup-duplicate-plan-{}",
         Uuid::new_v4()
@@ -3391,6 +3408,7 @@ fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
             exclude: None,
             safety: None,
         })
+        .await
         .expect("create target profile");
     service
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
@@ -3435,6 +3453,7 @@ fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
 
     let plan = service
         .create_plan(Some(&profile.id))
+        .await
         .expect("create deployment plan");
     assert_eq!(plan.actions.len(), 1);
     assert_eq!(
@@ -3632,8 +3651,8 @@ fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed_up() 
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
+#[tokio::test(flavor = "multi_thread")]
+async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-app-target-backup-status-{}",
         Uuid::new_v4()
@@ -3685,6 +3704,7 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
             exclude: None,
             safety: None,
         })
+        .await
         .expect("create codex target profile");
     service
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
@@ -3720,6 +3740,7 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
 
     let plan = service
         .create_plan(Some(&profile.id))
+        .await
         .expect("create deployment plan");
     assert_eq!(plan.summary.conflict_count, 0);
 
@@ -3743,8 +3764,8 @@ fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn refreshing_target_catalog_reconciles_existing_default_profiles() {
+#[tokio::test(flavor = "multi_thread")]
+async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     let root =
         std::env::temp_dir().join(format!("assetiweave-target-reconcile-{}", Uuid::new_v4()));
     let skill_target = root.join("codex-skills");
@@ -3776,6 +3797,7 @@ fn refreshing_target_catalog_reconciles_existing_default_profiles() {
 
     let profile = service
         .list_profiles()
+        .await
         .expect("list profiles")
         .into_iter()
         .find(|profile| profile.id == "codex")
@@ -3831,6 +3853,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let service = AppService::from_runtime(&service.runtime);
     assert!(service
         .list_profiles()
+        .await
         .expect("list seeded profiles")
         .iter()
         .any(|profile| profile.target_provider_id == "fixture-provider"));
@@ -3853,6 +3876,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             enabled: true,
             priority: 0,
         })
+        .await
         .expect("save detected target source");
     assert_eq!(
         detected.origin_provider_id.as_deref(),
@@ -3902,6 +3926,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
 
     let profile = service
         .list_profiles()
+        .await
         .expect("list fixture profiles")
         .into_iter()
         .find(|profile| profile.target_provider_id == "fixture-provider")
@@ -3917,10 +3942,12 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     .expect("record fixture mount intent");
     let plan = service
         .create_plan(Some(&profile.id))
+        .await
         .expect("build plan from injected catalog");
     assert_eq!(plan.summary.create_count, 1);
     let execution = service
         .execute_plan(plan, None)
+        .await
         .expect("execute plan from injected catalog");
     assert_eq!(execution.executed_count, 1);
     assert!(target_root.join("Fixture Skill.md").is_symlink());

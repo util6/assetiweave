@@ -272,32 +272,32 @@ mod tests {
     use crate::backend::store::Database;
     use uuid::Uuid;
 
-    #[test]
-    fn sqlx_source_repo_upserts_lists_and_filters_skill_sources() {
+    #[tokio::test]
+    async fn sqlx_source_repo_upserts_lists_and_filters_skill_sources() {
         let db_path =
             std::env::temp_dir().join(format!("assetiweave-source-sqlx-{}.sqlite", Uuid::new_v4()));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let regular_source = test_source("regular", SourceScannerKind::Mixed);
         let skill_source = test_source("skill", SourceScannerKind::Skill);
 
-        let (all_sources, skill_sources, loaded_skill_source, missing_source) = database
-            .block_on(async {
-                upsert_source_sqlx(database.pool(), "default", &regular_source).await?;
-                upsert_source_sqlx(database.pool(), "default", &skill_source).await?;
-                let all_sources = load_sources_sqlx(database.pool(), "default").await?;
-                let skill_sources = load_skill_sources_sqlx(database.pool(), "default").await?;
-                let loaded_skill_source =
-                    load_source_sqlx(database.pool(), "default", &skill_source.id).await?;
-                let missing_source =
-                    load_source_sqlx(database.pool(), "default", "missing").await?;
-                AppResult::Ok((
-                    all_sources,
-                    skill_sources,
-                    loaded_skill_source,
-                    missing_source,
-                ))
-            })
-            .expect("query SQLx source repo");
+        upsert_source_sqlx(database.pool(), "default", &regular_source)
+            .await
+            .expect("upsert regular source");
+        upsert_source_sqlx(database.pool(), "default", &skill_source)
+            .await
+            .expect("upsert skill source");
+        let all_sources = load_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("load all sources");
+        let skill_sources = load_skill_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("load skill sources");
+        let loaded_skill_source = load_source_sqlx(database.pool(), "default", &skill_source.id)
+            .await
+            .expect("load source");
+        let missing_source = load_source_sqlx(database.pool(), "default", "missing")
+            .await
+            .expect("load missing source");
 
         assert_eq!(all_sources.len(), 2);
         assert_eq!(skill_sources.len(), 1);
@@ -311,34 +311,36 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_source_repo_isolates_same_id_by_tenant() {
+    #[tokio::test]
+    async fn sqlx_source_repo_isolates_same_id_by_tenant() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-source-tenant-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut default_source = test_source("shared", SourceScannerKind::Mixed);
         default_source.name = "Default source".to_string();
         let mut tenant_source = test_source("shared", SourceScannerKind::Skill);
         tenant_source.name = "Tenant source".to_string();
 
-        let (default_sources, tenant_sources, default_loaded, tenant_loaded) = database
-            .block_on(async {
-                upsert_source_sqlx(database.pool(), "default", &default_source).await?;
-                upsert_source_sqlx(database.pool(), "tenant-a", &tenant_source).await?;
-                let default_sources = load_sources_sqlx(database.pool(), "default").await?;
-                let tenant_sources = load_sources_sqlx(database.pool(), "tenant-a").await?;
-                let default_loaded = load_source_sqlx(database.pool(), "default", "shared").await?;
-                let tenant_loaded = load_source_sqlx(database.pool(), "tenant-a", "shared").await?;
-                AppResult::Ok((
-                    default_sources,
-                    tenant_sources,
-                    default_loaded,
-                    tenant_loaded,
-                ))
-            })
-            .expect("query tenant-scoped sources");
+        upsert_source_sqlx(database.pool(), "default", &default_source)
+            .await
+            .expect("upsert default source");
+        upsert_source_sqlx(database.pool(), "tenant-a", &tenant_source)
+            .await
+            .expect("upsert tenant source");
+        let default_sources = load_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("load default sources");
+        let tenant_sources = load_sources_sqlx(database.pool(), "tenant-a")
+            .await
+            .expect("load tenant sources");
+        let default_loaded = load_source_sqlx(database.pool(), "default", "shared")
+            .await
+            .expect("load default source");
+        let tenant_loaded = load_source_sqlx(database.pool(), "tenant-a", "shared")
+            .await
+            .expect("load tenant source");
 
         assert_eq!(default_sources.len(), 1);
         assert_eq!(tenant_sources.len(), 1);
@@ -354,11 +356,11 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_source_repo_normalizes_home_paths_for_storage_and_loading() {
+    #[tokio::test]
+    async fn sqlx_source_repo_normalizes_home_paths_for_storage_and_loading() {
         let db_path =
             std::env::temp_dir().join(format!("assetiweave-source-home-{}.sqlite", Uuid::new_v4()));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut source = test_source("home-source", SourceScannerKind::Skill);
         source.root_path = dirs::home_dir()
             .expect("home directory")
@@ -373,11 +375,11 @@ mod tests {
                 .to_string(),
         );
 
-        let loaded = database
-            .block_on(async {
-                upsert_source_sqlx(database.pool(), "default", &source).await?;
-                load_source_sqlx(database.pool(), "default", &source.id).await
-            })
+        upsert_source_sqlx(database.pool(), "default", &source)
+            .await
+            .expect("upsert source");
+        let loaded = load_source_sqlx(database.pool(), "default", &source.id)
+            .await
             .expect("round trip source")
             .expect("stored source");
 
@@ -387,44 +389,43 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_source_repo_decodes_source_row_and_detects_invalid_json() {
+    #[tokio::test]
+    async fn sqlx_source_repo_decodes_source_row_and_detects_invalid_json() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-source-decode-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut source = test_source("json-test", SourceScannerKind::Mixed);
         source.include_globs = vec!["*.md".to_string(), "*.txt".to_string()];
         source.exclude_globs = vec!["node_modules/**".to_string()];
 
-        database
-            .block_on(async {
-                upsert_source_sqlx(database.pool(), "default", &source).await?;
-                let loaded = load_source_sqlx(database.pool(), "default", &source.id)
-                    .await?
-                    .expect("source exists");
-                assert_eq!(loaded.include_globs, vec!["*.md", "*.txt"]);
-                assert_eq!(loaded.exclude_globs, vec!["node_modules/**"]);
-                assert_eq!(loaded.repo_root, None);
+        upsert_source_sqlx(database.pool(), "default", &source)
+            .await
+            .expect("upsert source");
+        let loaded = load_source_sqlx(database.pool(), "default", &source.id)
+            .await
+            .expect("load source")
+            .expect("source exists");
+        assert_eq!(loaded.include_globs, vec!["*.md", "*.txt"]);
+        assert_eq!(loaded.exclude_globs, vec!["node_modules/**"]);
+        assert_eq!(loaded.repo_root, None);
 
-                // Now corrupt include_globs with invalid JSON
-                sqlx::query("UPDATE sources SET include_globs = '{not_valid_json' WHERE tenant_id = ?1 AND id = ?2")
-                    .bind("default")
-                    .bind(&source.id)
-                    .execute(database.pool())
-                    .await
-                    .expect("corrupt row");
+        // Now corrupt include_globs with invalid JSON
+        sqlx::query(
+            "UPDATE sources SET include_globs = '{not_valid_json' WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind("default")
+        .bind(&source.id)
+        .execute(database.pool())
+        .await
+        .expect("corrupt row");
 
-                // Loading should return an error and NOT swallow it into an empty vec
-                let err = load_source_sqlx(database.pool(), "default", &source.id)
-                    .await
-                    .expect_err("should fail on invalid JSON");
-                assert_eq!(err.code(), "external_error");
-
-                AppResult::Ok(())
-            })
-            .expect("test operations");
+        // Loading should return an error and NOT swallow it into an empty vec
+        let err = load_source_sqlx(database.pool(), "default", &source.id)
+            .await
+            .expect_err("should fail on invalid JSON");
+        assert_eq!(err.code(), "external_error");
 
         drop(database);
         cleanup_database(&db_path);

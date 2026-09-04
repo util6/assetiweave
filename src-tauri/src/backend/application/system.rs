@@ -246,7 +246,8 @@ impl AppService {
     }
 
     pub(crate) async fn run_doctor(&self) -> AppResult<Value> {
-        let backup_root = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?;
+        let backup_root =
+            capabilities::skill_backup_root_sqlx(self.db.pool(), self.tenant_id()).await?;
         let runtime_statuses = self.list_conversation_adapter_runtime_statuses()?;
         let (runtime_status, runtime_message) =
             conversation_runtime_doctor_summary(&runtime_statuses);

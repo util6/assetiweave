@@ -1,4 +1,5 @@
 use super::prelude::*;
+use sqlx::SqlitePool;
 
 pub(crate) const SKILL_BACKUP_SOURCE_ID: &str = "assetiweave-library-skills";
 
@@ -36,33 +37,23 @@ pub(crate) fn assetiweave_library_source_with_root(root_path: String) -> Source 
     }
 }
 
-pub(crate) fn skill_backup_root_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn skill_backup_root_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<PathBuf> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    let tenant_id_for_query = tenant_id.clone();
-    let sources = db.block_on(async move {
-        crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await
-    })?;
-    let root_path = skill_backup_root_path(&tenant_id, sources);
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let root_path = skill_backup_root_path(tenant_id, sources);
     let root = expand_path(&root_path)?;
     fs::create_dir_all(&root).map_err(AppError::external)?;
     Ok(root)
 }
 
-pub(crate) fn skill_backup_settings_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn skill_backup_settings_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<SkillBackupSettings> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    let tenant_id_for_query = tenant_id.clone();
-    let sources = db.block_on(async move {
-        crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await
-    })?;
-    build_skill_backup_settings(&tenant_id, sources)
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    build_skill_backup_settings(tenant_id, sources)
 }
 
 fn skill_backup_root_path(tenant_id: &str, sources: Vec<Source>) -> String {
@@ -99,54 +90,40 @@ fn build_skill_backup_settings(
     })
 }
 
-pub(crate) fn catalog_assets_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn catalog_assets_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<CatalogAsset>> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
-        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
-        let assets = filter_unavailable_backup_library_assets(assets, &sources);
-        AppResult::Ok(build_catalog_assets(assets, &sources))
-    })
+    let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, kind).await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let assets = filter_unavailable_backup_library_assets(assets, &sources);
+    Ok(build_catalog_assets(assets, &sources))
 }
 
-pub(crate) fn source_assets_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn source_assets_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<CatalogAsset>> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
-        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
-        let assets = filter_unavailable_backup_library_assets(assets, &sources);
-        AppResult::Ok(build_source_assets(assets, &sources))
-    })
+    let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, kind).await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let assets = filter_unavailable_backup_library_assets(assets, &sources);
+    Ok(build_source_assets(assets, &sources))
 }
 
-pub(crate) fn catalog_visible_assets_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn catalog_visible_assets_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     kind: Option<AssetKind>,
 ) -> AppResult<Vec<Asset>> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, kind).await?;
-        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
-        let assets = filter_unavailable_backup_library_assets(assets, &sources);
-        AppResult::Ok(
-            build_catalog_asset_entries(assets, &sources)
-                .into_iter()
-                .map(|catalog_asset| catalog_asset.asset)
-                .collect(),
-        )
-    })
+    let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, kind).await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let assets = filter_unavailable_backup_library_assets(assets, &sources);
+    Ok(build_catalog_asset_entries(assets, &sources)
+        .into_iter()
+        .map(|catalog_asset| catalog_asset.asset)
+        .collect())
 }
 
 fn filter_unavailable_backup_library_assets(assets: Vec<Asset>, sources: &[Source]) -> Vec<Asset> {

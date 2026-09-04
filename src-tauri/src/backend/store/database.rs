@@ -79,6 +79,12 @@ impl Database {
     }
 
     #[cfg(test)]
+    pub(crate) async fn open_async(db_path: &Path) -> AppResult<Self> {
+        let pool = open_migrated_pool(db_path).await?;
+        Ok(Self::from_pool(pool))
+    }
+
+    #[cfg(test)]
     pub(crate) async fn open_initialized_async(db_path: &Path) -> AppResult<Self> {
         let pool = open_migrated_pool(db_path).await?;
         let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));

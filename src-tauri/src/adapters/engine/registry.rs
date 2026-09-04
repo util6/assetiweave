@@ -480,7 +480,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_sources(),
+        ServiceAsync => |service, _params| service.list_sources().await,
         &[],
         Some("assetiweave-cli source list")
     ),
@@ -492,7 +492,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceAddParams,
-        Service => |service, params| service.add_source_with_options(params),
+        ServiceAsync => |service, params| service.add_source_with_options(params).await,
         &[
             param!("name", "Source display name"),
             param!("kind", "Source kind"),
@@ -523,7 +523,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceRemoveParams,
-        Service => |service, params| service.remove_source(params),
+        ServiceAsync => |service, params| service.remove_source(params).await,
         &[
             param!("id", "Source identifier"),
             param!("dry_run", "Preview without removing", ["dryRun"]),
@@ -539,7 +539,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceScanParams,
-        Service => |service, params| service.scan_sources(params),
+        ServiceAsync => |service, params| service.scan_sources(params).await,
         &[
             param!("kind", "Optional asset kind filter"),
             param!(
@@ -558,7 +558,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_profiles(),
+        ServiceAsync => |service, _params| service.list_profiles().await,
         &[],
         Some("assetiweave-cli profile list")
     ),
@@ -1054,7 +1054,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ListAssetsParams,
-        Service => |service, params| service.list_assets(params),
+        ServiceAsync => |service, params| service.list_assets(params).await,
         &[param!("kind", "Optional asset kind filter")],
         Some("assetiweave-cli asset list")
     ),
@@ -2518,7 +2518,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ListAssetsParams,
-        Service => |service, params| service.list_assets(params),
+        ServiceAsync => |service, params| service.list_assets(params).await,
         &[param!("kind", "Optional asset kind filter")],
         None
     ),
@@ -2640,7 +2640,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_sources(),
+        ServiceAsync => |service, _params| service.list_sources().await,
         &[],
         None
     ),
@@ -2652,7 +2652,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_sources(),
+        ServiceAsync => |service, _params| service.list_skill_sources().await,
         &[],
         None
     ),
@@ -2664,7 +2664,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateSourceParams,
-        Service => |service, params| service.add_source(params.source),
+        ServiceAsync => |service, params| service.add_source(params.source).await,
         &[param!("source", "Source input")],
         None
     ),
@@ -2676,7 +2676,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSourceParams,
-        Service => |service, params| service.update_source(params.source),
+        ServiceAsync => |service, params| service.update_source(params.source).await,
         &[param!("source", "Complete source record")],
         None
     ),
@@ -2688,7 +2688,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.delete_source(params.id),
+        ServiceAsync => |service, params| service.delete_source(params.id).await,
         &[param!("id", "Source identifier")],
         None
     ),
@@ -2700,7 +2700,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateAssetDescriptionParams,
-        Service => |service, params| service.update_asset_description(params.asset_id, params.description),
+        ServiceAsync => |service, params| service.update_asset_description(params.asset_id, params.description).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("description", "New description"),
@@ -2715,7 +2715,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::DeleteAssetParams,
-        Service => |service, params| service.delete_asset(params.asset_id, params.unmount),
+        ServiceAsync => |service, params| service.delete_asset(params.asset_id, params.unmount).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("unmount", "Unmount managed targets before deleting"),
@@ -2730,7 +2730,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_profiles(),
+        ServiceAsync => |service, _params| service.list_profiles().await,
         &[],
         None
     ),
@@ -2742,7 +2742,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateProfileParams,
-        Service => |service, params| service.create_profile(params.input),
+        ServiceAsync => |service, params| service.create_profile(params.input).await,
         &[param!("input", "Target profile input")],
         None
     ),
@@ -2754,7 +2754,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateProfileParams,
-        Service => |service, params| service.update_profile(params.profile),
+        ServiceAsync => |service, params| service.update_profile(params.profile).await,
         &[param!("profile", "Complete target profile record")],
         None
     ),
@@ -2766,7 +2766,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.delete_profile(params.id),
+        ServiceAsync => |service, params| service.delete_profile(params.id).await,
         &[param!("id", "Target profile identifier")],
         None
     ),
@@ -2778,7 +2778,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.navigation_model(),
+        ServiceAsync => |service, _params| service.navigation_model().await,
         &[],
         None
     ),
@@ -2790,7 +2790,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateNavigationModelParams,
-        Service => |service, params| service.update_navigation_model(params.model),
+        ServiceAsync => |service, params| service.update_navigation_model(params.model).await,
         &[param!("model", "Navigation model")],
         None
     ),
@@ -2802,7 +2802,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_app_shortcuts(),
+        ServiceAsync => |service, _params| service.list_app_shortcuts().await,
         &[],
         None
     ),
@@ -2814,7 +2814,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_app_shortcut_settings(),
+        ServiceAsync => |service, _params| service.list_app_shortcut_settings().await,
         &[],
         None
     ),
@@ -2826,7 +2826,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateAppShortcutsParams,
-        Service => |service, params| service.update_app_shortcuts(params.shortcuts),
+        ServiceAsync => |service, params| service.update_app_shortcuts(params.shortcuts).await,
         &[param!("shortcuts", "App shortcut records")],
         None
     ),
@@ -2838,7 +2838,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.list_asset_mounts(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.list_asset_mounts(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2977,7 +2977,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.toggle_asset_mount(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.toggle_asset_mount(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -3039,7 +3039,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         true,
         crate::backend::application::SourceScanParams,
-        Service => |service, params| service.scan_sources(params),
+        ServiceAsync => |service, params| service.scan_sources(params).await,
         &[
             param!("kind", "Optional asset kind filter"),
             param!(
@@ -3058,7 +3058,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.scan_skill_sources(),
+        ServiceAsync => |service, _params| service.scan_skill_sources().await,
         &[],
         None
     ),
@@ -4216,7 +4216,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ProfileIdParams,
-        Service => |service, params| service.create_plan(params.profile_id.as_deref()),
+        ServiceAsync => |service, params| service.create_plan(params.profile_id.as_deref()).await,
         &[param!(
             "profile_id",
             "Optional target profile identifier",
@@ -4232,7 +4232,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ExecutePlanParams,
-        Service => |service, params| service.execute_plan(params.plan, params.action_ids),
+        ServiceAsync => |service, params| service.execute_plan(params.plan, params.action_ids).await,
         &[
             param!("plan", "Deployment plan"),
             param!(

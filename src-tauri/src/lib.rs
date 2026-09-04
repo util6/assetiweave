@@ -215,14 +215,18 @@ pub fn run() {
                 &[],
             );
         }
-        if let Err(error) = service.refresh_recorded_assets() {
-            log_error(
-                "app.startup.asset_refresh",
-                "failed to validate recorded AssetIWeave assets on startup",
-                &error,
-                &[],
-            );
-        }
+        let refresh_runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = AppService::from_runtime(&refresh_runtime);
+            if let Err(error) = service.refresh_recorded_assets().await {
+                log_error(
+                    "app.startup.asset_refresh",
+                    "failed to validate recorded AssetIWeave assets on startup",
+                    &error,
+                    &[],
+                );
+            }
+        });
         if let Err(error) = service.refresh_asset_mount_statuses(None) {
             log_error(
                 "app.startup.mount_refresh",
