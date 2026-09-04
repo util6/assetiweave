@@ -45,11 +45,197 @@ pub(crate) struct AppSettingsFile {
     pub(crate) settings: Value,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct AppSettingsDocument {
-    schema_version: u32,
-    settings: Value,
+pub(crate) struct AppSettingsDocument {
+    pub(crate) schema_version: u32,
+    pub(crate) settings: Value,
+}
+
+impl AppSettingsDocument {
+    pub(crate) fn new(settings: Value) -> Self {
+        Self {
+            schema_version: SETTINGS_SCHEMA_VERSION,
+            settings,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MemorySettings {
+    #[serde(default = "default_true")]
+    pub(crate) generation_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(crate) usage_enabled: bool,
+    #[serde(default)]
+    pub(crate) excluded_session_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) excluded_source_ids: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            generation_enabled: true,
+            usage_enabled: true,
+            excluded_session_ids: Vec::new(),
+            excluded_source_ids: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConversationsSettings {
+    #[serde(default = "default_conversation_full_sync")]
+    pub(crate) auto_full_sync_on_startup: bool,
+}
+
+fn default_conversation_full_sync() -> bool {
+    DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP
+}
+
+impl Default for ConversationsSettings {
+    fn default() -> Self {
+        Self {
+            auto_full_sync_on_startup: DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiRuntimeSettings {
+    #[serde(default = "default_ai_runtime_cli")]
+    pub(crate) cli: String,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+}
+
+fn default_ai_runtime_cli() -> String {
+    DEFAULT_AI_RUNTIME_CLI.to_string()
+}
+
+impl Default for AiRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            cli: DEFAULT_AI_RUNTIME_CLI.to_string(),
+            model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentAssignmentSetting {
+    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BackendSettings {
+    #[serde(default)]
+    pub(crate) memory: MemorySettings,
+    #[serde(default)]
+    pub(crate) conversations: ConversationsSettings,
+    #[serde(default)]
+    pub(crate) ai_runtime: AiRuntimeSettings,
+    #[serde(default)]
+    pub(crate) agent_assignments: std::collections::BTreeMap<String, AgentAssignmentSetting>,
+    #[serde(default)]
+    pub(crate) locale: Option<AppLocale>,
+    #[serde(default)]
+    pub(crate) column_layouts: std::collections::BTreeMap<String, Vec<f64>>,
+}
+
+impl BackendSettings {
+    pub(crate) fn from_document(document: &AppSettingsDocument) -> AppResult<Self> {
+        Self::from_value(&document.settings)
+    }
+
+    pub(crate) fn from_value(value: &Value) -> AppResult<Self> {
+        serde_json::from_value(value.clone())
+            .map_err(|error| AppError::Validation(format!("invalid settings document: {error}")))
+    }
+
+    pub(crate) fn merge_into_document(
+        &self,
+        mut document: AppSettingsDocument,
+    ) -> AppResult<AppSettingsDocument> {
+        let root = document.settings.as_object_mut().ok_or_else(|| {
+            AppError::Validation("settings root must be a JSON object".to_string())
+        })?;
+
+        root.insert(
+            "memory".to_string(),
+            serde_json::to_value(&self.memory).map_err(AppError::external)?,
+        );
+        if root.contains_key("conversations")
+            || self.conversations != ConversationsSettings::default()
+        {
+            root.insert(
+                "conversations".to_string(),
+                serde_json::to_value(&self.conversations).map_err(AppError::external)?,
+            );
+        }
+        root.insert(
+            "aiRuntime".to_string(),
+            serde_json::to_value(&self.ai_runtime).map_err(AppError::external)?,
+        );
+        root.insert(
+            "agentAssignments".to_string(),
+            serde_json::to_value(&self.agent_assignments).map_err(AppError::external)?,
+        );
+        root.insert(
+            "locale".to_string(),
+            serde_json::to_value(&self.locale).map_err(AppError::external)?,
+        );
+        root.insert(
+            "columnLayouts".to_string(),
+            serde_json::to_value(&self.column_layouts).map_err(AppError::external)?,
+        );
+
+        Ok(document)
+    }
+
+    pub(crate) fn is_memory_generation_enabled(&self) -> bool {
+        self.memory.generation_enabled
+    }
+
+    pub(crate) fn is_memory_usage_enabled(&self) -> bool {
+        self.memory.usage_enabled
+    }
+
+    pub(crate) fn is_session_excluded(&self, session_id: &str) -> bool {
+        self.memory
+            .excluded_session_ids
+            .iter()
+            .any(|id| id == session_id)
+    }
+
+    pub(crate) fn is_source_excluded(&self, source_id: &str) -> bool {
+        self.memory
+            .excluded_source_ids
+            .iter()
+            .any(|id| id == source_id)
+    }
+
+    pub(crate) fn auto_full_sync_on_startup(&self) -> bool {
+        self.conversations.auto_full_sync_on_startup
+    }
+
+    pub(crate) fn resolve_agent_for_action(&self, action: &str) -> Option<(&str, Option<&str>)> {
+        self.agent_assignments
+            .get(action)
+            .map(|assignment| (assignment.agent_id.as_str(), assignment.model_id.as_deref()))
+    }
 }
 
 pub(crate) fn read_app_settings_value() -> AppResult<Value> {
@@ -77,12 +263,20 @@ pub(crate) fn save_app_settings_for_database(
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
     let settings = canonicalize_settings(settings)?;
+    // Validate known typed slices
+    let typed = BackendSettings::from_value(&settings)?;
+    // Merge known typed slices into the raw document to ensure unknown fields round-trip
+    let document = AppSettingsDocument::new(settings);
+    let merged = typed.merge_into_document(document)?;
+
     db.block_on(store::save_app_settings_sqlx(
         db.pool(),
         SETTINGS_SCHEMA_VERSION,
-        &settings,
+        &merged.settings,
     ))?;
-    Ok(paths.into_file(settings))
+    let persisted = read_app_settings_value_for_database(db)?;
+    let canonical = canonicalize_settings(persisted)?;
+    Ok(paths.into_file(canonical))
 }
 
 pub(crate) fn initialize_app_locale_for_database(
@@ -99,6 +293,18 @@ pub(crate) fn initialize_app_locale_for_database(
 
 pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
     db.block_on(load_or_import_app_settings_sqlx(db.pool()))
+}
+
+pub(crate) fn read_app_settings_document_for_database(
+    db: &Database,
+) -> AppResult<AppSettingsDocument> {
+    let settings = read_app_settings_value_for_database(db)?;
+    Ok(AppSettingsDocument::new(settings))
+}
+
+pub(crate) fn load_backend_settings_for_database(db: &Database) -> AppResult<BackendSettings> {
+    let doc = read_app_settings_document_for_database(db)?;
+    BackendSettings::from_document(&doc)
 }
 
 /// Load the authoritative SQLite settings row. The legacy JSON document is
@@ -127,51 +333,29 @@ pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) ->
 pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
     db: &Database,
 ) -> AppResult<bool> {
-    Ok(conversation_full_sync_on_startup_enabled_from_value(
-        &read_app_settings_value_for_database(db)?,
-    ))
+    Ok(load_backend_settings_for_database(db)?.auto_full_sync_on_startup())
 }
 
 pub(crate) fn memory_generation_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("generationEnabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true))
+    Ok(load_backend_settings_for_database(db)?.is_memory_generation_enabled())
 }
 
 pub(crate) fn memory_usage_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("usageEnabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true))
+    Ok(load_backend_settings_for_database(db)?.is_memory_usage_enabled())
 }
 
 pub(crate) fn memory_session_excluded_for_database(
     db: &Database,
     session_id: &str,
 ) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("excludedSessionIds"))
-        .and_then(Value::as_array)
-        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(session_id))))
+    Ok(load_backend_settings_for_database(db)?.is_session_excluded(session_id))
 }
 
 pub(crate) fn memory_source_excluded_for_database(
     db: &Database,
     source_id: &str,
 ) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("excludedSourceIds"))
-        .and_then(Value::as_array)
-        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(source_id))))
+    Ok(load_backend_settings_for_database(db)?.is_source_excluded(source_id))
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -1027,5 +1211,140 @@ mod tests {
         assert_eq!(stored["theme"], "promptStudio");
         assert_eq!(stored["locale"], serde_json::Value::Null);
         assert_eq!(stored["columnLayouts"], json!({}));
+    }
+
+    #[test]
+    fn save_app_settings_preserves_and_returns_persisted_locale() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "assetiweave-settings-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("test.db");
+        let db = crate::backend::store::Database::open_initialized(&db_path).unwrap();
+
+        // 1. 先保存一个带有 locale: "en" 的设置
+        let res1 = save_app_settings_for_database(&db, json!({ "theme": "dark", "locale": "en" }))
+            .unwrap();
+        assert_eq!(res1.settings["locale"], "en");
+
+        // 2. 模拟客户端提交不含 locale 或 locale 为 null 的更新（如只更新 theme）
+        let res2 =
+            save_app_settings_for_database(&db, json!({ "theme": "sunlight", "locale": null }))
+                .unwrap();
+
+        // 3. 验证返回的响应中，locale 依然保留为 "en"，与实际数据库内容一致，而不是返回 null！
+        assert_eq!(res2.settings["theme"], "sunlight");
+        assert_eq!(
+            res2.settings["locale"], "en",
+            "Response must reflect persisted locale from database"
+        );
+
+        // 4. 再次读取数据库，验证数据库本身也是 "en"
+        let loaded = read_app_settings_value_for_database(&db).unwrap();
+        assert_eq!(loaded["theme"], "sunlight");
+        assert_eq!(loaded["locale"], "en");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn missing_known_fields_get_current_defaults() {
+        let settings = BackendSettings::from_value(&json!({})).expect("default backend settings");
+        assert!(settings.is_memory_generation_enabled());
+        assert!(settings.is_memory_usage_enabled());
+        assert!(settings.auto_full_sync_on_startup());
+        assert_eq!(settings.ai_runtime.cli, "opencode");
+        assert_eq!(settings.ai_runtime.model, None);
+        assert_eq!(settings.locale, None);
+        assert!(settings.column_layouts.is_empty());
+        assert!(settings.agent_assignments.is_empty());
+    }
+
+    #[test]
+    fn wrong_known_field_types_return_validation() {
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "memory": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "conversations": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "aiRuntime": 123 })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "columnLayouts": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn canonicalize_twice_is_identical() {
+        let raw = json!({
+            "theme": "dark",
+            "locale": "zh",
+            "customUnknown": { "nested": [1, 2, 3] },
+            "columnLayouts": { "nav": [1.0, 2.0] },
+            "conversations": { "autoFullSyncOnStartup": false }
+        });
+        let first = canonicalize_settings(raw).expect("first canonicalization");
+        let second = canonicalize_settings(first.clone()).expect("second canonicalization");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn v3_v4_migration_is_idempotent() {
+        let v3_payload = json!({
+            "agentCapabilityAssignments": {
+                "memory": "opencode",
+                "cardTranslation": "opencode"
+            },
+            "agentModels": {
+                "opencode": "default-model"
+            }
+        });
+        let first = canonicalize_settings(v3_payload).expect("v3 migration");
+        assert!(first.get("agentCapabilityAssignments").is_none());
+        assert!(first.get("agentModels").is_none());
+        assert!(first.get("agentAssignments").is_some());
+
+        let second = canonicalize_settings(first.clone()).expect("second pass");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn unknown_top_level_and_nested_fields_survive_load_save_load() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "assetiweave-settings-roundtrip-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("roundtrip.db");
+        let db = crate::backend::store::Database::open_initialized(&db_path).unwrap();
+
+        let initial = json!({
+            "theme": "synthwave",
+            "unknownPlugin": { "enabled": true, "threshold": 42 },
+            "nested": { "deep": { "value": "preserved" } },
+            "locale": "en",
+            "conversations": { "autoFullSyncOnStartup": false }
+        });
+
+        let saved = save_app_settings_for_database(&db, initial.clone()).unwrap();
+        assert_eq!(saved.settings["theme"], "synthwave");
+        assert_eq!(saved.settings["unknownPlugin"]["threshold"], 42);
+        assert_eq!(saved.settings["nested"]["deep"]["value"], "preserved");
+
+        let reloaded = read_app_settings_value_for_database(&db).unwrap();
+        assert_eq!(reloaded["theme"], "synthwave");
+        assert_eq!(reloaded["unknownPlugin"]["threshold"], 42);
+        assert_eq!(reloaded["nested"]["deep"]["value"], "preserved");
+        assert_eq!(reloaded["locale"], "en");
+        assert_eq!(reloaded["conversations"]["autoFullSyncOnStartup"], false);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
