@@ -9,6 +9,9 @@ use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use std::future::Future;
+use std::pin::Pin;
+
 /// Engine 命令风险等级定义
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -61,6 +64,9 @@ pub(crate) struct ParamSpec {
     aliases: &'static [&'static str],
 }
 
+pub(crate) type DispatchFuture = Pin<Box<dyn Future<Output = DispatchResult> + Send>>;
+pub(crate) type CommandHandler = fn(Value) -> DispatchFuture;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CommandSpec {
     pub(crate) method: &'static str,
@@ -72,15 +78,15 @@ pub(crate) struct CommandSpec {
     params: &'static [ParamSpec],
     params_schema: fn() -> Value,
     validate_typed_params: fn(&Value) -> Result<(), String>,
-    handler: fn(Value) -> DispatchResult,
+    handler: CommandHandler,
     cli: Option<&'static str>,
     since: &'static str,
     deprecated: bool,
 }
 
 impl CommandSpec {
-    pub(crate) fn dispatch(&self, params: Value) -> DispatchResult {
-        (self.handler)(params)
+    pub(crate) async fn dispatch(&self, params: Value) -> DispatchResult {
+        (self.handler)(params).await
     }
 }
 
@@ -4840,27 +4846,35 @@ fn validate_typed_params<T: DeserializeOwned>(params: &Value) -> Result<(), Stri
 fn dispatch_service<P, T, E>(
     params: Value,
     handler: fn(&AppService, P) -> Result<T, E>,
-) -> DispatchResult
+) -> DispatchFuture
 where
-    P: DeserializeOwned,
-    T: Serialize,
-    E: Into<AppError>,
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    E: Into<AppError> + Send + 'static,
 {
-    let params = deserialize_dispatch_params(params)?;
-    let service = AppService::open_for_engine()
-        .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
-    serialize_dispatch_result(
-        handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
-    )
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        tokio::task::spawn_blocking(move || {
+            let service = AppService::open_for_engine()
+                .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
+            serialize_dispatch_result(
+                handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
+            )
+        })
+        .await
+        .map_err(|join_err| DispatchFailure::OpenService(join_err.to_string()))?
+    })
 }
 
-fn dispatch_system<P, T>(params: Value, handler: fn(P) -> T) -> DispatchResult
+fn dispatch_system<P, T>(params: Value, handler: fn(P) -> T) -> DispatchFuture
 where
-    P: DeserializeOwned,
-    T: Serialize,
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
 {
-    let params = deserialize_dispatch_params(params)?;
-    serialize_dispatch_result(handler(params))
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        serialize_dispatch_result(handler(params))
+    })
 }
 
 fn deserialize_dispatch_params<T: DeserializeOwned>(params: Value) -> Result<T, DispatchFailure> {

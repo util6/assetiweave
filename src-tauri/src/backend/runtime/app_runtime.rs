@@ -731,11 +731,7 @@ impl AppRuntime {
             }
         }
         self.task_runtime.stop_accepting();
-        let mut dispatcher_handle = self
-            .dispatcher
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take());
+        let mut dispatcher_handle = self.dispatcher.lock().ok().and_then(|mut slot| slot.take());
         let (task_report, dispatcher_report) = self.run_sync(async {
             let remaining = deadline.saturating_duration_since(Instant::now());
             let task_report = self.task_runtime.shutdown_with_grace(remaining).await;

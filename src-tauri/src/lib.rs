@@ -550,7 +550,7 @@ pub fn run_engine_stdio() {
         std::process::exit(1);
     }
     let engine_db_path = backend::path_utils::app_db_path();
-    let runtime = match engine_db_path {
+    let (app_runtime, runtime) = match engine_db_path {
         Ok(path) => match AppRuntime::bootstrap(path, RuntimeRole::OneShot) {
             Ok(runtime) => {
                 if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
@@ -558,7 +558,7 @@ pub fn run_engine_stdio() {
                     drop(_logging_guard);
                     std::process::exit(1);
                 }
-                runtime.agent_runtime()
+                (runtime.clone(), runtime.agent_runtime())
             }
             Err(error) => {
                 eprintln!("failed to initialize Engine AppRuntime: {error}");
@@ -577,7 +577,7 @@ pub fn run_engine_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = adapters::engine::run_stdio() {
+    if let Err(error) = app_runtime.run_sync(adapters::engine::run_stdio()) {
         eprintln!("{error}");
         drop(_logging_guard);
         std::process::exit(1);

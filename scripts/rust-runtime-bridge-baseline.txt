@@ -55,3 +55,4 @@
 4	src-tauri/src/backend/store/source_repo.rs
 1	src-tauri/src/backend/store/tenant_repo.rs
 11	src-tauri/src/backend/store/web_record_repo.rs
+1	src-tauri/src/lib.rs
