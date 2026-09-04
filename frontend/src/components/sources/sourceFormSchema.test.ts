@@ -31,9 +31,9 @@ describe("sourceFormSchema", () => {
     expect(sourceFormSchema.safeParse({ ...valid, priority: "" }).success).toBe(
       true,
     );
-    expect(sourceFormSchema.safeParse({ ...valid, priority: "0" }).success).toBe(
-      true,
-    );
+    expect(
+      sourceFormSchema.safeParse({ ...valid, priority: "0" }).success,
+    ).toBe(true);
     expect(
       sourceFormSchema.safeParse({ ...valid, priority: "-5" }).success,
     ).toBe(true);

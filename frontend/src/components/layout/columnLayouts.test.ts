@@ -28,9 +28,7 @@ describe("columnLayouts", () => {
 
   it("validates fromPanelLayout with extra or missing panels", () => {
     expect(fromPanelLayout({}, 1)).toBeNull();
-    expect(
-      fromPanelLayout({ "column-0": 30, "column-1": 0 }, 2),
-    ).toBeNull();
+    expect(fromPanelLayout({ "column-0": 30, "column-1": 0 }, 2)).toBeNull();
     expect(
       fromPanelLayout({ "column-0": 30, "column-1": 70, "column-2": 100 }, 2),
     ).toEqual([30, 70]);

@@ -15,11 +15,7 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
-import type {
-  Asset,
-  AssetGroup,
-  AssetGroupDetail,
-} from "../../types";
+import type { Asset, AssetGroup, AssetGroupDetail } from "../../types";
 import { getBackupableSkillAssetsByIds } from "../../utils/skillBackup";
 import {
   AssetPickerHeader,
@@ -259,11 +255,7 @@ export function SkillGroupEditDialog({
         >
           {t("group.dialog.cancel")}
         </Button>
-        <Button
-          disabled={busy}
-          form={formId}
-          type="submit"
-        >
+        <Button disabled={busy} form={formId} type="submit">
           <Save size={16} />
           {t("group.editDialog.submit")}
         </Button>
@@ -376,10 +368,7 @@ export function SkillGroupEditDialog({
                     />
                   </GroupField>
                   <GroupField label={t("group.field.description")}>
-                    <Input
-                      {...register("description")}
-                      disabled={busy}
-                    />
+                    <Input {...register("description")} disabled={busy} />
                   </GroupField>
                 </div>
 
@@ -417,7 +406,9 @@ export function SkillGroupEditDialog({
                             disabled={busy}
                             maxLength={7}
                             onBlur={field.onBlur}
-                            onChange={(event) => field.onChange(event.target.value)}
+                            onChange={(event) =>
+                              field.onChange(event.target.value)
+                            }
                             value={field.value}
                           />
                         </div>

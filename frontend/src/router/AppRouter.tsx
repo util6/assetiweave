@@ -172,7 +172,6 @@ export function AppRouter() {
     persistNavigationModel(nextModel);
   }
 
-
   function handleSubNavSelect(id: string) {
     if (id === activeSubNavId) {
       return;

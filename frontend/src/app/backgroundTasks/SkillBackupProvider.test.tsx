@@ -129,7 +129,9 @@ function ProviderHarness() {
       </button>
       <button type="button">Other feature</button>
       <output data-testid="backup-status">
-        {task ? `${task.status}:${task.completed_count}/${task.total_count}` : "idle"}
+        {task
+          ? `${task.status}:${task.completed_count}/${task.total_count}`
+          : "idle"}
       </output>
     </>
   );

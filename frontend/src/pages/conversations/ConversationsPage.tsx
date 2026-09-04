@@ -304,7 +304,9 @@ export function ConversationsPage({
 
   useEffect(() => {
     if (sessionsQuery.data !== undefined) {
-      reconcileSessionSelection(sessionsQuery.data.map((session) => session.id));
+      reconcileSessionSelection(
+        sessionsQuery.data.map((session) => session.id),
+      );
     }
   }, [sessionsQuery.data]);
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());

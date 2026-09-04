@@ -100,7 +100,7 @@ export function AppLayout({
   const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
 
   const effectiveLogViewerOpen = logViewerOpen ?? storeLogViewerOpen;
-  const effectiveSettingsOpen = settingsOpen ?? (storeSettingsPanel !== null);
+  const effectiveSettingsOpen = settingsOpen ?? storeSettingsPanel !== null;
   const effectiveSettingsPanel =
     settingsPanel ?? storeSettingsPanel ?? "general.appearance";
   const handleOpenSettings =

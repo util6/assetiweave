@@ -14,7 +14,8 @@ export const commonZh = {
   "tenant.slugPlaceholder": "可选，例如 client-a",
   "tenant.creating": "创建中...",
   "tenant.error.nameRequired": "请输入租户名称。",
-  "notification.ready": "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
+  "notification.ready":
+    "通知消息出口已就绪，后续账号切换、扫描完成、部署结果都可以在这里展示。",
   "notification.aria": "通知消息",
   "notification.close": "关闭通知",
   "common.close": "关闭",
@@ -89,16 +90,21 @@ export const commonZh = {
   "update.button.ready": "更新已就绪，重启应用",
   "update.button.error": "更新失败",
   "update.dialog.title": "应用更新",
-  "update.dialog.description": "自动检测 GitHub Release 上的新版本，并在应用内下载、安装和重启。",
+  "update.dialog.description":
+    "自动检测 GitHub Release 上的新版本，并在应用内下载、安装和重启。",
   "update.intro.open": "查看当前版本功能介绍",
   "update.intro.title": "当前版本功能介绍",
   "update.intro.description": "了解当前版本新增和优化的核心能力。",
   "update.intro.currentTitle": "当前新版本",
-  "update.intro.currentDescription": "这个版本继续完善桌面端资产管理、更新入口和后台任务体验。",
+  "update.intro.currentDescription":
+    "这个版本继续完善桌面端资产管理、更新入口和后台任务体验。",
   "update.intro.highlights": "功能亮点",
-  "update.intro.highlight.navigation": "左侧工作区导航整合品牌入口，常规信息和更新状态都能从同一位置进入。",
-  "update.intro.highlight.updater": "应用内更新流程支持发现版本、展示说明、下载安装和重启。",
-  "update.intro.highlight.backgroundTasks": "后台同步和备份任务保留进度提示，减少长任务对日常浏览的打断。",
+  "update.intro.highlight.navigation":
+    "左侧工作区导航整合品牌入口，常规信息和更新状态都能从同一位置进入。",
+  "update.intro.highlight.updater":
+    "应用内更新流程支持发现版本、展示说明、下载安装和重启。",
+  "update.intro.highlight.backgroundTasks":
+    "后台同步和备份任务保留进度提示，减少长任务对日常浏览的打断。",
   "update.status.checking": "正在检查更新",
   "update.status.available": "发现新版本",
   "update.status.upToDate": "当前已是最新版本",
@@ -109,7 +115,8 @@ export const commonZh = {
   "update.description.checking": "正在连接发布端点并验证是否有可用版本。",
   "update.description.available": "可以直接在应用内下载并安装这个版本。",
   "update.description.upToDate": "本机版本和发布端点返回的最新版本一致。",
-  "update.description.downloading": "请保持应用开启，下载完成后会自动执行安装步骤。",
+  "update.description.downloading":
+    "请保持应用开启，下载完成后会自动执行安装步骤。",
   "update.description.installing": "安装器正在写入更新，请暂时不要关闭应用。",
   "update.description.ready": "重启后将运行刚安装的新版本。",
   "update.description.error": "可以重试自动更新，或打开发布页手动下载安装包。",
@@ -136,7 +143,8 @@ export const commonZh = {
   "status.previewData": "浏览器预览模式：使用内置示例数据",
   "status.scanOk": "扫描完成：{{count}} 个资产",
   "status.scanError": "扫描失败：{{message}}",
-  "status.validatedAssets": "状态刷新：{{count}} 个资产，移除 {{removed}}，更新 {{updated}}",
+  "status.validatedAssets":
+    "状态刷新：{{count}} 个资产，移除 {{removed}}，更新 {{updated}}",
   "nav.aria.main": "主导航",
   "nav.aria.assetTypes": "资产类型",
   "nav.aria.subNav": "资产子导航",
@@ -187,24 +195,28 @@ export const commonZh = {
   "nav.sub.team.overview": "团队与花名册",
   "underConstruction.eyebrow": "功能建设中",
   "underConstruction.title": "{{feature}} 正在建设中",
-  "underConstruction.description": "这个界面已经接入导航框架，但功能还没有开发完成。先用占位状态保留入口，避免误展示其他页面。",
+  "underConstruction.description":
+    "这个界面已经接入导航框架，但功能还没有开发完成。先用占位状态保留入口，避免误展示其他页面。",
   "underConstruction.routeKey": "路由：{{routeKey}}",
   "underConstruction.defaultFeature": "此功能",
   "prompt.page.eyebrow": "提示词工作台",
   "prompt.page.title": "提示词总览",
-  "prompt.page.description": "像剪贴板一样快速记录灵感、Feature 想法和 Prompt 草稿，并在卡片上直接复制、翻译和优化。",
+  "prompt.page.description":
+    "像剪贴板一样快速记录灵感、Feature 想法和 Prompt 草稿，并在卡片上直接复制、翻译和优化。",
   "prompt.project.pickDirectory": "选择项目目录",
   "prompt.composer.eyebrow": "快速记录",
   "prompt.composer.title": "新建灵感 / Prompt",
   "prompt.composer.titlePlaceholder": "标题，可留空",
-  "prompt.composer.contentPlaceholder": "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+  "prompt.composer.contentPlaceholder":
+    "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
   "prompt.composer.projectPathPlaceholder": "项目目录路径，例如 ~/project",
   "prompt.composer.sessionPlaceholder": "Session 名称或 ID",
   "prompt.composer.tagsPlaceholder": "标签，用空格或逗号分隔",
   "prompt.composer.create": "保存卡片",
   "prompt.original.label": "原始提示词",
   "prompt.optimized.label": "优化稿",
-  "prompt.optimized.empty": "还没有优化稿。点击正面的优化按钮后，会在这里保留优化后的版本。",
+  "prompt.optimized.empty":
+    "还没有优化稿。点击正面的优化按钮后，会在这里保留优化后的版本。",
   "prompt.note.untitled": "未命名提示词",
   "prompt.metric.notes": "卡片",
   "prompt.metric.filtered": "当前结果",
@@ -229,7 +241,8 @@ export const commonZh = {
   "prompt.tags.library": "已创建标签",
   "prompt.tags.libraryEmpty": "暂无已创建标签",
   "prompt.tags.remove": "移除标签 {{tag}}",
-  "prompt.tags.rule": "最多 {{count}} 个标签，单个标签长度不超过 {{length}} 个字符。",
+  "prompt.tags.rule":
+    "最多 {{count}} 个标签，单个标签长度不超过 {{length}} 个字符。",
   "prompt.sort.label": "排序",
   "prompt.sort.aria": "提示词排序",
   "prompt.sort.updated": "最近更新",
@@ -253,9 +266,11 @@ export const commonZh = {
   "prompt.search.submit": "搜索提示词",
   "prompt.toolbar.sort.copyCount": "按复制次数",
   "prompt.empty.title": "还没有提示词卡片",
-  "prompt.empty.description": "先在上方记录一段灵感或 Prompt，后续可以直接复制、翻译或优化。",
+  "prompt.empty.description":
+    "先在上方记录一段灵感或 Prompt，后续可以直接复制、翻译或优化。",
   "prompt.empty.filteredTitle": "没有匹配结果",
-  "prompt.empty.filteredDescription": "换一个关键词，或清空搜索条件后查看全部卡片。",
+  "prompt.empty.filteredDescription":
+    "换一个关键词，或清空搜索条件后查看全部卡片。",
   "prompt.action.copy": "复制",
   "prompt.action.copyNamed": "复制 {{title}}",
   "prompt.action.copyImages": "复制图片",
@@ -334,8 +349,10 @@ export const commonZh = {
   "plan.title": "部署计划",
   "plan.actions": "{{count}} 个动作",
   "plan.reason.unsupported": "{{profile}} 不支持 {{kind}} 或未命中包含规则",
-  "plan.reason.conflictExisting": "目标路径已存在，当前版本默认不覆盖非本应用管理的文件",
-  "plan.reason.project": "{{profile}} 支持 {{kind}}，将以 {{strategy}} 投影到目标目录",
+  "plan.reason.conflictExisting":
+    "目标路径已存在，当前版本默认不覆盖非本应用管理的文件",
+  "plan.reason.project":
+    "{{profile}} 支持 {{kind}}，将以 {{strategy}} 投影到目标目录",
   "appMount.page.title": "应用挂载",
   "appMount.page.subtitle": "App 挂载",
   "appMount.searchPlaceholder": "搜索 App、目录或类型...",
@@ -386,15 +403,21 @@ export const commonZh = {
   "appMount.field.accentColor": "强调色",
   "appMount.field.enabled": "启用 Profile",
   "appMount.field.shortcutEnabled": "显示快捷入口",
-  "appMount.confirmDelete": "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
+  "appMount.confirmDelete":
+    "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
   "appMount.deleteDialog.title": "删除 App",
-  "appMount.deleteDialog.message": "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
-  "appMount.deleteDialog.detail": "后端会检查受管部署和真实挂载状态；仍在使用时会拒绝删除。",
+  "appMount.deleteDialog.message":
+    "确认删除 App {{name}}？如果目标目录仍有受管挂载，需要先卸载。",
+  "appMount.deleteDialog.detail":
+    "后端会检查受管部署和真实挂载状态；仍在使用时会拒绝删除。",
   "appMount.deleteDialog.defaultBlocked": "{{name}} 是官方默认 App，不能删除。",
-  "appMount.deleteDialog.defaultDetail": "官方默认 App 由 AssetIWeave 内置维护，只能调整配置，不能删除。",
+  "appMount.deleteDialog.defaultDetail":
+    "官方默认 App 由 AssetIWeave 内置维护，只能调整配置，不能删除。",
   "appMount.pathChangeDialog.title": "确认修改默认 App 路径",
-  "appMount.pathChangeDialog.message": "{{name}} 是官方默认 App。确认修改它的 Skill 目录？",
-  "appMount.pathChangeDialog.detail": "当前路径：{{previousPath}}\n新路径：{{nextPath}}",
+  "appMount.pathChangeDialog.message":
+    "{{name}} 是官方默认 App。确认修改它的 Skill 目录？",
+  "appMount.pathChangeDialog.detail":
+    "当前路径：{{previousPath}}\n新路径：{{nextPath}}",
   "appMount.toolbar.appKindAll": "全部 App ({{count}})",
   "appMount.toolbar.appKindFilter": "App 类型",
   "appMount.toolbar.statusFilter": "App 状态",
@@ -412,5 +435,5 @@ export const commonZh = {
   "logViewer.levels.all": "全部",
   "logViewer.levels.info": "INFO",
   "logViewer.levels.warn": "WARN",
-  "logViewer.levels.error": "ERROR"
+  "logViewer.levels.error": "ERROR",
 } as const;

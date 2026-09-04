@@ -30,10 +30,8 @@ export function aiExecutionQueryOptions(scope: QueryScope) {
     queryKey: taskKeys.resource(scope, "ai-execution"),
     queryFn: listAiExecutionTasks,
     structuralSharing: (oldData, newData) => {
-      const current =
-        (oldData as AiExecutionTaskSnapshot[] | undefined) ?? [];
-      const incoming =
-        (newData as AiExecutionTaskSnapshot[] | undefined) ?? [];
+      const current = (oldData as AiExecutionTaskSnapshot[] | undefined) ?? [];
+      const incoming = (newData as AiExecutionTaskSnapshot[] | undefined) ?? [];
       return mergeAiExecutionTaskSnapshots(current, incoming);
     },
     staleTime: 1000,

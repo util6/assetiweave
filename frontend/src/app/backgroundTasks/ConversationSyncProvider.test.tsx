@@ -226,7 +226,9 @@ describe("ConversationSyncProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start full sync" }));
 
     await waitFor(() => {
-      expect(screen.getByTestId("full-sync-status").textContent).toBe("running");
+      expect(screen.getByTestId("full-sync-status").textContent).toBe(
+        "running",
+      );
       expect(screen.getByTestId("session-sync-status").textContent).toBe(
         "running",
       );

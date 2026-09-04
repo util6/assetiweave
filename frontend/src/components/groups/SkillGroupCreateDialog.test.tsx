@@ -52,9 +52,7 @@ describe("SkillGroupCreateDialog", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("请输入分组名称。"),
-      ).toBeTruthy();
+      expect(screen.getByText("请输入分组名称。")).toBeTruthy();
     });
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -78,7 +76,9 @@ describe("SkillGroupCreateDialog", () => {
     );
 
     const dialog = screen.getByRole("dialog", { hidden: true });
-    const nameInput = dialog.querySelector('input[name="name"]') as HTMLInputElement;
+    const nameInput = dialog.querySelector(
+      'input[name="name"]',
+    ) as HTMLInputElement;
     expect(nameInput).toBeTruthy();
     fireEvent.change(nameInput, { target: { value: "Engineering Skills" } });
 

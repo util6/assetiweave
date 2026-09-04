@@ -1,48 +1,65 @@
 export const conversationsEn = {
-  "conversation.navigation.sessionMissing": "The Session referenced by this Memory record could not be located.",
-  "conversation.navigation.questionMissing": "The Session opened, but the referenced Question is missing.",
-  "conversation.navigation.blockMissing": "The Question opened, but the referenced Card changed or is unavailable.",
+  "conversation.navigation.sessionMissing":
+    "The Session referenced by this Memory record could not be located.",
+  "conversation.navigation.questionMissing":
+    "The Session opened, but the referenced Question is missing.",
+  "conversation.navigation.blockMissing":
+    "The Question opened, but the referenced Card changed or is unavailable.",
   "conversation.eyebrow": "Conversations",
   "conversation.sessions.title": "Conversation Browser",
-  "conversation.sessions.subtitle": "Start from an app and session, then browse questions and full response details in a dedicated workspace.",
+  "conversation.sessions.subtitle":
+    "Start from an app and session, then browse questions and full response details in a dedicated workspace.",
   "conversation.webRecords.title": "Web Record Browser",
-  "conversation.webRecords.subtitle": "Browse AI web conversations imported by user-directory harvesters and stored independently.",
+  "conversation.webRecords.subtitle":
+    "Browse AI web conversations imported by user-directory harvesters and stored independently.",
   "conversation.webRecords.status.syncedAll": "Synced web conversation sources",
   "conversation.scriptMarket.inlineTitle": "Script Market List",
-  "conversation.scriptMarket.inlineDescription": "Register a parser from the market (download and install); uninstall stops future sync while retaining package files and history.",
-  "conversation.scriptMarket.loading": "Validating script directories and runtime status in the background. You can keep using the interface…",
+  "conversation.scriptMarket.inlineDescription":
+    "Register a parser from the market (download and install); uninstall stops future sync while retaining package files and history.",
+  "conversation.scriptMarket.loading":
+    "Validating script directories and runtime status in the background. You can keep using the interface…",
   "conversation.scriptMarket.install": "Install",
   "conversation.scriptMarket.registerPackage": "Register",
   "conversation.scriptMarket.update": "Update",
   "conversation.scriptMarket.repair": "Repair",
   "conversation.scriptMarket.notInstalled": "Not installed",
   "conversation.scriptMarket.installed": "Installed",
-  "conversation.scriptMarket.uninstalled": "Uninstalled (files and records retained)",
+  "conversation.scriptMarket.uninstalled":
+    "Uninstalled (files and records retained)",
   "conversation.scriptMarket.updateAvailable": "Update",
   "conversation.scriptMarket.aheadOfRelease": "Ahead",
   "conversation.scriptMarket.runtimeMissing": "Runtime Missing",
   "conversation.scriptMarket.verificationFailed": "Verification failed",
   "conversation.scriptMarket.installing": "Installing script in the background",
   "conversation.scriptMarket.updating": "Updating the plugin in the background",
-  "conversation.scriptMarket.uninstalling": "Stopping the plugin runtime in the background",
+  "conversation.scriptMarket.uninstalling":
+    "Stopping the plugin runtime in the background",
   "conversation.scriptMarket.installStarted": "Script install started.",
   "conversation.scriptMarket.installCompleted": "Script install completed.",
-  "conversation.scriptMarket.registerCompleted": "The adapter was registered again and its runtime and sources were restored.",
-  "conversation.scriptMarket.builtInManifestMissing": "The built-in adapter has no manifest path and cannot be registered again.",
-  "conversation.scriptMarket.localManifestMissing": "The local adapter has no manifest path and cannot be registered.",
+  "conversation.scriptMarket.registerCompleted":
+    "The adapter was registered again and its runtime and sources were restored.",
+  "conversation.scriptMarket.builtInManifestMissing":
+    "The built-in adapter has no manifest path and cannot be registered again.",
+  "conversation.scriptMarket.localManifestMissing":
+    "The local adapter has no manifest path and cannot be registered.",
   "conversation.scriptMarket.installFailed": "Script install failed.",
   "conversation.scriptMarket.updateCompleted": "Plugin update completed.",
   "conversation.scriptMarket.updateFailed": "Plugin update failed.",
-  "conversation.scriptMarket.uninstallCompleted": "Plugin runtime uninstalled; it no longer syncs, while package files, conversation records, and source configuration remain.",
+  "conversation.scriptMarket.uninstallCompleted":
+    "Plugin runtime uninstalled; it no longer syncs, while package files, conversation records, and source configuration remain.",
   "conversation.scriptMarket.uninstallFailed": "Plugin uninstall failed.",
-  "conversation.scriptMarket.emptyForKind": "No installable script resources for this record type.",
+  "conversation.scriptMarket.emptyForKind":
+    "No installable script resources for this record type.",
   "conversation.scriptMarket.repository": "Repository",
   "conversation.scriptMarket.confirmTitle": "Confirm plugin change",
   "conversation.scriptMarket.confirmMessage": "Confirm {action} for “{name}”?",
-  "conversation.scriptMarket.recordsPreserved": "Existing conversation records will be preserved.",
+  "conversation.scriptMarket.recordsPreserved":
+    "Existing conversation records will be preserved.",
   "conversation.scriptMarket.affectedSources": "Affected sources",
-  "conversation.scriptMarket.managedPaths": "Managed paths (uninstall retains them; deleting a version removes them)",
-  "conversation.scriptMarket.taskConflict": "The plugin is in use by running tasks: {tasks}",
+  "conversation.scriptMarket.managedPaths":
+    "Managed paths (uninstall retains them; deleting a version removes them)",
+  "conversation.scriptMarket.taskConflict":
+    "The plugin is in use by running tasks: {tasks}",
   "conversation.scriptMarket.view.connected": "Connected",
   "conversation.scriptMarket.view.updates": "Updates",
   "conversation.scriptMarket.view.discover": "Discover",
@@ -59,7 +76,8 @@ export const conversationsEn = {
   "conversation.scriptMarket.uninstall": "Uninstall",
   "conversation.scriptMarket.checkUpdates": "Check for updates",
   "conversation.scriptMarket.checkingUpdates": "Checking for updates…",
-  "conversation.scriptMarket.checkUpdatesCompleted": "Update check completed; {{count}} plugins can be updated.",
+  "conversation.scriptMarket.checkUpdatesCompleted":
+    "Update check completed; {{count}} plugins can be updated.",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "Origin",
@@ -72,22 +90,30 @@ export const conversationsEn = {
   "conversation.scriptMarket.manifest": "Adapter manifest",
   "conversation.scriptMarket.contentHash": "Content hash",
   "conversation.scriptMarket.trustedHash": "Trusted hash",
-  "conversation.scriptMarket.devOverrideNotice": "This dev override is in debug mode; marketplace updates will not replace the active runtime.",
+  "conversation.scriptMarket.devOverrideNotice":
+    "This dev override is in debug mode; marketplace updates will not replace the active runtime.",
   "conversation.scriptMarket.versionHistory": "Version history and changelog",
   "conversation.scriptMarket.selectVersion": "Select install version",
-  "conversation.scriptMarket.noVersionHistory": "No version history is available.",
+  "conversation.scriptMarket.noVersionHistory":
+    "No version history is available.",
   "conversation.scriptMarket.installedVersions": "Installed offline versions",
   "conversation.scriptMarket.activeVersion": "Active",
   "conversation.scriptMarket.switchVersion": "Switch",
   "conversation.scriptMarket.registerVersion": "Register this version",
   "conversation.scriptMarket.rollback": "Roll back",
   "conversation.scriptMarket.deleteVersion": "Delete version",
-  "conversation.scriptMarket.deleteRunningVersionHelp": "Uninstall the running version before deleting it.",
-  "conversation.scriptMarket.deleteVersionHelp": "Managed files can be permanently deleted here after uninstall; sources and conversation history remain.",
-  "conversation.scriptMarket.externalDeleteUnavailable": "This plugin is locally or legacy registered, so its files are not managed by the version library. It can be uninstalled but not deleted by AssetIWeave; register it from the market to enable version deletion.",
-  "conversation.scriptMarket.builtInDeleteUnavailable": "Built-in or development adapters can be uninstalled and skipped by the scanner. Their files remain part of the app and cannot be deleted.",
-  "conversation.scriptMarket.deleteVersionConfirm": "Permanently delete the managed files for version {{version}}? A running version must be uninstalled or switched first.",
-  "conversation.scriptMarket.versionActionCompleted": "Local version operation completed.",
+  "conversation.scriptMarket.deleteRunningVersionHelp":
+    "Uninstall the running version before deleting it.",
+  "conversation.scriptMarket.deleteVersionHelp":
+    "Managed files can be permanently deleted here after uninstall; sources and conversation history remain.",
+  "conversation.scriptMarket.externalDeleteUnavailable":
+    "This plugin is locally or legacy registered, so its files are not managed by the version library. It can be uninstalled but not deleted by AssetIWeave; register it from the market to enable version deletion.",
+  "conversation.scriptMarket.builtInDeleteUnavailable":
+    "Built-in or development adapters can be uninstalled and skipped by the scanner. Their files remain part of the app and cannot be deleted.",
+  "conversation.scriptMarket.deleteVersionConfirm":
+    "Permanently delete the managed files for version {{version}}? A running version must be uninstalled or switched first.",
+  "conversation.scriptMarket.versionActionCompleted":
+    "Local version operation completed.",
   "conversation.scriptMarket.updatePolicy": "Update policy",
   "conversation.scriptMarket.policy.manual": "Manual notice (stable)",
   "conversation.scriptMarket.policy.follow_stable": "Follow stable",
@@ -97,13 +123,15 @@ export const conversationsEn = {
   "conversation.toolbar.aria": "Conversation records toolbar",
   "conversation.toolbar.searchPlaceholder": "Search sessions or projects...",
   "conversation.toolbar.searchSubmit": "Search sessions",
-  "conversation.search.contentPlaceholder": "Search content and jump to cards...",
+  "conversation.search.contentPlaceholder":
+    "Search content and jump to cards...",
   "conversation.search.submit": "Search content",
   "conversation.search.resultsTitle": "Content Search Results",
   "conversation.search.loading": "Searching content...",
   "conversation.search.resultsCount": "“{{query}}” matched {{count}} cards",
   "conversation.search.empty": "No content matches.",
-  "conversation.search.typeFilterAria": "Filter content search results by card type",
+  "conversation.search.typeFilterAria":
+    "Filter content search results by card type",
   "conversation.search.type.all": "All",
   "conversation.search.groupCount": "{{count}}",
   "conversation.search.openHit": "Open {{type}} search result: {{title}}",
@@ -121,7 +149,8 @@ export const conversationsEn = {
   "conversation.toolbar.questions": "Questions",
   "conversation.toolbar.selected": "Selected",
   "conversation.toolbar.batchExport": "Batch export",
-  "conversation.toolbar.batchExportSelected": "Batch export {{count}} questions",
+  "conversation.toolbar.batchExportSelected":
+    "Batch export {{count}} questions",
   "conversation.toolbar.sessionSort": "Session sort",
   "conversation.toolbar.questionSort": "Question sort",
   "conversation.toolbar.sort.updated": "By update time",
@@ -130,15 +159,19 @@ export const conversationsEn = {
   "conversation.toolbar.sort.questionCount": "By questions",
   "conversation.toolbar.sort.turnCount": "By turns",
   "conversation.status.syncedAll": "Synced conversation sources",
-  "conversation.status.importStarted": "Added source \"{{source}}\". Background import has started.",
+  "conversation.status.importStarted":
+    'Added source "{{source}}". Background import has started.',
   "conversation.status.merged": "Merged adjacent questions",
   "conversation.status.split": "Split question",
   "conversation.status.exported": "Exported session Markdown",
-  "conversation.status.exportedSelected": "Exported {{count}} question Markdown",
+  "conversation.status.exportedSelected":
+    "Exported {{count}} question Markdown",
   "conversation.add.title.session": "Add Conversation Source",
   "conversation.add.title.web": "Add Web Record Source",
-  "conversation.add.description.session": "Install an external adapter plugin and add a Session source.",
-  "conversation.add.description.web": "Install an external adapter plugin and add a web record source.",
+  "conversation.add.description.session":
+    "Install an external adapter plugin and add a Session source.",
+  "conversation.add.description.web":
+    "Install an external adapter plugin and add a web record source.",
   "conversation.add.close": "Close add source dialog",
   "conversation.add.submit": "Add source",
   "conversation.add.submitting": "Adding...",
@@ -156,7 +189,8 @@ export const conversationsEn = {
   "conversation.add.sourceKind.live": "Live",
   "conversation.add.sourceKind.custom": "Custom",
   "conversation.export.title": "Export Markdown",
-  "conversation.export.description": "Choose which content blocks should be written to the Markdown file.",
+  "conversation.export.description":
+    "Choose which content blocks should be written to the Markdown file.",
   "conversation.export.close": "Close export dialog",
   "conversation.export.scope": "Export scope",
   "conversation.export.scopeSession": "Current session, {{count}} questions",
@@ -166,8 +200,10 @@ export const conversationsEn = {
   "conversation.export.exporting": "Exporting...",
   "conversation.import.sessionTitle": "Import Conversations",
   "conversation.import.webTitle": "Import Web Records",
-  "conversation.import.sessionDescription": "Choose an external adapter manifest and local record source. Import continues in the background.",
-  "conversation.import.webDescription": "Choose an adapter with web_records capability and a web record source. The web browser refreshes after import.",
+  "conversation.import.sessionDescription":
+    "Choose an external adapter manifest and local record source. Import continues in the background.",
+  "conversation.import.webDescription":
+    "Choose an adapter with web_records capability and a web record source. The web browser refreshes after import.",
   "conversation.import.close": "Close import dialog",
   "conversation.import.pageSwitchAria": "Import page switcher",
   "conversation.import.page.form": "Import Form",
@@ -193,8 +229,10 @@ export const conversationsEn = {
   "conversation.import.step.source": "Add source",
   "conversation.import.step.sync": "Start sync",
   "conversation.import.step.done": "Refresh browser",
-  "conversation.import.error.manifestRequired": "Choose or enter an adapter manifest path.",
-  "conversation.import.error.locationRequired": "Choose or enter a source location.",
+  "conversation.import.error.manifestRequired":
+    "Choose or enter an adapter manifest path.",
+  "conversation.import.error.locationRequired":
+    "Choose or enter a source location.",
   "conversation.column.apps": "Apps",
   "conversation.column.projects": "Project Folders",
   "conversation.column.sessions": "Sessions",
@@ -203,11 +241,13 @@ export const conversationsEn = {
   "conversation.app.select": "Select an app to view its sessions.",
   "conversation.app.selectNamed": "Select app {{name}}",
   "conversation.app.sessionCount": "{{count}} sessions",
-  "conversation.app.summary": "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
+  "conversation.app.summary":
+    "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.project.select": "Select a project folder to view sessions.",
   "conversation.project.selectNamed": "Select project folder {{path}}",
   "conversation.project.sessionCount": "{{count}} sessions",
-  "conversation.project.summary": "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
+  "conversation.project.summary":
+    "{{sessions}} sessions · {{questions}} questions · {{turns}} turns",
   "conversation.session.open": "Open session {{title}}",
   "conversation.session.backToBrowser": "Back to apps / sessions",
   "conversation.session.loading": "Loading session...",
@@ -218,10 +258,13 @@ export const conversationsEn = {
   "conversation.session.questionCountChip": "{{count}} questions",
   "conversation.session.turnCountChip": "{{count}} turns",
   "conversation.session.emptyForApp": "This app has no sessions yet.",
-  "conversation.session.emptyForProject": "This project folder has no sessions yet.",
+  "conversation.session.emptyForProject":
+    "This project folder has no sessions yet.",
   "conversation.question.select": "Preview question {{title}}",
-  "conversation.question.selectForExport": "Select question {{title}} for batch export",
-  "conversation.question.searchPlaceholder": "Search questions in this session...",
+  "conversation.question.selectForExport":
+    "Select question {{title}} for batch export",
+  "conversation.question.searchPlaceholder":
+    "Search questions in this session...",
   "conversation.question.searchSubmit": "Search questions",
   "conversation.question.empty": "This session has no questions.",
   "conversation.question.emptyForSearch": "No matching questions.",
@@ -254,14 +297,16 @@ export const conversationsEn = {
   "conversation.content.resultFailed": "failed",
   "conversation.content.changedFiles": "Changed files · {{count}} files",
   "conversation.content.diffSummaryFiles": "{{count}} changed files",
-  "conversation.content.diffSummaryUnavailable": "The file list could not be parsed. Expand to view the raw diff.",
+  "conversation.content.diffSummaryUnavailable":
+    "The file list could not be parsed. Expand to view the raw diff.",
   "conversation.content.viewDiff": "View Diff",
   "conversation.content.expandCommands": "Show {{count}} more commands",
   "conversation.content.collapseCommands": "Collapse commands",
   "conversation.content.loadMoreCommands": "Load more commands",
   "conversation.content.loadMoreResults": "Load more results",
   "conversation.content.loadMoreActivities": "Load more activity",
-  "conversation.content.projectionFailed": "Command display projection failed; raw command retained: {{message}}",
+  "conversation.content.projectionFailed":
+    "Command display projection failed; raw command retained: {{message}}",
   "conversation.content.hidden": "All response blocks are currently hidden.",
   "conversation.content.exitCode": "Exit code {{code}}",
   "conversation.content.copy": "Copy {{type}}",
@@ -274,17 +319,21 @@ export const conversationsEn = {
   "conversation.content.translating": "Translating",
   "conversation.content.translation": "Translation · {{language}}",
   "conversation.content.translationChecking": "Checking translation service",
-  "conversation.content.translationUnavailable": "Translation service is unavailable",
+  "conversation.content.translationUnavailable":
+    "Translation service is unavailable",
   "conversation.content.translationFailed": "Translation failed: {{message}}",
-  "conversation.content.translationSaveFailed": "Failed to save translation: {{message}}",
-  "conversation.content.translationUnknownError": "The AI translation task returned no usable result",
+  "conversation.content.translationSaveFailed":
+    "Failed to save translation: {{message}}",
+  "conversation.content.translationUnknownError":
+    "The AI translation task returned no usable result",
   "conversation.content.translationCancel": "Cancel current translation",
   "conversation.content.translationCancelling": "Cancelling",
   "conversation.content.translationPhase.queued": "Waiting to run",
   "conversation.content.translationPhase.resolving": "Starting OpenCode",
   "conversation.content.translationPhase.spawning": "Starting OpenCode",
   "conversation.content.translationPhase.initializing": "Connecting to Agent",
-  "conversation.content.translationPhase.creating_session": "Connecting to Agent",
+  "conversation.content.translationPhase.creating_session":
+    "Connecting to Agent",
   "conversation.content.translationPhase.configuring": "Applying model",
   "conversation.content.translationPhase.prompting": "Translating",
   "conversation.content.translationPhase.cancelling": "Cancelling",
@@ -292,51 +341,78 @@ export const conversationsEn = {
   "conversation.content.translationPhase.cleaning_up": "Finishing",
   "conversation.content.expandResult": "Show all",
   "conversation.content.collapseResult": "Collapse",
-  "conversation.content.resultPreviewLines": "Showing {{shown}} / {{total}} lines",
+  "conversation.content.resultPreviewLines":
+    "Showing {{shown}} / {{total}} lines",
   "conversation.sync.allSources": "All sources",
   "conversation.sync.phase.preparing": "Preparing sync",
   "conversation.sync.phase.importing": "Reading and importing conversations",
   "conversation.sync.phase.refreshing": "Refreshing session lists",
   "conversation.sync.phase.completed": "Sync completed",
   "conversation.sync.phase.failed": "Sync failed",
-  "conversation.sync.description.preparing": "Collecting sources and sync parameters before the task starts.",
-  "conversation.sync.description.importing": "Parsing local records and writing normalized sessions, questions, and content blocks.",
-  "conversation.sync.description.refreshing": "Import is complete. Reloading app, session, and question statistics.",
-  "conversation.sync.description.completed": "Conversation records and browser lists are up to date.",
-  "conversation.sync.description.failed": "Sync could not finish. Review the error notification and try again.",
+  "conversation.sync.description.preparing":
+    "Collecting sources and sync parameters before the task starts.",
+  "conversation.sync.description.importing":
+    "Parsing local records and writing normalized sessions, questions, and content blocks.",
+  "conversation.sync.description.refreshing":
+    "Import is complete. Reloading app, session, and question statistics.",
+  "conversation.sync.description.completed":
+    "Conversation records and browser lists are up to date.",
+  "conversation.sync.description.failed":
+    "Sync could not finish. Review the error notification and try again.",
   "conversation.sync.stage": "Stage {{current}} of {{total}}",
   "conversation.sync.scope": "Scope: {{source}}",
   "conversation.sync.dismiss": "Dismiss sync progress",
-  "conversation.sync.incrementalSummary": "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
-  "conversation.sync.incrementalSummaryWithErrors": "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.summary": "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources.",
-  "conversation.sync.summaryWithErrors": "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.summaryUnavailable": "Sync completed. Detailed statistics are not available.",
-  "conversation.sync.partialFailureAdvice": "Successful sources were imported. Fix the failed source below, then sync that source again.",
+  "conversation.sync.incrementalSummary":
+    "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
+  "conversation.sync.incrementalSummaryWithErrors":
+    "Discovered {{discovered}} sessions, added/updated {{sessions}}, skipped {{skipped}} unchanged sessions, and retained {{retained}} historical sessions no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.summary":
+    "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources.",
+  "conversation.sync.summaryWithErrors":
+    "Added/updated {{sessions}} sessions and {{turns}} content items, skipped {{skipped}} unchanged sessions across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.summaryUnavailable":
+    "Sync completed. Detailed statistics are not available.",
+  "conversation.sync.partialFailureAdvice":
+    "Successful sources were imported. Fix the failed source below, then sync that source again.",
   "conversation.sync.failedSourcesTitle": "Failed sources",
-  "conversation.sync.failureMessageUnavailable": "No error message was provided.",
+  "conversation.sync.failureMessageUnavailable":
+    "No error message was provided.",
   "conversation.sync.unknownFailedSource": "Unknown source",
   "conversation.sync.web.phase.preparing": "Preparing web record sync",
   "conversation.sync.web.phase.importing": "Reading and importing web records",
   "conversation.sync.web.phase.refreshing": "Refreshing web record lists",
   "conversation.sync.web.phase.completed": "Web record sync completed",
   "conversation.sync.web.phase.failed": "Web record sync failed",
-  "conversation.sync.web.description.preparing": "Collecting web sources and sync parameters before the task starts.",
-  "conversation.sync.web.description.importing": "Parsing harvested web records and writing independent web conversations, questions, and content blocks.",
-  "conversation.sync.web.description.refreshing": "Import is complete. Reloading site, web conversation, and question statistics.",
-  "conversation.sync.web.description.completed": "Web records and browser lists are up to date.",
-  "conversation.sync.web.description.failed": "Web record sync could not finish. Review the error notification and try again.",
+  "conversation.sync.web.description.preparing":
+    "Collecting web sources and sync parameters before the task starts.",
+  "conversation.sync.web.description.importing":
+    "Parsing harvested web records and writing independent web conversations, questions, and content blocks.",
+  "conversation.sync.web.description.refreshing":
+    "Import is complete. Reloading site, web conversation, and question statistics.",
+  "conversation.sync.web.description.completed":
+    "Web records and browser lists are up to date.",
+  "conversation.sync.web.description.failed":
+    "Web record sync could not finish. Review the error notification and try again.",
   "conversation.sync.web.scope": "Web source: {{source}}",
-  "conversation.sync.web.summary": "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources.",
-  "conversation.sync.web.summaryWithErrors": "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.web.incrementalSummary": "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
-  "conversation.sync.web.incrementalSummaryWithErrors": "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
-  "conversation.sync.web.summaryUnavailable": "Web record sync completed. Detailed statistics are not available.",
-  "conversation.sync.web.partialFailureAdvice": "Successful sources were imported. Fix the failed web source below, then sync that source again.",
+  "conversation.sync.web.summary":
+    "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources.",
+  "conversation.sync.web.summaryWithErrors":
+    "Added/updated {{sessions}} web records and {{turns}} content items, skipped {{skipped}} unchanged records across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.web.incrementalSummary":
+    "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources.",
+  "conversation.sync.web.incrementalSummaryWithErrors":
+    "Discovered {{discovered}} web records, added/updated {{sessions}}, skipped {{skipped}} unchanged records, and retained {{retained}} historical records no longer visible at the source; wrote {{turns}} content items across {{sources}} sources; {{errors}} sources failed.",
+  "conversation.sync.web.summaryUnavailable":
+    "Web record sync completed. Detailed statistics are not available.",
+  "conversation.sync.web.partialFailureAdvice":
+    "Successful sources were imported. Fix the failed web source below, then sync that source again.",
   "conversation.sync.web.failedSourcesTitle": "Failed web sources",
-  "conversation.sync.background.title": "Syncing conversations in the background",
-  "conversation.sync.background.webTitle": "Syncing web records in the background",
-  "conversation.sync.background.description": "You can keep using other features. Lists refresh when it finishes.",
+  "conversation.sync.background.title":
+    "Syncing conversations in the background",
+  "conversation.sync.background.webTitle":
+    "Syncing web records in the background",
+  "conversation.sync.background.description":
+    "You can keep using other features. Lists refresh when it finishes.",
   "conversation.markdown.untitledQuestion": "Untitled question",
-  "conversation.markdown.empty": "Nothing to preview yet."
+  "conversation.markdown.empty": "Nothing to preview yet.",
 } as const;

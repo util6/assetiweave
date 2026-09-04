@@ -38,22 +38,26 @@ export function I18nEffects() {
     bootstrappedRef.current = true;
 
     const currentFile = query.data;
-    const currentLocale = (currentFile.settings as { locale?: AppLocale | null } | undefined)
-      ?.locale;
+    const currentLocale = (
+      currentFile.settings as { locale?: AppLocale | null } | undefined
+    )?.locale;
 
     if (typeof window !== "undefined" && window.localStorage) {
-      void ensureAppLocale(currentFile, window.localStorage).then((updatedFile) => {
-        const nextLocale = (updatedFile.settings as { locale?: AppLocale | null } | undefined)
-          ?.locale;
-        if (nextLocale && nextLocale !== currentLocale) {
-          queryClient.setQueryData(appSettingsKey, updatedFile);
-          if (nextLocale !== i18n.language) {
-            void i18n.changeLanguage(nextLocale);
+      void ensureAppLocale(currentFile, window.localStorage)
+        .then((updatedFile) => {
+          const nextLocale = (
+            updatedFile.settings as { locale?: AppLocale | null } | undefined
+          )?.locale;
+          if (nextLocale && nextLocale !== currentLocale) {
+            queryClient.setQueryData(appSettingsKey, updatedFile);
+            if (nextLocale !== i18n.language) {
+              void i18n.changeLanguage(nextLocale);
+            }
           }
-        }
-      }).catch((err) => {
-        console.error("Failed to bootstrap locale to SQLite settings:", err);
-      });
+        })
+        .catch((err) => {
+          console.error("Failed to bootstrap locale to SQLite settings:", err);
+        });
     }
   }, [query.data, queryClient, i18n]);
 

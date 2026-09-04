@@ -155,7 +155,9 @@ describe("AiExecutionTaskProvider", () => {
     });
     await waitFor(() => {
       expect(cancelTaskMock).toHaveBeenCalledWith("ai-task-1");
-      expect(screen.getByTestId("state").textContent).toBe("running:cancelling");
+      expect(screen.getByTestId("state").textContent).toBe(
+        "running:cancelling",
+      );
     });
   });
 

@@ -111,9 +111,7 @@ export function SourceEditDialog({
         root_path: values.rootPath.trim(),
       });
     } catch (error) {
-      onNotifyError(
-        error instanceof Error ? error.message : String(error),
-      );
+      onNotifyError(error instanceof Error ? error.message : String(error));
     }
   });
 
@@ -190,9 +188,7 @@ export function SourceEditDialog({
         <div className="grid gap-4">
           <Field label={t("source.field.rootPath")} required>
             <PathPickerInput
-              aria-describedby={
-                errors.rootPath ? rootPathErrorId : undefined
-              }
+              aria-describedby={errors.rootPath ? rootPathErrorId : undefined}
               aria-invalid={Boolean(errors.rootPath)}
               disabled={busy}
               onPick={() => void handlePickRootPath()}
@@ -213,16 +209,11 @@ export function SourceEditDialog({
 
           <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3 max-[720px]:grid-cols-1">
             <Field label={t("source.field.name")}>
-              <Input
-                disabled={busy}
-                {...register("name")}
-              />
+              <Input disabled={busy} {...register("name")} />
             </Field>
             <Field label={t("source.field.priority")}>
               <Input
-                aria-describedby={
-                  errors.priority ? priorityErrorId : undefined
-                }
+                aria-describedby={errors.priority ? priorityErrorId : undefined}
                 aria-invalid={Boolean(errors.priority)}
                 disabled={busy}
                 inputMode="numeric"

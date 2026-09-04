@@ -91,7 +91,10 @@ export interface TeamSessionView {
 const TeamSessionContext = createContext<TeamSessionContextValue | null>(null);
 
 export function teamSessionQueryKey(scope: QueryScope, teamId: string | null) {
-  return [...taskKeys.resource(scope, "team-session"), teamId ?? "all"] as const;
+  return [
+    ...taskKeys.resource(scope, "team-session"),
+    teamId ?? "all",
+  ] as const;
 }
 
 const BACKEND_STATE_FLAG = Symbol("BACKEND_STATE_FLAG");
@@ -107,7 +110,9 @@ export function teamSessionQueryOptions(
   return queryOptions<TeamSessionStoreState>({
     queryKey: teamSessionQueryKey(scope, teamId),
     queryFn: async () => {
-      const state = (await loadTeamSessionState(teamId)) as BackendTeamSessionStoreState;
+      const state = (await loadTeamSessionState(
+        teamId,
+      )) as BackendTeamSessionStoreState;
       state[BACKEND_STATE_FLAG] = true;
       return state;
     },
@@ -126,7 +131,6 @@ export function teamSessionQueryOptions(
   });
 }
 
-
 export function TeamSessionProvider({
   activeMemberId = null,
   autoRestore = false,
@@ -144,7 +148,6 @@ export function TeamSessionProvider({
   const activeScope = scope ?? { tenantId: "default", epoch: 1 };
   const queryKey = useMemo(
     () => teamSessionQueryKey(activeScope, teamId),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeScope.tenantId, activeScope.epoch, teamId],
   );
   const queryClient = useQueryClient();

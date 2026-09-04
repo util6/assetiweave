@@ -125,7 +125,9 @@ describe("ConversationDataMaintenanceProvider", () => {
     );
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Cancel maintenance" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Cancel maintenance" }),
+      );
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(cancelMock).toHaveBeenCalledWith("repair-1");

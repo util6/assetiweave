@@ -1,7 +1,8 @@
 export const teamEn = {
   "team.page.eyebrow": "Team collaboration",
   "team.page.title": "Teams & Rosters",
-  "team.page.description": "Manage fixed member order and Agent/model bindings for Leaders and Teammates.",
+  "team.page.description":
+    "Manage fixed member order and Agent/model bindings for Leaders and Teammates.",
   "team.action.create": "Create team",
   "team.action.edit": "Edit",
   "team.action.delete": "Delete",
@@ -15,7 +16,8 @@ export const teamEn = {
   "team.list.count": "{{count}} teams",
   "team.list.loading": "Loading teams...",
   "team.list.empty": "No teams configured",
-  "team.list.emptyDescription": "Create a fixed roster in the desktop application.",
+  "team.list.emptyDescription":
+    "Create a fixed roster in the desktop application.",
   "team.detail.select": "Select a team to view its roster",
   "team.detail.roster": "Member roster",
   "team.detail.memberCount": "{{count}} members",
@@ -28,7 +30,8 @@ export const teamEn = {
   "team.dialog.name": "Team name",
   "team.dialog.namePlaceholder": "For example: Autonomous Refactor Crew",
   "team.dialog.description": "Team description",
-  "team.dialog.descriptionPlaceholder": "Briefly describe the team's responsibility...",
+  "team.dialog.descriptionPlaceholder":
+    "Briefly describe the team's responsibility...",
   "team.dialog.members": "Members (1 Leader + at least 1 Teammate)",
   "team.dialog.agent": "Agent",
   "team.dialog.model": "Model",
@@ -48,10 +51,12 @@ export const teamEn = {
   "team.error.catalog": "Failed to load Agent Market: {{message}}",
   "team.error.models": "Failed to load models: {{message}}",
   "team.preview.title": "Browser preview is read-only",
-  "team.preview.description": "Team roster validation and persistence run only in the desktop application.",
+  "team.preview.description":
+    "Team roster validation and persistence run only in the desktop application.",
   "team.workflow.title": "Run Team workflow",
   "team.workflow.message": "Work brief for the Leader",
-  "team.workflow.messagePlaceholder": "Describe the work to decompose and execute...",
+  "team.workflow.messagePlaceholder":
+    "Describe the work to decompose and execute...",
   "team.workflow.draft": "Generate draft",
   "team.workflow.review": "Save review",
   "team.workflow.confirm": "Confirm execution",
@@ -71,14 +76,17 @@ export const teamEn = {
   "team.workflow.unavailable": "Unavailable",
   "team.workflow.error": "Team workflow failed: {{message}}",
   "team.workflow.plan": "Task plan",
-  "team.workflow.planDescription": "The Leader's recommended breakdown; Teammates do not start before confirmation.",
+  "team.workflow.planDescription":
+    "The Leader's recommended breakdown; Teammates do not start before confirmation.",
   "team.workflow.drafting": "Generating task draft...",
   "team.workflow.taskNumber": "Task {{number}}",
   "team.workflow.taskTitle": "Task title",
   "team.workflow.taskDescription": "Task description",
   "team.workflow.recommended": "Recommended owner: {{owner}}",
-  "team.workflow.taskFieldsRequired": "Task title and description are required.",
-  "team.workflow.ownerRequired": "Choose an owner from the frozen Teammate roster.",
+  "team.workflow.taskFieldsRequired":
+    "Task title and description are required.",
+  "team.workflow.ownerRequired":
+    "Choose an owner from the frozen Teammate roster.",
   "team.workflow.taskProjection": "Assigned task",
   "team.workflow.taskProjectionLabel": "Task: {{title}}",
   "team.workflow.ownerValue": "Owner: {{owner}}",
@@ -99,7 +107,8 @@ export const teamEn = {
   "team.leader.replay": "Replay history",
   "team.chat.eyebrow": "Team chat",
   "team.chat.pageTitle": "Team workspace",
-  "team.chat.pageDescription": "Collaborate with one active member timeline at a time.",
+  "team.chat.pageDescription":
+    "Collaborate with one active member timeline at a time.",
   "team.chat.description": "View an independent Session for each member.",
   "team.chat.members": "Members",
   "team.chat.memberNavigation": "Member Session navigation",
@@ -118,7 +127,8 @@ export const teamEn = {
   "team.chat.composerInput": "Message content",
   "team.chat.composerPlaceholder": "Message {{name}}...",
   "team.chat.composerPlaceholderFallback": "Select a member first...",
-  "team.chat.taskPlaceholder": "Describe work for the Leader to decompose and run...",
+  "team.chat.taskPlaceholder":
+    "Describe work for the Leader to decompose and run...",
   "team.chat.composerPending": "Messages will be sent to the active member",
   "team.chat.send": "Send",
   "team.chat.replay": "Replay",
@@ -131,12 +141,14 @@ export const teamEn = {
   "team.chat.status.unread": "New activity",
   "team.chat.status.ready": "Ready",
   "team.chat.emptyTitle": "No Session activity yet",
-  "team.chat.emptyDescription": "Messages and activity from {{name}} will appear here.",
+  "team.chat.emptyDescription":
+    "Messages and activity from {{name}} will appear here.",
   "team.chat.newActivity": "View new activity",
   "team.chat.collapseNavigation": "Collapse list",
   "team.chat.expandNavigation": "Expand list",
   "team.chat.noEligibleTitle": "No available members",
-  "team.chat.noEligibleDescription": "Configure at least one member with resume and live event capabilities.",
+  "team.chat.noEligibleDescription":
+    "Configure at least one member with resume and live event capabilities.",
   "team.chat.item.user": "User message",
   "team.chat.item.assistant": "Agent reply",
   "team.chat.item.processing": "Processing",
@@ -152,5 +164,5 @@ export const teamEn = {
   "team.chat.item.taskActivity": "Task activity recorded",
   "team.chat.item.noText": "This activity has no body to display.",
   "team.task.global": "Team background task running",
-  "team.task.active": "Working"
+  "team.task.active": "Working",
 } as const;

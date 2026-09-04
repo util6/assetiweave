@@ -318,8 +318,8 @@ fn external_task_runtime_starts_a_registered_task_only_once() {
     assert_eq!(executions.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
+#[tokio::test]
+async fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
@@ -337,11 +337,7 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     };
 
     let started = std::time::Instant::now();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(20)));
+    let report = tasks.shutdown_with_grace(Duration::from_millis(20)).await;
     assert!(started.elapsed() < Duration::from_millis(100));
     assert_eq!(report.unfinished_task_ids, vec![task_id]);
 
@@ -390,17 +386,13 @@ fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
     assert!(!source.contains(concat!("fn release_active_", "slot(")));
 }
 
-#[test]
-fn shutdown_waits_for_external_task_completion() {
+#[tokio::test]
+async fn shutdown_waits_for_external_task_completion() {
     let tasks = tasks::TaskRuntime::new();
     let spec =
         tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("external-still-running");
     tasks.register_external(spec).unwrap();
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(5)));
+    let report = tasks.shutdown_with_grace(Duration::from_millis(5)).await;
     assert_eq!(report.unfinished_task_ids, vec!["external-still-running"]);
     assert!(tasks
         .spawn(
@@ -410,8 +402,8 @@ fn shutdown_waits_for_external_task_completion() {
         .is_err());
 }
 
-#[test]
-fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
+#[tokio::test]
+async fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
     let tasks = tasks::TaskRuntime::new();
     let spec = tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("ext-completed");
     tasks.register_external(spec).unwrap();
@@ -419,10 +411,6 @@ fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
         .complete_external("ext-completed", Ok(serde_json::Value::Null))
         .unwrap();
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap();
-    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(50)));
+    let report = tasks.shutdown_with_grace(Duration::from_millis(50)).await;
     assert!(report.unfinished_task_ids.is_empty());
 }

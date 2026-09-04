@@ -1,7 +1,12 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppSettings } from "../store/settings/useAppSettings";
-import type { AppLocale, TranslationKey, TranslationParams, Translator } from "./types";
+import type {
+  AppLocale,
+  TranslationKey,
+  TranslationParams,
+  Translator,
+} from "./types";
 
 export type { Translator };
 
@@ -15,9 +20,7 @@ export function useI18n(): {
 
   const currentLocale: AppLocale =
     settings.locale ??
-    ((i18n.language === "en" || i18n.language === "zh")
-      ? i18n.language
-      : "zh");
+    (i18n.language === "en" || i18n.language === "zh" ? i18n.language : "zh");
 
   const setLocale = useCallback(
     (locale: AppLocale) => {

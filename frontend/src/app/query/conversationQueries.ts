@@ -84,9 +84,7 @@ export function conversationSessionsQueryOptions(
     queryKey: conversationKeys.sessions(scope, recordKind, search),
     queryFn: async (): Promise<ConversationSessionListItem[]> => {
       const listSessions =
-        recordKind === "web"
-          ? listWebRecordSessions
-          : listConversationSessions;
+        recordKind === "web" ? listWebRecordSessions : listConversationSessions;
       return loadAllConversationSessionPages(
         listSessions,
         search.trim() || null,

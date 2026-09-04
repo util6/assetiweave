@@ -26,7 +26,10 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useQueryScope } from "../../app/query/QueryScopeProvider";
-import { catalogKeys, groupsQueryOptions } from "../../app/query/catalogQueries";
+import {
+  catalogKeys,
+  groupsQueryOptions,
+} from "../../app/query/catalogQueries";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import {
   AssetToolbar,

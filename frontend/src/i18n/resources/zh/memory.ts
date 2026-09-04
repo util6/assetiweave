@@ -1,7 +1,8 @@
 export const memoryZh = {
   "memory.page.eyebrow": "渐进式回忆",
   "memory.recent.title": "近期",
-  "memory.recent.description": "查看最近 72 小时的工作轨迹，并从事件返回 Conversation 现场。",
+  "memory.recent.description":
+    "查看最近 72 小时的工作轨迹，并从事件返回 Conversation 现场。",
   "memory.recent.projectView": "按项目",
   "memory.recent.timeView": "按时间",
   "memory.recent.refresh": "刷新",
@@ -9,10 +10,12 @@ export const memoryZh = {
   "memory.recent.questions": "个问题",
   "memory.recent.noEvents": "暂无可见事件。",
   "memory.recent.emptyTitle": "最近 72 小时没有工作记录",
-  "memory.recent.emptyDescription": "Conversation 同步后，近期工作会在这里按项目或时间展示。",
+  "memory.recent.emptyDescription":
+    "Conversation 同步后，近期工作会在这里按项目或时间展示。",
   "memory.task.running": "Memory 后台任务运行中",
   "memory.recall.title": "深度回忆",
-  "memory.recall.description": "在同一条持久会话中，用本地来源内容回答具体问题。",
+  "memory.recall.description":
+    "在同一条持久会话中，用本地来源内容回答具体问题。",
   "memory.recall.session": "Recall 会话",
   "memory.recall.newSession": "新建会话",
   "memory.recall.turnCount": "轮次",
@@ -39,5 +42,6 @@ export const memoryZh = {
   "memory.recall.emptyTitle": "等待第一轮回忆",
   "memory.recall.emptyDescription": "发送问题后会在同一条持久会话中连续追问。",
   "memory.recall.browserTitle": "浏览器预览不提供 Recall 数据",
-  "memory.recall.browserDescription": "请在桌面应用中检索本地 Conversation 记录。"
+  "memory.recall.browserDescription":
+    "请在桌面应用中检索本地 Conversation 记录。",
 } as const;

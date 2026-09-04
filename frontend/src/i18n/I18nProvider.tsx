@@ -1,7 +1,11 @@
 import { useContext, useRef, type ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import type { i18n as I18nInstance } from "i18next";
-import { QueryClient, QueryClientContext, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientContext,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { createAppI18nSync } from "./createAppI18n";
 import { resolveInitialLocale } from "./localeBootstrap";
 import type { Translator } from "./types";
@@ -41,9 +45,7 @@ export function I18nProvider({ children, i18n }: I18nProviderProps) {
   }
 
   const content = (
-    <I18nextProvider i18n={instanceRef.current}>
-      {children}
-    </I18nextProvider>
+    <I18nextProvider i18n={instanceRef.current}>{children}</I18nextProvider>
   );
 
   if (!hasQueryClient) {

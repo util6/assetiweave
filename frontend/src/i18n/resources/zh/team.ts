@@ -1,7 +1,8 @@
 export const teamZh = {
   "team.page.eyebrow": "团队协作",
   "team.page.title": "团队与花名册",
-  "team.page.description": "管理固定成员顺序、Leader 和 Teammate 的 Agent/模型绑定。",
+  "team.page.description":
+    "管理固定成员顺序、Leader 和 Teammate 的 Agent/模型绑定。",
   "team.action.create": "新建团队",
   "team.action.edit": "编辑",
   "team.action.delete": "删除",
@@ -71,7 +72,8 @@ export const teamZh = {
   "team.workflow.unavailable": "不可恢复",
   "team.workflow.error": "Team 工作流失败：{{message}}",
   "team.workflow.plan": "任务计划",
-  "team.workflow.planDescription": "Leader 推荐的任务拆解；确认前不会启动 Teammate。",
+  "team.workflow.planDescription":
+    "Leader 推荐的任务拆解；确认前不会启动 Teammate。",
   "team.workflow.drafting": "正在生成任务草案...",
   "team.workflow.taskNumber": "任务 {{number}}",
   "team.workflow.taskTitle": "任务标题",
@@ -136,7 +138,8 @@ export const teamZh = {
   "team.chat.collapseNavigation": "收起列表",
   "team.chat.expandNavigation": "展开列表",
   "team.chat.noEligibleTitle": "没有可用成员",
-  "team.chat.noEligibleDescription": "为团队配置至少一个可恢复且支持实时事件的成员。",
+  "team.chat.noEligibleDescription":
+    "为团队配置至少一个可恢复且支持实时事件的成员。",
   "team.chat.item.user": "用户消息",
   "team.chat.item.assistant": "Agent 回复",
   "team.chat.item.processing": "处理中",
@@ -152,5 +155,5 @@ export const teamZh = {
   "team.chat.item.taskActivity": "任务活动已记录",
   "team.chat.item.noText": "该活动没有可显示正文。",
   "team.task.global": "Team 后台任务运行中",
-  "team.task.active": "处理中"
+  "team.task.active": "处理中",
 } as const;

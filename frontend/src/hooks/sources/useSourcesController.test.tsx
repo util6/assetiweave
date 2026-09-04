@@ -52,9 +52,12 @@ describe("useSourcesController", () => {
     catalogService.listSourceAssets.mockResolvedValue([sourceAsset]);
     catalogService.scanSkillSources.mockResolvedValue([canonicalAsset]);
 
-    const { result } = renderHook(() => useSourcesController(onCatalogRefresh), {
-      wrapper: createWrapper(),
-    });
+    const { result } = renderHook(
+      () => useSourcesController(onCatalogRefresh),
+      {
+        wrapper: createWrapper(),
+      },
+    );
 
     await waitFor(() =>
       expect(result.current.sourceAssets).toEqual([sourceAsset]),

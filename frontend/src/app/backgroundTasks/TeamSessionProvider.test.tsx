@@ -123,7 +123,6 @@ describe("TeamSessionProvider", () => {
     expect(screen.getByTestId("leader-unread").textContent).toBe("false");
   });
 
-
   it("cleans up the old scoped listener when the Team changes", async () => {
     const unsubscribers = [vi.fn(), vi.fn()];
     subscribeMock
@@ -343,9 +342,7 @@ function SecondHarness() {
   const session = useTeamSession();
   const leader = session.getMember("leader");
   return (
-    <output data-testid="second-leader">
-      {leader?.task?.state ?? "none"}
-    </output>
+    <output data-testid="second-leader">{leader?.task?.state ?? "none"}</output>
   );
 }
 

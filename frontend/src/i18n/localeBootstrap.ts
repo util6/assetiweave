@@ -30,8 +30,9 @@ export async function ensureAppLocale(
   storage: Pick<Storage, "getItem" | "removeItem">,
   navigatorLanguage?: string,
 ): Promise<AppSettingsFile> {
-  const currentLocale = (file.settings as { locale?: AppLocale | null } | undefined)
-    ?.locale;
+  const currentLocale = (
+    file.settings as { locale?: AppLocale | null } | undefined
+  )?.locale;
 
   if (currentLocale === "zh" || currentLocale === "en") {
     try {

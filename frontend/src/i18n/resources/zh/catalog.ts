@@ -12,11 +12,14 @@ export const catalogZh = {
   "asset.edit": "编辑资产",
   "asset.delete": "删除资产",
   "asset.editDialog.title": "编辑资产说明",
-  "asset.editDialog.readonlyMeta": "资产名称、类型和路径来自扫描结果；这里仅保存目录中的补充说明。",
-  "asset.editDialog.descriptionPlaceholder": "记录这个资产的用途、适用场景或维护说明",
+  "asset.editDialog.readonlyMeta":
+    "资产名称、类型和路径来自扫描结果；这里仅保存目录中的补充说明。",
+  "asset.editDialog.descriptionPlaceholder":
+    "记录这个资产的用途、适用场景或维护说明",
   "asset.editDialog.submit": "保存说明",
   "asset.editDialog.groups": "所属分组",
-  "asset.editDialog.groupsHelp": "手动加入可以在这里增删；规则命中的分组需要到分组规则中调整。",
+  "asset.editDialog.groupsHelp":
+    "手动加入可以在这里增删；规则命中的分组需要到分组规则中调整。",
   "asset.editDialog.noGroups": "暂无分组。",
   "asset.editDialog.inGroup": "已在组内",
   "asset.editDialog.ruleMatched": "规则命中",
@@ -24,10 +27,12 @@ export const catalogZh = {
   "asset.editDialog.addToGroup": "加入分组",
   "asset.editDialog.removeManualGroup": "移除手动加入",
   "asset.editDialog.mounts": "App 挂载",
-  "asset.editDialog.mountsHelp": "这里显示真实文件系统扫描后的挂载状态，可以直接挂载或卸载这个 Skill。",
+  "asset.editDialog.mountsHelp":
+    "这里显示真实文件系统扫描后的挂载状态，可以直接挂载或卸载这个 Skill。",
   "asset.editDialog.noProfiles": "暂无可挂载 App/Profile。",
   "asset.deleteDialog.title": "删除资产",
-  "asset.deleteDialog.message": "确认删除资产 {{name}}？只有 AssetIWeave 备份库里的 Skill 会被实际删除；外部来源资产会被后端拒绝。",
+  "asset.deleteDialog.message":
+    "确认删除资产 {{name}}？只有 AssetIWeave 备份库里的 Skill 会被实际删除；外部来源资产会被后端拒绝。",
   "asset.deleteDialog.path": "源路径",
   "asset.deleteDialog.mountedCount": "当前检测到 {{count}} 个挂载目标。",
   "asset.deleteDialog.unmount": "删除前先卸载受管挂载",
@@ -50,8 +55,10 @@ export const catalogZh = {
   "group.action.removeMember": "移除 {{name}}",
   "group.confirmDelete": "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
   "group.deleteDialog.title": "删除分组",
-  "group.deleteDialog.message": "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
-  "group.deleteDialog.detail": "后端会确认分组仍然存在，然后删除分组记录和手动成员关系。",
+  "group.deleteDialog.message":
+    "确认删除分组 {{name}}？这不会删除 Skill 源文件。",
+  "group.deleteDialog.detail":
+    "后端会确认分组仍然存在，然后删除分组记录和手动成员关系。",
   "group.column.groups": "分组",
   "group.column.members": "成员 Skill",
   "group.column.controls": "规则与挂载",
@@ -105,7 +112,8 @@ export const catalogZh = {
   "group.icon.cancelSvg": "取消",
   "group.icon.saveSvg": "保存图标",
   "group.icon.svgEditorTitle": "编辑分组图标",
-  "group.icon.svgEditorDescription": "输入 SVG JSON 或 SVG 标记以自定义分组图标。",
+  "group.icon.svgEditorDescription":
+    "输入 SVG JSON 或 SVG 标记以自定义分组图标。",
   "group.icon.svgInput": "SVG 代码",
   "group.icon.svgPlaceholder": "粘贴 SVG 标记或 JSON...",
   "group.icon.svgError": "无法解析 SVG，请检查格式。",
@@ -129,9 +137,12 @@ export const catalogZh = {
   "group.mount.empty": "本组暂无可批量挂载的 Skill。",
   "group.mount.noApps": "暂无可用 App 快捷入口。",
   "group.mount.disabled": "分组已停用，启用后才能批量挂载。",
-  "group.mount.result": "已更新 {{updated}}/{{total}} 个成员，失败 {{errors}} 个。",
-  "group.mount.resultMounted": "已挂载本组 {{updated}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
-  "group.mount.resultUnmounted": "已从 {{profile}} 卸载本组 {{updated}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
+  "group.mount.result":
+    "已更新 {{updated}}/{{total}} 个成员，失败 {{errors}} 个。",
+  "group.mount.resultMounted":
+    "已挂载本组 {{updated}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
+  "group.mount.resultUnmounted":
+    "已从 {{profile}} 卸载本组 {{updated}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个；失败 {{errors}} 个。",
   "group.exclusive.selectedGroups": "已选择 {{count}} 个分组",
   "group.exclusive.selectedSkills": "并集 {{count}} 个 Skill",
   "group.exclusive.selectAll": "全选当前启用分组",
@@ -159,7 +170,8 @@ export const catalogZh = {
   "group.exclusive.skippedSection": "跳过 / 风险项",
   "group.exclusive.emptySection": "没有条目",
   "group.exclusive.confirm": "确认执行",
-  "group.exclusive.result": "已更新 {{profile}}：保持 {{keep}}，新增 {{mount}}，卸载 {{unmount}}，当前共挂载 {{mounted}} 个；跳过/失败 {{skipped}} 个。",
+  "group.exclusive.result":
+    "已更新 {{profile}}：保持 {{keep}}，新增 {{mount}}，卸载 {{unmount}}，当前共挂载 {{mounted}} 个；跳过/失败 {{skipped}} 个。",
   "source.page.title": "技能源管理",
   "source.page.subtitle": "来源目录",
   "source.toolbar.searchPlaceholder": "搜索来源、路径或规则...",
@@ -244,18 +256,23 @@ export const catalogZh = {
   "source.rules.include": "Include",
   "source.rules.exclude": "Exclude",
   "source.rules.empty": "未设置",
-  "source.confirmDelete": "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
+  "source.confirmDelete":
+    "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
   "source.edit.title": "编辑技能源",
   "source.edit.submit": "保存来源",
   "source.edit.submitting": "保存中...",
   "source.deleteDialog.title": "删除来源",
-  "source.deleteDialog.message": "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
-  "source.deleteDialog.detail": "后端会确认来源仍然存在，并清理关联资产、挂载观察和分组成员索引。",
+  "source.deleteDialog.message":
+    "确认删除来源 {{name}}？这只会取消注册，不会删除源目录文件。",
+  "source.deleteDialog.detail":
+    "后端会确认来源仍然存在，并清理关联资产、挂载观察和分组成员索引。",
   "source.delete.protected": "默认 Skill 来源由软件维护，不可删除。",
   "skillAcquire.dialog.title": "搜索并导入 Skill",
-  "skillAcquire.dialog.description": "从 GitHub 搜索候选 Skill，预览下载计划后导入 AssetIWeave 备份库。",
+  "skillAcquire.dialog.description":
+    "从 GitHub 搜索候选 Skill，预览下载计划后导入 AssetIWeave 备份库。",
   "skillAcquire.close": "关闭 Skill 搜索",
-  "skillAcquire.search.placeholder": "例如 browser testing、kicad、pdf workflow",
+  "skillAcquire.search.placeholder":
+    "例如 browser testing、kicad、pdf workflow",
   "skillAcquire.search.submit": "搜索",
   "skillAcquire.search.searching": "搜索中...",
   "skillAcquire.warning.title": "搜索提示",
@@ -264,7 +281,8 @@ export const catalogZh = {
   "skillAcquire.candidate.open": "打开",
   "skillAcquire.candidate.preview": "预览",
   "skillAcquire.field.url": "GitHub URL",
-  "skillAcquire.field.urlPlaceholder": "https://github.com/owner/repo/tree/main/skills/name",
+  "skillAcquire.field.urlPlaceholder":
+    "https://github.com/owner/repo/tree/main/skills/name",
   "skillAcquire.field.branch": "分支",
   "skillAcquire.field.branchPlaceholder": "main",
   "skillAcquire.field.path": "Skill 路径",
@@ -282,7 +300,8 @@ export const catalogZh = {
   "skillAcquire.preview.staging": "暂存目录",
   "skillAcquire.preview.skillPath": "Skill 目录",
   "skillAcquire.security.title": "远程 Skill 安全提示",
-  "skillAcquire.security.message": "导入前请审查远程 Skill 内容；AssetIWeave 不会自动执行或信任远程代码。",
+  "skillAcquire.security.message":
+    "导入前请审查远程 Skill 内容；AssetIWeave 不会自动执行或信任远程代码。",
   "skillAcquire.import.submit": "导入",
   "skillAcquire.import.importing": "导入中...",
   "skillAcquire.error.queryRequired": "请输入搜索关键词。",
@@ -299,7 +318,8 @@ export const catalogZh = {
   "mount.supported": "支持此资产类型",
   "mount.unsupported": "当前类型未声明支持",
   "mount.blocked": "禁止挂载",
-  "mount.blockedAppSource": "App 专属或 App 本地目录中的 Skill 需要先备份到 AssetIWeave 备份库，再作为挂载源。",
+  "mount.blockedAppSource":
+    "App 专属或 App 本地目录中的 Skill 需要先备份到 AssetIWeave 备份库，再作为挂载源。",
   "mount.status.mounted": "已挂载",
   "mount.status.not_mounted": "未挂载",
   "mount.status.conflict": "目标冲突",
@@ -311,31 +331,46 @@ export const catalogZh = {
   "mount.stateHelp.open": "查看挂载状态说明",
   "mount.stateHelp.openAria": "查看 {{status}} 的挂载状态说明",
   "mount.stateHelp.title": "挂载状态说明",
-  "mount.stateHelp.description": "挂载状态只来自真实文件系统扫描，用来判断当前资产是否真的可被目标应用读取。",
+  "mount.stateHelp.description":
+    "挂载状态只来自真实文件系统扫描，用来判断当前资产是否真的可被目标应用读取。",
   "mount.stateHelp.close": "关闭挂载状态说明",
   "mount.stateHelp.current": "当前状态",
   "mount.stateHelp.meaning": "含义",
   "mount.stateHelp.action": "建议",
-  "mount.stateHelp.mounted.meaning": "目标目录中存在指向这个资产源路径的正确软链接。",
-  "mount.stateHelp.mounted.action": "这是正常状态。无需处理；如果不再需要，可以点击亮起的挂载按钮取消挂载。",
+  "mount.stateHelp.mounted.meaning":
+    "目标目录中存在指向这个资产源路径的正确软链接。",
+  "mount.stateHelp.mounted.action":
+    "这是正常状态。无需处理；如果不再需要，可以点击亮起的挂载按钮取消挂载。",
   "mount.stateHelp.not_mounted.meaning": "目标目录中没有这个资产的软链接。",
-  "mount.stateHelp.not_mounted.action": "需要让目标应用读取该资产时，点击挂载按钮创建并验证软链接。",
-  "mount.stateHelp.conflict.meaning": "目标路径已被其他文件、目录或指向其他来源的链接占用。",
-  "mount.stateHelp.conflict.action": "先检查目标路径，确认是否可以移动、重命名或删除占用项，然后再尝试挂载。",
-  "mount.stateHelp.broken.meaning": "目标路径是软链接，但它指向的来源已经不存在。",
-  "mount.stateHelp.broken.action": "检查源资产是否被移动或删除；确认后清理断链，再重新挂载。",
+  "mount.stateHelp.not_mounted.action":
+    "需要让目标应用读取该资产时，点击挂载按钮创建并验证软链接。",
+  "mount.stateHelp.conflict.meaning":
+    "目标路径已被其他文件、目录或指向其他来源的链接占用。",
+  "mount.stateHelp.conflict.action":
+    "先检查目标路径，确认是否可以移动、重命名或删除占用项，然后再尝试挂载。",
+  "mount.stateHelp.broken.meaning":
+    "目标路径是软链接，但它指向的来源已经不存在。",
+  "mount.stateHelp.broken.action":
+    "检查源资产是否被移动或删除；确认后清理断链，再重新挂载。",
   "mount.action.repair": "修复 {{profile}} 挂载",
   "mount.notification.refreshingStatus": "正在扫描真实文件系统链接状态...",
-  "mount.notification.statusRefreshed": "链接状态已刷新：{{count}} 个目标，已挂载 {{mounted}}，异常 {{issues}}。",
+  "mount.notification.statusRefreshed":
+    "链接状态已刷新：{{count}} 个目标，已挂载 {{mounted}}，异常 {{issues}}。",
   "mount.notification.statusRefreshFailed": "链接状态刷新失败：{{message}}",
   "mount.notification.synced": "挂载状态已同步：{{name}}",
-  "mount.notification.assetMountedProfile": "{{name}} 已挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetUnmountedProfile": "{{name}} 未挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetConflictProfile": "{{name}} 在 {{profile}} 存在挂载冲突，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
-  "mount.notification.assetBrokenProfile": "{{name}} 在 {{profile}} 的挂载已断链，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetMountedProfile":
+    "{{name}} 已挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetUnmountedProfile":
+    "{{name}} 未挂载到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetConflictProfile":
+    "{{name}} 在 {{profile}} 存在挂载冲突，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
+  "mount.notification.assetBrokenProfile":
+    "{{name}} 在 {{profile}} 的挂载已断链，当前 {{profile}} 共挂载 {{mounted}} 个 Skill。",
   "mount.notification.batchSynced": "批量挂载状态已同步：{{count}} 个资产",
-  "mount.notification.batchMountedProfile": "已挂载 {{count}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个。",
-  "mount.notification.batchUnmountedProfile": "已从 {{profile}} 卸载 {{count}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个。",
+  "mount.notification.batchMountedProfile":
+    "已挂载 {{count}} 个 Skill 到 {{profile}}，当前 {{profile}} 共挂载 {{mounted}} 个。",
+  "mount.notification.batchUnmountedProfile":
+    "已从 {{profile}} 卸载 {{count}} 个 Skill，当前 {{profile}} 共挂载 {{mounted}} 个。",
   "mount.notification.failed": "挂载操作失败：{{message}}",
   "assetKind.prompt": "提示词",
   "assetKind.rule": "规则",
@@ -357,5 +392,5 @@ export const catalogZh = {
   "deploymentStrategy.copy_to_target": "复制到目标目录",
   "deploymentStrategy.render": "渲染",
   "deploymentStrategy.append": "追加",
-  "deploymentStrategy.config_merge": "配置合并"
+  "deploymentStrategy.config_merge": "配置合并",
 } as const;

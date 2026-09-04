@@ -12,11 +12,14 @@ export const catalogEn = {
   "asset.edit": "Edit asset",
   "asset.delete": "Delete asset",
   "asset.editDialog.title": "Edit asset notes",
-  "asset.editDialog.readonlyMeta": "Asset name, type, and path come from scanning. This saves only supplemental catalog notes.",
-  "asset.editDialog.descriptionPlaceholder": "Record usage, scenarios, or maintenance notes for this asset",
+  "asset.editDialog.readonlyMeta":
+    "Asset name, type, and path come from scanning. This saves only supplemental catalog notes.",
+  "asset.editDialog.descriptionPlaceholder":
+    "Record usage, scenarios, or maintenance notes for this asset",
   "asset.editDialog.submit": "Save notes",
   "asset.editDialog.groups": "Groups",
-  "asset.editDialog.groupsHelp": "Manual membership can be changed here. Rule-matched groups must be changed in group rules.",
+  "asset.editDialog.groupsHelp":
+    "Manual membership can be changed here. Rule-matched groups must be changed in group rules.",
   "asset.editDialog.noGroups": "No groups yet.",
   "asset.editDialog.inGroup": "In group",
   "asset.editDialog.ruleMatched": "Rule matched",
@@ -24,10 +27,12 @@ export const catalogEn = {
   "asset.editDialog.addToGroup": "Add to group",
   "asset.editDialog.removeManualGroup": "Remove manual add",
   "asset.editDialog.mounts": "App mounts",
-  "asset.editDialog.mountsHelp": "These states come from a real filesystem scan. You can mount or unmount this Skill directly.",
+  "asset.editDialog.mountsHelp":
+    "These states come from a real filesystem scan. You can mount or unmount this Skill directly.",
   "asset.editDialog.noProfiles": "No apps/profiles available.",
   "asset.deleteDialog.title": "Delete asset",
-  "asset.deleteDialog.message": "Delete asset {{name}}? Only Skills in the AssetIWeave backup library are physically deleted; external source assets are rejected by the backend.",
+  "asset.deleteDialog.message":
+    "Delete asset {{name}}? Only Skills in the AssetIWeave backup library are physically deleted; external source assets are rejected by the backend.",
   "asset.deleteDialog.path": "Source path",
   "asset.deleteDialog.mountedCount": "{{count}} mounted targets detected.",
   "asset.deleteDialog.unmount": "Unmount managed mounts before deleting",
@@ -48,10 +53,13 @@ export const catalogEn = {
   "group.action.save": "Save group",
   "group.action.delete": "Delete group",
   "group.action.removeMember": "Remove {{name}}",
-  "group.confirmDelete": "Delete group {{name}}? This will not delete skill source files.",
+  "group.confirmDelete":
+    "Delete group {{name}}? This will not delete skill source files.",
   "group.deleteDialog.title": "Delete group",
-  "group.deleteDialog.message": "Delete group {{name}}? This will not delete skill source files.",
-  "group.deleteDialog.detail": "The backend confirms the group still exists, then removes the group record and manual memberships.",
+  "group.deleteDialog.message":
+    "Delete group {{name}}? This will not delete skill source files.",
+  "group.deleteDialog.detail":
+    "The backend confirms the group still exists, then removes the group record and manual memberships.",
   "group.column.groups": "Groups",
   "group.column.members": "Member Skills",
   "group.column.controls": "Rules and Mounts",
@@ -105,7 +113,8 @@ export const catalogEn = {
   "group.icon.cancelSvg": "Cancel",
   "group.icon.saveSvg": "Save Icon",
   "group.icon.svgEditorTitle": "Edit Group Icon",
-  "group.icon.svgEditorDescription": "Enter SVG JSON or SVG markup to customize the group icon.",
+  "group.icon.svgEditorDescription":
+    "Enter SVG JSON or SVG markup to customize the group icon.",
   "group.icon.svgInput": "SVG Code",
   "group.icon.svgPlaceholder": "Paste SVG markup or JSON...",
   "group.icon.svgError": "Cannot parse SVG, please check the format.",
@@ -128,10 +137,14 @@ export const catalogEn = {
   "group.mount.summary": "{{count}} skills",
   "group.mount.empty": "No skills in this group are available for batch mount.",
   "group.mount.noApps": "No app shortcuts available.",
-  "group.mount.disabled": "This group is disabled. Enable it before batch mounting.",
-  "group.mount.result": "Updated {{updated}}/{{total}} members, {{errors}} failed.",
-  "group.mount.resultMounted": "Mounted {{updated}} group skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
-  "group.mount.resultUnmounted": "Unmounted {{updated}} group skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
+  "group.mount.disabled":
+    "This group is disabled. Enable it before batch mounting.",
+  "group.mount.result":
+    "Updated {{updated}}/{{total}} members, {{errors}} failed.",
+  "group.mount.resultMounted":
+    "Mounted {{updated}} group skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
+  "group.mount.resultUnmounted":
+    "Unmounted {{updated}} group skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills; {{errors}} failed.",
   "group.exclusive.selectedGroups": "{{count}} groups selected",
   "group.exclusive.selectedSkills": "{{count}} skills in union",
   "group.exclusive.selectAll": "Select all enabled groups",
@@ -159,7 +172,8 @@ export const catalogEn = {
   "group.exclusive.skippedSection": "Skipped / Risks",
   "group.exclusive.emptySection": "No items",
   "group.exclusive.confirm": "Confirm",
-  "group.exclusive.result": "Updated {{profile}}: kept {{keep}}, mounted {{mount}}, unmounted {{unmount}}, now {{mounted}} mounted; {{skipped}} skipped/failed.",
+  "group.exclusive.result":
+    "Updated {{profile}}: kept {{keep}}, mounted {{mount}}, unmounted {{unmount}}, now {{mounted}} mounted; {{skipped}} skipped/failed.",
   "source.page.title": "Skill Sources",
   "source.page.subtitle": "Source directories",
   "source.toolbar.searchPlaceholder": "Search sources, paths, or rules...",
@@ -244,27 +258,35 @@ export const catalogEn = {
   "source.rules.include": "Include",
   "source.rules.exclude": "Exclude",
   "source.rules.empty": "Not set",
-  "source.confirmDelete": "Delete source {{name}}? This unregisters it without deleting source files.",
+  "source.confirmDelete":
+    "Delete source {{name}}? This unregisters it without deleting source files.",
   "source.edit.title": "Edit skill source",
   "source.edit.submit": "Save source",
   "source.edit.submitting": "Saving...",
   "source.deleteDialog.title": "Delete source",
-  "source.deleteDialog.message": "Delete source {{name}}? This unregisters it without deleting source files.",
-  "source.deleteDialog.detail": "The backend confirms the source still exists and cleans linked assets, mount observations, and group member indexes.",
-  "source.delete.protected": "The default Skill source is maintained by the app and cannot be deleted.",
+  "source.deleteDialog.message":
+    "Delete source {{name}}? This unregisters it without deleting source files.",
+  "source.deleteDialog.detail":
+    "The backend confirms the source still exists and cleans linked assets, mount observations, and group member indexes.",
+  "source.delete.protected":
+    "The default Skill source is maintained by the app and cannot be deleted.",
   "skillAcquire.dialog.title": "Search and Import Skill",
-  "skillAcquire.dialog.description": "Search GitHub candidates, preview the download plan, then import into the AssetIWeave backup library.",
+  "skillAcquire.dialog.description":
+    "Search GitHub candidates, preview the download plan, then import into the AssetIWeave backup library.",
   "skillAcquire.close": "Close Skill search",
-  "skillAcquire.search.placeholder": "For example browser testing, kicad, pdf workflow",
+  "skillAcquire.search.placeholder":
+    "For example browser testing, kicad, pdf workflow",
   "skillAcquire.search.submit": "Search",
   "skillAcquire.search.searching": "Searching...",
   "skillAcquire.warning.title": "Search notices",
   "skillAcquire.empty.title": "No candidates",
-  "skillAcquire.empty.description": "Enter keywords to list GitHub candidates that can be imported.",
+  "skillAcquire.empty.description":
+    "Enter keywords to list GitHub candidates that can be imported.",
   "skillAcquire.candidate.open": "Open",
   "skillAcquire.candidate.preview": "Preview",
   "skillAcquire.field.url": "GitHub URL",
-  "skillAcquire.field.urlPlaceholder": "https://github.com/owner/repo/tree/main/skills/name",
+  "skillAcquire.field.urlPlaceholder":
+    "https://github.com/owner/repo/tree/main/skills/name",
   "skillAcquire.field.branch": "Branch",
   "skillAcquire.field.branchPlaceholder": "main",
   "skillAcquire.field.path": "Skill path",
@@ -273,7 +295,8 @@ export const catalogEn = {
   "skillAcquire.field.namePlaceholder": "Defaults to path or repository name",
   "skillAcquire.preview.submit": "Preview plan",
   "skillAcquire.preview.loading": "Previewing...",
-  "skillAcquire.preview.empty": "Select a candidate or enter a GitHub URL to preview the download plan.",
+  "skillAcquire.preview.empty":
+    "Select a candidate or enter a GitHub URL to preview the download plan.",
   "skillAcquire.preview.title": "Download Plan",
   "skillAcquire.preview.name": "Name",
   "skillAcquire.preview.repo": "Repository",
@@ -282,7 +305,8 @@ export const catalogEn = {
   "skillAcquire.preview.staging": "Staging path",
   "skillAcquire.preview.skillPath": "Skill path",
   "skillAcquire.security.title": "Remote Skill safety",
-  "skillAcquire.security.message": "Review the remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.",
+  "skillAcquire.security.message":
+    "Review the remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.",
   "skillAcquire.import.submit": "Import",
   "skillAcquire.import.importing": "Importing...",
   "skillAcquire.error.queryRequired": "Enter search keywords.",
@@ -293,13 +317,15 @@ export const catalogEn = {
   "mount.title": "Mount Targets",
   "mount.description": "Choose which apps/profiles should mount this asset.",
   "mount.selected": "{{count}} selected",
-  "mount.empty": "No available profiles. Add a target app in Profile Management first.",
+  "mount.empty":
+    "No available profiles. Add a target app in Profile Management first.",
   "mount.unmount": "Unmount from {{profile}}",
   "mount.mountTo": "Mount to {{profile}}",
   "mount.supported": "Supports this asset type",
   "mount.unsupported": "This type is not declared as supported",
   "mount.blocked": "Mounting blocked",
-  "mount.blockedAppSource": "Skills from app-specific or app-local directories must be backed up into the AssetIWeave backup library before mounting.",
+  "mount.blockedAppSource":
+    "Skills from app-specific or app-local directories must be backed up into the AssetIWeave backup library before mounting.",
   "mount.status.mounted": "Mounted",
   "mount.status.not_mounted": "Not mounted",
   "mount.status.conflict": "Target conflict",
@@ -311,31 +337,50 @@ export const catalogEn = {
   "mount.stateHelp.open": "View mount state guide",
   "mount.stateHelp.openAria": "View mount state guide for {{status}}",
   "mount.stateHelp.title": "Mount State Guide",
-  "mount.stateHelp.description": "Mount state comes only from a real filesystem scan, so you can tell whether the target app can actually read this asset.",
+  "mount.stateHelp.description":
+    "Mount state comes only from a real filesystem scan, so you can tell whether the target app can actually read this asset.",
   "mount.stateHelp.close": "Close mount state guide",
   "mount.stateHelp.current": "Current state",
   "mount.stateHelp.meaning": "Meaning",
   "mount.stateHelp.action": "Suggested action",
-  "mount.stateHelp.mounted.meaning": "The target directory contains a correct symlink to this asset source path.",
-  "mount.stateHelp.mounted.action": "This is healthy. No action is needed; click the lit mount button only if you want to unmount it.",
-  "mount.stateHelp.not_mounted.meaning": "The target directory does not contain a symlink for this asset.",
-  "mount.stateHelp.not_mounted.action": "Click the mount button when you want the target app to read this asset; AssetIWeave will create and verify the symlink.",
-  "mount.stateHelp.conflict.meaning": "The target path is occupied by another file, directory, or a symlink pointing somewhere else.",
-  "mount.stateHelp.conflict.action": "Inspect the target path first, then move, rename, or remove the occupying item before mounting again.",
-  "mount.stateHelp.broken.meaning": "The target path is a symlink, but its source no longer exists.",
-  "mount.stateHelp.broken.action": "Check whether the source asset moved or was deleted; then clean the broken link and mount again.",
+  "mount.stateHelp.mounted.meaning":
+    "The target directory contains a correct symlink to this asset source path.",
+  "mount.stateHelp.mounted.action":
+    "This is healthy. No action is needed; click the lit mount button only if you want to unmount it.",
+  "mount.stateHelp.not_mounted.meaning":
+    "The target directory does not contain a symlink for this asset.",
+  "mount.stateHelp.not_mounted.action":
+    "Click the mount button when you want the target app to read this asset; AssetIWeave will create and verify the symlink.",
+  "mount.stateHelp.conflict.meaning":
+    "The target path is occupied by another file, directory, or a symlink pointing somewhere else.",
+  "mount.stateHelp.conflict.action":
+    "Inspect the target path first, then move, rename, or remove the occupying item before mounting again.",
+  "mount.stateHelp.broken.meaning":
+    "The target path is a symlink, but its source no longer exists.",
+  "mount.stateHelp.broken.action":
+    "Check whether the source asset moved or was deleted; then clean the broken link and mount again.",
   "mount.action.repair": "Repair {{profile}} mount",
-  "mount.notification.refreshingStatus": "Scanning real filesystem link state...",
-  "mount.notification.statusRefreshed": "Link state refreshed: {{count}} targets, {{mounted}} mounted, {{issues}} issues.",
-  "mount.notification.statusRefreshFailed": "Link state refresh failed: {{message}}",
+  "mount.notification.refreshingStatus":
+    "Scanning real filesystem link state...",
+  "mount.notification.statusRefreshed":
+    "Link state refreshed: {{count}} targets, {{mounted}} mounted, {{issues}} issues.",
+  "mount.notification.statusRefreshFailed":
+    "Link state refresh failed: {{message}}",
   "mount.notification.synced": "Mount state synced: {{name}}",
-  "mount.notification.assetMountedProfile": "Real scan shows {{name}} is mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetUnmountedProfile": "Real scan shows {{name}} is not mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetConflictProfile": "Real scan shows {{name}} has a mount conflict in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.assetBrokenProfile": "Real scan shows {{name}} has a broken mount in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.batchSynced": "Batch mount state synced for {{count}} assets",
-  "mount.notification.batchMountedProfile": "Mounted {{count}} skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
-  "mount.notification.batchUnmountedProfile": "Unmounted {{count}} skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetMountedProfile":
+    "Real scan shows {{name}} is mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetUnmountedProfile":
+    "Real scan shows {{name}} is not mounted to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetConflictProfile":
+    "Real scan shows {{name}} has a mount conflict in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.assetBrokenProfile":
+    "Real scan shows {{name}} has a broken mount in {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.batchSynced":
+    "Batch mount state synced for {{count}} assets",
+  "mount.notification.batchMountedProfile":
+    "Mounted {{count}} skills to {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
+  "mount.notification.batchUnmountedProfile":
+    "Unmounted {{count}} skills from {{profile}}. {{profile}} now has {{mounted}} mounted skills.",
   "mount.notification.failed": "Mount operation failed: {{message}}",
   "assetKind.prompt": "Prompt",
   "assetKind.rule": "Rule",
@@ -357,5 +402,5 @@ export const catalogEn = {
   "deploymentStrategy.copy_to_target": "Copy to target",
   "deploymentStrategy.render": "Render",
   "deploymentStrategy.append": "Append",
-  "deploymentStrategy.config_merge": "Config merge"
+  "deploymentStrategy.config_merge": "Config merge",
 } as const;

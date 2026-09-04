@@ -16,10 +16,7 @@ export function convertLatexDelimiters(source: string): string {
       // Keep code fences unchanged
       if (index % 2 === 1) return part;
       return part
-        .replace(
-          /\\\[([\s\S]*?)\\\]/g,
-          (_, math) => `$$\n${math.trim()}\n$$`,
-        )
+        .replace(/\\\[([\s\S]*?)\\\]/g, (_, math) => `$$\n${math.trim()}\n$$`)
         .replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => `$${math.trim()}$`);
     })
     .join("");
@@ -79,8 +76,7 @@ export function isTableDividerRow(line: string): boolean {
     return true;
   });
   return (
-    cells.length >= 2 &&
-    cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
+    cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))
   );
 }
 

@@ -198,7 +198,7 @@ export function GlobalSettingsDialog({
 }) {
   const storeSettingsPanel = useAppUiStore((state) => state.settingsPanel);
   const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
-  const resolvedOpen = open ?? (storeSettingsPanel !== null);
+  const resolvedOpen = open ?? storeSettingsPanel !== null;
   const resolvedInitialPanel =
     initialPanel ?? storeSettingsPanel ?? "general.appearance";
   const handleDialogClose = onClose ?? storeCloseSettings;

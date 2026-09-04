@@ -239,9 +239,7 @@ export function SkillGroupCreateDialog({
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-end gap-2 max-[720px]:grid-cols-1">
               <GroupField
                 error={
-                  errors.name
-                    ? t("group.form.error.nameRequired")
-                    : undefined
+                  errors.name ? t("group.form.error.nameRequired") : undefined
                 }
                 label={t("group.field.name")}
               >
@@ -255,10 +253,7 @@ export function SkillGroupCreateDialog({
                 />
               </GroupField>
               <GroupField label={t("group.field.description")}>
-                <Input
-                  {...register("description")}
-                  disabled={busy}
-                />
+                <Input {...register("description")} disabled={busy} />
               </GroupField>
             </div>
 

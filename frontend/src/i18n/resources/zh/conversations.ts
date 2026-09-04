@@ -1,16 +1,23 @@
 export const conversationsZh = {
-  "conversation.navigation.sessionMissing": "无法定位这条 Memory 记录对应的 Session。",
-  "conversation.navigation.questionMissing": "Session 已打开，但对应 Question 不存在。",
-  "conversation.navigation.blockMissing": "Question 已打开，但对应 Card 已变化或不可用。",
+  "conversation.navigation.sessionMissing":
+    "无法定位这条 Memory 记录对应的 Session。",
+  "conversation.navigation.questionMissing":
+    "Session 已打开，但对应 Question 不存在。",
+  "conversation.navigation.blockMissing":
+    "Question 已打开，但对应 Card 已变化或不可用。",
   "conversation.eyebrow": "对话记录",
   "conversation.sessions.title": "对话记录浏览",
-  "conversation.sessions.subtitle": "先从 APP 进入 Session，再在独立工作区中浏览问题与完整回答详情。",
+  "conversation.sessions.subtitle":
+    "先从 APP 进入 Session，再在独立工作区中浏览问题与完整回答详情。",
   "conversation.webRecords.title": "网页记录浏览",
-  "conversation.webRecords.subtitle": "浏览由用户目录下网页采集脚本导入并独立持久化的 AI 网页对话。",
+  "conversation.webRecords.subtitle":
+    "浏览由用户目录下网页采集脚本导入并独立持久化的 AI 网页对话。",
   "conversation.webRecords.status.syncedAll": "已同步网页对话来源",
   "conversation.scriptMarket.inlineTitle": "脚本市场榜单",
-  "conversation.scriptMarket.inlineDescription": "需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。",
-  "conversation.scriptMarket.loading": "正在后台校验脚本目录与运行状态，界面仍可继续操作…",
+  "conversation.scriptMarket.inlineDescription":
+    "需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。",
+  "conversation.scriptMarket.loading":
+    "正在后台校验脚本目录与运行状态，界面仍可继续操作…",
   "conversation.scriptMarket.install": "安装",
   "conversation.scriptMarket.registerPackage": "注册",
   "conversation.scriptMarket.update": "更新",
@@ -27,21 +34,27 @@ export const conversationsZh = {
   "conversation.scriptMarket.uninstalling": "正在后台停止插件 runtime",
   "conversation.scriptMarket.installStarted": "脚本安装已开始。",
   "conversation.scriptMarket.installCompleted": "脚本安装完成。",
-  "conversation.scriptMarket.registerCompleted": "脚本已重新注册，runtime 与关联 Source 已恢复。",
-  "conversation.scriptMarket.builtInManifestMissing": "内置脚本缺少 manifest 路径，无法重新注册。",
-  "conversation.scriptMarket.localManifestMissing": "本地插件缺少 manifest 路径，无法注册。",
+  "conversation.scriptMarket.registerCompleted":
+    "脚本已重新注册，runtime 与关联 Source 已恢复。",
+  "conversation.scriptMarket.builtInManifestMissing":
+    "内置脚本缺少 manifest 路径，无法重新注册。",
+  "conversation.scriptMarket.localManifestMissing":
+    "本地插件缺少 manifest 路径，无法注册。",
   "conversation.scriptMarket.installFailed": "脚本安装失败。",
   "conversation.scriptMarket.updateCompleted": "插件更新完成。",
   "conversation.scriptMarket.updateFailed": "插件更新失败。",
-  "conversation.scriptMarket.uninstallCompleted": "插件卸载完成；不再参与同步，插件文件、对话记录与 Source 配置均已保留。",
+  "conversation.scriptMarket.uninstallCompleted":
+    "插件卸载完成；不再参与同步，插件文件、对话记录与 Source 配置均已保留。",
   "conversation.scriptMarket.uninstallFailed": "插件卸载失败。",
   "conversation.scriptMarket.emptyForKind": "当前记录类型暂无可安装脚本资源。",
   "conversation.scriptMarket.repository": "仓库",
   "conversation.scriptMarket.confirmTitle": "确认插件变更",
-  "conversation.scriptMarket.confirmMessage": "确认要为“{name}”执行{action}吗？",
+  "conversation.scriptMarket.confirmMessage":
+    "确认要为“{name}”执行{action}吗？",
   "conversation.scriptMarket.recordsPreserved": "已有对话记录会保留。",
   "conversation.scriptMarket.affectedSources": "受影响的 Source",
-  "conversation.scriptMarket.managedPaths": "相关托管目录（卸载会保留，删除版本才移除）",
+  "conversation.scriptMarket.managedPaths":
+    "相关托管目录（卸载会保留，删除版本才移除）",
   "conversation.scriptMarket.taskConflict": "插件正在被任务使用：{tasks}",
   "conversation.scriptMarket.view.connected": "已接入",
   "conversation.scriptMarket.view.updates": "更新",
@@ -59,7 +72,8 @@ export const conversationsZh = {
   "conversation.scriptMarket.uninstall": "卸载",
   "conversation.scriptMarket.checkUpdates": "检查更新",
   "conversation.scriptMarket.checkingUpdates": "正在检查更新…",
-  "conversation.scriptMarket.checkUpdatesCompleted": "更新检查完成，发现 {{count}} 个可更新插件。",
+  "conversation.scriptMarket.checkUpdatesCompleted":
+    "更新检查完成，发现 {{count}} 个可更新插件。",
   "conversation.scriptMarket.packageId": "Package ID",
   "conversation.scriptMarket.adapterId": "Adapter ID",
   "conversation.scriptMarket.origin": "来源类型",
@@ -72,7 +86,8 @@ export const conversationsZh = {
   "conversation.scriptMarket.manifest": "Adapter Manifest",
   "conversation.scriptMarket.contentHash": "Content Hash",
   "conversation.scriptMarket.trustedHash": "Trusted Hash",
-  "conversation.scriptMarket.devOverrideNotice": "本地覆盖处于调试模式，市场更新不会替换当前运行版本。",
+  "conversation.scriptMarket.devOverrideNotice":
+    "本地覆盖处于调试模式，市场更新不会替换当前运行版本。",
   "conversation.scriptMarket.versionHistory": "版本历史与 Changelog",
   "conversation.scriptMarket.selectVersion": "选择安装版本",
   "conversation.scriptMarket.noVersionHistory": "暂无可用的版本历史。",
@@ -82,11 +97,16 @@ export const conversationsZh = {
   "conversation.scriptMarket.registerVersion": "注册此版本",
   "conversation.scriptMarket.rollback": "一键回退",
   "conversation.scriptMarket.deleteVersion": "删除版本",
-  "conversation.scriptMarket.deleteRunningVersionHelp": "删除前必须先卸载正在运行的版本，或切换到其他版本。",
-  "conversation.scriptMarket.deleteVersionHelp": "卸载后的托管版本可在此真实删除文件；Source 配置与历史对话仍会保留。",
-  "conversation.scriptMarket.externalDeleteUnavailable": "此插件是本地或旧版注册，文件不受版本库托管，因此只能卸载，不能由 AssetIWeave 删除。重新从市场注册后即可按版本管理与删除。",
-  "conversation.scriptMarket.builtInDeleteUnavailable": "内置或开发态脚本可以卸载停用，扫描器会跳过它；脚本文件随应用保留，不提供删除。",
-  "conversation.scriptMarket.deleteVersionConfirm": "确定真实删除版本 {{version}} 的托管文件？正在运行的版本必须先卸载或切换。",
+  "conversation.scriptMarket.deleteRunningVersionHelp":
+    "删除前必须先卸载正在运行的版本，或切换到其他版本。",
+  "conversation.scriptMarket.deleteVersionHelp":
+    "卸载后的托管版本可在此真实删除文件；Source 配置与历史对话仍会保留。",
+  "conversation.scriptMarket.externalDeleteUnavailable":
+    "此插件是本地或旧版注册，文件不受版本库托管，因此只能卸载，不能由 AssetIWeave 删除。重新从市场注册后即可按版本管理与删除。",
+  "conversation.scriptMarket.builtInDeleteUnavailable":
+    "内置或开发态脚本可以卸载停用，扫描器会跳过它；脚本文件随应用保留，不提供删除。",
+  "conversation.scriptMarket.deleteVersionConfirm":
+    "确定真实删除版本 {{version}} 的托管文件？正在运行的版本必须先卸载或切换。",
   "conversation.scriptMarket.versionActionCompleted": "本地版本操作已完成。",
   "conversation.scriptMarket.updatePolicy": "更新跟随策略",
   "conversation.scriptMarket.policy.manual": "手动提示（稳定版）",
@@ -130,14 +150,16 @@ export const conversationsZh = {
   "conversation.toolbar.sort.questionCount": "按问题数",
   "conversation.toolbar.sort.turnCount": "按轮次数",
   "conversation.status.syncedAll": "已同步对话来源",
-  "conversation.status.importStarted": "已添加来源“{{source}}”，后台导入已开始。",
+  "conversation.status.importStarted":
+    "已添加来源“{{source}}”，后台导入已开始。",
   "conversation.status.merged": "已合并相邻问题",
   "conversation.status.split": "已拆分问题",
   "conversation.status.exported": "已导出 Session Markdown",
   "conversation.status.exportedSelected": "已导出 {{count}} 个问题 Markdown",
   "conversation.add.title.session": "添加对话来源",
   "conversation.add.title.web": "添加网页记录来源",
-  "conversation.add.description.session": "安装外部解析器插件并添加 Session 来源。",
+  "conversation.add.description.session":
+    "安装外部解析器插件并添加 Session 来源。",
   "conversation.add.description.web": "安装外部解析器插件并添加网页记录来源。",
   "conversation.add.close": "关闭添加来源弹窗",
   "conversation.add.submit": "添加来源",
@@ -166,8 +188,10 @@ export const conversationsZh = {
   "conversation.export.exporting": "导出中...",
   "conversation.import.sessionTitle": "导入对话记录",
   "conversation.import.webTitle": "导入网页记录",
-  "conversation.import.sessionDescription": "选择外部解析器 manifest 和本地记录来源，导入会在后台同步完成。",
-  "conversation.import.webDescription": "选择带 web_records 能力的解析器和网页记录目录，导入完成后刷新网页记录浏览页。",
+  "conversation.import.sessionDescription":
+    "选择外部解析器 manifest 和本地记录来源，导入会在后台同步完成。",
+  "conversation.import.webDescription":
+    "选择带 web_records 能力的解析器和网页记录目录，导入完成后刷新网页记录浏览页。",
   "conversation.import.close": "关闭导入弹窗",
   "conversation.import.pageSwitchAria": "导入页面切换",
   "conversation.import.page.form": "导入表单",
@@ -193,7 +217,8 @@ export const conversationsZh = {
   "conversation.import.step.source": "添加来源",
   "conversation.import.step.sync": "启动同步",
   "conversation.import.step.done": "刷新浏览页",
-  "conversation.import.error.manifestRequired": "请选择或输入插件 manifest 路径。",
+  "conversation.import.error.manifestRequired":
+    "请选择或输入插件 manifest 路径。",
   "conversation.import.error.locationRequired": "请选择或输入来源位置。",
   "conversation.column.apps": "APP",
   "conversation.column.projects": "项目文件夹",
@@ -203,11 +228,13 @@ export const conversationsZh = {
   "conversation.app.select": "选择一个 APP 查看 Session。",
   "conversation.app.selectNamed": "选择 APP {{name}}",
   "conversation.app.sessionCount": "{{count}} 个 Session",
-  "conversation.app.summary": "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
+  "conversation.app.summary":
+    "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.project.select": "选择项目文件夹查看 Session。",
   "conversation.project.selectNamed": "选择项目文件夹 {{path}}",
   "conversation.project.sessionCount": "{{count}} 个 Session",
-  "conversation.project.summary": "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
+  "conversation.project.summary":
+    "{{sessions}} 个 Session · {{questions}} 个问题 · {{turns}} 个 Turn",
   "conversation.session.open": "打开 Session {{title}}",
   "conversation.session.backToBrowser": "返回 APP / Session",
   "conversation.session.loading": "正在加载 Session...",
@@ -254,14 +281,16 @@ export const conversationsZh = {
   "conversation.content.resultFailed": "失败",
   "conversation.content.changedFiles": "Changed files · {{count}} 个文件",
   "conversation.content.diffSummaryFiles": "{{count}} 个文件变更",
-  "conversation.content.diffSummaryUnavailable": "Diff 文件列表暂时无法解析，可展开查看原始 Diff。",
+  "conversation.content.diffSummaryUnavailable":
+    "Diff 文件列表暂时无法解析，可展开查看原始 Diff。",
   "conversation.content.viewDiff": "查看 Diff",
   "conversation.content.expandCommands": "展开其余 {{count}} 条命令",
   "conversation.content.collapseCommands": "折叠命令",
   "conversation.content.loadMoreCommands": "继续加载命令",
   "conversation.content.loadMoreResults": "继续加载执行结果",
   "conversation.content.loadMoreActivities": "继续加载活动记录",
-  "conversation.content.projectionFailed": "命令展示解析失败，已保留原始命令：{{message}}",
+  "conversation.content.projectionFailed":
+    "命令展示解析失败，已保留原始命令：{{message}}",
   "conversation.content.hidden": "当前回答板块已全部隐藏。",
   "conversation.content.exitCode": "退出码 {{code}}",
   "conversation.content.copy": "复制{{type}}",
@@ -299,20 +328,29 @@ export const conversationsZh = {
   "conversation.sync.phase.refreshing": "正在刷新会话列表",
   "conversation.sync.phase.completed": "同步完成",
   "conversation.sync.phase.failed": "同步失败",
-  "conversation.sync.description.preparing": "正在整理来源与同步参数，任务即将开始。",
-  "conversation.sync.description.importing": "正在解析本地对话记录并写入标准化 Session、问题和内容板块。",
-  "conversation.sync.description.refreshing": "导入已经结束，正在重新读取 APP、Session 和问题统计。",
+  "conversation.sync.description.preparing":
+    "正在整理来源与同步参数，任务即将开始。",
+  "conversation.sync.description.importing":
+    "正在解析本地对话记录并写入标准化 Session、问题和内容板块。",
+  "conversation.sync.description.refreshing":
+    "导入已经结束，正在重新读取 APP、Session 和问题统计。",
   "conversation.sync.description.completed": "对话记录和浏览列表已更新。",
-  "conversation.sync.description.failed": "同步未能完成，请查看错误通知后重试。",
+  "conversation.sync.description.failed":
+    "同步未能完成，请查看错误通知后重试。",
   "conversation.sync.stage": "第 {{current}}/{{total}} 阶段",
   "conversation.sync.scope": "范围：{{source}}",
   "conversation.sync.dismiss": "关闭同步进度",
-  "conversation.sync.incrementalSummary": "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
-  "conversation.sync.incrementalSummaryWithErrors": "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.summary": "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源。",
-  "conversation.sync.summaryWithErrors": "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.incrementalSummary":
+    "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
+  "conversation.sync.incrementalSummaryWithErrors":
+    "发现 {{discovered}} 个 Session，新增/更新 {{sessions}} 个、跳过 {{skipped}} 个未变化 Session；另保留 {{retained}} 个来源已不可见的历史 Session，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.summary":
+    "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源。",
+  "conversation.sync.summaryWithErrors":
+    "本次新增/更新 {{sessions}} 个 Session、{{turns}} 条内容，跳过 {{skipped}} 个未变化 Session，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
   "conversation.sync.summaryUnavailable": "同步完成，暂无详细统计。",
-  "conversation.sync.partialFailureAdvice": "可用来源已成功导入。请修复下方失败来源后，再单独同步该来源。",
+  "conversation.sync.partialFailureAdvice":
+    "可用来源已成功导入。请修复下方失败来源后，再单独同步该来源。",
   "conversation.sync.failedSourcesTitle": "失败来源",
   "conversation.sync.failureMessageUnavailable": "未提供错误信息。",
   "conversation.sync.unknownFailedSource": "未知来源",
@@ -321,22 +359,33 @@ export const conversationsZh = {
   "conversation.sync.web.phase.refreshing": "正在刷新网页记录列表",
   "conversation.sync.web.phase.completed": "网页记录同步完成",
   "conversation.sync.web.phase.failed": "网页记录同步失败",
-  "conversation.sync.web.description.preparing": "正在整理网页来源与同步参数，任务即将开始。",
-  "conversation.sync.web.description.importing": "正在解析网页采集记录并写入独立的网页对话、问题和内容板块。",
-  "conversation.sync.web.description.refreshing": "导入已经结束，正在重新读取站点、网页对话和问题统计。",
+  "conversation.sync.web.description.preparing":
+    "正在整理网页来源与同步参数，任务即将开始。",
+  "conversation.sync.web.description.importing":
+    "正在解析网页采集记录并写入独立的网页对话、问题和内容板块。",
+  "conversation.sync.web.description.refreshing":
+    "导入已经结束，正在重新读取站点、网页对话和问题统计。",
   "conversation.sync.web.description.completed": "网页记录和浏览列表已更新。",
-  "conversation.sync.web.description.failed": "网页记录同步未能完成，请查看错误通知后重试。",
+  "conversation.sync.web.description.failed":
+    "网页记录同步未能完成，请查看错误通知后重试。",
   "conversation.sync.web.scope": "网页来源：{{source}}",
-  "conversation.sync.web.summary": "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源。",
-  "conversation.sync.web.summaryWithErrors": "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.web.incrementalSummary": "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
-  "conversation.sync.web.incrementalSummaryWithErrors": "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
-  "conversation.sync.web.summaryUnavailable": "网页记录同步完成，暂无详细统计。",
-  "conversation.sync.web.partialFailureAdvice": "可用来源已成功导入。请修复下方失败网页来源后，再单独同步该来源。",
+  "conversation.sync.web.summary":
+    "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源。",
+  "conversation.sync.web.summaryWithErrors":
+    "本次新增/更新 {{sessions}} 条网页记录、{{turns}} 条内容，跳过 {{skipped}} 条未变化记录，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.web.incrementalSummary":
+    "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源。",
+  "conversation.sync.web.incrementalSummaryWithErrors":
+    "发现 {{discovered}} 条网页记录，新增/更新 {{sessions}} 条、跳过 {{skipped}} 条未变化记录；另保留 {{retained}} 条来源已不可见的历史记录，共写入 {{turns}} 条内容，覆盖 {{sources}} 个来源；{{errors}} 个来源同步失败。",
+  "conversation.sync.web.summaryUnavailable":
+    "网页记录同步完成，暂无详细统计。",
+  "conversation.sync.web.partialFailureAdvice":
+    "可用来源已成功导入。请修复下方失败网页来源后，再单独同步该来源。",
   "conversation.sync.web.failedSourcesTitle": "失败网页来源",
   "conversation.sync.background.title": "后台同步对话记录",
   "conversation.sync.background.webTitle": "后台同步网页记录",
-  "conversation.sync.background.description": "可继续使用其他功能，完成后会自动刷新。",
+  "conversation.sync.background.description":
+    "可继续使用其他功能，完成后会自动刷新。",
   "conversation.markdown.untitledQuestion": "未命名问题",
-  "conversation.markdown.empty": "暂无可预览内容。"
+  "conversation.markdown.empty": "暂无可预览内容。",
 } as const;

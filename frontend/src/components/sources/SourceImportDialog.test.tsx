@@ -52,9 +52,7 @@ describe("SourceImportDialog", () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("请输入源目录路径。"),
-      ).toBeTruthy();
+      expect(screen.getByText("请输入源目录路径。")).toBeTruthy();
     });
     expect(onSubmit).not.toHaveBeenCalled();
   });

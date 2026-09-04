@@ -139,9 +139,7 @@ export function SourceImportDialog({
         <div className="grid gap-4">
           <Field label={t("source.field.rootPath")} required>
             <PathPickerInput
-              aria-describedby={
-                errors.rootPath ? rootPathErrorId : undefined
-              }
+              aria-describedby={errors.rootPath ? rootPathErrorId : undefined}
               aria-invalid={Boolean(errors.rootPath)}
               disabled={busy}
               onPick={() => void handlePickRootPath()}
@@ -171,9 +169,7 @@ export function SourceImportDialog({
             </Field>
             <Field label={t("source.field.priority")}>
               <Input
-                aria-describedby={
-                  errors.priority ? priorityErrorId : undefined
-                }
+                aria-describedby={errors.priority ? priorityErrorId : undefined}
                 aria-invalid={Boolean(errors.priority)}
                 disabled={busy}
                 inputMode="numeric"

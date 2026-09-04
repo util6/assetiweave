@@ -22,7 +22,9 @@ export function GroupField({
         {label}
       </span>
       {children}
-      {error && <span className="text-body-sm text-status-remove">{error}</span>}
+      {error && (
+        <span className="text-body-sm text-status-remove">{error}</span>
+      )}
     </label>
   );
 }

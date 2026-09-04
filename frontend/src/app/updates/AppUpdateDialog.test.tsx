@@ -50,9 +50,8 @@ describe("AppUpdateDialog", () => {
     const { useAppUiStore } = await import("../../store/ui/appUiStore");
     useAppUiStore.getState().closeUpdateDialog();
 
-    const { AppUpdateDialog: DialogComponent } = await import(
-      "./AppUpdateDialog"
-    );
+    const { AppUpdateDialog: DialogComponent } =
+      await import("./AppUpdateDialog");
     // Since mock has dialogOpen: true, we can verify useAppUiStore overrides or integrates cleanly
     useAppUiStore.getState().openUpdateDialog("update");
     expect(useAppUiStore.getState().updateDialogMode).toBe("update");

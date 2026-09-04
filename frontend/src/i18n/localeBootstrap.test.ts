@@ -75,7 +75,9 @@ describe("localeBootstrap", () => {
       initialize.mockRejectedValueOnce(new Error("CAS failed"));
 
       const storage = { getItem: vi.fn(() => "zh"), removeItem: vi.fn() };
-      await expect(ensureAppLocale(file, storage, "zh-CN")).rejects.toThrow("CAS failed");
+      await expect(ensureAppLocale(file, storage, "zh-CN")).rejects.toThrow(
+        "CAS failed",
+      );
       expect(storage.removeItem).not.toHaveBeenCalled();
     });
 

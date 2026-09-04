@@ -34,9 +34,11 @@ export function conversationDataMaintenanceQueryOptions(scope: QueryScope) {
     queryFn: listConversationDataMaintenanceTasks,
     structuralSharing: (oldData, newData) => {
       const current =
-        (oldData as ConversationDataMaintenanceTaskSnapshot[] | undefined) ?? [];
+        (oldData as ConversationDataMaintenanceTaskSnapshot[] | undefined) ??
+        [];
       const incoming =
-        (newData as ConversationDataMaintenanceTaskSnapshot[] | undefined) ?? [];
+        (newData as ConversationDataMaintenanceTaskSnapshot[] | undefined) ??
+        [];
       return mergeMaintenanceTask(current, incoming);
     },
     staleTime: 1000,

@@ -1,18 +1,9 @@
 // @vitest-environment jsdom
 
-import {
-  act,
-  cleanup,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  TeamTaskProvider,
-  useTeamTasks,
-} from "./TeamTaskProvider";
+import { TeamTaskProvider, useTeamTasks } from "./TeamTaskProvider";
 import type { TeamRuntimeTaskSnapshot } from "../../types/team";
 
 const subscribeMock = vi.hoisted(() => vi.fn());

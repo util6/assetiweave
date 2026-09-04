@@ -147,4 +147,3 @@ export function skillAssetsQueryOptions(scope: QueryScope) {
     staleTime: DEFAULT_CATALOG_STALE_TIME,
   });
 }
-

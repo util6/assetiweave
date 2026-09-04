@@ -64,7 +64,10 @@ export function parseGroupIconSvgInput(
   // 2. 尝试作为 SVG Markup 解析
   if (trimmed.includes("<svg") && typeof DOMParser !== "undefined") {
     try {
-      const document = new DOMParser().parseFromString(trimmed, "image/svg+xml");
+      const document = new DOMParser().parseFromString(
+        trimmed,
+        "image/svg+xml",
+      );
       if (document.querySelector("parsererror")) {
         return null;
       }

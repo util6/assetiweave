@@ -14,7 +14,8 @@ export const commonEn = {
   "tenant.slugPlaceholder": "Optional, for example client-a",
   "tenant.creating": "Creating...",
   "tenant.error.nameRequired": "Enter a tenant name.",
-  "notification.ready": "The notification outlet is ready for account changes, scan completion, and deployment results.",
+  "notification.ready":
+    "The notification outlet is ready for account changes, scan completion, and deployment results.",
   "notification.aria": "Notifications",
   "notification.close": "Close notification",
   "common.close": "Close",
@@ -30,7 +31,8 @@ export const commonEn = {
   "common.delete": "Delete",
   "common.saving": "Saving...",
   "app.close.title": "Close AssetIWeave",
-  "app.close.message": "Choose whether to close the app or minimize it to the background.",
+  "app.close.message":
+    "Choose whether to close the app or minimize it to the background.",
   "app.close.backupDatabase": "Back up the database before closing",
   "app.close.minimize": "Minimize",
   "app.close.confirm": "Confirm close",
@@ -47,7 +49,8 @@ export const commonEn = {
   "ai.execution.phase.cancelling": "Cancelling",
   "ai.execution.phase.closing": "Closing Agent",
   "ai.execution.phase.cleaning_up": "Cleaning up",
-  "agent.lifecycle.global.title": "Agent installation tasks running · {{count}}",
+  "agent.lifecycle.global.title":
+    "Agent installation tasks running · {{count}}",
   "agent.lifecycle.cancel": "Cancel Agent installation task",
   "layout.resizeColumns": "Resize columns",
   "layout.scrollColumns": "Scroll columns horizontally",
@@ -76,7 +79,8 @@ export const commonEn = {
   "backup.mode.default": "Default",
   "backup.mode.custom": "Custom",
   "backup.setting.directory": "Skill backup directory",
-  "backup.notification.batchCompleted": "Background backup completed for {{count}} items.",
+  "backup.notification.batchCompleted":
+    "Background backup completed for {{count}} items.",
   "backup.notification.failed": "Background backup failed: {{message}}",
   "backup.background.title": "Backing up in background",
   "backup.background.description": "Completed {{completed}} / {{total}}",
@@ -89,16 +93,22 @@ export const commonEn = {
   "update.button.ready": "Update ready, restart app",
   "update.button.error": "Update failed",
   "update.dialog.title": "App Update",
-  "update.dialog.description": "Checks GitHub Releases for new versions, then downloads, installs, and restarts from inside the app.",
+  "update.dialog.description":
+    "Checks GitHub Releases for new versions, then downloads, installs, and restarts from inside the app.",
   "update.intro.open": "View current version highlights",
   "update.intro.title": "Current Version Highlights",
-  "update.intro.description": "Review the core additions and refinements in the current version.",
+  "update.intro.description":
+    "Review the core additions and refinements in the current version.",
   "update.intro.currentTitle": "Current release",
-  "update.intro.currentDescription": "This version continues refining desktop asset management, the update entry point, and background task visibility.",
+  "update.intro.currentDescription":
+    "This version continues refining desktop asset management, the update entry point, and background task visibility.",
   "update.intro.highlights": "Highlights",
-  "update.intro.highlight.navigation": "The workspace rail now folds brand information and update state into one predictable entry point.",
-  "update.intro.highlight.updater": "In-app updates can discover versions, show notes, download and install, then restart from inside the app.",
-  "update.intro.highlight.backgroundTasks": "Background sync and backup tasks keep visible progress without blocking routine browsing.",
+  "update.intro.highlight.navigation":
+    "The workspace rail now folds brand information and update state into one predictable entry point.",
+  "update.intro.highlight.updater":
+    "In-app updates can discover versions, show notes, download and install, then restart from inside the app.",
+  "update.intro.highlight.backgroundTasks":
+    "Background sync and backup tasks keep visible progress without blocking routine browsing.",
   "update.status.checking": "Checking for updates",
   "update.status.available": "New version available",
   "update.status.upToDate": "You are up to date",
@@ -106,13 +116,19 @@ export const commonEn = {
   "update.status.installing": "Installing update",
   "update.status.ready": "Update installed, restart required",
   "update.status.error": "Update failed",
-  "update.description.checking": "Connecting to the release endpoint and verifying whether a newer version is available.",
-  "update.description.available": "You can download and install this version directly in the app.",
-  "update.description.upToDate": "The installed version matches the latest version returned by the release endpoint.",
-  "update.description.downloading": "Keep the app open. Installation will start after the download finishes.",
-  "update.description.installing": "The installer is applying the update. Do not close the app yet.",
+  "update.description.checking":
+    "Connecting to the release endpoint and verifying whether a newer version is available.",
+  "update.description.available":
+    "You can download and install this version directly in the app.",
+  "update.description.upToDate":
+    "The installed version matches the latest version returned by the release endpoint.",
+  "update.description.downloading":
+    "Keep the app open. Installation will start after the download finishes.",
+  "update.description.installing":
+    "The installer is applying the update. Do not close the app yet.",
   "update.description.ready": "Restart to run the newly installed version.",
-  "update.description.error": "Retry automatic update, or open the release page and install manually.",
+  "update.description.error":
+    "Retry automatic update, or open the release page and install manually.",
   "update.retrying": "Retry {{attempt}} / {{total}}",
   "update.currentVersion": "Current version",
   "update.latestVersion": "Latest version",
@@ -136,7 +152,8 @@ export const commonEn = {
   "status.previewData": "Browser preview mode: using bundled sample data",
   "status.scanOk": "Scan complete: {{count}} assets",
   "status.scanError": "Scan failed: {{message}}",
-  "status.validatedAssets": "State refreshed: {{count}} assets, {{removed}} removed, {{updated}} updated",
+  "status.validatedAssets":
+    "State refreshed: {{count}} assets, {{removed}} removed, {{updated}} updated",
   "nav.aria.main": "Main navigation",
   "nav.aria.assetTypes": "Asset types",
   "nav.aria.subNav": "Asset sub-navigation",
@@ -187,24 +204,29 @@ export const commonEn = {
   "nav.sub.team.overview": "Teams & Rosters",
   "underConstruction.eyebrow": "Feature in progress",
   "underConstruction.title": "{{feature}} is under construction",
-  "underConstruction.description": "This view is wired into the navigation shell, but the feature is not finished yet. The placeholder keeps the entry visible without showing the wrong page.",
+  "underConstruction.description":
+    "This view is wired into the navigation shell, but the feature is not finished yet. The placeholder keeps the entry visible without showing the wrong page.",
   "underConstruction.routeKey": "Route: {{routeKey}}",
   "underConstruction.defaultFeature": "This feature",
   "prompt.page.eyebrow": "Prompt Workspace",
   "prompt.page.title": "Prompt Overview",
-  "prompt.page.description": "Capture ideas, feature notes, and prompt drafts like a clipboard notebook, then copy, translate, or optimize directly from each card.",
+  "prompt.page.description":
+    "Capture ideas, feature notes, and prompt drafts like a clipboard notebook, then copy, translate, or optimize directly from each card.",
   "prompt.project.pickDirectory": "Choose project directory",
   "prompt.composer.eyebrow": "Quick Capture",
   "prompt.composer.title": "New Idea / Prompt",
   "prompt.composer.titlePlaceholder": "Title, optional",
-  "prompt.composer.contentPlaceholder": "Paste a prompt, capture a feature idea, or write an unfinished note.",
-  "prompt.composer.projectPathPlaceholder": "Project directory path, e.g. ~/project",
+  "prompt.composer.contentPlaceholder":
+    "Paste a prompt, capture a feature idea, or write an unfinished note.",
+  "prompt.composer.projectPathPlaceholder":
+    "Project directory path, e.g. ~/project",
   "prompt.composer.sessionPlaceholder": "Session name or ID",
   "prompt.composer.tagsPlaceholder": "Tags, separated by spaces or commas",
   "prompt.composer.create": "Save card",
   "prompt.original.label": "Original prompt",
   "prompt.optimized.label": "Optimized draft",
-  "prompt.optimized.empty": "No optimized draft yet. Use Optimize on the front side to keep the improved version here.",
+  "prompt.optimized.empty":
+    "No optimized draft yet. Use Optimize on the front side to keep the improved version here.",
   "prompt.note.untitled": "Untitled prompt",
   "prompt.metric.notes": "Cards",
   "prompt.metric.filtered": "Current results",
@@ -229,7 +251,8 @@ export const commonEn = {
   "prompt.tags.library": "Created tags",
   "prompt.tags.libraryEmpty": "No created tags",
   "prompt.tags.remove": "Remove tag {{tag}}",
-  "prompt.tags.rule": "Up to {{count}} tags. Each tag must be {{length}} characters or fewer.",
+  "prompt.tags.rule":
+    "Up to {{count}} tags. Each tag must be {{length}} characters or fewer.",
   "prompt.sort.label": "Sort",
   "prompt.sort.aria": "Prompt sort",
   "prompt.sort.updated": "Recently updated",
@@ -246,16 +269,19 @@ export const commonEn = {
   "prompt.translation.status": "CLI service",
   "prompt.translation.available": "Available for translation and optimization",
   "prompt.translation.checking": "Checking translation service",
-  "prompt.translation.unavailable": "Unavailable. Check CLI translation settings.",
+  "prompt.translation.unavailable":
+    "Unavailable. Check CLI translation settings.",
   "prompt.translation.result": "Translation · {{language}}",
   "prompt.search.label": "Search prompt cards",
   "prompt.search.placeholder": "Search content, tags, or translations...",
   "prompt.search.submit": "Search prompts",
   "prompt.toolbar.sort.copyCount": "By copy count",
   "prompt.empty.title": "No prompt cards yet",
-  "prompt.empty.description": "Capture an idea or prompt above, then copy, translate, or optimize it later.",
+  "prompt.empty.description":
+    "Capture an idea or prompt above, then copy, translate, or optimize it later.",
   "prompt.empty.filteredTitle": "No matching results",
-  "prompt.empty.filteredDescription": "Try another keyword, or clear search to see all cards.",
+  "prompt.empty.filteredDescription":
+    "Try another keyword, or clear search to see all cards.",
   "prompt.action.copy": "Copy",
   "prompt.action.copyNamed": "Copy {{title}}",
   "prompt.action.copyImages": "Copy images",
@@ -304,8 +330,10 @@ export const commonEn = {
   "toolbar.sort.name": "By name",
   "toolbar.sort.kind": "By kind",
   "toolbar.sort.direction.label": "Toggle sort direction",
-  "toolbar.sort.direction.descTitle": "Current: descending. Click to switch to ascending.",
-  "toolbar.sort.direction.ascTitle": "Current: ascending. Click to switch to descending.",
+  "toolbar.sort.direction.descTitle":
+    "Current: descending. Click to switch to ascending.",
+  "toolbar.sort.direction.ascTitle":
+    "Current: ascending. Click to switch to descending.",
   "toolbar.export": "Export",
   "toolbar.cancel": "Cancel",
   "toolbar.createDeploymentPlan": "Create deployment plan",
@@ -333,9 +361,12 @@ export const commonEn = {
   "plan.createSummary": "{{count}} create",
   "plan.title": "Deployment Plan",
   "plan.actions": "{{count}} actions",
-  "plan.reason.unsupported": "{{profile}} does not support {{kind}} or did not match include rules",
-  "plan.reason.conflictExisting": "Target path already exists. The current version does not overwrite files not managed by this app.",
-  "plan.reason.project": "{{profile}} supports {{kind}} and will project it to the target directory with {{strategy}}",
+  "plan.reason.unsupported":
+    "{{profile}} does not support {{kind}} or did not match include rules",
+  "plan.reason.conflictExisting":
+    "Target path already exists. The current version does not overwrite files not managed by this app.",
+  "plan.reason.project":
+    "{{profile}} supports {{kind}} and will project it to the target directory with {{strategy}}",
   "appMount.page.title": "App Mounts",
   "appMount.page.subtitle": "App mounts",
   "appMount.searchPlaceholder": "Search apps, directories, or types...",
@@ -386,15 +417,22 @@ export const commonEn = {
   "appMount.field.accentColor": "Accent color",
   "appMount.field.enabled": "Enable profile",
   "appMount.field.shortcutEnabled": "Show shortcut",
-  "appMount.confirmDelete": "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
+  "appMount.confirmDelete":
+    "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
   "appMount.deleteDialog.title": "Delete app",
-  "appMount.deleteDialog.message": "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
-  "appMount.deleteDialog.detail": "The backend checks managed deployments and real mount state. It rejects deletion while the app is still in use.",
-  "appMount.deleteDialog.defaultBlocked": "{{name}} is an official default app and cannot be deleted.",
-  "appMount.deleteDialog.defaultDetail": "Official default apps are built into AssetIWeave. You can adjust their settings, but you cannot delete them.",
+  "appMount.deleteDialog.message":
+    "Delete app {{name}}? If the target directory still has managed mounts, unmount them first.",
+  "appMount.deleteDialog.detail":
+    "The backend checks managed deployments and real mount state. It rejects deletion while the app is still in use.",
+  "appMount.deleteDialog.defaultBlocked":
+    "{{name}} is an official default app and cannot be deleted.",
+  "appMount.deleteDialog.defaultDetail":
+    "Official default apps are built into AssetIWeave. You can adjust their settings, but you cannot delete them.",
   "appMount.pathChangeDialog.title": "Confirm Default App Path Change",
-  "appMount.pathChangeDialog.message": "{{name}} is an official default app. Change its Skill directory?",
-  "appMount.pathChangeDialog.detail": "Current path: {{previousPath}}\nNew path: {{nextPath}}",
+  "appMount.pathChangeDialog.message":
+    "{{name}} is an official default app. Change its Skill directory?",
+  "appMount.pathChangeDialog.detail":
+    "Current path: {{previousPath}}\nNew path: {{nextPath}}",
   "appMount.toolbar.appKindAll": "All apps ({{count}})",
   "appMount.toolbar.appKindFilter": "App kind",
   "appMount.toolbar.statusFilter": "App status",
@@ -412,5 +450,5 @@ export const commonEn = {
   "logViewer.levels.all": "All",
   "logViewer.levels.info": "INFO",
   "logViewer.levels.warn": "WARN",
-  "logViewer.levels.error": "ERROR"
+  "logViewer.levels.error": "ERROR",
 } as const;

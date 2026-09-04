@@ -17,7 +17,10 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useQueryScope } from "../../app/query/QueryScopeProvider";
-import { catalogKeys, groupsQueryOptions } from "../../app/query/catalogQueries";
+import {
+  catalogKeys,
+  groupsQueryOptions,
+} from "../../app/query/catalogQueries";
 import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";

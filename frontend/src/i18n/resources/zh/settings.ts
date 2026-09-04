@@ -15,7 +15,8 @@ export const settingsZh = {
   "settings.scope.conversations": "页面级 / 对话记录",
   "settings.reset": "恢复应用设置默认值",
   "settings.resetConfirmTitle": "确认恢复应用设置默认值？",
-  "settings.resetConfirmMessage": "应用设置中的自定义项将恢复为默认值；导航菜单、快捷方式、资产源和备份库等独立数据不会受影响。",
+  "settings.resetConfirmMessage":
+    "应用设置中的自定义项将恢复为默认值；导航菜单、快捷方式、资产源和备份库等独立数据不会受影响。",
   "settings.resetConfirmAction": "恢复应用设置",
   "settings.section.appearance": "外观",
   "settings.section.agents": "Agents",
@@ -61,17 +62,20 @@ export const settingsZh = {
   "settings.memory.project": "项目记忆 Agent",
   "settings.memory.global": "全局记忆 Agent",
   "settings.memory.recall": "Recall Agent",
-  "settings.memory.assignmentHint": "为此 Memory 工作流选择独立的 Agent 与模型。",
+  "settings.memory.assignmentHint":
+    "为此 Memory 工作流选择独立的 Agent 与模型。",
   "settings.memory.generationEnabled": "启用 Memory 生成",
   "settings.memory.usageEnabled": "启用 Memory 使用记录",
   "settings.memory.excludedSessionIds": "排除 Session ID",
   "settings.memory.excludedSourceIds": "排除来源 ID",
   "settings.memory.excludedPlaceholder": "使用逗号或换行分隔多个 ID",
   "settings.ai.executionBoundary": "外部 AI 边界",
-  "settings.ai.externalWarning": "OpenCode / Gemini CLI 可能访问网络并具备本机能力。Memory 会在发送前和写入前执行确定性脱敏。",
+  "settings.ai.externalWarning":
+    "OpenCode / Gemini CLI 可能访问网络并具备本机能力。Memory 会在发送前和写入前执行确定性脱敏。",
   "settings.agentCapabilities.label": "模型能力",
   "settings.agentCapabilities.dialogTitle": "选择 Agent 能力",
-  "settings.agentCapabilities.dialogDescription": "选择为当前服务提供模型能力的 Agent；模型和连接测试请在 Agent 设置中完成。",
+  "settings.agentCapabilities.dialogDescription":
+    "选择为当前服务提供模型能力的 Agent；模型和连接测试请在 Agent 设置中完成。",
   "settings.agentCapabilities.dialogCount": "{{available}} / {{total}} 个可用",
   "settings.agentCapabilities.dialogChecking": "正在检测 {{count}} 个 Agent",
   "settings.agentCapabilities.selectedLabel": "当前服务使用",
@@ -80,24 +84,34 @@ export const settingsZh = {
   "settings.agentCapabilities.current": "当前使用",
   "settings.agentCapabilities.empty": "暂无可用的 Agent 能力。",
   "settings.agentCapabilities.openAgentSettings": "打开 Agent 设置",
-  "settings.agentCapabilities.cardTranslationDescription": "使用所选 Agent 为卡片翻译提供模型能力。",
-  "settings.agentCapabilities.memoryDescription": "使用所选 Agent 为 Memory 提取、整理和 Recall 提供模型能力。",
-  "settings.agentCapabilities.promptOptimizationDescription": "使用所选 Agent 为提示词优化提供模型能力。",
+  "settings.agentCapabilities.cardTranslationDescription":
+    "使用所选 Agent 为卡片翻译提供模型能力。",
+  "settings.agentCapabilities.memoryDescription":
+    "使用所选 Agent 为 Memory 提取、整理和 Recall 提供模型能力。",
+  "settings.agentCapabilities.promptOptimizationDescription":
+    "使用所选 Agent 为提示词优化提供模型能力。",
   "settings.promptOptimization.descriptionLabel": "功能说明",
-  "settings.promptOptimization.description": "提示词优化会调用所选 Agent，将原始提示词改写为更清晰、可执行的版本。",
+  "settings.promptOptimization.description":
+    "提示词优化会调用所选 Agent，将原始提示词改写为更清晰、可执行的版本。",
   "settings.promptOptimization.systemPrompt": "系统提示词",
-  "settings.promptOptimization.systemPromptPlaceholder": "可使用 {content} 占位符。",
+  "settings.promptOptimization.systemPromptPlaceholder":
+    "可使用 {content} 占位符。",
   "settings.agents.title": "Agents",
-  "settings.agents.description": "管理本机可用的 AI 编程 Agent。AssetIWeave 通过 Agent Registry 统一描述命令、协议和连接状态。",
-  "settings.agents.registryHint": "当前运行时定义由内置 Registry 提供；自定义 Agent 的持久化编辑将在后续阶段接入。",
+  "settings.agents.description":
+    "管理本机可用的 AI 编程 Agent。AssetIWeave 通过 Agent Registry 统一描述命令、协议和连接状态。",
+  "settings.agents.registryHint":
+    "当前运行时定义由内置 Registry 提供；自定义 Agent 的持久化编辑将在后续阶段接入。",
   "settings.agents.marketTab": "市场",
   "settings.agents.installedTab": "已安装",
   "settings.agents.addCustom": "添加自定义 Agent",
   "settings.agents.customDefinition": "查看定义模板",
-  "settings.agents.customDefinitionHint": "使用 Agent Registry 的字段描述启动命令和协议。",
+  "settings.agents.customDefinitionHint":
+    "使用 Agent Registry 的字段描述启动命令和协议。",
   "settings.agents.customDialogTitle": "自定义 Agent 定义模板",
-  "settings.agents.customDialogDescription": "先查看 Agent Registry 所需字段；当前版本暂不把自定义定义写入运行时 Registry。",
-  "settings.agents.customDialogNotice": "后续接入持久化自定义 Agent 后，这些字段将由表单编辑并保存到 App-owned 配置。",
+  "settings.agents.customDialogDescription":
+    "先查看 Agent Registry 所需字段；当前版本暂不把自定义定义写入运行时 Registry。",
+  "settings.agents.customDialogNotice":
+    "后续接入持久化自定义 Agent 后，这些字段将由表单编辑并保存到 App-owned 配置。",
   "settings.agents.field.agentId": "Agent ID",
   "settings.agents.field.displayName": "显示名称",
   "settings.agents.field.arguments": "启动参数",
@@ -115,7 +129,8 @@ export const settingsZh = {
   "settings.agents.statusNotInstalled": "未安装",
   "settings.agents.statusNotTested": "未检测",
   "settings.agents.coreIncompatible": "当前版本不兼容",
-  "settings.agents.coreIncompatibleRange": "当前版本不兼容（要求 {min} ≤ core < {maxExclusive}）",
+  "settings.agents.coreIncompatibleRange":
+    "当前版本不兼容（要求 {min} ≤ core < {maxExclusive}）",
   "settings.agents.install": "安装",
   "settings.agents.update": "更新",
   "settings.agents.reinstall": "重装",
@@ -125,14 +140,17 @@ export const settingsZh = {
   "settings.agents.enabled": "已启用",
   "settings.agents.disabled": "已停用",
   "settings.agents.installing": "处理中...",
-  "settings.agents.installPreviewDescription": "确认固定版本、分发方式和本地写入范围后再开始生命周期任务。",
+  "settings.agents.installPreviewDescription":
+    "确认固定版本、分发方式和本地写入范围后再开始生命周期任务。",
   "settings.agents.confirmInstall": "确认并开始",
   "settings.agents.confirmUninstall": "确认卸载",
-  "settings.agents.uninstallPreviewDescription": "确认安装归属、路径和能力分配清理范围后再卸载 Agent。",
+  "settings.agents.uninstallPreviewDescription":
+    "确认安装归属、路径和能力分配清理范围后再卸载 Agent。",
   "settings.agents.installPath": "安装路径",
   "settings.agents.externalRuntime": "外部 System runtime（只解除绑定）",
   "settings.agents.assignmentsToClear": "需要清理的能力分配",
-  "settings.agents.assignmentsToClearDescription": "卸载前必须确认移除所有仍指向该 Agent 的能力分配。",
+  "settings.agents.assignmentsToClearDescription":
+    "卸载前必须确认移除所有仍指向该 Agent 的能力分配。",
   "settings.agents.uninstallFailed": "Agent 卸载失败",
   "settings.agents.distributionOptions": "分发方式",
   "settings.agents.recommended": "推荐",
@@ -148,7 +166,8 @@ export const settingsZh = {
   "settings.agents.model": "模型",
   "settings.agents.modelDefault": "使用 Agent 默认模型",
   "settings.agents.modelDialogTitle": "选择模型",
-  "settings.agents.modelDialogDescription": "从当前 Agent 的 ACP session/new 响应中加载可选模型。",
+  "settings.agents.modelDialogDescription":
+    "从当前 Agent 的 ACP session/new 响应中加载可选模型。",
   "settings.agents.modelLoading": "正在加载模型...",
   "settings.agents.modelSearch": "搜索模型",
   "settings.agents.modelSearchPlaceholder": "搜索模型...",
@@ -164,10 +183,14 @@ export const settingsZh = {
   "settings.agents.edit": "编辑",
   "settings.agents.command": "启动命令",
   "settings.agents.protocol": "协议",
-  "settings.agents.definitionDialogDescription": "查看当前 Agent 的运行时定义和接入状态。",
-  "settings.agents.editHint": "当前 Agent 的命令、协议和连接状态由 Agents 页面统一管理。",
-  "settings.agents.definitionEditingHint": "当前版本在 Agents 页面统一展示命令、协议和连接状态；详细定义编辑将在后续接入。",
-  "settings.agents.registryDefinitionHint": "该 Agent 已接入内置 Registry；连接测试只有在 ACP 返回可用模型列表后才会成功。当前版本的定义编辑入口暂未开放。",
+  "settings.agents.definitionDialogDescription":
+    "查看当前 Agent 的运行时定义和接入状态。",
+  "settings.agents.editHint":
+    "当前 Agent 的命令、协议和连接状态由 Agents 页面统一管理。",
+  "settings.agents.definitionEditingHint":
+    "当前版本在 Agents 页面统一展示命令、协议和连接状态；详细定义编辑将在后续接入。",
+  "settings.agents.registryDefinitionHint":
+    "该 Agent 已接入内置 Registry；连接测试只有在 ACP 返回可用模型列表后才会成功。当前版本的定义编辑入口暂未开放。",
   "settings.storage.configFile": "旧版设置导入文件",
   "settings.storage.configDir": "用户配置目录",
   "settings.storage.defaultDataBackupDir": "默认数据库备份目录",
@@ -190,24 +213,30 @@ export const settingsZh = {
   "settings.cli.installing": "安装中...",
   "settings.conversation.sessionBrowserFont": "Session 浏览字体",
   "settings.conversation.autoFullSyncOnStartup": "启动时自动全量同步",
-  "settings.conversation.autoFullSyncOnStartupHint": "应用启动时自动重新解析可发现的对话记录；关闭后仍可在此处手动执行全量同步。",
+  "settings.conversation.autoFullSyncOnStartupHint":
+    "应用启动时自动重新解析可发现的对话记录；关闭后仍可在此处手动执行全量同步。",
   "settings.conversation.fullSyncTitle": "全量重新解析",
-  "settings.conversation.fullSyncDescription": "使用当前解析器重新读取所有来源中仍可发现的 Session 与网页记录。来源已删除或归档的本地历史不会被清除。日常同步仍使用增量模式。",
+  "settings.conversation.fullSyncDescription":
+    "使用当前解析器重新读取所有来源中仍可发现的 Session 与网页记录。来源已删除或归档的本地历史不会被清除。日常同步仍使用增量模式。",
   "settings.conversation.fullSyncAction": "开始全量同步",
   "settings.conversation.fullSyncButtonRunning": "全量同步中",
-  "settings.conversation.fullSyncButtonRunningWithProgress": "全量同步中 · {{percent}}%",
+  "settings.conversation.fullSyncButtonRunningWithProgress":
+    "全量同步中 · {{percent}}%",
   "settings.conversation.fullSyncConfirmTitle": "确认全量重新解析",
-  "settings.conversation.fullSyncConfirmMessage": "此操作会重新读取所有当前可发现的对话，耗时和资源占用通常高于增量同步。已沉淀但来源不可见的历史记录会继续保留。",
+  "settings.conversation.fullSyncConfirmMessage":
+    "此操作会重新读取所有当前可发现的对话，耗时和资源占用通常高于增量同步。已沉淀但来源不可见的历史记录会继续保留。",
   "settings.conversation.fullSyncConfirmAction": "开始重新解析",
   "settings.conversation.fullSyncIdle": "尚未执行全量同步",
   "settings.conversation.fullSyncRunning": "正在后台重新解析全部可发现记录",
   "settings.conversation.fullSyncCompleted": "最近一次全量同步已完成",
   "settings.conversation.fullSyncFailed": "最近一次全量同步失败",
-  "settings.conversation.fullSyncConflict": "已有其他对话同步任务正在运行，请等待完成后重试。",
+  "settings.conversation.fullSyncConflict":
+    "已有其他对话同步任务正在运行，请等待完成后重试。",
   "settings.conversation.fullSyncProgressLabel": "全量同步进度",
   "settings.conversation.fullSyncPreparing": "正在准备来源列表…",
   "settings.conversation.fullSyncCurrentSource": "正在处理：",
-  "settings.conversation.fullSyncProgressCount": "已完成 {{completed}}/{{total}} 个来源",
+  "settings.conversation.fullSyncProgressCount":
+    "已完成 {{completed}}/{{total}} 个来源",
   "settings.conversation.fullSyncProgressPercent": "已完成 {{percent}}%",
   "settings.conversation.sessionBrowserSize": "Session 浏览字号",
   "settings.conversation.contentCardColors": "内容卡片颜色",
@@ -221,12 +250,14 @@ export const settingsZh = {
   "settings.conversation.translationProvider.cli": "宿主机 CLI",
   "settings.conversation.translationProvider.google": "谷歌翻译",
   "settings.conversation.translationProvider.apple": "苹果翻译",
-  "settings.conversation.translationProviderReserved": "该翻译方式已预留设置入口，当前版本尚未实现连接。",
+  "settings.conversation.translationProviderReserved":
+    "该翻译方式已预留设置入口，当前版本尚未实现连接。",
   "settings.conversation.translationCli": "CLI 工具",
   "settings.conversation.translationCli.opencode": "OpenCode",
   "settings.conversation.translationCli.gemini": "Gemini",
   "settings.conversation.translationModel": "模型",
-  "settings.conversation.translationModelPlaceholder": "留空使用 CLI 默认模型，或输入模型 ID",
+  "settings.conversation.translationModelPlaceholder":
+    "留空使用 CLI 默认模型，或输入模型 ID",
   "settings.conversation.translationConnection": "连接检测",
   "settings.conversation.translationConnect": "检测连接",
   "settings.conversation.translationConnecting": "检测中...",
@@ -234,11 +265,14 @@ export const settingsZh = {
   "settings.conversation.translationConnectionFailed": "连接失败",
   "settings.conversation.translationConnectionIdle": "尚未检测",
   "settings.conversation.translationRefreshModels": "刷新模型",
-  "settings.conversation.translationModelsUnavailable": "当前 CLI 未返回可用模型列表，可手动输入模型 ID。",
+  "settings.conversation.translationModelsUnavailable":
+    "当前 CLI 未返回可用模型列表，可手动输入模型 ID。",
   "settings.conversation.translationPrompt": "提示词模板",
-  "settings.conversation.translationPromptPlaceholder": "可使用 {targetLanguage}、{targetLanguageJson}、{content} 占位符。",
+  "settings.conversation.translationPromptPlaceholder":
+    "可使用 {targetLanguage}、{targetLanguageJson}、{content} 占位符。",
   "settings.conversation.translationTarget": "卡片翻译目标语言",
-  "settings.conversation.translationTargetPlaceholder": "例如：简体中文、French、Spanish (Latin America)",
+  "settings.conversation.translationTargetPlaceholder":
+    "例如：简体中文、French、Spanish (Latin America)",
   "settings.conversation.translationTarget.zhCN": "简体中文",
   "settings.conversation.translationTarget.en": "英文",
   "settings.conversation.translationTarget.ja": "日文",
@@ -257,7 +291,8 @@ export const settingsZh = {
   "settings.conversation.runtimeOverrides": "运行时路径",
   "settings.conversation.runtimePath": "运行时路径",
   "settings.conversation.runtimeClear": "清空",
-  "settings.conversation.runtimeOverridesHint": "留空时使用系统 PATH。可填写绝对路径，适合运行时已安装但桌面 App 进程无法从 PATH 发现的情况。",
+  "settings.conversation.runtimeOverridesHint":
+    "留空时使用系统 PATH。可填写绝对路径，适合运行时已安装但桌面 App 进程无法从 PATH 发现的情况。",
   "settings.showStartupNotification": "显示启动通知",
   "settings.menu.sideRail": "全局入口",
   "settings.menu.headerTabs": "侧栏资产入口",
@@ -278,15 +313,19 @@ export const settingsZh = {
   "settings.shortcuts.customIcon": "自定义符号",
   "settings.shortcuts.editSvg": "编辑图标代码",
   "settings.shortcuts.svgEditorTitle": "图标代码",
-  "settings.shortcuts.svgEditorDescription": "输入 1-4 个自定义符号，或粘贴 iconfont 导出的 SVG、包含 viewBox 与 paths 的 JSON。保存后作为图标设置中的自定义图标资源。",
+  "settings.shortcuts.svgEditorDescription":
+    "输入 1-4 个自定义符号，或粘贴 iconfont 导出的 SVG、包含 viewBox 与 paths 的 JSON。保存后作为图标设置中的自定义图标资源。",
   "settings.shortcuts.svgInput": "符号 / SVG / JSON",
-  "settings.shortcuts.svgPlaceholder": "+ 或 <svg viewBox=\"0 0 1024 1024\"><path d=\"...\" /></svg>",
-  "settings.shortcuts.svgError": "无法解析图标资源，请确认包含有效的 <svg><path d=\"...\" /></svg> 或 JSON paths。",
-  "settings.shortcuts.iconCodeEmptyError": "请输入自定义符号，或粘贴有效的 SVG / JSON 图标资源。",
+  "settings.shortcuts.svgPlaceholder":
+    '+ 或 <svg viewBox="0 0 1024 1024"><path d="..." /></svg>',
+  "settings.shortcuts.svgError":
+    '无法解析图标资源，请确认包含有效的 <svg><path d="..." /></svg> 或 JSON paths。',
+  "settings.shortcuts.iconCodeEmptyError":
+    "请输入自定义符号，或粘贴有效的 SVG / JSON 图标资源。",
   "settings.shortcuts.clearSvg": "清除自定义图标",
   "settings.shortcuts.cancelSvg": "取消",
   "settings.shortcuts.closeSvg": "关闭图标代码编辑器",
   "settings.shortcuts.saveSvg": "保存图标",
   "settings.shortcuts.color": "颜色",
-  "settings.shortcuts.colorValue": "颜色值"
+  "settings.shortcuts.colorValue": "颜色值",
 } as const;

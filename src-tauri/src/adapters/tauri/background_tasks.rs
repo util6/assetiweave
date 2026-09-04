@@ -2740,21 +2740,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn production_registry_can_expose_the_shared_task_runtime() {
+    #[tokio::test]
+    async fn production_registry_can_expose_the_shared_task_runtime() {
         let runtime = TaskRuntime::new();
         let registry = BackgroundTaskRegistry::with_task_runtime(runtime.clone());
 
         assert!(registry.task_runtime().is_some());
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
-        rt.block_on(runtime.shutdown_with_grace(Duration::ZERO));
+        runtime.shutdown_with_grace(Duration::ZERO).await;
     }
 
-    #[test]
-    fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
+    #[tokio::test]
+    async fn conversation_and_agent_lifecycle_use_one_kernel_task_runtime() {
         let runtime = TaskRuntime::new();
         let registry = BackgroundTaskRegistry::with_task_runtime(runtime.clone());
         let (agent, _, agent_should_start) = registry
@@ -2852,11 +2848,7 @@ mod tests {
         registry
             .finish_conversation_script_install(&adapter.id, Ok(serde_json::json!({})))
             .unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
-        rt.block_on(runtime.shutdown_with_grace(Duration::ZERO));
+        runtime.shutdown_with_grace(Duration::ZERO).await;
     }
 
     #[test]

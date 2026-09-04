@@ -44,11 +44,9 @@ export function settingsQueryOptions() {
   });
 }
 
-export function useSaveAppSettings(customClient?: QueryClient): UseMutationResult<
-  AppSettingsFile,
-  unknown,
-  AppSettings
-> {
+export function useSaveAppSettings(
+  customClient?: QueryClient,
+): UseMutationResult<AppSettingsFile, unknown, AppSettings> {
   const contextClient = useContext(QueryClientContext);
   const queryClient = customClient ?? contextClient;
 
@@ -68,9 +66,7 @@ export function useSaveAppSettings(customClient?: QueryClient): UseMutationResul
         const saveMutations = mutationCache?.getAll().filter((m) => {
           const key = m.options.mutationKey;
           return (
-            Array.isArray(key) &&
-            key[0] === "app-settings" &&
-            key[1] === "save"
+            Array.isArray(key) && key[0] === "app-settings" && key[1] === "save"
           );
         });
 

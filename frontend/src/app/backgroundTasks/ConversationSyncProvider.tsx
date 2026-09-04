@@ -52,7 +52,8 @@ export function conversationSyncQueryOptions(scope: QueryScope) {
     structuralSharing: (oldData, newData) => {
       const current =
         (oldData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
-      const incoming = (newData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
+      const incoming =
+        (newData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
       return Object.values(incoming).reduce(
         (next, snapshot) =>
           snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
@@ -241,7 +242,9 @@ export function mergeConversationTaskSnapshot(
     ...current,
     ...incoming,
     record_kind: incomingKind ?? currentKind ?? fallbackKind ?? null,
-    finished_at: preserveFinishedAt ? current.finished_at : incoming.finished_at,
+    finished_at: preserveFinishedAt
+      ? current.finished_at
+      : incoming.finished_at,
     result: incoming.result ?? current.result,
     error: incoming.error ?? current.error,
   };

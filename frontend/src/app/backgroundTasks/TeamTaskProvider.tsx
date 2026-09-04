@@ -21,10 +21,8 @@ export function teamRunQueryOptions(scope: QueryScope) {
     queryKey: taskKeys.resource(scope, "team-run"),
     queryFn: listTeamRunTasks,
     structuralSharing: (oldData, newData) => {
-      const current =
-        (oldData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
-      const incoming =
-        (newData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
+      const current = (oldData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
+      const incoming = (newData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
       return mergeTeamRunTasks(current, incoming);
     },
     staleTime: 1000,

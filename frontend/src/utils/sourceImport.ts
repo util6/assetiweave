@@ -17,8 +17,6 @@ export interface SourceImportFormValues {
   rootPath: string;
 }
 
-
-
 export function buildImportSourceInput(
   values: SourceImportFormValues,
 ): SourceInput {
