@@ -1,21 +1,13 @@
 import { FolderCog, Save } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { SkillBackupTaskSnapshot } from "../../services/catalog";
 import type { Source } from "../../types";
 import {
   deriveSourceName,
-  hasSourceImportFormErrors,
-  type SourceImportFormErrors,
   type SourceImportFormValues,
-  validateSourceImportForm,
 } from "../../utils/sourceImport";
 import { abbreviateHomePath } from "../../utils/path";
 import {
@@ -28,6 +20,7 @@ import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { sourceFormSchema, type SourceFormValues } from "./sourceFormSchema";
 
 export function SourceEditDialog({
   backupAssetIds = [],
@@ -57,17 +50,24 @@ export function SourceEditDialog({
   const priorityErrorId = useId();
   const formId = useId();
   const rootPathInputRef = useRef<HTMLInputElement>(null);
-  const [values, setValues] = useState<SourceImportFormValues>(() =>
-    sourceToFormValues(source),
-  );
-  const [fieldErrors, setFieldErrors] = useState<SourceImportFormErrors>({});
   const [pickingRootPath, setPickingRootPath] = useState(false);
 
+  const {
+    control,
+    formState: { errors },
+    handleSubmit,
+    register,
+    reset,
+    setValue,
+  } = useForm<SourceFormValues>({
+    defaultValues: sourceToFormValues(source),
+    resolver: zodResolver(sourceFormSchema),
+  });
+
   useEffect(() => {
-    setValues(sourceToFormValues(source));
-    setFieldErrors({});
+    reset(sourceToFormValues(source));
     setPickingRootPath(false);
-  }, [source]);
+  }, [source, reset]);
 
   if (!source) {
     return null;
@@ -78,44 +78,15 @@ export function SourceEditDialog({
       ? t("backup.action.backupCount", { count: backupAssetCount })
       : t("backup.action.allInDirectory");
 
-  function updateValue<Key extends keyof SourceImportFormValues>(
-    key: Key,
-    value: SourceImportFormValues[Key],
-  ) {
-    setValues((currentValues) => ({ ...currentValues, [key]: value }));
-    if (key === "rootPath" || key === "priority") {
-      setFieldErrors((currentErrors) => ({
-        ...currentErrors,
-        [key]: undefined,
-      }));
-    }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const errors = validateSourceImportForm(values);
-    setFieldErrors(errors);
-    if (hasSourceImportFormErrors(errors)) {
-      return;
-    }
-
-    await onSubmit({
-      ...currentSource,
-      enabled: values.enabled,
-      exclude_globs: splitRuleLines(values.excludeGlobsText),
-      include_globs: splitRuleLines(values.includeGlobsText),
-      name: values.name.trim() || deriveSourceName(values.rootPath),
-      priority: parsePriority(values.priority, currentSource.priority),
-      root_path: values.rootPath.trim(),
-    });
-  }
-
   async function handlePickRootPath() {
     setPickingRootPath(true);
     try {
       const selectedPath = await onPickRootPath();
       if (selectedPath) {
-        updateValue("rootPath", abbreviateHomePath(selectedPath));
+        setValue("rootPath", abbreviateHomePath(selectedPath), {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
       }
     } catch (error) {
       onNotifyError(
@@ -127,6 +98,26 @@ export function SourceEditDialog({
       setPickingRootPath(false);
     }
   }
+
+  const onFormSubmit = handleSubmit(async (values) => {
+    try {
+      await onSubmit({
+        ...currentSource,
+        enabled: values.enabled,
+        exclude_globs: splitRuleLines(values.excludeGlobsText),
+        include_globs: splitRuleLines(values.includeGlobsText),
+        name: values.name.trim() || deriveSourceName(values.rootPath),
+        priority: parsePriority(values.priority, currentSource.priority),
+        root_path: values.rootPath.trim(),
+      });
+    } catch (error) {
+      onNotifyError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  });
+
+  const { ref: formRootPathRef, ...rootPathRegister } = register("rootPath");
 
   const footer = (
     <>
@@ -194,24 +185,26 @@ export function SourceEditDialog({
       <form
         className="px-5 py-5"
         id={formId}
-        onSubmit={(event) => void handleSubmit(event)}
+        onSubmit={(event) => void onFormSubmit(event)}
       >
         <div className="grid gap-4">
           <Field label={t("source.field.rootPath")} required>
             <PathPickerInput
               aria-describedby={
-                fieldErrors.rootPath ? rootPathErrorId : undefined
+                errors.rootPath ? rootPathErrorId : undefined
               }
-              aria-invalid={Boolean(fieldErrors.rootPath)}
+              aria-invalid={Boolean(errors.rootPath)}
               disabled={busy}
-              onChange={(event) => updateValue("rootPath", event.target.value)}
               onPick={() => void handlePickRootPath()}
               pickLabel={t("source.import.pickDirectory")}
               picking={pickingRootPath}
-              ref={rootPathInputRef}
-              value={values.rootPath}
+              ref={(element) => {
+                rootPathInputRef.current = element;
+                formRootPathRef(element);
+              }}
+              {...rootPathRegister}
             />
-            {fieldErrors.rootPath && (
+            {errors.rootPath && (
               <FieldError id={rootPathErrorId}>
                 {t("source.import.error.rootPathRequired")}
               </FieldError>
@@ -222,24 +215,20 @@ export function SourceEditDialog({
             <Field label={t("source.field.name")}>
               <Input
                 disabled={busy}
-                onChange={(event) => updateValue("name", event.target.value)}
-                value={values.name}
+                {...register("name")}
               />
             </Field>
             <Field label={t("source.field.priority")}>
               <Input
                 aria-describedby={
-                  fieldErrors.priority ? priorityErrorId : undefined
+                  errors.priority ? priorityErrorId : undefined
                 }
-                aria-invalid={Boolean(fieldErrors.priority)}
+                aria-invalid={Boolean(errors.priority)}
                 disabled={busy}
                 inputMode="numeric"
-                onChange={(event) =>
-                  updateValue("priority", event.target.value)
-                }
-                value={values.priority}
+                {...register("priority")}
               />
-              {fieldErrors.priority && (
+              {errors.priority && (
                 <FieldError id={priorityErrorId}>
                   {t("source.import.error.priorityInvalid")}
                 </FieldError>
@@ -252,20 +241,14 @@ export function SourceEditDialog({
               <textarea
                 className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={busy}
-                onChange={(event) =>
-                  updateValue("includeGlobsText", event.target.value)
-                }
-                value={values.includeGlobsText}
+                {...register("includeGlobsText")}
               />
             </Field>
             <Field label={t("source.field.excludeGlobs")}>
               <textarea
                 className="min-h-28 w-full resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60 disabled:cursor-not-allowed disabled:opacity-50"
                 disabled={busy}
-                onChange={(event) =>
-                  updateValue("excludeGlobsText", event.target.value)
-                }
-                value={values.excludeGlobsText}
+                {...register("excludeGlobsText")}
               />
             </Field>
           </div>
@@ -274,11 +257,17 @@ export function SourceEditDialog({
             <span className="text-body-sm text-on-surface">
               {t("source.field.enabled")}
             </span>
-            <Switch
-              aria-label={t("source.field.enabled")}
-              checked={values.enabled}
-              disabled={busy}
-              onCheckedChange={(checked) => updateValue("enabled", checked)}
+            <Controller
+              control={control}
+              name="enabled"
+              render={({ field }) => (
+                <Switch
+                  aria-label={t("source.field.enabled")}
+                  checked={field.value}
+                  disabled={busy}
+                  onCheckedChange={field.onChange}
+                />
+              )}
             />
           </div>
         </div>

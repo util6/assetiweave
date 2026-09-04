@@ -4,7 +4,6 @@ import {
   DEFAULT_SKILL_EXCLUDE_GLOBS,
   DEFAULT_SKILL_INCLUDE_GLOBS,
   deriveSourceName,
-  validateSourceImportForm,
 } from "./sourceImport";
 
 describe("source import helpers", () => {
@@ -51,22 +50,6 @@ describe("source import helpers", () => {
       include_globs: ["**/SKILL.md", "packages/*/SKILL.md"],
       name: "util6-agents",
       priority: 7,
-    });
-  });
-
-  it("reports missing path and invalid priority before submit", () => {
-    expect(
-      validateSourceImportForm({
-        enabled: true,
-        excludeGlobsText: "",
-        includeGlobsText: "",
-        name: "",
-        priority: "1.5",
-        rootPath: "",
-      }),
-    ).toEqual({
-      priority: "invalid",
-      rootPath: "required",
     });
   });
 

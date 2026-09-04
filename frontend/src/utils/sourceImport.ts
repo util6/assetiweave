@@ -17,10 +17,7 @@ export interface SourceImportFormValues {
   rootPath: string;
 }
 
-export interface SourceImportFormErrors {
-  priority?: "invalid";
-  rootPath?: "required";
-}
+
 
 export function buildImportSourceInput(
   values: SourceImportFormValues,
@@ -46,26 +43,6 @@ export function buildImportSourceInput(
     scanner_kind: "skill",
     source_origin: "local_folder",
   };
-}
-
-export function validateSourceImportForm(
-  values: SourceImportFormValues,
-): SourceImportFormErrors {
-  const errors: SourceImportFormErrors = {};
-
-  if (!values.rootPath.trim()) {
-    errors.rootPath = "required";
-  }
-
-  if (!Number.isInteger(Number(values.priority))) {
-    errors.priority = "invalid";
-  }
-
-  return errors;
-}
-
-export function hasSourceImportFormErrors(errors: SourceImportFormErrors) {
-  return Boolean(errors.rootPath || errors.priority);
 }
 
 export function deriveSourceName(rootPath: string) {
