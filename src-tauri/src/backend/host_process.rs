@@ -88,12 +88,27 @@ pub(crate) enum HostProcessError {
     Cleanup(String),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
+pub(crate) enum HostCancellation<'a> {
+    Atomic(&'a std::sync::atomic::AtomicBool),
+    Token(&'a tokio_util::sync::CancellationToken),
+}
+
+impl HostCancellation<'_> {
+    pub(crate) fn is_cancelled(self) -> bool {
+        match self {
+            Self::Atomic(flag) => flag.load(std::sync::atomic::Ordering::Acquire),
+            Self::Token(token) => token.is_cancelled(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct HostProcessControl<'a> {
     pub(crate) timeout: Duration,
     pub(crate) stdout_cap: usize,
     pub(crate) stderr_cap: usize,
-    pub(crate) cancellation: Option<&'a AtomicBool>,
+    pub(crate) cancellation: Option<HostCancellation<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -264,36 +279,32 @@ pub(crate) fn run_host_command_with_cancellation(
     spec: HostCommandSpec,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    let Some(cancellation) = cancellation else {
-        return run_host_command_blocking(spec);
-    };
-    if cancellation.is_cancelled() {
-        return Err(HostProcessError::Cancelled);
-    }
-    let cancellation_flag = Arc::new(AtomicBool::new(false));
-    let watcher_done = Arc::new(AtomicBool::new(false));
-    let watcher_flag = cancellation_flag.clone();
-    let watcher_done_flag = watcher_done.clone();
-    let watcher_token = cancellation.clone();
-    let watcher = thread::spawn(move || {
-        while !watcher_done_flag.load(Ordering::Acquire) {
-            if watcher_token.is_cancelled() {
-                watcher_flag.store(true, Ordering::Release);
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    });
-    let result = run_host_command_blocking_with_cancellation(spec, Some(&cancellation_flag));
-    watcher_done.store(true, Ordering::Release);
-    let _ = watcher.join();
-    result
+    let mut command = build_host_command(&spec)?;
+    let started = Instant::now();
+    let output = run_command_with_control_and_input(
+        &mut command,
+        HostProcessControl {
+            timeout: spec.timeout,
+            stdout_cap: spec.stdout_limit,
+            stderr_cap: spec.stderr_limit,
+            cancellation: cancellation.map(HostCancellation::Token),
+        },
+        spec.stdin,
+    )?;
+    Ok(HostCommandOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+        elapsed: started.elapsed(),
+    })
 }
 
 pub(crate) fn run_host_command_blocking(
     spec: HostCommandSpec,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    run_host_command_blocking_with_cancellation(spec, None)
+    run_host_command_with_cancellation(spec, None)
 }
 
 fn run_host_command_blocking_with_cancellation(
@@ -308,7 +319,7 @@ fn run_host_command_blocking_with_cancellation(
             timeout: spec.timeout,
             stdout_cap: spec.stdout_limit,
             stderr_cap: spec.stderr_limit,
-            cancellation,
+            cancellation: cancellation.map(HostCancellation::Atomic),
         },
         spec.stdin,
     )?;
@@ -326,8 +337,7 @@ pub(crate) async fn run_host_command(
     spec: HostCommandSpec,
     cancellation: tokio_util::sync::CancellationToken,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    let cancellation_flag = Arc::new(AtomicBool::new(cancellation.is_cancelled()));
-    let worker_cancellation_flag = cancellation_flag.clone();
+    let worker_cancellation = cancellation.clone();
     let join = tokio::task::spawn_blocking(move || {
         let mut command = build_host_command(&spec)?;
         let started = Instant::now();
@@ -337,7 +347,7 @@ pub(crate) async fn run_host_command(
                 timeout: spec.timeout,
                 stdout_cap: spec.stdout_limit,
                 stderr_cap: spec.stderr_limit,
-                cancellation: Some(&worker_cancellation_flag),
+                cancellation: Some(HostCancellation::Token(&worker_cancellation)),
             },
             spec.stdin,
         )?;
@@ -356,7 +366,6 @@ pub(crate) async fn run_host_command(
         output = &mut join => output
             .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?,
         _ = cancellation.cancelled() => {
-            cancellation_flag.store(true, Ordering::Release);
             join.await
                 .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?
         }
@@ -509,8 +518,8 @@ fn run_command_with_control_and_input(
     }
 }
 
-fn is_cancelled(cancellation: Option<&AtomicBool>) -> bool {
-    cancellation.is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
+fn is_cancelled(cancellation: Option<HostCancellation<'_>>) -> bool {
+    cancellation.is_some_and(HostCancellation::is_cancelled)
 }
 
 fn find_program_on_path(program: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
@@ -935,5 +944,79 @@ mod tests {
             ])
             .env("ASSETIWEAVE_HOST_PROCESS_FIXTURE", mode);
         command
+    }
+
+    #[test]
+    fn token_cancellation_has_no_mirror_watcher_thread() {
+        let source = include_str!("host_process.rs");
+        assert!(!source.contains(concat!("let watcher_", "done =")));
+        assert!(!source.contains(concat!("let watcher_", "token =")));
+    }
+
+    #[test]
+    fn token_view_observes_cancellation_without_copying_state() {
+        let token = tokio_util::sync::CancellationToken::new();
+        let view = HostCancellation::Token(&token);
+        assert!(!view.is_cancelled());
+        token.cancel();
+        assert!(view.is_cancelled());
+    }
+
+    #[test]
+    fn sync_runner_cancels_and_reaps_the_process_tree() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let cancellation_clone = cancellation.clone();
+        let cancel_handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cancellation_clone.cancel();
+        });
+
+        let error = run_host_command_with_cancellation(
+            HostCommandSpec {
+                program: env::current_exe().expect("resolve test binary"),
+                args: vec![
+                    "--exact".to_string(),
+                    "backend::host_process::tests::process_fixture".to_string(),
+                    "--nocapture".to_string(),
+                ],
+                env: vec![(
+                    "ASSETIWEAVE_HOST_PROCESS_FIXTURE".to_string(),
+                    "timeout".to_string(),
+                )],
+                working_dir: None,
+                stdin: HostInput::Null,
+                timeout: Duration::from_secs(5),
+                stdout_limit: 32 * 1024,
+                stderr_limit: 32 * 1024,
+            },
+            Some(&cancellation),
+        )
+        .expect_err("cancelled sync command should fail");
+
+        cancel_handle.join().unwrap();
+        assert!(matches!(error, HostProcessError::Cancelled));
+    }
+
+    #[test]
+    fn pre_cancelled_command_does_not_spawn() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        cancellation.cancel();
+
+        let error = run_program_with_cancellation(
+            &env::current_exe().expect("resolve test binary"),
+            &[
+                "--exact".to_string(),
+                "backend::host_process::tests::process_fixture".to_string(),
+                "--nocapture".to_string(),
+            ],
+            None,
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            Some(&cancellation),
+        )
+        .expect_err("pre-cancelled command should fail immediately");
+
+        assert!(matches!(error, HostProcessError::Cancelled));
     }
 }

@@ -6,7 +6,7 @@
 
 ## 执行规则
 
-状态：`PLANNED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
+状态：`VERIFIED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
 
 ## 文件与接口
 
@@ -35,8 +35,8 @@ impl HostCancellation<'_> {
 
 ## 步骤
 
-- [ ] 跑现有HostProcess超时、取消、进程树回收、stdout/stderr cap测试，记录green。
-- [ ] 新增deletion guard，旧 `watcher_done` 必须red：
+- [x] 跑现有HostProcess超时、取消、进程树回收、stdout/stderr cap测试，记录green。
+- [x] 新增deletion guard，旧 `watcher_done` 必须red：
 
 ```rust
 #[test]
@@ -55,10 +55,10 @@ fn token_view_observes_cancellation_without_copying_state() {
 }
 ```
 
-- [ ] 将同步token入口直接构建control，调用原 `run_command_with_control_and_input`；保留stdin bytes/EOF、timeout、输出上限。删除watcher thread、done Atomic、10ms mirror loop及join。
-- [ ] `run_host_command` 的spawn_blocking closure持有clone token，在control内借用；外层select收到取消后仍await worker完成进程组terminate→grace→kill→reap，不提前返回泄漏子进程。
-- [ ] 原is_cancelled helper改成 `cancellation.is_some_and(HostCancellation::is_cancelled)`；原Atomic调用点显式包装。保持轮询进程退出的原周期，本卡不创造新的CancellationRuntime。
-- [ ] 用现有 `fixture_command("timeout")` 或现有fixture spec跑取消，断言返回Cancelled且子进程已回收；再测预取消不spawn、超时和输出超限依然走原分类。用测试计数/guard证明没有每次额外watcher线程，而非依赖操作系统线程总数。
+- [x] 将同步token入口直接构建control，调用原 `run_command_with_control_and_input`；保留stdin bytes/EOF、timeout、输出上限。删除watcher thread、done Atomic、10ms mirror loop及join。
+- [x] `run_host_command` 的spawn_blocking closure持有clone token，在control内借用；外层select收到取消后仍await worker完成进程组terminate→grace→kill→reap，不提前返回泄漏子进程。
+- [x] 原is_cancelled helper改成 `cancellation.is_some_and(HostCancellation::is_cancelled)`；原Atomic调用点显式包装。保持轮询进程退出的原周期，本卡不创造新的CancellationRuntime。
+- [x] 用现有 `fixture_command("timeout")` 或现有fixture spec跑取消，断言返回Cancelled且子进程已回收；再测预取消不spawn、超时和输出超限依然走原分类。用测试计数/guard证明没有每次额外watcher线程，而非依赖操作系统线程总数。
 
 ## 删除与验证
 

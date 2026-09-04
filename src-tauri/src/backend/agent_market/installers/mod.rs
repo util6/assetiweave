@@ -129,7 +129,10 @@ pub(crate) fn run_host_command(
             timeout: context.timeout,
             stdout_cap,
             stderr_cap,
-            cancellation: context.cancellation.as_deref(),
+            cancellation: context
+                .cancellation
+                .as_deref()
+                .map(crate::backend::host_process::HostCancellation::Atomic),
         },
     )
     .map_err(|error| match error {
