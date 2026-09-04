@@ -1844,15 +1844,31 @@ fn load_conversation_script_catalog(
 }
 
 fn fetch_catalog_text(url: &str) -> AppResult<String> {
-    let response = ureq::get(url)
-        .set(
-            "User-Agent",
+    let client = crate::backend::http_client::shared_http_client()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(
             "AssetIWeave/0.5 conversation-adapter-package-catalog",
-        )
-        .call()
-        .map_err(|error| format!("conversation adapter package catalog request failed: {error}"))
-        .map_err(AppError::external)?;
-    response.into_string().map_err(|error| {
+        ),
+    );
+    let response = crate::backend::http_client::get_with_redirects(
+        &client,
+        url,
+        headers,
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|error| {
+        AppError::External(format!(
+            "conversation adapter package catalog request failed: {error}"
+        ))
+    })?;
+    let response = response.error_for_status().map_err(|error| {
+        AppError::External(format!(
+            "conversation adapter package catalog request failed: {error}"
+        ))
+    })?;
+    response.text().map_err(|error| {
         AppError::External(format!(
             "conversation adapter package catalog response was not text: {error}"
         ))
@@ -3416,5 +3432,37 @@ mod tests {
 
         drop(service);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conversation_script_catalog_uses_reqwest_not_ureq() {
+        let source = include_str!("conversation_script_catalog.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
+    }
+
+    #[test]
+    fn conversation_script_catalog_fetch_text_loopback() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let body = "test catalog text";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let result = fetch_catalog_text(&format!("http://{address}/catalog.txt")).unwrap();
+        assert_eq!(result, "test catalog text");
+        server.join().unwrap();
     }
 }

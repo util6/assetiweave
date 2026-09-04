@@ -154,32 +154,60 @@ impl CatalogCache {
     }
 
     pub(crate) fn refresh_default() -> Result<CatalogRefreshOutcome, String> {
+        Self::refresh_from_url(DEFAULT_CATALOG_URL)
+    }
+
+    pub(crate) fn refresh_from_url(url: &str) -> Result<CatalogRefreshOutcome, String> {
+        let client =
+            crate::backend::http_client::shared_http_client().map_err(|error| error.to_string())?;
+        Self::refresh_from_url_with_client(&client, url)
+    }
+
+    pub(crate) fn refresh_from_url_with_client(
+        client: &reqwest::blocking::Client,
+        url: &str,
+    ) -> Result<CatalogRefreshOutcome, String> {
         let cache = Self::in_app_cache();
         let cached = cache.as_ref().and_then(|cache| cache.read().ok().flatten());
         let etag = cached.as_ref().and_then(|(_, etag)| etag.as_deref());
-        let request = ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .get(DEFAULT_CATALOG_URL)
-            .set("Accept", "application/json")
-            .set("User-Agent", "AssetIWeave/0.5 agent-market-catalog");
-        let request = if let Some(etag) = etag {
-            request.set("If-None-Match", etag)
-        } else {
-            request
-        };
-        let response = match request.call() {
-            Ok(response) => response,
-            Err(ureq::Error::Status(304, _)) => {
-                let Some((catalog, etag)) = cached else {
-                    return Err("Agent catalog returned 304 without a valid cache".to_string());
-                };
-                return Ok(CatalogRefreshOutcome::NotModified { catalog, etag });
-            }
-            Err(error) => return Err(format!("Agent catalog refresh failed: {error}")),
-        };
-        let final_url = url::Url::parse(response.get_url())
-            .map_err(|_| "Agent catalog redirect URL is invalid".to_string())?;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::ACCEPT,
+            reqwest::header::HeaderValue::from_static("application/json"),
+        );
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            reqwest::header::HeaderValue::from_static("AssetIWeave/0.5 agent-market-catalog"),
+        );
+        if let Some(etag) = etag {
+            headers.insert(
+                reqwest::header::IF_NONE_MATCH,
+                reqwest::header::HeaderValue::from_str(etag)
+                    .map_err(|error| format!("invalid etag: {error}"))?,
+            );
+        }
+
+        let response = crate::backend::http_client::get_with_redirects(
+            client,
+            url,
+            headers,
+            Duration::from_secs(15),
+        )
+        .map_err(|error| format!("Agent catalog refresh failed: {error}"))?;
+
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            let Some((catalog, etag)) = cached else {
+                return Err("Agent catalog returned 304 without a valid cache".to_string());
+            };
+            return Ok(CatalogRefreshOutcome::NotModified { catalog, etag });
+        }
+
+        let response = response
+            .error_for_status()
+            .map_err(|error| format!("Agent catalog refresh failed: {error}"))?;
+
+        let final_url = response.url();
         let host = final_url
             .host_str()
             .unwrap_or_default()
@@ -191,10 +219,16 @@ impl CatalogCache {
         {
             return Err("Agent catalog redirect host is not allowlisted".to_string());
         }
-        let response_etag = response.header("ETag").map(str::to_string);
+
+        let response_etag = response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
         let mut bytes = Vec::new();
-        response
-            .into_reader()
+        let mut reader = response;
+        reader
             .take((MAX_CATALOG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|error| format!("Agent catalog response could not be read: {error}"))?;
@@ -364,6 +398,48 @@ mod tests {
         assert!(CatalogRevision::parse("2026.02.30.1").is_err());
         assert!(CatalogRevision::parse("2026.08.20.1").is_ok());
         assert!(CatalogRevision::parse("2026.08.20").is_err());
+    }
+
+    #[test]
+    fn catalog_refresh_loopback_rejects_untrusted_host() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"catalog_version":"2026.08.20.1","items":[]}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("client");
+        let result = CatalogCache::refresh_from_url_with_client(
+            &client,
+            &format!("http://{addr}/catalog.json"),
+        );
+        let _ = handle.join();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not allowlisted"));
+    }
+
+    #[test]
+    fn catalog_cache_uses_reqwest_not_ureq() {
+        let source = include_str!("cache.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
     }
 }
 

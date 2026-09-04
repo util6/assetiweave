@@ -612,18 +612,35 @@ fn github_skill_tree_url(repo_url: &str, branch: &str, path: &str) -> String {
 }
 
 fn github_get_json(url: &str, context: &str) -> AppResult<Value> {
-    let mut request = ureq::get(url)
-        .set("User-Agent", "AssetIWeave/0.1 skill-search")
-        .set("Accept", "application/vnd.github+json");
-    let authorization = github_api_token().map(|token| format!("Bearer {token}"));
-    if let Some(authorization) = authorization.as_deref() {
-        request = request.set("Authorization", authorization);
+    let client = crate::backend::http_client::shared_http_client()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static("AssetIWeave/0.1 skill-search"),
+    );
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
+    );
+    if let Some(token) = github_api_token() {
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(AppError::external)?,
+        );
     }
-    let response = request
-        .call()
+    let response = crate::backend::http_client::get_with_redirects(
+        &client,
+        url,
+        headers,
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|error| AppError::External(format!("{context} request failed: {error}")))?;
+    let response = response
+        .error_for_status()
         .map_err(|error| AppError::External(format!("{context} request failed: {error}")))?;
     response
-        .into_json()
+        .json()
         .map_err(|error| AppError::External(format!("{context} response was not JSON: {error}")))
 }
 
@@ -978,4 +995,43 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
 
 fn short_uuid() -> String {
     Uuid::new_v4().to_string()[..8].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_remote_uses_reqwest_not_ureq() {
+        let source = include_str!("skill_remote.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
+    }
+
+    #[test]
+    fn skill_remote_github_get_json_loopback() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let body = r#"{"name":"test-skill","tag_name":"v1.0.0"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let result =
+            github_get_json(&format!("http://{address}/repos/test"), "test context").unwrap();
+        assert_eq!(result["name"], "test-skill");
+        assert_eq!(result["tag_name"], "v1.0.0");
+        server.join().unwrap();
+    }
 }

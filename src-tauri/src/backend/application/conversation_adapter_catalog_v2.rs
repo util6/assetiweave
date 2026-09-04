@@ -449,26 +449,48 @@ fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFet
                 ))
             });
     }
-    let mut request = ureq::get(url).set(
-        "User-Agent",
-        "AssetIWeave/0.5 conversation-adapter-catalog-v2",
+    let client = crate::backend::http_client::shared_http_client()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(
+            "AssetIWeave/0.5 conversation-adapter-catalog-v2",
+        ),
     );
     if let Some(etag) = etag {
-        request = request.set("If-None-Match", etag);
+        headers.insert(
+            reqwest::header::IF_NONE_MATCH,
+            reqwest::header::HeaderValue::from_str(etag).map_err(AppError::external)?,
+        );
     }
-    match request.call() {
-        Ok(response) => {
-            let etag = response.header("ETag").map(str::to_string);
-            let text = response.into_string().map_err(|error| {
-                AppError::External(format!("Catalog v2 response was not text: {error}"))
-            })?;
-            Ok(CatalogFetchResult::Text { text, etag })
-        }
-        Err(ureq::Error::Status(304, _)) => Ok(CatalogFetchResult::NotModified),
-        Err(error) => Err(AppError::External(format!(
+    let response = crate::backend::http_client::get_with_redirects(
+        &client,
+        url,
+        headers,
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|error| {
+        AppError::External(format!(
             "conversation adapter Catalog v2 request failed: {error}"
-        ))),
+        ))
+    })?;
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(CatalogFetchResult::NotModified);
     }
+    let response = response.error_for_status().map_err(|error| {
+        AppError::External(format!(
+            "conversation adapter Catalog v2 request failed: {error}"
+        ))
+    })?;
+    let etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let text = response.text().map_err(|error| {
+        AppError::External(format!("Catalog v2 response was not text: {error}"))
+    })?;
+    Ok(CatalogFetchResult::Text { text, etag })
 }
 
 fn normalized_catalog_v2_url(value: Option<&str>) -> String {
@@ -790,5 +812,40 @@ mod tests {
 
         drop(service);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn catalog_fetch_keeps_not_modified() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..n])
+                .to_lowercase()
+                .contains("if-none-match:"));
+            stream
+                .write_all(b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.flush().unwrap();
+        });
+        assert!(matches!(
+            fetch_catalog_document(&format!("http://{address}/index.json"), Some("etag-1"))
+                .unwrap(),
+            CatalogFetchResult::NotModified
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn catalog_document_uses_reqwest_not_ureq() {
+        let source = include_str!("conversation_adapter_catalog_v2.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
     }
 }
