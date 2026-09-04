@@ -8,12 +8,13 @@ use std::{
     panic::{catch_unwind, AssertUnwindSafe},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Condvar, Mutex,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::{task_tracker::TaskTrackerToken, TaskTracker};
 
 pub(crate) const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
 pub(crate) const TASK_TERMINAL_LIMIT: usize = 100;
@@ -194,6 +195,7 @@ struct TaskEntry {
     cancellation: CancellationToken,
     conflict_keys: Vec<String>,
     started: bool,
+    tracking: Option<TaskTrackerToken>,
 }
 
 #[derive(Clone)]
@@ -202,7 +204,7 @@ pub(crate) struct TaskRuntime {
     sequence: Arc<AtomicU64>,
     accepting: Arc<AtomicBool>,
     runtime_handle: Option<tokio::runtime::Handle>,
-    active: Arc<(Mutex<usize>, Condvar)>,
+    tracker: TaskTracker,
     events: Arc<broadcast::Sender<TaskSnapshot>>,
 }
 
@@ -249,7 +251,7 @@ impl TaskRuntime {
             sequence: Arc::new(AtomicU64::new(0)),
             accepting: Arc::new(AtomicBool::new(true)),
             runtime_handle: None,
-            active: Arc::new((Mutex::new(0), Condvar::new())),
+            tracker: TaskTracker::new(),
             events: Arc::new(events),
         }
     }
@@ -285,6 +287,11 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(AppError::Canceled(
+                "应用正在关闭，不再接受新任务".to_string(),
+            ));
+        }
         Self::prune_terminal_tasks_locked(&mut tasks);
         if tasks.contains_key(&task_id) {
             return Ok(SpawnOutcome::Existing);
@@ -302,6 +309,7 @@ impl TaskRuntime {
         }) {
             return Ok(SpawnOutcome::Existing);
         }
+        let tracking = self.tracker.token();
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
@@ -322,15 +330,13 @@ impl TaskRuntime {
                 cancellation: cancellation.clone(),
                 conflict_keys: spec.conflict_keys,
                 started: true,
+                tracking: None,
             },
         );
         drop(tasks);
-        if let Ok(mut active) = self.active.0.lock() {
-            *active += 1;
-        }
         self.publish(&snapshot);
 
-        self.launch_task(task_id.clone(), cancellation, task)?;
+        self.launch_task(task_id, cancellation, tracking, task)?;
         Ok(SpawnOutcome::Started)
     }
 
@@ -356,6 +362,11 @@ impl TaskRuntime {
             .tasks
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(AppError::Canceled(
+                "应用正在关闭，不再接受新任务".to_string(),
+            ));
+        }
         Self::prune_terminal_tasks_locked(&mut tasks);
         if let Some(existing) = tasks.get(&task_id) {
             return Ok(ExternalRegistrationOutcome::Existing(
@@ -386,6 +397,7 @@ impl TaskRuntime {
                 existing.snapshot.clone(),
             ));
         }
+        let tracking = self.tracker.token();
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
@@ -406,12 +418,10 @@ impl TaskRuntime {
                 cancellation: cancellation.clone(),
                 conflict_keys: spec.conflict_keys,
                 started: false,
+                tracking: Some(tracking),
             },
         );
         drop(tasks);
-        if let Ok(mut active) = self.active.0.lock() {
-            *active += 1;
-        }
         self.publish(&snapshot);
         Ok(ExternalRegistrationOutcome::Started(snapshot))
     }
@@ -558,7 +568,7 @@ impl TaskRuntime {
         detail: Value,
         task: TaskFn,
     ) -> AppResult<TaskSnapshot> {
-        let (snapshot, cancellation, should_launch) = {
+        let (snapshot, cancellation, tracking, should_launch) = {
             let mut tasks = self
                 .tasks
                 .lock()
@@ -572,18 +582,25 @@ impl TaskRuntime {
                 entry.snapshot.detail = sanitize_task_detail(detail);
             }
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
-            if should_launch {
+            let tracking = if should_launch {
                 entry.started = true;
-            }
+                entry
+                    .tracking
+                    .take()
+                    .unwrap_or_else(|| self.tracker.token())
+            } else {
+                self.tracker.token()
+            };
             (
                 entry.snapshot.clone(),
                 entry.cancellation.clone(),
+                tracking,
                 should_launch,
             )
         };
         self.publish(&snapshot);
         if should_launch {
-            self.launch_task(task_id.to_string(), cancellation, task)?;
+            self.launch_task(task_id.to_string(), cancellation, tracking, task)?;
         } else if snapshot.state == TaskState::Cancelling {
             return self.complete_external(
                 task_id,
@@ -610,6 +627,7 @@ impl TaskRuntime {
             return Ok(entry.snapshot.clone());
         }
         entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        let _tracking = entry.tracking.take();
         match result {
             Ok(detail) => {
                 if entry.cancellation.is_cancelled() {
@@ -638,7 +656,6 @@ impl TaskRuntime {
         let snapshot = entry.snapshot.clone();
         drop(tasks);
         self.publish(&snapshot);
-        self.release_active_slot();
         Ok(snapshot)
     }
 
@@ -650,18 +667,16 @@ impl TaskRuntime {
         if !should_remove {
             return None;
         }
-        tasks.remove(task_id).map(|entry| entry.snapshot)
+        tasks.remove(task_id).map(|mut entry| {
+            let _ = entry.tracking.take();
+            entry.snapshot
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn remove(&self, task_id: &str) -> Option<TaskSnapshot> {
-        let removed = self.tasks.lock().ok()?.remove(task_id);
-        if removed
-            .as_ref()
-            .is_some_and(|entry| entry.snapshot.state.is_active())
-        {
-            self.release_active_slot();
-        }
+        let mut removed = self.tasks.lock().ok()?.remove(task_id);
+        let _ = removed.as_mut().and_then(|entry| entry.tracking.take());
         removed.map(|entry| entry.snapshot)
     }
 
@@ -689,23 +704,18 @@ impl TaskRuntime {
             .unwrap_or(true)
     }
 
-    fn release_active_slot(&self) {
-        if let Ok(mut active) = self.active.0.lock() {
-            *active = active.saturating_sub(1);
-            self.active.1.notify_all();
-        }
-    }
-
     fn launch_task(
         &self,
         task_id: String,
         cancellation: CancellationToken,
+        tracking: TaskTrackerToken,
         task: TaskFn,
     ) -> AppResult<()> {
         let runtime = self.clone();
         let run_task_id = task_id.clone();
         let thread_name = format!("aiw-task-{task_id}");
         let run = move || {
+            let _tracking = tracking;
             let cancellation = cancellation;
             let context = TaskContext {
                 cancellation: cancellation.clone(),
@@ -716,7 +726,6 @@ impl TaskRuntime {
             };
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
                 .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
-            let mut release_slot = false;
             let mut terminal_snapshot = None;
             if let Ok(mut tasks) = runtime.tasks.lock() {
                 if let Some(entry) = tasks.get_mut(&run_task_id) {
@@ -755,15 +764,11 @@ impl TaskRuntime {
                             }
                         }
                         terminal_snapshot = Some(entry.snapshot.clone());
-                        release_slot = true;
                     }
                 }
             }
             if let Some(snapshot) = terminal_snapshot {
                 runtime.publish(&snapshot);
-            }
-            if release_slot {
-                runtime.release_active_slot();
             }
         };
         if let Some(handle) = self.runtime_handle.clone() {
@@ -785,7 +790,6 @@ impl TaskRuntime {
             if let Some(snapshot) = failed_snapshot {
                 self.publish(&snapshot);
             }
-            self.release_active_slot();
             return Err(AppError::External(format!("启动后台任务失败: {error}")));
         }
         Ok(())
@@ -865,11 +869,16 @@ impl TaskRuntime {
 
     pub(crate) fn stop_accepting(&self) {
         self.accepting.store(false, Ordering::Release);
+        self.tracker.close();
     }
 
-    pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
+    pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
         self.stop_accepting();
-        if let Ok(tasks) = self.tasks.lock() {
+        {
+            let tasks = self
+                .tasks
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             for entry in tasks
                 .values()
                 .filter(|entry| entry.snapshot.state.is_active())
@@ -877,20 +886,8 @@ impl TaskRuntime {
                 entry.cancellation.cancel();
             }
         }
-
-        let deadline = Instant::now() + grace;
-        if let Ok(mut active) = self.active.0.lock() {
-            while *active > 0 {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                active = match self.active.1.wait_timeout(active, remaining) {
-                    Ok((next, _)) => next,
-                    Err(error) => error.into_inner().0,
-                };
-            }
-        }
+        self.tracker.close();
+        let _ = tokio::time::timeout(grace, self.tracker.wait()).await;
 
         let unfinished_task_ids = self
             .tasks

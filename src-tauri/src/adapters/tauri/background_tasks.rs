@@ -2746,7 +2746,11 @@ mod tests {
         let registry = BackgroundTaskRegistry::with_task_runtime(runtime.clone());
 
         assert!(registry.task_runtime().is_some());
-        runtime.shutdown_with_grace(Duration::ZERO);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        rt.block_on(runtime.shutdown_with_grace(Duration::ZERO));
     }
 
     #[test]
@@ -2848,7 +2852,11 @@ mod tests {
         registry
             .finish_conversation_script_install(&adapter.id, Ok(serde_json::json!({})))
             .unwrap();
-        runtime.shutdown_with_grace(Duration::ZERO);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        rt.block_on(runtime.shutdown_with_grace(Duration::ZERO));
     }
 
     #[test]

@@ -43,7 +43,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2.10.0"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["compat"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 tracing-appender = "=0.2.5"

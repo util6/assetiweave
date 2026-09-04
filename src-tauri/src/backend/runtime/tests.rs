@@ -337,7 +337,11 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     };
 
     let started = std::time::Instant::now();
-    let report = tasks.shutdown_with_grace(Duration::from_millis(20));
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(20)));
     assert!(started.elapsed() < Duration::from_millis(100));
     assert_eq!(report.unfinished_task_ids, vec![task_id]);
 
@@ -376,4 +380,49 @@ fn runtime_config_db_path_matches_injected_path() {
         .expect("bootstrap test runtime");
     assert_eq!(runtime.config().db_path, temp_db);
     let _ = std::fs::remove_file(&temp_db);
+}
+
+#[test]
+fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
+    let source = include_str!("tasks.rs");
+    assert!(source.contains("TaskTracker"));
+    assert!(!source.contains(concat!("Cond", "var")));
+    assert!(!source.contains(concat!("fn release_active_", "slot(")));
+}
+
+#[test]
+fn shutdown_waits_for_external_task_completion() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec =
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("external-still-running");
+    tasks.register_external(spec).unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(5)));
+    assert_eq!(report.unfinished_task_ids, vec!["external-still-running"]);
+    assert!(tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+            Box::new(|_| Ok(serde_json::Value::Null)),
+        )
+        .is_err());
+}
+
+#[test]
+fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec = tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("ext-completed");
+    tasks.register_external(spec).unwrap();
+    tasks
+        .complete_external("ext-completed", Ok(serde_json::Value::Null))
+        .unwrap();
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    let report = rt.block_on(tasks.shutdown_with_grace(Duration::from_millis(50)));
+    assert!(report.unfinished_task_ids.is_empty());
 }

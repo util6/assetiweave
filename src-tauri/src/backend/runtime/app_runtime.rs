@@ -623,8 +623,7 @@ impl AppRuntime {
     pub(crate) fn stop_tasks_with_grace(&self, grace: Duration) -> Vec<String> {
         self.stop_session_memory_coordinator();
         self.task_runtime.stop_accepting();
-        self.task_runtime
-            .shutdown_with_grace(grace)
+        self.block_on(self.task_runtime.shutdown_with_grace(grace))
             .unfinished_task_ids
     }
 
@@ -730,9 +729,10 @@ impl AppRuntime {
             }
         }
         self.task_runtime.stop_accepting();
-        let task_report = self
-            .task_runtime
-            .shutdown_with_grace(deadline.saturating_duration_since(Instant::now()));
+        let task_report = self.block_on(
+            self.task_runtime
+                .shutdown_with_grace(deadline.saturating_duration_since(Instant::now())),
+        );
         let dispatcher_report = self
             .dispatcher
             .lock()

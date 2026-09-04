@@ -1128,10 +1128,12 @@ mod tests {
         assert_eq!(cancelled.turns[0].status, MemoryRecallTurnStatus::Cancelled);
         assert!(cancelled.turns[0].structured_output.is_none());
         assert!(cancelled.active_turn_id.is_none());
-        service
-            .runtime
-            .task_runtime()
-            .shutdown_with_grace(std::time::Duration::from_secs(2));
+        service.runtime.block_on(
+            service
+                .runtime
+                .task_runtime()
+                .shutdown_with_grace(std::time::Duration::from_secs(2)),
+        );
         drop(service);
         std::fs::remove_dir_all(root).ok();
     }

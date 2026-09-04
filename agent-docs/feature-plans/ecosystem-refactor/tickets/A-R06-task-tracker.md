@@ -6,7 +6,7 @@
 
 ## 执行规则
 
-状态：`PLANNED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
+状态：`VERIFIED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。原有正确行为先 characterization green；随后新增 adoption/deletion guard 得到 red，再迁移。筛选测试先 `-- --list`，零测试不算 green。只用临时目录/内存库/loopback fixture；本卡不授权插件架构或真实用户数据操作。
 
 ## 文件
 
@@ -30,8 +30,8 @@ pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownRepor
 
 ## 步骤
 
-- [ ] 跑 `runtime::tests`，保存去重、external task终态、取消、退出宽限期的green。
-- [ ] 加source guard得到red；这是替换机制的强制证据：
+- [x] 跑 `runtime::tests`，保存去重、external task终态、取消、退出宽限期的green。
+- [x] 加source guard得到red；这是替换机制的强制证据：
 
 ```rust
 #[test]
@@ -43,9 +43,9 @@ fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
 }
 ```
 
-- [ ] 在成功注册任务且持有tasks锁时创建 `tracker.token()`；同一锁内检查accepting，避免stop/新注册竞态。Pending任务token存entry；启动普通任务时token取出移到worker，worker真正返回时Drop；external task token由finish_external唯一消费。
-- [ ] 普通worker继续catch_unwind并发布终态；token用RAII无论成功、取消、panic都释放。不要在“UI已终态”但worker还执行清理时提前drop。取消请求不释放token，终止真正完成才释放。
-- [ ] `stop_accepting` 在同一注册锁内设置闸门并close；tracker.close本身不禁止spawn，注册函数的闸门必须保留。关闭等待核心：
+- [x] 在成功注册任务且持有tasks锁时创建 `tracker.token()`；同一锁内检查accepting，避免stop/新注册竞态。Pending任务token存entry；启动普通任务时token取出移到worker，worker真正返回时Drop；external task token由finish_external唯一消费。
+- [x] 普通worker继续catch_unwind并发布终态；token用RAII无论成功、取消、panic都释放。不要在“UI已终态”但worker还执行清理时提前drop。取消请求不释放token，终止真正完成才释放。
+- [x] `stop_accepting` 在同一注册锁内设置闸门并close；tracker.close本身不禁止spawn，注册函数的闸门必须保留。关闭等待核心：
 
 ```rust
 self.stop_accepting();
@@ -60,8 +60,8 @@ let _ = tokio::time::timeout(grace, self.tracker.wait()).await;
 // 然后由既有snapshot枚举unfinished_task_ids；超时不捏造任务已结束。
 ```
 
-- [ ] 删除 `active: Arc<(Mutex<usize>, Condvar)>`、注册加计数、release_active_slot及所有notify/wait_timeout分支；保留tasks map、conflict_keys、进度、租户、sequence、terminal retention。
-- [ ] 用确定的channel/barrier测试注册与shutdown竞态、external task未finish的超时报告、panic释放token、取消后清理完成再退出。额外测试 `tracker.close()` 后原注册入口拒绝任务，避免误依赖库close行为。
+- [x] 删除 `active: Arc<(Mutex<usize>, Condvar)>`、注册加计数、release_active_slot及所有notify/wait_timeout分支；保留tasks map、conflict_keys、进度、租户、sequence、terminal retention。
+- [x] 用确定的channel/barrier测试注册与shutdown竞态、external task未finish的超时报告、panic释放token、取消后清理完成再退出。额外测试 `tracker.close()` 后原注册入口拒绝任务，避免误依赖库close行为。
 
 ## 具体行为测试骨架
 
