@@ -6,7 +6,7 @@
 
 ## 执行规则
 
-状态：`PLANNED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。保真测试先green、采用库/删除旧路径guard再red；测试未命中不算通过。网络测试只用loopback fixture，数据测试只用临时目录/内存SQLite。
+状态：`COMPLETED`。先读总入口、本卡 Contract IDs、`../02-dependencies.md`、`../05-playbook.md`。一轮只做本卡。保真测试先green、采用库/删除旧路径guard再red；测试未命中不算通过。网络测试只用loopback fixture，数据测试只用临时目录/内存SQLite。
 
 ## 文件
 
@@ -38,8 +38,8 @@ pub(crate) fn get_with_redirects(
 
 ## 步骤与具体代码
 
-- [ ] 保留ureq直依赖，查锁表加入reqwest blocking/json/rustls/gzip；先用旧fixture确认5跳/Authorization策略。
-- [ ] 添加新接缝测试，未创建方法时编译red；再用source guard确认不再每次构建client。
+- [x] 保留ureq直依赖，查锁表加入reqwest blocking/json/rustls/gzip；先用旧fixture确认5跳/Authorization策略。
+- [x] 添加新接缝测试，未创建方法时编译red；再用source guard确认不再每次构建client。
 
 ```rust
 #[test]
@@ -56,7 +56,7 @@ fn client_can_be_built_used_and_dropped_in_blocking_worker() {
 }
 ```
 
-- [ ] 私有builder使用真实库API，不包自研Request/Response：
+- [x] 私有builder使用真实库API，不包自研Request/Response：
 
 ```rust
 fn build_http_client() -> AppResult<reqwest::blocking::Client> {
@@ -70,7 +70,7 @@ fn build_http_client() -> AppResult<reqwest::blocking::Client> {
 }
 ```
 
-- [ ] 每次get helper设置请求timeout（catalog 15s，artifact沿context最多10min）；builder无默认总timeout避免偷偷改变旧下载上限。
+- [x] 每次get helper设置请求timeout（catalog 15s，artifact沿context最多10min）；builder无默认总timeout避免偷偷改变旧下载上限。
 
 ```rust
 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -82,8 +82,8 @@ if response.status() == reqwest::StatusCode::NOT_MODIFIED { return Ok(response);
 headers.remove(reqwest::header::AUTHORIZATION);
 ```
 
-- [ ] fixture内用std TcpListener返回200/304/相对302/6跳和gzip；记录headers，证明任何redirect下一跳都没有Authorization。请求错误不调用mock；用两次请求验证共享Client可复用连接。
-- [ ] 确认所有 HTTP 调用属于现有后台任务/同步 Engine 作用域；关闭由 TaskRuntime 停止接纳和排空。HTTP 模块没有第二个 accepting/active/shutdown registry；静态连接池仅为进程级库资源。
+- [x] fixture内用std TcpListener返回200/304/相对302/6跳和gzip；记录headers，证明任何redirect下一跳都没有Authorization。请求错误不调用mock；用两次请求验证共享Client可复用连接。
+- [x] 确认所有 HTTP 调用属于现有后台任务/同步 Engine 作用域；关闭由 TaskRuntime 停止接纳和排空。HTTP 模块没有第二个 accepting/active/shutdown registry；静态连接池仅为进程级库资源。
 
 ## 验证
 

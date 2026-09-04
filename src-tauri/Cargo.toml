@@ -28,6 +28,7 @@ globset = "0.4"
 libc = "0.2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 regex = "1"
+reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json", "rustls", "gzip"] }
 schemars = "1.2.1"
 semver = "1"
 signal-hook = "0.3"
