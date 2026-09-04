@@ -238,9 +238,9 @@ pub(super) fn upsert_highest_runtime_requirement(
 }
 
 fn runtime_requirement_is_higher(candidate: &str, current: &str) -> AppResult<bool> {
-    let candidate = parse_minimum_version_constraint(candidate)?;
-    let current = parse_minimum_version_constraint(current)?;
-    Ok(compare_versions(&candidate, &current) == std::cmp::Ordering::Greater)
+    let candidate = parse_minimum_runtime_version(candidate)?;
+    let current = parse_minimum_runtime_version(current)?;
+    Ok(candidate > current)
 }
 
 pub(super) fn sort_runtime_requirements(
@@ -508,49 +508,57 @@ pub(super) fn runtime_version_satisfies_constraint(
     detected_version: &str,
     requirement: &str,
 ) -> AppResult<bool> {
-    let minimum = parse_minimum_version_constraint(requirement)?;
+    let requirement = parse_minimum_version_constraint(requirement)?;
     let detected = parse_detected_runtime_version(detected_version).ok_or_else(|| {
         AppError::external({
             format!("could not parse adapter runtime version from output: {detected_version}")
         })
     })?;
-    Ok(compare_versions(&detected, &minimum) != std::cmp::Ordering::Less)
+    Ok(requirement.matches(&detected))
 }
 
-fn parse_minimum_version_constraint(requirement: &str) -> AppResult<Vec<u64>> {
+fn parse_minimum_version_constraint(requirement: &str) -> AppResult<semver::VersionReq> {
+    let minimum = parse_minimum_runtime_version(requirement)?;
+    semver::VersionReq::parse(&format!(">={minimum}")).map_err(AppError::external)
+}
+
+fn parse_minimum_runtime_version(requirement: &str) -> AppResult<semver::Version> {
     let requirement = requirement.trim();
     let version = requirement.strip_prefix(">=").ok_or_else(|| {
         AppError::external({
             format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
         })
     })?;
-    parse_exact_runtime_version(version.trim()).ok_or_else(|| {
+    parse_numeric_runtime_version(version.trim()).ok_or_else(|| {
         AppError::Validation(format!(
             "adapter runtime version constraint must use >=x[.y[.z]]: {requirement}"
         ))
     })
 }
 
-fn parse_exact_runtime_version(version: &str) -> Option<Vec<u64>> {
-    if version.is_empty() {
+fn parse_numeric_runtime_version(value: &str) -> Option<semver::Version> {
+    if value.is_empty() {
         return None;
     }
-    let parts = version.split('.').collect::<Vec<_>>();
+    let parts = value.split('.').collect::<Vec<_>>();
     if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
         return None;
     }
-    parts
-        .into_iter()
-        .map(|part| {
-            part.chars()
-                .all(|character| character.is_ascii_digit())
-                .then(|| part.parse::<u64>().ok())
-                .flatten()
-        })
-        .collect()
+    let mut numbers = Vec::with_capacity(parts.len());
+    for part in parts {
+        if !part.chars().all(|character| character.is_ascii_digit()) {
+            return None;
+        }
+        let number = part.parse::<u64>().ok()?;
+        numbers.push(number);
+    }
+    let major = *numbers.first().unwrap_or(&0);
+    let minor = *numbers.get(1).unwrap_or(&0);
+    let patch = *numbers.get(2).unwrap_or(&0);
+    Some(semver::Version::new(major, minor, patch))
 }
 
-fn parse_detected_runtime_version(output: &str) -> Option<Vec<u64>> {
+fn parse_detected_runtime_version(output: &str) -> Option<semver::Version> {
     let start = output
         .char_indices()
         .find(|(_, character)| character.is_ascii_digit())
@@ -559,23 +567,7 @@ fn parse_detected_runtime_version(output: &str) -> Option<Vec<u64>> {
         .chars()
         .take_while(|character| character.is_ascii_digit() || *character == '.')
         .collect::<String>();
-    parse_exact_runtime_version(version.trim_end_matches('.'))
-}
-
-fn compare_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
-    let max_len = left.len().max(right.len());
-    for index in 0..max_len {
-        match left
-            .get(index)
-            .copied()
-            .unwrap_or_default()
-            .cmp(&right.get(index).copied().unwrap_or_default())
-        {
-            std::cmp::Ordering::Equal => {}
-            ordering => return ordering,
-        }
-    }
-    std::cmp::Ordering::Equal
+    parse_numeric_runtime_version(version.trim_end_matches('.'))
 }
 
 fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind, settings: &Value) -> PathBuf {
@@ -756,4 +748,26 @@ pub(super) fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_semver_preserves_minimum_language() {
+        assert!(runtime_version_satisfies_constraint("v20.10.0", ">=20.2").unwrap());
+        assert!(runtime_version_satisfies_constraint("Python 3.12.1", ">=3.12").unwrap());
+        assert!(!runtime_version_satisfies_constraint("v18.19.0", ">=20").unwrap());
+        assert!(runtime_version_satisfies_constraint("v20.0.0", ">=020").unwrap());
+        assert!(validate_runtime_version_constraint("^20").is_err());
+        assert!(validate_runtime_version_constraint(">=20.0.0.1").is_err());
+    }
+
+    #[test]
+    fn runtime_semver_uses_semver_and_no_manual_compare() {
+        let source = include_str!("io_utils.rs");
+        assert!(source.contains("semver::VersionReq"));
+        assert!(!source.contains(concat!("fn ", "compare_versions")));
+    }
 }
