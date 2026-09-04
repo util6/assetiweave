@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
+import type { i18n as I18nInstance } from "i18next";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createAppQueryClient } from "./query/queryClient";
 import { QueryScopeProvider } from "./query/QueryScopeProvider";
 import { I18nProvider } from "../i18n/I18nProvider";
+import { I18nEffects } from "../i18n/I18nEffects";
 import { SettingsEffects } from "../store/settings/SettingsEffects";
 import { ConversationSyncProvider } from "./backgroundTasks/ConversationSyncProvider";
 import { AiExecutionTaskProvider } from "./backgroundTasks/AiExecutionTaskProvider";
@@ -18,11 +20,17 @@ import { TeamTaskProvider } from "./backgroundTasks/TeamTaskProvider";
 
 const appQueryClient = createAppQueryClient();
 
-export function AppProviders({ children }: { children: ReactNode }) {
+export interface AppProvidersProps {
+  children: ReactNode;
+  i18n?: I18nInstance;
+}
+
+export function AppProviders({ children, i18n }: AppProvidersProps) {
   return (
     <QueryClientProvider client={appQueryClient}>
       <QueryScopeProvider>
-        <I18nProvider>
+        <I18nProvider i18n={i18n}>
+          <I18nEffects />
           <SettingsEffects />
           <ConversationCardKindRegistryProvider>
             <ConversationSyncProvider>
