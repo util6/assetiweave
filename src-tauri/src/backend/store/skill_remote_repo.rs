@@ -113,66 +113,77 @@ mod tests {
     use super::*;
     use crate::backend::models::{Asset, AssetFormat, AssetKind};
 
-    #[test]
-    fn sqlx_upserts_and_updates_skill_remote_source() {
+    #[tokio::test]
+    async fn sqlx_skill_remote_source_round_trips_and_updates_check_result() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-skill-remote-sqlx-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let mut source = test_remote_source();
 
-        database
-            .block_on(async {
-                upsert_skill_remote_source_sqlx(database.pool(), "default", &source).await?;
-                source.last_checked_at = Some("2026-01-02T00:00:00Z".to_string());
-                source.latest_tree_sha = Some("new-tree".to_string());
-                source.status = "changed".to_string();
-                source.message = Some("Remote Skill changed since import".to_string());
-                update_skill_remote_check_result_sqlx(database.pool(), "default", &source).await?;
-                let loaded =
-                    load_skill_remote_source_sqlx(database.pool(), "default", "asset-a").await?;
-                let listed = list_skill_remote_sources_sqlx(database.pool(), "default").await?;
-                AppResult::Ok((loaded, listed))
-            })
-            .map(|(loaded, listed)| {
-                assert_eq!(loaded.expect("loaded remote").status, "changed");
-                assert_eq!(listed.len(), 1);
-            })
-            .expect("query SQLx skill remote repo");
+        upsert_skill_remote_source_sqlx(database.pool(), "default", &source)
+            .await
+            .expect("upsert skill remote source");
+        source.last_checked_at = Some("2026-01-02T00:00:00Z".to_string());
+        source.latest_tree_sha = Some("new-tree".to_string());
+        source.status = "changed".to_string();
+        source.message = Some("Remote Skill changed since import".to_string());
+        update_skill_remote_check_result_sqlx(database.pool(), "default", &source)
+            .await
+            .expect("update check result");
+        let loaded = load_skill_remote_source_sqlx(database.pool(), "default", "asset-a")
+            .await
+            .expect("load remote source");
+        let listed = list_skill_remote_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("list remote sources");
+
+        assert_eq!(loaded.expect("loaded remote").status, "changed");
+        assert_eq!(listed.len(), 1);
+
         drop(database);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
-    #[test]
-    fn sqlx_deletes_orphan_skill_remote_sources() {
+    #[tokio::test]
+    async fn sqlx_deletes_orphan_skill_remote_sources() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-skill-remote-orphan-sqlx-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let asset = test_asset();
         let retained = test_remote_source();
         let mut orphan = test_remote_source();
         orphan.asset_id = "missing-asset".to_string();
 
-        let listed = database
-            .block_on(async {
-                crate::backend::store::replace_source_assets_sqlx(
-                    database.pool(),
-                    "default",
-                    &asset.source_id,
-                    std::slice::from_ref(&asset),
-                )
-                .await?;
-                upsert_skill_remote_source_sqlx(database.pool(), "default", &retained).await?;
-                upsert_skill_remote_source_sqlx(database.pool(), "default", &orphan).await?;
-                delete_orphan_skill_remote_sources_sqlx(database.pool(), "default").await?;
-                list_skill_remote_sources_sqlx(database.pool(), "default").await
-            })
-            .expect("delete SQLx orphan remote sources");
+        crate::backend::store::replace_source_assets_sqlx(
+            database.pool(),
+            "default",
+            &asset.source_id,
+            std::slice::from_ref(&asset),
+        )
+        .await
+        .expect("replace source assets");
+        upsert_skill_remote_source_sqlx(database.pool(), "default", &retained)
+            .await
+            .expect("upsert retained");
+        upsert_skill_remote_source_sqlx(database.pool(), "default", &orphan)
+            .await
+            .expect("upsert orphan");
+        delete_orphan_skill_remote_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("delete orphan remote sources");
+        let listed = list_skill_remote_sources_sqlx(database.pool(), "default")
+            .await
+            .expect("list remaining remote sources");
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].asset_id, retained.asset_id);

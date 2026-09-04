@@ -22,7 +22,7 @@ impl StagingDirectoryGuard {
     }
 }
 
-fn report_skill_acquire_phase(phase_sink: Option<&dyn Fn(&str)>, phase: &str) {
+fn report_skill_acquire_phase(phase_sink: Option<&(dyn Fn(&str) + Send + Sync)>, phase: &str) {
     if let Some(phase_sink) = phase_sink {
         phase_sink(phase);
     }
@@ -68,23 +68,23 @@ impl AppService {
         })
     }
 
-    pub(crate) fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
-        self.acquire_skill_with_cancellation(params, None)
+    pub(crate) async fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation(params, None).await
     }
 
-    pub(crate) fn acquire_skill_with_cancellation(
+    pub(crate) async fn acquire_skill_with_cancellation(
         &self,
         params: SkillAcquireParams,
         cancellation: Option<&CancellationToken>,
     ) -> AppResult<Value> {
-        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None)
+        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None).await
     }
 
-    pub(crate) fn acquire_skill_with_cancellation_and_progress(
+    pub(crate) async fn acquire_skill_with_cancellation_and_progress(
         &self,
         params: SkillAcquireParams,
         cancellation: Option<&CancellationToken>,
-        phase_sink: Option<&dyn Fn(&str)>,
+        phase_sink: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
@@ -102,14 +102,13 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = self
-            .db
-            .block_on(capabilities::skill_backup_root_sqlx(
-                self.db.pool(),
-                self.tenant_id(),
-            ))?
-            .join(".staging")
-            .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
+        let staging_dir = capabilities::skill_backup_root_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+        )
+        .await?
+        .join(".staging")
+        .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 
         if params.dry_run {
@@ -150,7 +149,7 @@ impl AppService {
                 dry_run: false,
             },
             phase_sink,
-        )?;
+        ).await?;
         ensure_not_cancelled(cancellation)?;
         let imported_asset = import_result
             .get("asset")
@@ -180,19 +179,13 @@ impl AppService {
                 "Remote source recorded; run skill remote check to detect drift".to_string(),
             ),
         };
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let remote_source_to_save = remote_source.clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::upsert_skill_remote_source_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &remote_source_to_save,
-                )
-                .await
-            })
-            .map_err(AppError::external)?;
+        crate::backend::store::upsert_skill_remote_source_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &remote_source,
+        )
+        .await
+        .map_err(AppError::external)?;
         let staging_cleaned = staging_guard.cleanup();
         if !staging_cleaned {
             return Err(AppError::Storage(
@@ -216,20 +209,18 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self
-            .db
-            .block_on(async move {
-                crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
-                    .await?;
-                crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
-            })
-            .map_err(AppError::external)?)
+    pub(crate) async fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(pool, tenant_id)
+            .await
+            .map_err(AppError::external)?;
+        crate::backend::store::list_skill_remote_sources_sqlx(pool, tenant_id)
+            .await
+            .map_err(AppError::external)
     }
 
-    pub(crate) fn check_skill_remote_sources(
+    pub(crate) async fn check_skill_remote_sources(
         &self,
         params: SkillRemoteCheckParams,
     ) -> AppResult<Vec<SkillRemoteSource>> {
@@ -239,44 +230,33 @@ impl AppService {
             .map(str::trim)
             .filter(|id| !id.is_empty())
         {
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            vec![self
-                .db
-                .block_on(async move {
-                    crate::backend::store::delete_orphan_skill_remote_sources_sqlx(
-                        &pool, &tenant_id,
-                    )
-                    .await?;
-                    crate::backend::store::load_skill_remote_source_sqlx(
-                        &pool, &tenant_id, asset_id,
-                    )
-                    .await
-                })
-                .map_err(AppError::external)?
-                .ok_or_else(|| {
-                    AppError::NotFound(format!("skill remote source not found: {asset_id}"))
-                })?]
+            let pool = self.db.pool();
+            let tenant_id = self.tenant_id();
+            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(pool, tenant_id)
+                .await
+                .map_err(AppError::external)?;
+            vec![crate::backend::store::load_skill_remote_source_sqlx(
+                pool, tenant_id, asset_id,
+            )
+            .await
+            .map_err(AppError::external)?
+            .ok_or_else(|| {
+                AppError::NotFound(format!("skill remote source not found: {asset_id}"))
+            })?]
         } else {
-            self.list_skill_remote_sources()?
+            self.list_skill_remote_sources().await?
         };
 
         let mut checked = Vec::with_capacity(sources.len());
         for source in sources {
             let source = check_skill_remote_source(source);
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let source_to_save = source.clone();
-            self.db
-                .block_on(async move {
-                    crate::backend::store::update_skill_remote_check_result_sqlx(
-                        &pool,
-                        &tenant_id,
-                        &source_to_save,
-                    )
-                    .await
-                })
-                .map_err(AppError::external)?;
+            crate::backend::store::update_skill_remote_check_result_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                &source,
+            )
+            .await
+            .map_err(AppError::external)?;
             checked.push(source);
         }
         Ok(checked)

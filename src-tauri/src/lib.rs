@@ -226,15 +226,15 @@ pub fn run() {
                     &[],
                 );
             }
+            if let Err(error) = service.refresh_asset_mount_statuses(None).await {
+                log_error(
+                    "app.startup.mount_refresh",
+                    "failed to sync AssetIWeave mount observations on startup",
+                    &error,
+                    &[],
+                );
+            }
         });
-        if let Err(error) = service.refresh_asset_mount_statuses(None) {
-            log_error(
-                "app.startup.mount_refresh",
-                "failed to sync AssetIWeave mount observations on startup",
-                &error,
-                &[],
-            );
-        }
         match service.conversation_payload_policy_reparse_required() {
             Ok(required) => required,
             Err(error) => {
@@ -489,13 +489,13 @@ pub fn run() {
     });
 }
 
-pub(crate) fn sync_before_close_with_runtime(
+pub(crate) async fn sync_before_close_with_runtime(
     runtime: &Arc<AppRuntime>,
     db_path: &std::path::Path,
     backup_database: bool,
 ) {
     let service = AppService::from_runtime(runtime);
-    if let Err(error) = service.refresh_asset_mount_statuses(None) {
+    if let Err(error) = service.refresh_asset_mount_statuses(None).await {
         log_error(
             "app.close.mount_refresh",
             "failed to sync AssetIWeave mount observations before close",
@@ -1107,18 +1107,6 @@ fn install_engine_termination_handlers(
         });
     }
     Ok(())
-}
-
-pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
-    match AppRuntime::bootstrap(db_path.to_path_buf(), RuntimeRole::OneShot) {
-        Ok(runtime) => sync_before_close_with_runtime(&runtime, db_path, backup_database),
-        Err(error) => log_error(
-            "app.close.database",
-            "failed to open AssetIWeave database before close",
-            &error,
-            &[],
-        ),
-    }
 }
 
 #[cfg(test)]

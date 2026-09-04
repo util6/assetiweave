@@ -1,25 +1,27 @@
 use super::prelude::*;
+use sqlx::SqlitePool;
 
 #[cfg(test)]
-pub(crate) fn apply_skill_group_mount_record(
-    db: &crate::backend::store::Database,
+pub(crate) async fn apply_skill_group_mount_record(
+    pool: &SqlitePool,
     tenant_id: &str,
     group_id: &str,
     profile_id: &str,
     enabled: bool,
 ) -> AppResult<ApplyAssetGroupMountResult> {
     apply_skill_group_mount_record_with_progress(
-        db,
+        pool,
         tenant_id,
         group_id,
         profile_id,
         enabled,
         |_, _, _| Ok(()),
     )
+    .await
 }
 
-pub(crate) fn apply_skill_group_mount_record_with_progress<BeforeItem>(
-    db: &crate::backend::store::Database,
+pub(crate) async fn apply_skill_group_mount_record_with_progress<BeforeItem>(
+    pool: &SqlitePool,
     tenant_id: &str,
     group_id: &str,
     profile_id: &str,
@@ -29,30 +31,16 @@ pub(crate) fn apply_skill_group_mount_record_with_progress<BeforeItem>(
 where
     BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
 {
-    let pool = db.pool().clone();
-    let tenant_id_for_query = tenant_id.to_string();
-    let group_id_to_load = group_id.to_string();
-    let (detail, assets, sources, profile) = db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(
-            &pool,
-            &tenant_id_for_query,
-            Some(AssetKind::Skill),
-        )
-        .await?;
-        let detail = crate::backend::store::load_skill_group_detail_sqlx(
-            &pool,
-            &tenant_id_for_query,
-            &group_id_to_load,
-            &assets,
-        )
-        .await?;
-        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await?;
-        let profile =
-            crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, profile_id)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
-        AppResult::Ok((detail, assets, sources, profile))
-    })?;
+    let assets =
+        crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
+    let detail =
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, group_id, &assets)
+            .await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let profile = crate::backend::store::load_profile_sqlx(pool, tenant_id, profile_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
+
     if !detail.group.enabled {
         return Err(AppError::Validation(format!(
             "asset group is disabled: {}",
@@ -77,14 +65,17 @@ where
         let result = match asset_by_id.get(member.asset_id.as_str()) {
             Some(asset) if enabled => match source_by_id.get(asset.source_id.as_str()) {
                 Some(source) => {
-                    mount_preloaded_asset_mount_record(db, tenant_id, asset, source, &profile)
+                    mount_preloaded_asset_mount_record(pool, tenant_id, asset, source, &profile)
+                        .await
                 }
                 None => Err(AppError::NotFound(format!(
                     "source not found: {}",
                     asset.source_id
                 ))),
             },
-            Some(asset) => unmount_preloaded_asset_mount_record(db, tenant_id, asset, &profile),
+            Some(asset) => {
+                unmount_preloaded_asset_mount_record(pool, tenant_id, asset, &profile).await
+            }
             None => Err(AppError::NotFound(format!(
                 "asset not found: {}",
                 member.asset_id
@@ -115,17 +106,19 @@ where
         errors,
     })
 }
+
 #[cfg(test)]
-pub(crate) fn apply_skill_group_exclusive_mount_record(
-    db: &crate::backend::store::Database,
+pub(crate) async fn apply_skill_group_exclusive_mount_record(
+    pool: &SqlitePool,
     tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
-    apply_skill_group_exclusive_mount_record_with_progress(db, tenant_id, input, |_, _, _| Ok(()))
+    apply_skill_group_exclusive_mount_record_with_progress(pool, tenant_id, input, |_, _, _| Ok(()))
+        .await
 }
 
-pub(crate) fn apply_skill_group_exclusive_mount_record_with_progress<BeforeItem>(
-    db: &crate::backend::store::Database,
+pub(crate) async fn apply_skill_group_exclusive_mount_record_with_progress<BeforeItem>(
+    pool: &SqlitePool,
     tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
     mut before_item: BeforeItem,
@@ -133,31 +126,18 @@ pub(crate) fn apply_skill_group_exclusive_mount_record_with_progress<BeforeItem>
 where
     BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
 {
-    let preview = build_skill_group_exclusive_mount_preview_sqlx(db, tenant_id, input)?;
-    let pool = db.pool().clone();
-    let tenant_id_for_query = tenant_id.to_string();
-    let profile_id = preview.profile_id.clone();
-    let (assets, sources, profile, managed_targets) = db.block_on(async move {
-        let assets = crate::backend::store::load_assets_sqlx(
-            &pool,
-            &tenant_id_for_query,
-            Some(AssetKind::Skill),
-        )
-        .await?;
-        let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await?;
-        let profile =
-            crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
-        let managed_targets =
-            crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
-                &pool,
-                &tenant_id_for_query,
-                &profile_id,
-            )
-            .await?;
-        AppResult::Ok((assets, sources, profile, managed_targets))
-    })?;
+    let preview = build_skill_group_exclusive_mount_preview_sqlx(pool, tenant_id, input).await?;
+    let profile_id = &preview.profile_id;
+    let assets =
+        crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let profile = crate::backend::store::load_profile_sqlx(pool, tenant_id, profile_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
+    let managed_targets = crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
+        pool, tenant_id, profile_id,
+    )
+    .await?;
     let asset_by_id = assets
         .iter()
         .map(|asset| (asset.id.as_str(), asset))
@@ -184,15 +164,22 @@ where
     for item in &preview.mount {
         before_item(change_index, total_changes, &item.asset_id)?;
         change_index += 1;
-        let result = asset_by_id
-            .get(item.asset_id.as_str())
-            .ok_or_else(|| AppError::NotFound(format!("asset not found: {}", item.asset_id)))
-            .and_then(|asset| {
-                let source = source_by_id.get(asset.source_id.as_str()).ok_or_else(|| {
-                    AppError::NotFound(format!("source not found: {}", asset.source_id))
-                })?;
-                mount_preloaded_asset_mount_record(db, tenant_id, asset, source, &profile)
-            });
+        let result = match asset_by_id.get(item.asset_id.as_str()) {
+            Some(asset) => match source_by_id.get(asset.source_id.as_str()) {
+                Some(source) => {
+                    mount_preloaded_asset_mount_record(pool, tenant_id, asset, source, &profile)
+                        .await
+                }
+                None => Err(AppError::NotFound(format!(
+                    "source not found: {}",
+                    asset.source_id
+                ))),
+            },
+            None => Err(AppError::NotFound(format!(
+                "asset not found: {}",
+                item.asset_id
+            ))),
+        };
         match result {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
@@ -206,32 +193,36 @@ where
     for item in &preview.unmount {
         before_item(change_index, total_changes, &item.asset_id)?;
         change_index += 1;
-        let result = asset_by_id
-            .get(item.asset_id.as_str())
-            .ok_or_else(|| AppError::NotFound(format!("asset not found: {}", item.asset_id)))
-            .and_then(|asset| {
+        let result = match asset_by_id.get(item.asset_id.as_str()) {
+            Some(asset) => {
                 let inspection = crate::backend::targeting::inspect_mount(&profile, asset)?;
                 match inspection.state {
                     crate::backend::targeting::PhysicalMountState::Mounted
                         if !managed_targets
                             .contains(&(asset.id.clone(), inspection.target_path.clone())) =>
                     {
-                        return Err(AppError::Conflict(format!(
+                        Err(AppError::Conflict(format!(
                             "target is mounted but not managed by AssetIWeave: {}",
                             inspection.target_path
-                        )));
+                        )))
                     }
                     crate::backend::targeting::PhysicalMountState::Conflict
                     | crate::backend::targeting::PhysicalMountState::Broken => {
-                        return Err(AppError::Conflict(format!(
+                        Err(AppError::Conflict(format!(
                             "target is not a managed mount for this asset: {}",
                             inspection.target_path
-                        )));
+                        )))
                     }
-                    _ => {}
+                    _ => {
+                        unmount_preloaded_asset_mount_record(pool, tenant_id, asset, &profile).await
+                    }
                 }
-                unmount_preloaded_asset_mount_record(db, tenant_id, asset, &profile)
-            });
+            }
+            None => Err(AppError::NotFound(format!(
+                "asset not found: {}",
+                item.asset_id
+            ))),
+        };
         match result {
             Ok(update) => statuses.push(update.status),
             Err(message) => errors.push(SkillGroupExclusiveMountError {
@@ -249,14 +240,12 @@ where
     })
 }
 
-pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn build_skill_group_exclusive_mount_preview_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     input: &SkillGroupExclusiveMountInput,
 ) -> AppResult<SkillGroupExclusiveMountPreview> {
-    let pool = db.pool().clone();
-    let tenant_id_for_query = tenant_id.to_string();
-    let profile_id = input.profile_id.clone();
+    let profile_id = &input.profile_id;
     let requested_group_ids = input
         .group_ids
         .iter()
@@ -264,51 +253,27 @@ pub(crate) fn build_skill_group_exclusive_mount_preview_sqlx(
         .filter(|group_id| !group_id.is_empty())
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-    let (profile, skill_assets, sources, enabled_mounts, group_details, managed_targets) = db
-        .block_on(async move {
-            let profile =
-                crate::backend::store::load_profile_sqlx(&pool, &tenant_id_for_query, &profile_id)
-                    .await?
-                    .ok_or_else(|| {
-                        AppError::NotFound(format!("profile not found: {profile_id}"))
-                    })?;
-            let skill_assets = crate::backend::store::load_assets_sqlx(
-                &pool,
-                &tenant_id_for_query,
-                Some(AssetKind::Skill),
-            )
+    let profile = crate::backend::store::load_profile_sqlx(pool, tenant_id, profile_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
+    let skill_assets =
+        crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
+    let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
+    let enabled_mounts =
+        crate::backend::store::load_enabled_asset_mounts_sqlx(pool, tenant_id, Some(profile_id))
             .await?;
-            let sources =
-                crate::backend::store::load_sources_sqlx(&pool, &tenant_id_for_query).await?;
-            let enabled_mounts = crate::backend::store::load_enabled_asset_mounts_sqlx(
-                &pool,
-                &tenant_id_for_query,
-                Some(&profile_id),
-            )
-            .await?;
-            let group_details = crate::backend::store::load_skill_group_details_by_ids_sqlx(
-                &pool,
-                &tenant_id_for_query,
-                &requested_group_ids,
-                &skill_assets,
-            )
-            .await?;
-            let managed_targets =
-                crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
-                    &pool,
-                    &tenant_id_for_query,
-                    &profile_id,
-                )
-                .await?;
-            AppResult::Ok((
-                profile,
-                skill_assets,
-                sources,
-                enabled_mounts,
-                group_details,
-                managed_targets,
-            ))
-        })?;
+    let group_details = crate::backend::store::load_skill_group_details_by_ids_sqlx(
+        pool,
+        tenant_id,
+        &requested_group_ids,
+        &skill_assets,
+    )
+    .await?;
+    let managed_targets = crate::backend::store::load_managed_deployment_targets_by_profile_sqlx(
+        pool, tenant_id, profile_id,
+    )
+    .await?;
+
     let group_details_by_id = group_details
         .into_iter()
         .map(|detail| (detail.group.id.clone(), detail))

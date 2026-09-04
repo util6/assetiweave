@@ -59,7 +59,8 @@ impl AppService {
         {
             return Err(AppError::NotFound(format!("profile not found: {id}")));
         }
-        capabilities::ensure_profile_can_be_deleted_sqlx(&self.db, self.tenant_id(), &id).await?;
+        capabilities::ensure_profile_can_be_deleted_sqlx(self.db.pool(), self.tenant_id(), &id)
+            .await?;
         crate::backend::store::delete_profile_sqlx(self.db.pool(), self.tenant_id(), &id).await
     }
 

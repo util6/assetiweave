@@ -1096,6 +1096,7 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
 
     let settings = tenant_service
         .get_skill_backup_settings()
+        .await
         .expect("load tenant skill backup settings");
     assert!(
         settings
@@ -1295,8 +1296,8 @@ async fn system_skill_source_cannot_be_edited_or_removed() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn system_skill_cannot_be_copied_into_the_user_backup_library() {
+#[tokio::test(flavor = "multi_thread")]
+async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-system-skill-backup-{}",
         Uuid::new_v4()
@@ -1328,6 +1329,7 @@ fn system_skill_cannot_be_copied_into_the_user_backup_library() {
 
     let error = service
         .backup_skill(asset.id)
+        .await
         .expect_err("system Skill backup should fail");
 
     assert!(error.to_string().contains("cannot be backed up"));
@@ -2808,8 +2810,8 @@ async fn scan_skill_sources_reads_sqlx_sources() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn skill_group_crud_and_members_use_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn skill_group_crud_and_members_use_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-groups-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
     let service =
@@ -2881,15 +2883,11 @@ fn skill_group_crud_and_members_use_sqlx_path() {
     ];
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await?;
-            crate::backend::store::replace_source_assets_sqlx(
-                &pool, &tenant_id, "source-a", &assets,
-            )
-            .await
-        })
+    crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source)
+        .await
+        .expect("seed source");
+    crate::backend::store::replace_source_assets_sqlx(&pool, &tenant_id, "source-a", &assets)
+        .await
         .expect("seed SQLx catalog");
 
     let created = service
@@ -2908,6 +2906,7 @@ fn skill_group_crud_and_members_use_sqlx_path() {
                 name_contains: Some("ui".to_string()),
             }),
         })
+        .await
         .expect("create SQLx group");
     assert_eq!(created.group.id, "frontend");
     assert_eq!(created.members.len(), 1);
@@ -2918,6 +2917,7 @@ fn skill_group_crud_and_members_use_sqlx_path() {
             "frontend".to_string(),
             vec!["skill-b".to_string(), "skill-b".to_string()],
         )
+        .await
         .expect("save SQLx manual members");
     assert_eq!(with_manual.manual_asset_ids, vec!["skill-b".to_string()]);
     assert_eq!(with_manual.members.len(), 2);
@@ -2926,26 +2926,34 @@ fn skill_group_crud_and_members_use_sqlx_path() {
     updated_group.name = "Frontend Updated".to_string();
     let updated = service
         .update_skill_group(updated_group)
+        .await
         .expect("update SQLx group");
     assert_eq!(updated.group.name, "Frontend Updated");
     assert_eq!(
         service
             .get_skill_group("frontend".to_string())
+            .await
             .expect("get SQLx group")
             .group
             .name,
         "Frontend Updated"
     );
     assert_eq!(
-        service.list_skill_groups().expect("list SQLx groups").len(),
+        service
+            .list_skill_groups()
+            .await
+            .expect("list SQLx groups")
+            .len(),
         1
     );
 
     service
         .delete_skill_group("frontend".to_string())
+        .await
         .expect("delete SQLx group");
     assert!(service
         .list_skill_groups()
+        .await
         .expect("list after delete")
         .is_empty());
 
@@ -3018,8 +3026,8 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-sqlx-skill-remote-cleanup-{}",
         Uuid::new_v4()
@@ -3044,15 +3052,13 @@ fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
     };
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &tenant_id, &orphan).await
-        })
+    crate::backend::store::upsert_skill_remote_source_sqlx(&pool, &tenant_id, &orphan)
+        .await
         .expect("save orphan remote source");
 
     assert!(service
         .list_skill_remote_sources()
+        .await
         .expect("list remote sources")
         .is_empty());
 
@@ -3147,6 +3153,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
             false,
             Some(DeploymentStrategy::CopyToTarget),
         )
+        .await
         .expect("persist disabled preference");
     assert!(!mount.enabled);
     assert_eq!(mount.strategy, DeploymentStrategy::CopyToTarget);
@@ -3250,6 +3257,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
             },
             true,
         )
+        .await
         .expect("dry-run mount skill");
 
     assert_eq!(preview["dry_run"], json!(true));
@@ -3266,8 +3274,8 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
+#[tokio::test(flavor = "multi_thread")]
+async fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
     let root =
         std::env::temp_dir().join(format!("assetiweave-skill-backup-batch-{}", Uuid::new_v4()));
     let source_root = root.join("source");
@@ -3313,6 +3321,7 @@ fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
             root_path: backup_root.to_string_lossy().to_string(),
             migrate: false,
         })
+        .await
         .expect("configure backup root");
 
     let mut source_assets = load_test_assets(&service)
@@ -3332,6 +3341,7 @@ fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
                 progress.push((completed, next_asset_id.map(str::to_string)));
             },
         )
+        .await
         .expect("back up skills");
 
     assert_eq!(backed_up.len(), 2);
@@ -3415,6 +3425,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
             root_path: backup_root.to_string_lossy().to_string(),
             migrate: false,
         })
+        .await
         .expect("configure backup root");
 
     let source_asset = load_test_assets(&service)
@@ -3423,6 +3434,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         .expect("source asset");
     service
         .backup_skill(source_asset.id.clone())
+        .await
         .expect("backup skill");
 
     let raw_skill_assets = load_test_assets(&service)
@@ -3440,7 +3452,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         );
     }
 
-    let catalog = service.list_skills().expect("list catalog");
+    let catalog = service.list_skills().await.expect("list catalog");
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].asset.source_id, "source-a");
     assert_eq!(
@@ -3465,6 +3477,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
 
     let target_statuses = service
         .list_asset_mount_statuses(None)
+        .await
         .expect("list mount statuses")
         .into_iter()
         .filter(|status| status.profile_id == profile.id)
@@ -3476,8 +3489,8 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn deleted_backup_library_copy_clears_source_backup_status() {
+#[tokio::test(flavor = "multi_thread")]
+async fn deleted_backup_library_copy_clears_source_backup_status() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-skill-backup-deleted-status-{}",
         Uuid::new_v4()
@@ -3519,6 +3532,7 @@ fn deleted_backup_library_copy_clears_source_backup_status() {
             root_path: backup_root.to_string_lossy().to_string(),
             migrate: false,
         })
+        .await
         .expect("configure backup root");
 
     let source_asset = load_test_assets(&service)
@@ -3527,6 +3541,7 @@ fn deleted_backup_library_copy_clears_source_backup_status() {
         .expect("source asset");
     let backed_up = service
         .backup_skill(source_asset.id.clone())
+        .await
         .expect("backup skill");
     let backup_path = backed_up
         .backup_status
@@ -3535,7 +3550,7 @@ fn deleted_backup_library_copy_clears_source_backup_status() {
         .expect("backup path");
     fs::remove_dir_all(backup_path).expect("delete backup copy outside app");
 
-    let catalog = service.list_skills().expect("list catalog");
+    let catalog = service.list_skills().await.expect("list catalog");
     let source_catalog_asset = catalog
         .iter()
         .find(|candidate| candidate.asset.id == source_asset.id)
@@ -3547,8 +3562,8 @@ fn deleted_backup_library_copy_clears_source_backup_status() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed_up() {
+#[tokio::test(flavor = "multi_thread")]
+async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed_up() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-stale-backup-root-status-{}",
         Uuid::new_v4()
@@ -3642,7 +3657,7 @@ fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed_up() 
         std::slice::from_ref(&stale_backup_asset),
     );
 
-    let catalog = service.list_skills().expect("list catalog");
+    let catalog = service.list_skills().await.expect("list catalog");
     assert_eq!(catalog.len(), 1);
     assert_eq!(catalog[0].asset.id, source_asset.id);
     assert!(catalog[0].backup_status.is_none());
@@ -3711,6 +3726,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
             root_path: backup_root.to_string_lossy().to_string(),
             migrate: false,
         })
+        .await
         .expect("configure backup root");
 
     let app_asset = load_test_assets(&service)
@@ -3719,9 +3735,10 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
         .expect("app target asset");
     service
         .backup_skill(app_asset.id)
+        .await
         .expect("backup app target skill");
 
-    let catalog = service.list_skills().expect("list catalog");
+    let catalog = service.list_skills().await.expect("list catalog");
     assert_eq!(catalog.len(), 1);
     assert_eq!(
         catalog[0].asset.source_id,
@@ -3730,6 +3747,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
 
     let statuses = service
         .list_asset_mount_statuses(None)
+        .await
         .expect("list mount statuses");
     let status = statuses
         .iter()
@@ -3746,6 +3764,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
 
     let mounted = service
         .mount_asset_by_id(&catalog[0].asset.id, &profile.id)
+        .await
         .expect("mount backup copy over identical app target");
     assert_eq!(mounted.status.state, PhysicalMountStateDto::Mounted);
     let target_metadata = fs::symlink_metadata(&skill_path).expect("target metadata");

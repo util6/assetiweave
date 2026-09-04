@@ -235,12 +235,7 @@ pub(crate) async fn complete_app_close(
     }
 
     if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        let sync_runtime = runtime.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            crate::sync_before_close_with_runtime(&sync_runtime, &db_path, backup_database);
-        })
-        .await
-        .map_err(AppError::external)?;
+        crate::sync_before_close_with_runtime(&runtime, &db_path, backup_database).await;
     }
 
     let shutdown_report = tauri::async_runtime::spawn_blocking(move || {
@@ -412,14 +407,16 @@ pub(crate) fn cancel_memory_recall_turn(
 }
 
 #[tauri::command]
-pub(crate) fn get_skill_backup_settings(
+pub(crate) async fn get_skill_backup_settings(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<SkillBackupSettings> {
-    AppService::from_runtime(&state.runtime).get_skill_backup_settings()
+    AppService::from_runtime(&state.runtime)
+        .get_skill_backup_settings()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_skill_backup_settings(
+pub(crate) async fn update_skill_backup_settings(
     state: State<'_, AppState>,
     root_path: String,
     migrate: Option<bool>,
@@ -428,14 +425,12 @@ pub(crate) fn update_skill_backup_settings(
         ("root_path", root_path.clone()),
         ("migrate", migrate.unwrap_or(true).to_string()),
     ];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).update_skill_backup_settings(
-            UpdateSkillBackupSettingsParams {
-                root_path,
-                migrate: migrate.unwrap_or(true),
-            },
-        )
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+            root_path,
+            migrate: migrate.unwrap_or(true),
+        })
+        .await;
 
     match &result {
         Ok(settings) => log_info(
@@ -457,12 +452,14 @@ pub(crate) fn update_skill_backup_settings(
 }
 
 #[tauri::command]
-pub(crate) fn backup_skill(
+pub(crate) async fn backup_skill(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> RuntimeAppResult<CatalogAsset> {
     let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).backup_skill(asset_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .backup_skill(asset_id)
+        .await;
 
     match &result {
         Ok(asset) => log_info(
@@ -493,18 +490,19 @@ pub(crate) fn backup_skills(
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     let task_asset_ids = snapshot.asset_ids.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn(async move {
         let progress_app = app.clone();
         let progress_tasks = background_tasks.clone();
         let progress_task_id = task_id.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::from_runtime(&runtime).backup_skills_with_progress(
+        let result = AppService::from_runtime(&runtime)
+            .backup_skills_with_progress(
                 task_asset_ids,
-                |completed_count, next_asset_id| match progress_tasks.update_skill_backup_progress(
-                    &progress_task_id,
-                    completed_count,
-                    next_asset_id.map(str::to_string),
-                ) {
+                |completed_count, next_asset_id| match progress_tasks
+                    .update_skill_backup_progress(
+                        &progress_task_id,
+                        completed_count,
+                        next_asset_id.map(str::to_string),
+                    ) {
                     Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
                     Err(error) => log_error(
                         "skill.backup.background",
@@ -514,8 +512,7 @@ pub(crate) fn backup_skills(
                     ),
                 },
             )
-        }))
-        .unwrap_or_else(|_| Err(AppError::Process("skill backup task panicked".to_string())));
+            .await;
         match &result {
             Ok(assets) => log_info(
                 "skill.backup.background",
@@ -693,7 +690,7 @@ pub(crate) fn start_skill_acquire(
         .task_runtime()
         .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?
         .cancellation_token(&task_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn(async move {
         let emit_app = app.clone();
         let emit_tasks = tasks.clone();
         let update_phase = |phase: &str| {
@@ -706,7 +703,8 @@ pub(crate) fn start_skill_acquire(
                 params,
                 Some(&cancellation),
                 Some(&update_phase),
-            );
+            )
+            .await;
         if let Err(error) = &result {
             log_error(
                 "skill.acquire",
@@ -777,10 +775,12 @@ pub(crate) fn cancel_skill_acquire_task(
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_remote_sources(
+pub(crate) async fn list_skill_remote_sources(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
-    let result = (|| AppService::from_runtime(&state.runtime).list_skill_remote_sources())();
+    let result = AppService::from_runtime(&state.runtime)
+        .list_skill_remote_sources()
+        .await;
 
     match &result {
         Ok(sources) => log_info(
@@ -794,7 +794,7 @@ pub(crate) fn list_skill_remote_sources(
 }
 
 #[tauri::command]
-pub(crate) fn check_skill_remote_sources(
+pub(crate) async fn check_skill_remote_sources(
     state: State<'_, AppState>,
     params: SkillRemoteCheckParams,
 ) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
@@ -803,7 +803,9 @@ pub(crate) fn check_skill_remote_sources(
         .as_ref()
         .map(|asset_id| vec![("asset_id", asset_id.clone())])
         .unwrap_or_default();
-    let result = (|| AppService::from_runtime(&state.runtime).check_skill_remote_sources(params))();
+    let result = AppService::from_runtime(&state.runtime)
+        .check_skill_remote_sources(params)
+        .await;
 
     match &result {
         Ok(sources) => log_info(
@@ -1134,15 +1136,17 @@ pub(crate) async fn list_asset_mounts(
 }
 
 #[tauri::command]
-pub(crate) fn list_asset_mount_statuses(
+pub(crate) async fn list_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMountStatus>> {
-    AppService::from_runtime(&state.runtime).list_asset_mount_statuses(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime)
+        .list_asset_mount_statuses(asset_id.as_deref())
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn refresh_asset_mount_statuses(
+pub(crate) async fn refresh_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMountStatus>> {
@@ -1150,9 +1154,9 @@ pub(crate) fn refresh_asset_mount_statuses(
         .as_ref()
         .map(|asset_id| vec![("asset_id", asset_id.clone())])
         .unwrap_or_default();
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).refresh_asset_mount_statuses(asset_id.as_deref())
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .refresh_asset_mount_statuses(asset_id.as_deref())
+        .await;
 
     match &result {
         Ok(statuses) => {
@@ -1166,19 +1170,23 @@ pub(crate) fn refresh_asset_mount_statuses(
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_groups(
+pub(crate) async fn list_skill_groups(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<AssetGroupDetail>> {
-    AppService::from_runtime(&state.runtime).list_skill_groups()
+    AppService::from_runtime(&state.runtime)
+        .list_skill_groups()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_skill_group(
+pub(crate) async fn create_skill_group(
     state: State<'_, AppState>,
     input: AssetGroupInput,
 ) -> RuntimeAppResult<AssetGroupDetail> {
     let input_fields = vec![("group_name", input.name.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).create_skill_group(input))();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_skill_group(input)
+        .await;
 
     match &result {
         Ok(detail) => log_info(
@@ -1201,7 +1209,7 @@ pub(crate) fn create_skill_group(
 }
 
 #[tauri::command]
-pub(crate) fn update_skill_group(
+pub(crate) async fn update_skill_group(
     state: State<'_, AppState>,
     group: AssetGroup,
 ) -> RuntimeAppResult<AssetGroupDetail> {
@@ -1209,7 +1217,9 @@ pub(crate) fn update_skill_group(
         ("group_id", group.id.clone()),
         ("group_name", group.name.clone()),
     ];
-    let result = (|| AppService::from_runtime(&state.runtime).update_skill_group(group))();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_skill_group(group)
+        .await;
 
     match &result {
         Ok(detail) => log_info(
@@ -1232,12 +1242,14 @@ pub(crate) fn update_skill_group(
 }
 
 #[tauri::command]
-pub(crate) fn delete_skill_group(
+pub(crate) async fn delete_skill_group(
     state: State<'_, AppState>,
     group_id: String,
 ) -> RuntimeAppResult<()> {
     let fields = vec![("group_id", group_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).delete_skill_group(group_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_skill_group(group_id)
+        .await;
 
     match &result {
         Ok(()) => log_info("skill_group.delete", "删除 skill 分组成功", &fields),
@@ -1247,7 +1259,7 @@ pub(crate) fn delete_skill_group(
 }
 
 #[tauri::command]
-pub(crate) fn set_skill_group_manual_members(
+pub(crate) async fn set_skill_group_manual_members(
     state: State<'_, AppState>,
     group_id: String,
     asset_ids: Vec<String>,
@@ -1256,9 +1268,9 @@ pub(crate) fn set_skill_group_manual_members(
         ("group_id", group_id.clone()),
         ("asset_count", asset_ids.len().to_string()),
     ];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).set_skill_group_manual_members(group_id, asset_ids)
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .set_skill_group_manual_members(group_id, asset_ids)
+        .await;
 
     match &result {
         Ok(detail) => log_info(
@@ -1281,7 +1293,7 @@ pub(crate) fn set_skill_group_manual_members(
 }
 
 #[tauri::command]
-pub(crate) fn preview_skill_group_exclusive_mount(
+pub(crate) async fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
 ) -> RuntimeAppResult<SkillGroupExclusiveMountPreview> {
@@ -1289,8 +1301,9 @@ pub(crate) fn preview_skill_group_exclusive_mount(
         ("profile_id", input.profile_id.clone()),
         ("group_count", input.group_ids.len().to_string()),
     ];
-    let result =
-        (|| AppService::from_runtime(&state.runtime).preview_skill_group_exclusive_mount(input))();
+    let result = AppService::from_runtime(&state.runtime)
+        .preview_skill_group_exclusive_mount(input)
+        .await;
 
     match &result {
         Ok(preview) => {
@@ -1355,13 +1368,14 @@ pub(crate) async fn toggle_asset_mount(
 }
 
 #[tauri::command]
-pub(crate) fn unmount_asset_mount(
+pub(crate) async fn unmount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMountUpdateResult> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).unmount_asset_by_id(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .unmount_asset_by_id(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
         log_error(
@@ -1375,13 +1389,14 @@ pub(crate) fn unmount_asset_mount(
 }
 
 #[tauri::command]
-pub(crate) fn mount_asset_mount(
+pub(crate) async fn mount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMountUpdateResult> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).mount_asset_by_id(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .mount_asset_by_id(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
         log_error(
@@ -1395,21 +1410,16 @@ pub(crate) fn mount_asset_mount(
 }
 
 #[tauri::command]
-pub(crate) fn set_asset_mount(
+pub(crate) async fn set_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
 ) -> RuntimeAppResult<AssetMount> {
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).set_asset_mount(
-            &asset_id,
-            &profile_id,
-            enabled,
-            strategy,
-        )
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .set_asset_mount(&asset_id, &profile_id, enabled, strategy)
+        .await;
 
     if let Err(error) = &result {
         log_error(
@@ -1631,25 +1641,30 @@ pub(crate) fn start_batch_mount(
                         "batch mount cancelled before execution".to_string(),
                     ));
                 }
-                service
-                    .run_batch_mount_workflow_with_progress(
-                        worker_input,
-                        |completed, total, current_id| {
-                            if task_context.is_cancelled() {
-                                return Err(AppError::Cancelled(
-                                    "batch mount cancelled".to_string(),
-                                ));
-                            }
-                            tasks
-                                .update_batch_mount_progress(
-                                    &worker_task_id,
-                                    completed as u64,
-                                    Some(total as u64),
-                                    Some(current_id),
-                                )
-                                .map(|_| ())
-                        },
-                    )
+                runtime
+                    .db()
+                    .block_on(async {
+                        service
+                            .run_batch_mount_workflow_with_progress(
+                                worker_input,
+                                |completed, total, current_id| {
+                                    if task_context.is_cancelled() {
+                                        return Err(AppError::Cancelled(
+                                            "batch mount cancelled".to_string(),
+                                        ));
+                                    }
+                                    tasks
+                                        .update_batch_mount_progress(
+                                            &worker_task_id,
+                                            completed as u64,
+                                            Some(total as u64),
+                                            Some(current_id),
+                                        )
+                                        .map(|_| ())
+                                },
+                            )
+                            .await
+                    })
                     .and_then(|value| {
                         serde_json::to_value(value)
                             .map_err(|error| AppError::External(error.to_string()))
@@ -4091,9 +4106,6 @@ mod tests {
         }
     }
 
-    fn open_test_database(db_path: &Path) -> crate::backend::store::Database {
-        crate::backend::store::Database::open_initialized(db_path).expect("open initialized db")
-    }
 
     async fn open_test_database_async(db_path: &Path) -> crate::backend::store::Database {
         crate::backend::store::Database::open_initialized_async(db_path)
@@ -4178,147 +4190,51 @@ mod tests {
             .expect("load mounts")
     }
 
-    fn upsert_test_source(db: &crate::backend::store::Database, source: &Source) {
-        db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(db.pool(), "default", source).await
-        })
-        .expect("insert source");
-    }
-
-    fn upsert_test_profile(db: &crate::backend::store::Database, profile: &TargetProfile) {
-        db.block_on(async move {
-            crate::backend::store::upsert_profile_sqlx(db.pool(), "default", profile).await
-        })
-        .expect("insert profile");
-    }
-
-    fn delete_test_profile(db: &crate::backend::store::Database, profile_id: &str) {
-        db.block_on(async move {
-            crate::backend::store::delete_profile_sqlx(db.pool(), "default", profile_id).await
-        })
-        .expect("delete profile");
-    }
-
-    fn replace_test_source_assets(
-        db: &crate::backend::store::Database,
-        source_id: &str,
-        assets: &[Asset],
-    ) {
-        db.block_on(async move {
-            crate::backend::store::replace_source_assets_sqlx(
-                db.pool(),
-                "default",
-                source_id,
-                assets,
-            )
+    async fn upsert_test_group_async(db: &crate::backend::store::Database, group: &AssetGroup) {
+        crate::backend::store::upsert_asset_group_sqlx(db.pool(), "default", group)
             .await
-        })
-        .expect("insert assets");
+            .expect("insert group");
     }
 
-    fn set_test_asset_mount(
-        db: &crate::backend::store::Database,
-        asset_id: &str,
-        profile_id: &str,
-        enabled: bool,
-        strategy: DeploymentStrategy,
-    ) -> AssetMount {
-        db.block_on(async move {
-            crate::backend::store::set_asset_mount_sqlx(
-                db.pool(),
-                "default",
-                asset_id,
-                profile_id,
-                enabled,
-                strategy,
-            )
-            .await
-        })
-        .expect("insert mount")
-    }
-
-    fn upsert_test_group(db: &crate::backend::store::Database, group: &AssetGroup) {
-        db.block_on(async move {
-            crate::backend::store::upsert_asset_group_sqlx(db.pool(), "default", group).await
-        })
-        .expect("insert group");
-    }
-
-    fn replace_test_group_members(
+    async fn replace_test_group_members_async(
         db: &crate::backend::store::Database,
         group_id: &str,
         asset_ids: &[String],
         assets: &[Asset],
     ) {
-        db.block_on(async move {
-            crate::backend::store::replace_asset_group_members_sqlx(
-                db.pool(),
-                "default",
-                group_id,
-                asset_ids,
-                assets,
-            )
-            .await
-        })
+        crate::backend::store::replace_asset_group_members_sqlx(
+            db.pool(),
+            "default",
+            group_id,
+            asset_ids,
+            assets,
+        )
+        .await
         .expect("insert group members");
     }
 
-    fn load_test_sources(db: &crate::backend::store::Database) -> Vec<Source> {
-        db.block_on(
-            async move { crate::backend::store::load_sources_sqlx(db.pool(), "default").await },
-        )
-        .expect("load sources")
-    }
-
-    fn load_test_profiles(db: &crate::backend::store::Database) -> Vec<TargetProfile> {
-        db.block_on(
-            async move { crate::backend::store::load_profiles_sqlx(db.pool(), "default").await },
-        )
-        .expect("load profiles")
-    }
-
-    fn load_test_assets(db: &crate::backend::store::Database) -> Vec<Asset> {
-        db.block_on(async move {
-            crate::backend::store::load_assets_sqlx(db.pool(), "default", None).await
-        })
-        .expect("load assets")
-    }
-
-    fn load_test_mounts(
-        db: &crate::backend::store::Database,
-        asset_id: Option<&str>,
-    ) -> Vec<AssetMount> {
-        db.block_on(async move {
-            crate::backend::store::load_asset_mounts_sqlx(db.pool(), "default", asset_id).await
-        })
-        .expect("load mounts")
-    }
-
-    fn load_test_mount_observations(
+    async fn load_test_mount_observations_async(
         db: &crate::backend::store::Database,
     ) -> Vec<crate::backend::dto::AssetMountObservation> {
-        db.block_on(async move {
-            crate::backend::store::load_asset_mount_observations_sqlx(db.pool(), "default").await
-        })
-        .expect("load observations")
+        crate::backend::store::load_asset_mount_observations_sqlx(db.pool(), "default")
+            .await
+            .expect("load observations")
     }
 
-    fn is_test_managed_deployment(
+    async fn is_test_managed_deployment_async(
         db: &crate::backend::store::Database,
         profile_id: &str,
         asset_id: &str,
         target_path: &str,
     ) -> bool {
-        db.block_on(async move {
-            crate::backend::store::is_managed_deployment_sqlx(
-                db.pool(),
-                "default",
-                profile_id,
-                asset_id,
-                target_path,
-            )
-            .await
-        })
+        crate::backend::store::is_managed_deployment_sqlx(
+            db.pool(),
+            "default",
+            profile_id,
+            asset_id,
+            target_path,
+        )
+        .await
         .expect("deployment state")
     }
 
@@ -4419,7 +4335,7 @@ mod tests {
             .iter()
             .any(|candidate| candidate.id == profile.id && candidate.name == "Team App Edited"));
 
-        ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+        ensure_profile_can_be_deleted_sqlx(database.pool(), "default", &profile.id)
             .await
             .expect("profile delete guard");
         delete_test_profile_async(&database, &profile.id).await;
@@ -4435,7 +4351,7 @@ mod tests {
         let db_path = unique_temp_path("assetiweave-default-profile-delete-db");
         let database = open_test_database_async(&db_path).await;
 
-        let error = ensure_profile_can_be_deleted_sqlx(&database, "default", "codex")
+        let error = ensure_profile_can_be_deleted_sqlx(database.pool(), "default", "codex")
             .await
             .expect_err("delete blocked");
 
@@ -4460,10 +4376,11 @@ mod tests {
         upsert_test_source_async(&database, &source).await;
         replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
         upsert_test_profile_async(&database, &profile).await;
-        mount_asset_mount_record(&database, "default", &asset.id, &profile.id)
+        mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
             .expect("mount asset");
 
-        let error = ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+        let error = ensure_profile_can_be_deleted_sqlx(database.pool(), "default", &profile.id)
             .await
             .expect_err("delete blocked");
 
@@ -4511,8 +4428,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn mount_asset_mount_creates_symlink_and_enables_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mount_asset_mount_creates_symlink_and_enables_mount() {
         let db_path = unique_temp_path("assetiweave-mount-db");
         let source_root = unique_temp_path("assetiweave-mount-source");
         let target_root = unique_temp_path("assetiweave-mount-target");
@@ -4521,16 +4438,17 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-unmounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path.clone());
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        let result =
-            mount_asset_mount_record(&database, "default", &asset.id, &profile.id).expect("mount");
+        let result = mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
+            .expect("mount");
 
         let metadata = std::fs::symlink_metadata(&target_path).expect("target metadata");
         assert!(metadata.file_type().is_symlink());
@@ -4540,12 +4458,15 @@ mod tests {
         );
         assert!(result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
-        assert!(is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4553,8 +4474,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn mount_asset_mount_links_to_real_source_directory() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mount_asset_mount_links_to_real_source_directory() {
         let db_path = unique_temp_path("assetiweave-mount-real-source-db");
         let real_root = unique_temp_path("assetiweave-mount-real-source-real");
         let alias_root = unique_temp_path("assetiweave-mount-real-source-alias");
@@ -4568,16 +4489,17 @@ mod tests {
         std::os::unix::fs::symlink(&real_asset_path, &alias_asset_path)
             .expect("create alias asset symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-aliased-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path.clone());
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        let result =
-            mount_asset_mount_record(&database, "default", &asset.id, &profile.id).expect("mount");
+        let result = mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
+            .expect("mount");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read target symlink"),
@@ -4603,8 +4525,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn set_asset_mount_creates_symlink_before_enabling_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_asset_mount_creates_symlink_before_enabling_mount() {
         let db_path = unique_temp_path("assetiweave-set-mount-db");
         let source_root = unique_temp_path("assetiweave-set-mount-source");
         let target_root = unique_temp_path("assetiweave-set-mount-target");
@@ -4613,16 +4535,23 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-set-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        let mount =
-            set_asset_mount_record(&database, "default", &asset.id, &profile.id, true, None)
-                .expect("set mount enabled");
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        let mount = set_asset_mount_record(
+            database.pool(),
+            "default",
+            &asset.id,
+            &profile.id,
+            true,
+            None,
+        )
+        .await
+        .expect("set mount enabled");
 
         assert!(mount.enabled);
         assert!(std::fs::symlink_metadata(&target_path)
@@ -4636,8 +4565,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn apply_skill_group_mount_only_mounts_group_members() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn apply_skill_group_mount_only_mounts_group_members() {
         let db_path = unique_temp_path("assetiweave-group-mount-db");
         let source_root = unique_temp_path("assetiweave-group-mount-source");
         let target_root = unique_temp_path("assetiweave-group-mount-target");
@@ -4649,22 +4578,29 @@ mod tests {
         std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-group-assets", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset_a = test_asset(&source, "skill-a", asset_path_a.clone());
         let asset_b = test_asset(&source, "skill-b", asset_path_b);
         let assets = vec![asset_a.clone(), asset_b.clone()];
         let group = test_group("frontend");
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &assets);
-        upsert_test_profile(&database, &profile);
-        upsert_test_group(&database, &group);
-        replace_test_group_members(&database, &group.id, &[asset_a.id.clone()], &assets);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &assets).await;
+        upsert_test_profile_async(&database, &profile).await;
+        upsert_test_group_async(&database, &group).await;
+        replace_test_group_members_async(&database, &group.id, &[asset_a.id.clone()], &assets)
+            .await;
 
-        let result =
-            apply_skill_group_mount_record(&database, "default", &group.id, &profile.id, true)
-                .expect("apply group");
+        let result = apply_skill_group_mount_record(
+            database.pool(),
+            "default",
+            &group.id,
+            &profile.id,
+            true,
+        )
+        .await
+        .expect("apply group");
 
         assert_eq!(result.requested_count, 1);
         assert_eq!(result.updated_count, 1);
@@ -4678,7 +4614,9 @@ mod tests {
             asset_path_a.canonicalize().expect("canonical asset path a")
         );
         assert!(!target_path_b.exists());
-        assert!(load_test_mounts(&database, Some(&asset_b.id)).is_empty());
+        assert!(load_test_mounts_async(&database, Some(&asset_b.id))
+            .await
+            .is_empty());
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4686,8 +4624,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn preview_exclusive_group_mount_uses_enabled_group_union_without_mutation() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preview_exclusive_group_mount_uses_enabled_group_union_without_mutation() {
         let db_path = unique_temp_path("assetiweave-exclusive-preview-db");
         let source_root = unique_temp_path("assetiweave-exclusive-preview-source");
         let codex_target = unique_temp_path("assetiweave-exclusive-preview-codex");
@@ -4701,7 +4639,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-exclusive-preview-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -4713,35 +4651,46 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &skill_assets);
-        upsert_test_profile(&database, &codex);
-        upsert_test_profile(&database, &cursor);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &skill_assets).await;
+        upsert_test_profile_async(&database, &codex).await;
+        upsert_test_profile_async(&database, &cursor).await;
         for group in [&group_a, &group_b, &disabled_group] {
-            upsert_test_group(&database, group);
+            upsert_test_group_async(&database, group).await;
         }
-        replace_test_group_members(
+        replace_test_group_members_async(
             &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        );
-        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
-        replace_test_group_members(
+        )
+        .await;
+        replace_test_group_members_async(
+            &database,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .await;
+        replace_test_group_members_async(
             &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        );
-        mount_asset_mount_record(&database, "default", &asset_a.id, &codex.id)
+        )
+        .await;
+        mount_asset_mount_record(database.pool(), "default", &asset_a.id, &codex.id)
+            .await
             .expect("mount skill a");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &codex.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &codex.id)
+            .await
             .expect("mount skill c");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &cursor.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &cursor.id)
+            .await
             .expect("mount skill c cursor");
 
         let preview = build_skill_group_exclusive_mount_preview_sqlx(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
@@ -4755,6 +4704,7 @@ mod tests {
                 dry_run: true,
             },
         )
+        .await
         .expect("preview exclusive mount");
 
         assert_eq!(
@@ -4771,7 +4721,8 @@ mod tests {
         assert_eq!(preview.skipped_count, 0);
         assert!(codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
-        assert!(load_test_mounts(&database, Some(&asset_c.id))
+        assert!(load_test_mounts_async(&database, Some(&asset_c.id))
+            .await
             .iter()
             .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
@@ -4782,8 +4733,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn apply_exclusive_group_mount_only_changes_target_profile_skill_mounts() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn apply_exclusive_group_mount_only_changes_target_profile_skill_mounts() {
         let db_path = unique_temp_path("assetiweave-exclusive-apply-db");
         let source_root = unique_temp_path("assetiweave-exclusive-apply-source");
         let codex_target = unique_temp_path("assetiweave-exclusive-apply-codex");
@@ -4800,7 +4751,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-exclusive-apply-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -4820,43 +4771,55 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &all_assets);
-        upsert_test_profile(&database, &codex);
-        upsert_test_profile(&database, &cursor);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &all_assets).await;
+        upsert_test_profile_async(&database, &codex).await;
+        upsert_test_profile_async(&database, &cursor).await;
         for group in [&group_a, &group_b, &disabled_group] {
-            upsert_test_group(&database, group);
+            upsert_test_group_async(&database, group).await;
         }
-        replace_test_group_members(
+        replace_test_group_members_async(
             &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        );
-        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
-        replace_test_group_members(
+        )
+        .await;
+        replace_test_group_members_async(
+            &database,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .await;
+        replace_test_group_members_async(
             &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        );
-        mount_asset_mount_record(&database, "default", &asset_a.id, &codex.id)
+        )
+        .await;
+        mount_asset_mount_record(database.pool(), "default", &asset_a.id, &codex.id)
+            .await
             .expect("mount skill a");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &codex.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &codex.id)
+            .await
             .expect("mount skill c");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &cursor.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &cursor.id)
+            .await
             .expect("mount skill c cursor");
         std::os::unix::fs::symlink(&prompt_path, &prompt_target).expect("create prompt symlink");
-        set_test_asset_mount(
+        set_test_asset_mount_async(
             &database,
             &prompt.id,
             &codex.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
         let result = apply_skill_group_exclusive_mount_record(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
@@ -4869,6 +4832,7 @@ mod tests {
                 dry_run: false,
             },
         )
+        .await
         .expect("apply exclusive mount");
 
         assert_eq!(result.preview.keep_count, 1);
@@ -4881,14 +4845,15 @@ mod tests {
         assert!(!codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
         assert!(prompt_target.exists());
-        let skill_c_mounts = load_test_mounts(&database, Some(&asset_c.id));
+        let skill_c_mounts = load_test_mounts_async(&database, Some(&asset_c.id)).await;
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == codex.id && !mount.enabled));
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == cursor.id && mount.enabled));
-        assert!(load_test_mounts(&database, Some(&prompt.id))
+        assert!(load_test_mounts_async(&database, Some(&prompt.id))
+            .await
             .iter()
             .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
@@ -4899,8 +4864,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn preview_exclusive_group_mount_reports_risks_without_forcing_repairs() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preview_exclusive_group_mount_reports_risks_without_forcing_repairs() {
         let db_path = unique_temp_path("assetiweave-exclusive-risk-db");
         let external_root = unique_temp_path("assetiweave-exclusive-risk-external");
         let app_local_root = unique_temp_path("assetiweave-exclusive-risk-local");
@@ -4914,7 +4879,7 @@ mod tests {
         std::os::unix::fs::symlink(&external_asset_path, &external_target)
             .expect("create unmanaged external symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let external_source = test_source("external-source", external_root.clone());
         let app_local_source = test_source_with_origin(
             "app-local-source",
@@ -4927,16 +4892,28 @@ mod tests {
             test_asset(&app_local_source, "app-local-skill", app_local_asset_path);
         let assets = vec![external_asset.clone(), app_local_asset.clone()];
         let group = test_group("selected-app-local");
-        upsert_test_source(&database, &external_source);
-        upsert_test_source(&database, &app_local_source);
-        replace_test_source_assets(&database, &external_source.id, &[external_asset.clone()]);
-        replace_test_source_assets(&database, &app_local_source.id, &[app_local_asset.clone()]);
-        upsert_test_profile(&database, &profile);
-        upsert_test_group(&database, &group);
-        replace_test_group_members(&database, &group.id, &[app_local_asset.id.clone()], &assets);
+        upsert_test_source_async(&database, &external_source).await;
+        upsert_test_source_async(&database, &app_local_source).await;
+        replace_test_source_assets_async(&database, &external_source.id, &[external_asset.clone()])
+            .await;
+        replace_test_source_assets_async(
+            &database,
+            &app_local_source.id,
+            &[app_local_asset.clone()],
+        )
+        .await;
+        upsert_test_profile_async(&database, &profile).await;
+        upsert_test_group_async(&database, &group).await;
+        replace_test_group_members_async(
+            &database,
+            &group.id,
+            &[app_local_asset.id.clone()],
+            &assets,
+        )
+        .await;
 
         let result = apply_skill_group_exclusive_mount_record(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![group.id.clone()],
@@ -4945,6 +4922,7 @@ mod tests {
                 dry_run: false,
             },
         )
+        .await
         .expect("apply exclusive mount");
 
         assert_eq!(result.preview.mount_count, 0);
@@ -4972,8 +4950,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn scan_asset_mount_statuses_does_not_mutate_snapshot() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scan_asset_mount_statuses_does_not_mutate_snapshot() {
         let db_path = unique_temp_path("assetiweave-status-scan-db");
         let source_root = unique_temp_path("assetiweave-status-scan-source");
         let target_root = unique_temp_path("assetiweave-status-scan-target");
@@ -4983,38 +4961,44 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-scanned-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        let statuses =
-            scan_asset_mount_statuses_sqlx(&database, "default", None).expect("scan statuses");
+        let statuses = scan_asset_mount_statuses_sqlx(database.pool(), "default", None)
+            .await
+            .expect("scan statuses");
 
         assert!(statuses.iter().any(|status| {
             status.asset_id == asset.id
                 && status.profile_id == profile.id
                 && status.state == PhysicalMountStateDto::Mounted
         }));
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
-        assert!(!is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            !is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -5022,8 +5006,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_records_physical_mount_snapshot() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_records_physical_mount_snapshot() {
         let db_path = unique_temp_path("assetiweave-observation-db");
         let source_root = unique_temp_path("assetiweave-observation-source");
         let target_root = unique_temp_path("assetiweave-observation-target");
@@ -5033,43 +5017,49 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        let original_mount = set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        let original_mount = set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
-        let observations = load_test_mount_observations(&database);
+        let observations = load_test_mount_observations_async(&database).await;
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
             .expect("asset/profile observation");
         assert_eq!(observation.state, PhysicalMountStateDto::Mounted);
         assert!(!observation.observed_at.is_empty());
-        let mounts = load_test_mounts(&database, Some(&asset.id));
+        let mounts = load_test_mounts_async(&database, Some(&asset.id)).await;
         let synced_mount = mounts
             .iter()
             .find(|mount| mount.profile_id == profile.id)
             .expect("synced mount");
         assert!(synced_mount.enabled);
         assert_eq!(synced_mount.created_at, original_mount.created_at);
-        assert!(is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -5077,8 +5067,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_repairs_ghost_alias_symlink() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_repairs_ghost_alias_symlink() {
         let db_path = unique_temp_path("assetiweave-observation-ghost-db");
         let real_root = unique_temp_path("assetiweave-observation-ghost-real");
         let alias_root = unique_temp_path("assetiweave-observation-ghost-alias");
@@ -5094,15 +5084,17 @@ mod tests {
         std::os::unix::fs::symlink(&alias_asset_path, &target_path)
             .expect("create ghost target symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-ghost-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read repaired target symlink"),
@@ -5110,7 +5102,7 @@ mod tests {
                 .canonicalize()
                 .expect("canonical real asset")
         );
-        let observations = load_test_mount_observations(&database);
+        let observations = load_test_mount_observations_async(&database).await;
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
@@ -5133,8 +5125,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_clears_snapshot_when_link_is_missing() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_clears_snapshot_when_link_is_missing() {
         let db_path = unique_temp_path("assetiweave-observation-missing-db");
         let source_root = unique_temp_path("assetiweave-observation-missing-source");
         let target_root = unique_temp_path("assetiweave-observation-missing-target");
@@ -5143,32 +5135,39 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-missing-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
-        assert!(!is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            !is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -5176,8 +5175,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn unmount_asset_mount_removes_matching_symlink_and_disables_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unmount_asset_mount_removes_matching_symlink_and_disables_mount() {
         let db_path = unique_temp_path("assetiweave-unmount-db");
         let source_root = unique_temp_path("assetiweave-unmount-source");
         let target_root = unique_temp_path("assetiweave-unmount-target");
@@ -5187,29 +5186,32 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create mounted symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        let result = unmount_asset_mount_record(&database, "default", &asset.id, &profile.id)
+        let result = unmount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
             .expect("unmount");
 
         assert!(!target_path.exists());
         assert!(!std::fs::symlink_metadata(&target_path).is_ok());
         assert!(!result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::NotMounted);
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
 

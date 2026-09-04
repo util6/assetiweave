@@ -133,7 +133,7 @@ check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application
 # Monotonic migration baselines from SPEC-01/SPEC-02. These values match the
 # current origin/main legacy bridge inventory; Team uses AppRuntime::run_sync
 # and therefore does not increase the application bridge count.
-check_max 366 'block_on' "$ROOT/src-tauri/src"
+check_max 197 'block_on' "$ROOT/src-tauri/src"
 check_max 0 'Legacy\(' "$ROOT/src-tauri/src"
 check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
   "$ROOT/src-tauri/src"
@@ -154,16 +154,16 @@ while IFS='|' read -r scope baseline; do
   case "$scope" in '#'*) continue ;; esac
   check_max "$baseline" 'block_on' "$ROOT/$scope"
 done <<'EOF'
-src-tauri/src/adapters|13
+src-tauri/src/adapters|1
 src-tauri/src/backend/agent_market|4
-src-tauri/src/backend/ai_execution|6
-src-tauri/src/backend/application|187
-src-tauri/src/backend/capabilities|27
-src-tauri/src/backend/data_backup.rs|2
-src-tauri/src/backend/events|13
-src-tauri/src/backend/runtime|16
+src-tauri/src/backend/ai_execution|5
+src-tauri/src/backend/application|107
+src-tauri/src/backend/capabilities|0
+src-tauri/src/backend/data_backup.rs|0
+src-tauri/src/backend/events|0
+src-tauri/src/backend/runtime|8
 src-tauri/src/backend/search|6
-src-tauri/src/backend/store|91
+src-tauri/src/backend/store|65
 src-tauri/src/backend/target_catalog.rs|0
 EOF
 

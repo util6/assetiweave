@@ -267,7 +267,9 @@ mod tests {
     async fn tenant_repo_loads_local_request_context() {
         let db_path =
             std::env::temp_dir().join(format!("assetiweave-tenant-{}.sqlite", Uuid::new_v4()));
-        let database = Database::open_initialized(&db_path).expect("open initialized database");
+        let database = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open initialized database");
 
         let context = load_local_request_context_sqlx(database.pool())
             .await

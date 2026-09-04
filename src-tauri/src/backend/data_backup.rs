@@ -13,17 +13,11 @@ use chrono::Utc;
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use serde_json::Value;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
-};
 use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    time::Duration,
 };
-use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 const DATA_BACKUP_SETTINGS_KEY: &str = "dataBackup";
@@ -186,44 +180,27 @@ fn snapshot_sqlite_database(db_path: &Path, target_path: &Path) -> AppResult<()>
 
 fn vacuum_into(db_path: &Path, target_path: &Path) -> AppResult<()> {
     let target = target_path.to_string_lossy().to_string();
-    let runtime = build_backup_runtime()?;
-    Ok(runtime.block_on(async move {
-        let pool = open_backup_pool(db_path).await?;
-        let result = crate::backend::store::vacuum_database_into_sqlx(&pool, &target).await;
-        pool.close().await;
-        result
-    })?)
-}
-
-fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
-    let runtime = build_backup_runtime()?;
-    runtime.block_on(async move {
-        let pool = open_backup_pool(db_path).await?;
-        let result = crate::backend::store::checkpoint_database_wal_sqlx(&pool).await;
-        pool.close().await;
-        result
-    })?;
-    fs::copy(db_path, target_path)?;
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(AppError::external)?;
+    conn.execute("VACUUM main INTO ?1", rusqlite::params![target])
+        .map_err(AppError::external)?;
     Ok(())
 }
 
-async fn open_backup_pool(db_path: &Path) -> AppResult<SqlitePool> {
-    let options = SqliteConnectOptions::new()
-        .filename(db_path)
-        .create_if_missing(false)
-        .busy_timeout(Duration::from_secs(10));
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(AppError::Db)
-}
-
-fn build_backup_runtime() -> AppResult<Runtime> {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .map_err(|error| AppError::External(error.to_string()))
+fn checkpoint_and_copy(db_path: &Path, target_path: &Path) -> AppResult<()> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(AppError::external)?;
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .map_err(AppError::external)?;
+    drop(conn);
+    fs::copy(db_path, target_path).map_err(AppError::external)?;
+    Ok(())
 }
 
 fn backup_file_name() -> String {

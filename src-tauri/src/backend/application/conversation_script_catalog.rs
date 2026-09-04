@@ -3034,9 +3034,8 @@ mod tests {
         drop(service);
         let _ = fs::remove_dir_all(root);
     }
-
-    #[tokio::test]
-    async fn package_preflight_detects_running_sync_in_another_tenant() {
+    #[test]
+    fn package_preflight_detects_running_sync_in_another_tenant() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-cross-tenant-package-preflight-{}",
             Uuid::new_v4()
@@ -3044,14 +3043,6 @@ mod tests {
         fs::create_dir_all(&root).expect("create preflight test root");
         let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
         let current_tenant_id = service.tenant_id().to_string();
-        let other_tenant = service
-            .create_tenant(TenantCreateParams {
-                name: "Other tenant".to_string(),
-                slug: Some("other-tenant".to_string()),
-                set_active: false,
-            })
-            .await
-            .expect("create other tenant");
         let adapter = adapter("cross-tenant-preflight", "1.0.0");
         let source = ConversationSource {
             id: "cross-tenant-preflight-source".to_string(),
@@ -3067,9 +3058,16 @@ mod tests {
             updated_at: "2026-07-15T00:00:00Z".to_string(),
         };
         let pool = service.db.pool().clone();
-        service
+        let other_tenant = service
             .db
-            .block_on(async move {
+            .block_on(async {
+                let other_tenant = service
+                    .create_tenant(TenantCreateParams {
+                        name: "Other tenant".to_string(),
+                        slug: Some("other-tenant".to_string()),
+                        set_active: false,
+                    })
+                    .await?;
                 crate::backend::store::upsert_conversation_adapter_sqlx(
                     &pool,
                     &current_tenant_id,
@@ -3103,7 +3101,7 @@ mod tests {
                 .execute(&pool)
                 .await
                 .map_err(AppError::external)?;
-                AppResult::Ok(())
+                AppResult::Ok(other_tenant)
             })
             .expect("seed cross-tenant preflight records");
         service

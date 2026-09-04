@@ -345,7 +345,10 @@ impl AppRuntime {
                 config.db_path = db_path;
                 Arc::new(config)
             },
-            settings: ArcSwap::from_pointee(serde_json::json!({})),
+            settings: ArcSwap::from_pointee(
+                crate::backend::app_settings::canonicalize_settings(serde_json::json!({}))
+                    .unwrap_or_else(|_| serde_json::json!({})),
+            ),
         })
     }
 

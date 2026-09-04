@@ -1066,7 +1066,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skills(),
+        ServiceAsync => |service, _params| service.list_skills().await,
         &[],
         Some("assetiweave-cli skill list")
     ),
@@ -1078,7 +1078,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ImportSkillParams,
-        Service => |service, params| service.import_skill(params),
+        ServiceAsync => |service, params| service.import_skill(params).await,
         &[
             param!("from", "Directory containing SKILL.md"),
             param!("name", "Optional imported Skill name"),
@@ -1110,7 +1110,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillAcquireParams,
-        Service => |service, params| service.acquire_skill(params),
+        ServiceAsync => |service, params| service.acquire_skill(params).await,
         &[
             param!("url", "GitHub repository or tree URL"),
             param!("branch", "Git branch override"),
@@ -1129,7 +1129,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_remote_sources(),
+        ServiceAsync => |service, _params| service.list_skill_remote_sources().await,
         &[],
         Some("assetiweave-cli skill remote list")
     ),
@@ -1141,7 +1141,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillRemoteCheckParams,
-        Service => |service, params| service.check_skill_remote_sources(params),
+        ServiceAsync => |service, params| service.check_skill_remote_sources(params).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         Some("assetiweave-cli skill remote check [asset-id]")
     ),
@@ -1153,7 +1153,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::RequiredAssetIdParams,
-        Service => |service, params| service.backup_skill(params.asset_id),
+        ServiceAsync => |service, params| service.backup_skill(params.asset_id).await,
         &[param!("asset_id", "Asset identifier", ["assetId"])],
         Some("assetiweave-cli skill backup <asset-id>")
     ),
@@ -1165,7 +1165,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.delete_skill(params),
+        ServiceAsync => |service, params| service.delete_skill(params).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Optional target profile", ["profileId"]),
@@ -1183,7 +1183,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.mount_skill(params, true),
+        ServiceAsync => |service, params| service.mount_skill(params, true).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1199,7 +1199,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.mount_skill(params, false),
+        ServiceAsync => |service, params| service.mount_skill(params, false).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1215,7 +1215,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_groups(),
+        ServiceAsync => |service, _params| service.list_skill_groups().await,
         &[],
         Some("assetiweave-cli skill group list")
     ),
@@ -1227,7 +1227,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.get_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.get_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         Some("assetiweave-cli skill group show <group-id>")
     ),
@@ -1239,7 +1239,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::CreateSkillGroupParams,
-        Service => |service, params| service.create_skill_group(params.input),
+        ServiceAsync => |service, params| service.create_skill_group(params.input).await,
         &[param!("input", "Skill group input")],
         Some("assetiweave-cli skill group create --name <name>")
     ),
@@ -1251,7 +1251,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::UpdateSkillGroupParams,
-        Service => |service, params| service.update_skill_group(params.group),
+        ServiceAsync => |service, params| service.update_skill_group(params.group).await,
         &[param!("group", "Complete Skill group record")],
         Some("assetiweave-cli skill group update <group-id> --json <json>")
     ),
@@ -1263,7 +1263,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.delete_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.delete_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         Some("assetiweave-cli skill group delete <group-id> --yes")
     ),
@@ -1275,7 +1275,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SetSkillGroupManualMembersParams,
-        Service => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids),
+        ServiceAsync => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("asset_ids", "Manual member asset identifiers", ["assetIds"]),
@@ -1290,7 +1290,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillGroupMountParams,
-        Service => |service, params| service.mount_skill_group(params, true),
+        ServiceAsync => |service, params| service.mount_skill_group(params, true).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1306,7 +1306,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillGroupMountParams,
-        Service => |service, params| service.mount_skill_group(params, false),
+        ServiceAsync => |service, params| service.mount_skill_group(params, false).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1323,7 +1323,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.preview_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.preview_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         Some("assetiweave-cli skill group exclusive preview --group <group-id> --profile <profile-id>")
     ),
@@ -1335,7 +1335,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.apply_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.apply_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         Some("assetiweave-cli skill group exclusive apply --group <group-id> --profile <profile-id> --yes")
     ),
@@ -2530,7 +2530,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_skill_backup_settings(),
+        ServiceAsync => |service, _params| service.get_skill_backup_settings().await,
         &[],
         None
     ),
@@ -2542,7 +2542,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSkillBackupSettingsParams,
-        Service => |service, params| service.update_skill_backup_settings(params),
+        ServiceAsync => |service, params| service.update_skill_backup_settings(params).await,
         &[
             param!("root_path", "Backup library root path", ["rootPath"]),
             param!("migrate", "Migrate existing backup files"),
@@ -2557,7 +2557,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::RequiredAssetIdParams,
-        Service => |service, params| service.backup_skill(params.asset_id),
+        ServiceAsync => |service, params| service.backup_skill(params.asset_id).await,
         &[param!("asset_id", "Asset identifier", ["assetId"])],
         None
     ),
@@ -2569,7 +2569,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillBackupTaskParams,
-        Service => |service, params| service.backup_skills(params.asset_ids),
+        ServiceAsync => |service, params| service.backup_skills(params.asset_ids).await,
         &[param!("asset_ids", "Asset identifiers", ["assetIds"])],
         None
     ),
@@ -2597,7 +2597,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         true,
         crate::backend::application::SkillAcquireParams,
-        Service => |service, params| service.acquire_skill(params),
+        ServiceAsync => |service, params| service.acquire_skill(params).await,
         &[
             param!("url", "GitHub repository or tree URL"),
             param!("branch", "Git branch override"),
@@ -2616,7 +2616,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_remote_sources(),
+        ServiceAsync => |service, _params| service.list_skill_remote_sources().await,
         &[],
         Some("assetiweave-cli skill remote list")
     ),
@@ -2628,7 +2628,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillRemoteCheckParams,
-        Service => |service, params| service.check_skill_remote_sources(params),
+        ServiceAsync => |service, params| service.check_skill_remote_sources(params).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         Some("assetiweave-cli skill remote check [asset-id]")
     ),
@@ -2850,7 +2850,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.list_asset_mount_statuses(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.list_asset_mount_statuses(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2862,7 +2862,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.refresh_asset_mount_statuses(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.refresh_asset_mount_statuses(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2874,7 +2874,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_groups(),
+        ServiceAsync => |service, _params| service.list_skill_groups().await,
         &[],
         None
     ),
@@ -2886,7 +2886,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateSkillGroupParams,
-        Service => |service, params| service.create_skill_group(params.input),
+        ServiceAsync => |service, params| service.create_skill_group(params.input).await,
         &[param!("input", "Skill group input")],
         None
     ),
@@ -2898,7 +2898,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSkillGroupParams,
-        Service => |service, params| service.update_skill_group(params.group),
+        ServiceAsync => |service, params| service.update_skill_group(params.group).await,
         &[param!("group", "Complete Skill group record")],
         None
     ),
@@ -2910,7 +2910,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.delete_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.delete_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         None
     ),
@@ -2922,7 +2922,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SetSkillGroupManualMembersParams,
-        Service => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids),
+        ServiceAsync => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("asset_ids", "Manual member asset identifiers", ["assetIds"]),
@@ -2937,7 +2937,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ApplySkillGroupMountParams,
-        Service => |service, params| service.apply_skill_group_mount(&params.group_id, &params.profile_id, params.enabled),
+        ServiceAsync => |service, params| service.apply_skill_group_mount(&params.group_id, &params.profile_id, params.enabled).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2953,7 +2953,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.preview_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.preview_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         None
     ),
@@ -2965,7 +2965,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.apply_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.apply_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         None
     ),
@@ -2992,7 +2992,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.mount_asset_by_id(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.mount_asset_by_id(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -3007,7 +3007,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.unmount_asset_by_id(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.unmount_asset_by_id(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -3022,7 +3022,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SetAssetMountParams,
-        Service => |service, params| service.set_asset_mount(&params.asset_id, &params.profile_id, params.enabled, params.strategy),
+        ServiceAsync => |service, params| service.set_asset_mount(&params.asset_id, &params.profile_id, params.enabled, params.strategy).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
