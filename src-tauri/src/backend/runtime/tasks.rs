@@ -263,6 +263,10 @@ impl TaskRuntime {
         }
     }
 
+    pub(crate) fn runtime_handle(&self) -> Option<tokio::runtime::Handle> {
+        self.runtime_handle.clone()
+    }
+
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<TaskSnapshot> {
         self.events.subscribe()
     }

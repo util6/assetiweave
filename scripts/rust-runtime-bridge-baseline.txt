@@ -36,9 +36,6 @@
 1	src-tauri/src/backend/capabilities/profiles.rs
 10	src-tauri/src/backend/capabilities/sources.rs
 3	src-tauri/src/backend/data_backup.rs
-2	src-tauri/src/backend/events/consumers.rs
-10	src-tauri/src/backend/events/dispatcher.rs
-6	src-tauri/src/backend/events/tests.rs
 1	src-tauri/src/backend/http_client.rs
 19	src-tauri/src/backend/runtime/app_runtime.rs
 6	src-tauri/src/backend/search/conversation/lifecycle.rs

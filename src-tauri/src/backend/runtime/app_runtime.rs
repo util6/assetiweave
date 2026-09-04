@@ -14,7 +14,7 @@ use crate::backend::{
     ai_execution::AgentExecutionRuntime,
     application::AppService,
     conversations::ConversationAdapterCatalog,
-    events::{EventDispatcher, EventDispatcherHandle},
+    events::{EventDispatcher, EventDispatcherHandle, EventDispatcherShutdownReport},
     extension_kernel::RegistrySnapshot,
     models::{ConversationAdapter, RequestContext, Tenant},
     path_utils::ensure_app_library_dirs,
@@ -333,7 +333,7 @@ impl AppRuntime {
         self.start_team_coordinator();
         self.start_session_memory_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
-        if let Err(error) = dispatcher.initialize_all_tenants() {
+        if let Err(error) = self.run_sync(dispatcher.initialize_all_tenants()) {
             crate::backend::operation_log::log_warn(
                 "app.startup.event_dispatcher",
                 "domain event dispatcher initialization deferred",
@@ -341,9 +341,11 @@ impl AppRuntime {
             );
             return;
         }
-        let handle = dispatcher.start();
-        if let Ok(mut slot) = self.dispatcher.lock() {
-            *slot = Some(handle);
+        if let Some(runtime_handle) = self.task_runtime.runtime_handle() {
+            let handle = dispatcher.start(&runtime_handle);
+            if let Ok(mut slot) = self.dispatcher.lock() {
+                *slot = Some(handle);
+            }
         }
     }
 
@@ -729,22 +731,22 @@ impl AppRuntime {
             }
         }
         self.task_runtime.stop_accepting();
-        let task_report = self.run_sync(
-            self.task_runtime
-                .shutdown_with_grace(deadline.saturating_duration_since(Instant::now())),
-        );
-        let dispatcher_report = self
+        let mut dispatcher_handle = self
             .dispatcher
             .lock()
             .ok()
-            .and_then(|mut slot| slot.take())
-            .map(|handle| {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                handle.stop_with_timeout(remaining)
-            })
-            .unwrap_or_default();
-        self.session_streams.clear();
-        let _ = self.run_sync(self.db.pool().close());
+            .and_then(|mut slot| slot.take());
+        let (task_report, dispatcher_report) = self.run_sync(async {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let task_report = self.task_runtime.shutdown_with_grace(remaining).await;
+            let dispatcher_report = match dispatcher_handle.as_mut() {
+                Some(handle) => handle.stop_until(deadline).await,
+                None => EventDispatcherShutdownReport::default(),
+            };
+            self.session_streams.clear();
+            let _ = self.db.pool().close().await;
+            (task_report, dispatcher_report)
+        });
         ShutdownReport {
             unfinished_task_ids: task_report.unfinished_task_ids,
             dispatcher_drained: dispatcher_report.drained,

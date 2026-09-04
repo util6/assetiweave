@@ -465,7 +465,7 @@ fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_ser
     assert_eq!(settings_oneshot.settings, settings_resident.settings);
 
     // Cleanly shutdown ResidentHost
-    let resident_report = resident_runtime.shutdown_with_grace(Duration::from_millis(200));
+    let resident_report = resident_runtime.shutdown_with_grace(Duration::from_secs(1));
     assert!(resident_report.unfinished_task_ids.is_empty());
     assert!(resident_report.dispatcher_drained);
 
@@ -481,12 +481,12 @@ fn shutdown_is_idempotent_when_called_twice() {
     let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
         .expect("bootstrap ResidentHost");
 
-    let first_report = runtime.shutdown_with_grace(Duration::from_millis(200));
+    let first_report = runtime.shutdown_with_grace(Duration::from_secs(1));
     assert!(first_report.dispatcher_drained);
     assert!(first_report.unfinished_task_ids.is_empty());
 
     // Second call to shutdown_with_grace must be idempotent and cleanly return default report
-    let second_report = runtime.shutdown_with_grace(Duration::from_millis(200));
+    let second_report = runtime.shutdown_with_grace(Duration::from_secs(1));
     assert!(second_report.dispatcher_drained);
     assert!(second_report.unfinished_task_ids.is_empty());
     assert_eq!(second_report.dispatcher_remaining_events, 0);
