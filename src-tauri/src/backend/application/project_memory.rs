@@ -372,7 +372,7 @@ impl AppService {
         inputs: &ProjectMemoryInputSet,
         cancellation: CancellationToken,
     ) -> AppResult<ProjectMemoryAgentOutputWithRaw> {
-        let settings = app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new(PROJECT_MEMORY_ACTION),
             &settings,

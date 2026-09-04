@@ -27,7 +27,21 @@ pub(crate) struct Database {
 
 struct DatabaseInner {
     pool: SqlitePool,
-    runtime: Runtime,
+    runtime: Option<Runtime>,
+}
+
+impl Drop for DatabaseInner {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                std::thread::spawn(move || {
+                    drop(runtime);
+                });
+            } else {
+                drop(runtime);
+            }
+        }
+    }
 }
 
 impl Database {
@@ -64,9 +78,41 @@ impl Database {
         Ok(Self::from_parts(pool, runtime))
     }
 
+    #[cfg(test)]
+    pub(crate) async fn open_initialized_async(db_path: &Path) -> AppResult<Self> {
+        let pool = open_migrated_pool(db_path).await?;
+        let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
+        let mut initialized_paths = initialized_paths.lock().map_err(AppError::external)?;
+        if !initialized_paths.contains(db_path) {
+            ensure_app_library_dirs()?;
+            seed_defaults_sqlx(&pool).await?;
+            let adapters = crate::backend::conversations::ensure_official_conversation_adapters()?;
+            super::conversation_repo::seed_prepared_builtin_conversation_adapters_sqlx(
+                &pool,
+                super::tenant_repo::DEFAULT_TENANT_ID,
+                adapters,
+            )
+            .await?;
+            initialized_paths.insert(db_path.to_path_buf());
+        }
+        Ok(Self::from_pool(pool))
+    }
+
+    pub(crate) fn from_pool(pool: SqlitePool) -> Self {
+        Self {
+            inner: Arc::new(DatabaseInner {
+                pool,
+                runtime: None,
+            }),
+        }
+    }
+
     pub(crate) fn from_parts(pool: SqlitePool, runtime: Runtime) -> Self {
         Self {
-            inner: Arc::new(DatabaseInner { pool, runtime }),
+            inner: Arc::new(DatabaseInner {
+                pool,
+                runtime: Some(runtime),
+            }),
         }
     }
 
@@ -75,11 +121,17 @@ impl Database {
     }
 
     pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.inner.runtime.block_on(future)
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(future))
+        } else if let Some(runtime) = &self.inner.runtime {
+            runtime.block_on(future)
+        } else {
+            panic!("Database has no runtime configured and is outside tokio context")
+        }
     }
 
     pub(crate) fn run_sync<F: Future>(&self, future: F) -> F::Output {
-        self.inner.runtime.block_on(future)
+        self.block_on(future)
     }
 }
 
@@ -1198,11 +1250,9 @@ mod tests {
         drop(conn);
 
         let reopened = Database::open(&db_path).expect("reopen initialized database");
-        reopened
-            .block_on(seed_tenant_defaults_sqlx(reopened.pool(), "default"))
-            .expect("restore initialized defaults");
         let (profile_count, shortcut_count, codex_accent, hermes_accent) = reopened
             .block_on(async {
+                seed_tenant_defaults_sqlx(reopened.pool(), "default").await?;
                 let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
                     .fetch_one(reopened.pool())
                     .await

@@ -109,27 +109,33 @@ pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> Runtim
 }
 
 #[tauri::command]
-pub(crate) fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
-    AppService::from_runtime(&state.runtime).overview()
+pub(crate) async fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
+    AppService::from_runtime(&state.runtime).overview().await
 }
 
 #[tauri::command]
-pub(crate) fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
-    AppService::from_runtime(&state.runtime).list_tenants()
+pub(crate) async fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
+    AppService::from_runtime(&state.runtime)
+        .list_tenants()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
-    AppService::from_runtime(&state.runtime).active_tenant()
+pub(crate) async fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
+    AppService::from_runtime(&state.runtime)
+        .active_tenant()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_tenant(
+pub(crate) async fn create_tenant(
     state: State<'_, AppState>,
     params: TenantCreateParams,
 ) -> RuntimeAppResult<Tenant> {
     let fields = vec![("name", params.name.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).create_tenant(params))();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_tenant(params)
+        .await;
     match &result {
         Ok(tenant) => log_info(
             "tenant.create",
@@ -142,12 +148,14 @@ pub(crate) fn create_tenant(
 }
 
 #[tauri::command]
-pub(crate) fn switch_tenant(
+pub(crate) async fn switch_tenant(
     state: State<'_, AppState>,
     tenant_id: String,
 ) -> RuntimeAppResult<Tenant> {
     let fields = vec![("tenant_id", tenant_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).switch_tenant(tenant_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .switch_tenant(tenant_id)
+        .await;
     match &result {
         Ok(tenant) => log_info(
             "tenant.switch",
@@ -160,26 +168,32 @@ pub(crate) fn switch_tenant(
 }
 
 #[tauri::command]
-pub(crate) fn get_app_settings(
+pub(crate) async fn get_app_settings(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime).get_app_settings()
+    AppService::from_runtime(&state.runtime)
+        .get_app_settings()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn save_app_settings(
+pub(crate) async fn save_app_settings(
     state: State<'_, AppState>,
     settings: serde_json::Value,
 ) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime).save_app_settings(settings)
+    AppService::from_runtime(&state.runtime)
+        .save_app_settings(settings)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn initialize_app_locale_if_unset(
+pub(crate) async fn initialize_app_locale_if_unset(
     state: State<'_, AppState>,
     locale: crate::backend::app_settings::AppLocale,
 ) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime).initialize_app_locale_if_unset(locale)
+    AppService::from_runtime(&state.runtime)
+        .initialize_app_locale_if_unset(locale)
+        .await
 }
 
 #[tauri::command]

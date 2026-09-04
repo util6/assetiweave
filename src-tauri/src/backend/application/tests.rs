@@ -1067,8 +1067,8 @@ fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn creating_tenant_seeds_isolated_skill_backup_library_root() {
+#[tokio::test(flavor = "multi_thread")]
+async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     let root = std::env::temp_dir().join(format!("assetiweave-tenant-root-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp dir");
     let db_path = root.join("app.db");
@@ -1080,6 +1080,7 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
             slug: Some("client-a".to_string()),
             set_active: true,
         })
+        .await
         .expect("create tenant");
     assert_eq!(tenant.id, "client-a");
     assert_eq!(tenant.slug, "client-a");
@@ -1140,8 +1141,8 @@ fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn switching_tenant_rebinds_the_next_app_service_request() {
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_tenant_rebinds_the_next_app_service_request() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-tenant-switch-request-{}",
         Uuid::new_v4()
@@ -1158,11 +1159,13 @@ fn switching_tenant_rebinds_the_next_app_service_request() {
             slug: Some("tenant-b".to_string()),
             set_active: false,
         })
+        .await
         .expect("create tenant B");
     let runtime_before_switch = service.runtime.context();
 
     service
         .switch_tenant(tenant_b.id.clone())
+        .await
         .expect("switch to tenant B");
     let runtime_after_switch = service.runtime.context();
     assert!(std::sync::Arc::ptr_eq(
@@ -1218,8 +1221,8 @@ fn switching_tenant_rebinds_the_next_app_service_request() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
+#[tokio::test(flavor = "multi_thread")]
+async fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-tenant-switch-runtime-resources-{}",
         Uuid::new_v4()
@@ -1233,6 +1236,7 @@ fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
             slug: Some("tenant-b-runtime".to_string()),
             set_active: false,
         })
+        .await
         .expect("create tenant B");
     execute_test_sql(
         &service,
@@ -1245,6 +1249,7 @@ fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
 
     service
         .switch_tenant(tenant_b.id)
+        .await
         .expect("switch to tenant B");
 
     let next_request = AppService::from_runtime(&service.runtime);
@@ -1326,14 +1331,14 @@ fn system_skill_cannot_be_copied_into_the_user_backup_library() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn doctor_reports_conversation_adapter_runtime_statuses() {
+#[tokio::test(flavor = "multi_thread")]
+async fn doctor_reports_conversation_adapter_runtime_statuses() {
     let root = std::env::temp_dir().join(format!("assetiweave-doctor-runtime-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp dir");
     let service =
         AppService::open_with_db_path(root.join("app.db")).expect("open application service");
 
-    let report = service.run_doctor().expect("run doctor");
+    let report = service.run_doctor().await.expect("run doctor");
     let checks = report["checks"].as_array().expect("doctor checks");
     let runtime_check = checks
         .iter()
@@ -3787,8 +3792,8 @@ fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
+#[tokio::test(flavor = "multi_thread")]
+async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let root = std::env::temp_dir().join(format!("assetiweave-target-runtime-{}", Uuid::new_v4()));
     let source_root = root.join("fixture-source");
     let target_root = root.join("fixture-target");
@@ -3821,6 +3826,7 @@ fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             slug: Some("fixture-tenant".to_string()),
             set_active: true,
         })
+        .await
         .expect("seed fixture provider profile");
     let service = AppService::from_runtime(&service.runtime);
     assert!(service

@@ -377,7 +377,7 @@ impl AppService {
         inputs: &GlobalMemoryInputSet,
         cancellation: CancellationToken,
     ) -> AppResult<GlobalMemoryAgentOutputWithRaw> {
-        let settings = app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new(GLOBAL_MEMORY_ACTION),
             &settings,

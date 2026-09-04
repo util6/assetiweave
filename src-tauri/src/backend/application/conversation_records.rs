@@ -470,8 +470,7 @@ impl AppService {
         if matches!(params.format, ConversationExportFormat::Rendered) {
             self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
         }
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         export_loaded_conversation_markdown(
             detail,
             adapter,
@@ -510,8 +509,7 @@ impl AppService {
         if matches!(params.format, ConversationExportFormat::Rendered) {
             self.ensure_conversation_adapter_package_runtime_ready(&adapter)?;
         }
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         export_loaded_conversation_markdown(
             detail, adapter, source, params, "web", "web", &settings,
         )

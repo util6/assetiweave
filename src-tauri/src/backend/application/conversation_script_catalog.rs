@@ -198,8 +198,7 @@ impl AppService {
             })
             .map_err(AppError::external)?;
         reject_conversation_package_task_conflicts(&preflight)?;
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
@@ -905,8 +904,7 @@ impl AppService {
                 json!({"dry_run": true, "package_id": package_id, "version": version, "install_path": target.install_dir}),
             );
         }
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let preview = crate::backend::conversations::register_external_adapter_with_settings(
             crate::backend::conversations::ExternalAdapterRegisterParams {
                 manifest_path: validation.adapter_manifest_path.clone(),
@@ -1197,7 +1195,7 @@ fn promote_conversation_adapter_workspace_package(
         }));
     }
 
-    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    let settings = service.app_settings_value();
     let prepared_dir = package_root.join("prepared").join(short_uuid());
     if let Some(parent) = prepared_dir.parent() {
         fs::create_dir_all(parent).map_err(AppError::external)?;
@@ -1868,11 +1866,10 @@ fn fetch_catalog_text(url: &str) -> AppResult<String> {
             "conversation adapter package catalog request failed: {error}"
         ))
     })?;
-    response.text().map_err(|error| {
-        AppError::External(format!(
-            "conversation adapter package catalog response was not text: {error}"
-        ))
-    })
+    crate::backend::http_client::read_response_text_with_limit(
+        response,
+        crate::backend::http_client::DEFAULT_MAX_TEXT_RESPONSE_BYTES,
+    )
 }
 
 fn read_local_default_catalog() -> AppResult<String> {
@@ -3038,8 +3035,8 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn package_preflight_detects_running_sync_in_another_tenant() {
+    #[tokio::test]
+    async fn package_preflight_detects_running_sync_in_another_tenant() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-cross-tenant-package-preflight-{}",
             Uuid::new_v4()
@@ -3053,6 +3050,7 @@ mod tests {
                 slug: Some("other-tenant".to_string()),
                 set_active: false,
             })
+            .await
             .expect("create other tenant");
         let adapter = adapter("cross-tenant-preflight", "1.0.0");
         let source = ConversationSource {

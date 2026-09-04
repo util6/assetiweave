@@ -240,7 +240,7 @@ impl BackendSettings {
 
 pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
-        return read_app_settings_value_for_database(runtime.db());
+        return Ok(runtime.app_settings_value());
     }
     let paths = app_settings_paths()?;
     if !paths.config_path.exists() {
@@ -249,15 +249,15 @@ pub(crate) fn read_app_settings_value() -> AppResult<Value> {
     Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
 
-pub(crate) fn get_app_settings_for_database(db: &Database) -> AppResult<AppSettingsFile> {
+pub(crate) async fn get_app_settings_sqlx(pool: &sqlx::SqlitePool) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
-    let settings = read_app_settings_value_for_database(db)?;
+    let settings = read_app_settings_value_sqlx(pool).await?;
     Ok(paths.into_file(settings))
 }
 
-pub(crate) fn save_app_settings_for_database(
-    db: &Database,
+pub(crate) async fn save_app_settings_sqlx(
+    pool: &sqlx::SqlitePool,
     settings: Value,
 ) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
@@ -269,41 +269,39 @@ pub(crate) fn save_app_settings_for_database(
     let document = AppSettingsDocument::new(settings);
     let merged = typed.merge_into_document(document)?;
 
-    db.block_on(store::save_app_settings_sqlx(
-        db.pool(),
-        SETTINGS_SCHEMA_VERSION,
-        &merged.settings,
-    ))?;
-    let persisted = read_app_settings_value_for_database(db)?;
+    store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &merged.settings).await?;
+    let persisted = read_app_settings_value_sqlx(pool).await?;
     let canonical = canonicalize_settings(persisted)?;
     Ok(paths.into_file(canonical))
 }
 
-pub(crate) fn initialize_app_locale_for_database(
-    db: &Database,
+pub(crate) async fn initialize_app_locale_sqlx(
+    pool: &sqlx::SqlitePool,
     locale: AppLocale,
 ) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
-    let _ = read_app_settings_value_for_database(db)?;
-    let settings = db.block_on(store::initialize_app_locale_sqlx(db.pool(), locale))?;
+    let _ = read_app_settings_value_sqlx(pool).await?;
+    let settings = store::initialize_app_locale_sqlx(pool, locale).await?;
     let canonical = canonicalize_settings(settings)?;
     Ok(paths.into_file(canonical))
 }
 
-pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
-    db.block_on(load_or_import_app_settings_sqlx(db.pool()))
+pub(crate) async fn read_app_settings_value_sqlx(pool: &sqlx::SqlitePool) -> AppResult<Value> {
+    load_or_import_app_settings_sqlx(pool).await
 }
 
-pub(crate) fn read_app_settings_document_for_database(
-    db: &Database,
+pub(crate) async fn read_app_settings_document_sqlx(
+    pool: &sqlx::SqlitePool,
 ) -> AppResult<AppSettingsDocument> {
-    let settings = read_app_settings_value_for_database(db)?;
+    let settings = read_app_settings_value_sqlx(pool).await?;
     Ok(AppSettingsDocument::new(settings))
 }
 
-pub(crate) fn load_backend_settings_for_database(db: &Database) -> AppResult<BackendSettings> {
-    let doc = read_app_settings_document_for_database(db)?;
+pub(crate) async fn load_backend_settings_sqlx(
+    pool: &sqlx::SqlitePool,
+) -> AppResult<BackendSettings> {
+    let doc = read_app_settings_document_sqlx(pool).await?;
     BackendSettings::from_document(&doc)
 }
 
@@ -328,6 +326,15 @@ pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) ->
     let imported = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
     store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &imported).await?;
     Ok(imported)
+}
+
+pub(crate) fn load_backend_settings_for_database(_db: &Database) -> AppResult<BackendSettings> {
+    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
+        return BackendSettings::from_value(&runtime.app_settings_value());
+    }
+    let paths = app_settings_paths()?;
+    let doc = read_settings_document(&paths.config_path)?;
+    BackendSettings::from_document(&doc)
 }
 
 pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
@@ -991,8 +998,8 @@ mod tests {
 
     const TEST_HOME_VAR: &str = "ASSETIWEAVE_HOME";
 
-    #[test]
-    fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
+    #[tokio::test]
+    async fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
         let _guard = settings_test_lock().lock().expect("settings test lock");
         let root = std::env::temp_dir().join(format!(
             "assetiweave-settings-migration-{}",
@@ -1017,9 +1024,12 @@ mod tests {
         .expect("write legacy settings");
 
         let db_path = root.join("settings.db");
-        let database = crate::backend::store::Database::open_initialized(&db_path)
+        let database = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
             .expect("open settings database");
-        let imported = read_app_settings_value_for_database(&database).expect("import settings");
+        let imported = read_app_settings_value_sqlx(database.pool())
+            .await
+            .expect("import settings");
         assert_eq!(
             imported["agentAssignments"]["memory.extraction"]["agentId"],
             "gemini"
@@ -1037,7 +1047,9 @@ mod tests {
             .expect("encode changed legacy settings"),
         )
         .expect("rewrite legacy settings");
-        let reopened = read_app_settings_value_for_database(&database).expect("read settings");
+        let reopened = read_app_settings_value_sqlx(database.pool())
+            .await
+            .expect("read settings");
         assert_eq!(reopened, imported);
 
         match previous_home {
@@ -1047,8 +1059,8 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
-    #[test]
-    fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
+    #[tokio::test]
+    async fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
         let _guard = settings_test_lock().lock().expect("settings test lock");
         let root = std::env::temp_dir().join(format!(
             "assetiweave-settings-corrupt-file-{}",
@@ -1057,18 +1069,23 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create settings test root");
         let previous_home = std::env::var_os(TEST_HOME_VAR);
         std::env::set_var(TEST_HOME_VAR, &root);
-        let database = crate::backend::store::Database::open_initialized(&root.join("settings.db"))
-            .expect("open settings database");
+        let database =
+            crate::backend::store::Database::open_initialized_async(&root.join("settings.db"))
+                .await
+                .expect("open settings database");
         let expected = canonicalize_settings(json!({
             "theme": "dark",
             "agentAssignments": {}
         }))
         .expect("canonical settings");
-        save_app_settings_for_database(&database, expected.clone()).expect("save sqlite settings");
+        save_app_settings_sqlx(database.pool(), expected.clone())
+            .await
+            .expect("save sqlite settings");
         std::fs::write(root.join(CONFIG_FILE_NAME), "{ invalid json")
             .expect("write corrupt legacy file");
 
-        let actual = read_app_settings_value_for_database(&database)
+        let actual = read_app_settings_value_sqlx(database.pool())
+            .await
             .expect("read settings from sqlite despite corrupt legacy file");
         assert_eq!(actual, expected);
 
@@ -1213,24 +1230,28 @@ mod tests {
         assert_eq!(stored["columnLayouts"], json!({}));
     }
 
-    #[test]
-    fn save_app_settings_preserves_and_returns_persisted_locale() {
+    #[tokio::test]
+    async fn save_app_settings_preserves_and_returns_persisted_locale() {
         let temp_dir = std::env::temp_dir().join(format!(
             "assetiweave-settings-test-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let db_path = temp_dir.join("test.db");
-        let db = crate::backend::store::Database::open_initialized(&db_path).unwrap();
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .unwrap();
 
         // 1. 先保存一个带有 locale: "en" 的设置
-        let res1 = save_app_settings_for_database(&db, json!({ "theme": "dark", "locale": "en" }))
+        let res1 = save_app_settings_sqlx(db.pool(), json!({ "theme": "dark", "locale": "en" }))
+            .await
             .unwrap();
         assert_eq!(res1.settings["locale"], "en");
 
         // 2. 模拟客户端提交不含 locale 或 locale 为 null 的更新（如只更新 theme）
         let res2 =
-            save_app_settings_for_database(&db, json!({ "theme": "sunlight", "locale": null }))
+            save_app_settings_sqlx(db.pool(), json!({ "theme": "sunlight", "locale": null }))
+                .await
                 .unwrap();
 
         // 3. 验证返回的响应中，locale 依然保留为 "en"，与实际数据库内容一致，而不是返回 null！
@@ -1241,7 +1262,7 @@ mod tests {
         );
 
         // 4. 再次读取数据库，验证数据库本身也是 "en"
-        let loaded = read_app_settings_value_for_database(&db).unwrap();
+        let loaded = read_app_settings_value_sqlx(db.pool()).await.unwrap();
         assert_eq!(loaded["theme"], "sunlight");
         assert_eq!(loaded["locale"], "en");
 
@@ -1315,15 +1336,17 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    #[test]
-    fn unknown_top_level_and_nested_fields_survive_load_save_load() {
+    #[tokio::test]
+    async fn unknown_top_level_and_nested_fields_survive_load_save_load() {
         let temp_dir = std::env::temp_dir().join(format!(
             "assetiweave-settings-roundtrip-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let db_path = temp_dir.join("roundtrip.db");
-        let db = crate::backend::store::Database::open_initialized(&db_path).unwrap();
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .unwrap();
 
         let initial = json!({
             "theme": "synthwave",
@@ -1333,12 +1356,14 @@ mod tests {
             "conversations": { "autoFullSyncOnStartup": false }
         });
 
-        let saved = save_app_settings_for_database(&db, initial.clone()).unwrap();
+        let saved = save_app_settings_sqlx(db.pool(), initial.clone())
+            .await
+            .unwrap();
         assert_eq!(saved.settings["theme"], "synthwave");
         assert_eq!(saved.settings["unknownPlugin"]["threshold"], 42);
         assert_eq!(saved.settings["nested"]["deep"]["value"], "preserved");
 
-        let reloaded = read_app_settings_value_for_database(&db).unwrap();
+        let reloaded = read_app_settings_value_sqlx(db.pool()).await.unwrap();
         assert_eq!(reloaded["theme"], "synthwave");
         assert_eq!(reloaded["unknownPlugin"]["threshold"], 42);
         assert_eq!(reloaded["nested"]["deep"]["value"], "preserved");

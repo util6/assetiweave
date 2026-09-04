@@ -501,18 +501,7 @@ pub(crate) fn sync_before_close_with_runtime(
     }
 
     if backup_database {
-        let settings = match service.get_app_settings() {
-            Ok(settings) => settings.settings,
-            Err(error) => {
-                log_error(
-                    "app.close.database_backup_settings",
-                    "读取 SQLite 备份设置失败，使用默认备份目录",
-                    &error,
-                    &[],
-                );
-                serde_json::Value::Object(Default::default())
-            }
-        };
+        let settings = service.app_settings_value();
         let backup_result = backup_database_from_settings_value(db_path, &settings);
         match backup_result {
             Ok(report) => {
@@ -601,7 +590,7 @@ pub fn run_team_mcp_stdio() {
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_TEAM_TOOL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+        if let Err(error) = runtime.activate_tenant_sync(&tenant_id) {
             eprintln!("failed to activate Team MCP tenant: {error}");
             drop(_logging_guard);
             std::process::exit(1);
@@ -639,7 +628,7 @@ pub fn run_memory_recall_mcp_stdio() {
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+        if let Err(error) = runtime.activate_tenant_sync(&tenant_id) {
             eprintln!("failed to activate Memory Recall MCP tenant: {error}");
             drop(_logging_guard);
             std::process::exit(1);

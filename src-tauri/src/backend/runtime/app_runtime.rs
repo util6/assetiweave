@@ -86,7 +86,7 @@ pub(crate) struct AppRuntime {
     db: Database,
     context: ArcSwap<RequestContextSnapshot>,
     task_runtime: TaskRuntime,
-    context_update_gate: Mutex<()>,
+    context_update_gate: tokio::sync::Mutex<()>,
     shutdown: ShutdownState,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     session_memory_coordinator: Mutex<Option<SessionMemoryCoordinatorHandle>>,
@@ -96,6 +96,7 @@ pub(crate) struct AppRuntime {
     target_catalog: RegistrySnapshot<TargetCatalog>,
     builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
     config: Arc<super::config::RuntimeConfig>,
+    settings: ArcSwap<serde_json::Value>,
 }
 
 struct TeamCoordinatorHandle {
@@ -131,10 +132,21 @@ impl TeamCoordinatorHandle {
 
 static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
 
+fn await_bootstrap_future<F: std::future::Future>(
+    runtime: &tokio::runtime::Runtime,
+    future: F,
+) -> F::Output {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        runtime.block_on(future)
+    }
+}
+
 impl AppRuntime {
     pub(crate) fn bootstrap(db_path: PathBuf, role: RuntimeRole) -> AppResult<Arc<Self>> {
         let runtime = crate::backend::store::build_runtime()?;
-        let pool = runtime.block_on(store::open_migrated_pool(&db_path))?;
+        let pool = await_bootstrap_future(&runtime, store::open_migrated_pool(&db_path))?;
         ensure_app_library_dirs()?;
         if let Err(error) = super::archive_legacy_memory_once(&db_path) {
             crate::backend::operation_log::log_warn(
@@ -151,16 +163,19 @@ impl AppRuntime {
 
         // Bootstrap is the only production path that opens the migrated pool. The
         // old Database::open_initialized remains a test/migration compatibility API.
-        runtime.block_on(store::seed_defaults_sqlx_with_catalog(
-            &pool,
-            &target_catalog,
-        ))?;
-        let context = runtime.block_on(store::load_local_request_context_sqlx(&pool))?;
+        await_bootstrap_future(
+            &runtime,
+            store::seed_defaults_sqlx_with_catalog(&pool, &target_catalog),
+        )?;
+        let context =
+            await_bootstrap_future(&runtime, store::load_local_request_context_sqlx(&pool))?;
         let tenant_id = context.tenant.id.clone();
-        let builtin_conversation_adapters = runtime.block_on(
+        let builtin_conversation_adapters = await_bootstrap_future(
+            &runtime,
             crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id),
         )?;
-        let conversation_adapters = runtime.block_on(
+        let conversation_adapters = await_bootstrap_future(
+            &runtime,
             crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id),
         )?;
         let workspace_root = db_path
@@ -171,30 +186,33 @@ impl AppRuntime {
             Arc::new(AgentRuntimeManager::new(pool.clone(), workspace_root));
         let runtime_root = crate::backend::agent_market::default_runtime_root()
             .map_err(|error| AppError::External(error.to_string()))?;
-        runtime
-            .block_on(agent_runtime_manager.recover_startup(&runtime_root))
-            .map_err(AppError::External)?;
+        await_bootstrap_future(
+            &runtime,
+            agent_runtime_manager.recover_startup(&runtime_root),
+        )
+        .map_err(AppError::External)?;
         let migration_scope = db_path.to_string_lossy().to_string();
-        if let Err(error) =
-            runtime.block_on(crate::backend::agent_market::migrate_legacy_assignments(
+        if let Err(error) = await_bootstrap_future(
+            &runtime,
+            crate::backend::agent_market::migrate_legacy_assignments(
                 pool.clone(),
                 agent_runtime_manager.clone(),
                 &migration_scope,
-            ))
-        {
+            ),
+        ) {
             crate::backend::operation_log::log_warn(
                 "app.startup.agent_market_migration",
                 "agent market legacy migration deferred",
                 &[("error", error.to_string())],
             );
         }
-        runtime
-            .block_on(agent_runtime_manager.reload())
+        await_bootstrap_future(&runtime, agent_runtime_manager.reload())
             .map_err(AppError::External)?;
         if role == RuntimeRole::ResidentHost {
-            if let Err(error) =
-                runtime.block_on(agent_runtime_manager.prepare_startup_health_refresh())
-            {
+            if let Err(error) = await_bootstrap_future(
+                &runtime,
+                agent_runtime_manager.prepare_startup_health_refresh(),
+            ) {
                 crate::backend::operation_log::log_warn(
                     "app.startup.agent_health_prepare",
                     "Agent startup health refresh could not be prepared",
@@ -203,6 +221,11 @@ impl AppRuntime {
             }
         }
 
+        let initial_settings = await_bootstrap_future(
+            &runtime,
+            crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool),
+        )
+        .unwrap_or_else(|_| serde_json::json!({}));
         let task_runtime = TaskRuntime::with_runtime_handle(runtime.handle().clone());
         let db = Database::from_parts(pool, runtime);
         let snapshot = RequestContextSnapshot {
@@ -223,7 +246,7 @@ impl AppRuntime {
             db,
             context: ArcSwap::from_pointee(snapshot),
             task_runtime,
-            context_update_gate: Mutex::new(()),
+            context_update_gate: tokio::sync::Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
@@ -233,6 +256,7 @@ impl AppRuntime {
             target_catalog: RegistrySnapshot::new(target_catalog),
             builtin_conversation_adapters: Arc::new(builtin_conversation_adapters),
             config,
+            settings: ArcSwap::from_pointee(initial_settings),
         });
 
         // The ResidentHost owns long-lived dispatchers. OneShot deliberately only
@@ -299,7 +323,7 @@ impl AppRuntime {
                 conversation_adapter_catalog: Arc::new(ConversationAdapterCatalog::new(adapters)),
             }),
             task_runtime: TaskRuntime::new(),
-            context_update_gate: Mutex::new(()),
+            context_update_gate: tokio::sync::Mutex::new(()),
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
@@ -321,6 +345,7 @@ impl AppRuntime {
                 config.db_path = db_path;
                 Arc::new(config)
             },
+            settings: ArcSwap::from_pointee(serde_json::json!({})),
         })
     }
 
@@ -543,49 +568,57 @@ impl AppRuntime {
     /// the active tenant is compensated back to the previously published
     /// snapshot so callers never keep a successful database change with a
     /// stale runtime context.
-    pub(crate) fn activate_tenant(&self, tenant_id: &str) -> AppResult<Tenant> {
-        let _update_guard = self
-            .context_update_gate
-            .lock()
-            .map_err(|_| AppError::Conflict("租户上下文更新锁不可用".to_string()))?;
+    pub(crate) async fn activate_tenant(&self, tenant_id: &str) -> AppResult<Tenant> {
+        let _update_guard = self.context_update_gate.lock().await;
         let previous = self.context();
         let principal_id = previous.request_context.principal.id.clone();
         let previous_tenant_id = previous.tenant.id.clone();
         let tenant_id = tenant_id.to_string();
         let pool = self.pool().clone();
 
-        let (tenant, next_snapshot) = self.block_on(async {
-            let transition = async {
-                let tenant =
-                    crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant_id)
-                        .await?;
-                let next_context =
-                    crate::backend::store::load_local_request_context_sqlx(&pool).await?;
-                let next_snapshot = self.build_tenant_snapshot(next_context).await?;
-                AppResult::Ok((tenant, next_snapshot))
+        let transition = async {
+            let tenant =
+                crate::backend::store::set_active_tenant_sqlx(&pool, &principal_id, &tenant_id)
+                    .await?;
+            let next_context =
+                crate::backend::store::load_local_request_context_sqlx(&pool).await?;
+            let next_snapshot = self.build_tenant_snapshot(next_context).await?;
+            AppResult::Ok((tenant, next_snapshot))
+        }
+        .await;
+
+        let (tenant, next_snapshot) = match transition {
+            Ok(transition) => Ok(transition),
+            Err(error) => {
+                crate::backend::store::set_active_tenant_sqlx(
+                    &pool,
+                    &principal_id,
+                    &previous_tenant_id,
+                )
+                .await
+                .map_err(|rollback_error| {
+                    AppError::Conflict(format!(
+                        "租户上下文构造失败且回滚 active tenant 失败: {error}; {rollback_error}"
+                    ))
+                })?;
+                Err(error)
             }
-            .await;
-            match transition {
-                Ok(transition) => Ok(transition),
-                Err(error) => {
-                    crate::backend::store::set_active_tenant_sqlx(
-                        &pool,
-                        &principal_id,
-                        &previous_tenant_id,
-                    )
-                    .await
-                    .map_err(|rollback_error| {
-                        AppError::Conflict(format!(
-                            "租户上下文构造失败且回滚 active tenant 失败: {error}; {rollback_error}"
-                        ))
-                    })?;
-                    Err(error)
-                }
-            }
-        })?;
+        }?;
 
         self.context.store(Arc::new(next_snapshot));
         Ok(tenant)
+    }
+
+    pub(crate) fn activate_tenant_sync(&self, tenant_id: &str) -> AppResult<Tenant> {
+        self.block_on(self.activate_tenant(tenant_id))
+    }
+
+    pub(crate) fn app_settings_value(&self) -> serde_json::Value {
+        (**self.settings.load()).clone()
+    }
+
+    pub(crate) fn update_app_settings_value(&self, new_settings: serde_json::Value) {
+        self.settings.store(Arc::new(new_settings));
     }
 
     async fn build_tenant_snapshot(
@@ -691,10 +724,7 @@ impl AppRuntime {
     }
 
     pub(crate) fn refresh_conversation_adapter_catalog(&self) -> AppResult<()> {
-        let _update_guard = self
-            .context_update_gate
-            .lock()
-            .map_err(|_| AppError::Conflict("租户上下文更新锁不可用".to_string()))?;
+        let _update_guard = self.context_update_gate.blocking_lock();
         let current = self.context();
         let tenant_id = current.tenant.id.clone();
         let pool = self.pool().clone();

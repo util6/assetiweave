@@ -291,6 +291,41 @@ macro_rules! command {
         $exposure:ident,
         $dry_run:expr,
         $params_type:ty,
+        ServiceAsync => |$service:ident, $typed_params:ident| $handler:expr,
+        $params:expr,
+        $cli:expr
+        $(, since: $since:literal, deprecated: $deprecated:expr)?
+    ) => {
+        command!(@build
+            method: $method,
+            canonical_method: $canonical,
+            description: $description,
+            risk: CommandRisk::$risk,
+            exposure: CommandExposure::$exposure,
+            supports_dry_run: $dry_run,
+            params_type: $params_type,
+            params: $params,
+            handler: command!(@service_handler $exposure,
+                |params| dispatch_service_async(
+                    params,
+                    |$service: AppService, $typed_params: $params_type| {
+                        Box::pin(async move { $handler })
+                    },
+                )
+            ),
+            cli: $cli,
+            since: command!(@since $($since)?),
+            deprecated: command!(@deprecated $($deprecated)?),
+        )
+    };
+    (
+        $method:literal,
+        $canonical:literal,
+        $description:literal,
+        $risk:ident,
+        $exposure:ident,
+        $dry_run:expr,
+        $params_type:ty,
         System => |$typed_params:ident| $handler:expr,
         $params:expr,
         $cli:expr
@@ -381,7 +416,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.overview(),
+        ServiceAsync => |service, _params| service.overview().await,
         &[],
         Some("assetiweave-cli overview")
     ),
@@ -393,7 +428,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_tenants(),
+        ServiceAsync => |service, _params| service.list_tenants().await,
         &[],
         Some("assetiweave-cli tenant list")
     ),
@@ -405,7 +440,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.active_tenant(),
+        ServiceAsync => |service, _params| service.active_tenant().await,
         &[],
         Some("assetiweave-cli tenant active")
     ),
@@ -417,7 +452,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::TenantCreateParams,
-        Service => |service, params| service.create_tenant(params),
+        ServiceAsync => |service, params| service.create_tenant(params).await,
         &[
             param!("name", "Tenant display name"),
             param!("slug", "Tenant stable slug"),
@@ -433,7 +468,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.switch_tenant(params.id),
+        ServiceAsync => |service, params| service.switch_tenant(params.id).await,
         &[param!("id", "Tenant identifier")],
         Some("assetiweave-cli tenant switch <tenant-id>")
     ),
@@ -2137,7 +2172,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.run_doctor(),
+        ServiceAsync => |service, _params| service.run_doctor().await,
         &[],
         Some("assetiweave-cli doctor")
     ),
@@ -2185,7 +2220,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.overview(),
+        ServiceAsync => |service, _params| service.overview().await,
         &[],
         None
     ),
@@ -2197,7 +2232,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_tenants(),
+        ServiceAsync => |service, _params| service.list_tenants().await,
         &[],
         None
     ),
@@ -2209,7 +2244,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.active_tenant(),
+        ServiceAsync => |service, _params| service.active_tenant().await,
         &[],
         None
     ),
@@ -2221,7 +2256,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::TenantCreateParams,
-        Service => |service, params| service.create_tenant(params),
+        ServiceAsync => |service, params| service.create_tenant(params).await,
         &[
             param!("name", "Tenant display name"),
             param!("slug", "Tenant stable slug"),
@@ -2237,7 +2272,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.switch_tenant(params.id),
+        ServiceAsync => |service, params| service.switch_tenant(params.id).await,
         &[param!("id", "Tenant identifier")],
         None
     ),
@@ -2249,7 +2284,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_app_settings(),
+        ServiceAsync => |service, _params| service.get_app_settings().await,
         &[],
         Some("assetiweave-cli settings show")
     ),
@@ -2261,7 +2296,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SaveAppSettingsParams,
-        Service => |service, params| service.save_app_settings(Value::Object(params.settings.into_iter().collect())),
+        ServiceAsync => |service, params| service.save_app_settings(Value::Object(params.settings.into_iter().collect())).await,
         &[param!("settings", "Normalized application settings object")],
         Some("assetiweave-cli settings save --json <json>")
     ),
@@ -2273,7 +2308,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::InitializeAppLocaleParams,
-        Service => |service, params| service.initialize_app_locale_if_unset(params.locale),
+        ServiceAsync => |service, params| service.initialize_app_locale_if_unset(params.locale).await,
         &[param!("locale", "Application locale (zh or en)")],
         None
     ),
@@ -4841,6 +4876,24 @@ fn validate_typed_params<T: DeserializeOwned>(params: &Value) -> Result<(), Stri
     serde_json::from_value::<T>(params.clone())
         .map(|_| ())
         .map_err(|error| format!("params do not match the Rust request type: {error}"))
+}
+
+fn dispatch_service_async<P, T, E>(
+    params: Value,
+    handler: fn(AppService, P) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send>>,
+) -> DispatchFuture
+where
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    E: Into<AppError> + Send + 'static,
+{
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        let service = AppService::open_for_engine()
+            .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
+        let result = handler(service, params).await;
+        serialize_dispatch_result(result.map_err(|error| DispatchFailure::App(error.into()))?)
+    })
 }
 
 fn dispatch_service<P, T, E>(

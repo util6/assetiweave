@@ -487,9 +487,10 @@ fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFet
         .get(reqwest::header::ETAG)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let text = response.text().map_err(|error| {
-        AppError::External(format!("Catalog v2 response was not text: {error}"))
-    })?;
+    let text = crate::backend::http_client::read_response_text_with_limit(
+        response,
+        crate::backend::http_client::DEFAULT_MAX_TEXT_RESPONSE_BYTES,
+    )?;
     Ok(CatalogFetchResult::Text { text, etag })
 }
 

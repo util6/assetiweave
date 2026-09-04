@@ -558,8 +558,7 @@ impl AppService {
     }
 
     fn resolve_recall_assignment(&self) -> AppResult<(AgentId, Option<String>)> {
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new("memory.recall"),
             &settings,

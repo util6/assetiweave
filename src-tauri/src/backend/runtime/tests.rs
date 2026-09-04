@@ -435,10 +435,8 @@ fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_ser
         .any(|t| t.detail["operation"] == "startup_health_refresh"));
 
     // Observe persistent data through the initialized database
-    let settings_oneshot =
-        crate::backend::app_settings::get_app_settings_for_database(oneshot_runtime.db())
-            .expect("load settings via oneshot");
-    assert!(settings_oneshot.settings.is_object());
+    let settings_oneshot = oneshot_runtime.app_settings_value();
+    assert!(settings_oneshot.is_object());
 
     // Cleanly shutdown OneShot
     let oneshot_report = oneshot_runtime.shutdown_with_grace(Duration::from_millis(200));
@@ -459,10 +457,8 @@ fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_ser
         .any(|t| t.detail["operation"] == "startup_health_refresh"));
 
     // Observe identical persistent settings through the shared database
-    let settings_resident =
-        crate::backend::app_settings::get_app_settings_for_database(resident_runtime.db())
-            .expect("load settings via resident");
-    assert_eq!(settings_oneshot.settings, settings_resident.settings);
+    let settings_resident = resident_runtime.app_settings_value();
+    assert_eq!(settings_oneshot, settings_resident);
 
     // Cleanly shutdown ResidentHost
     let resident_report = resident_runtime.shutdown_with_grace(Duration::from_secs(1));

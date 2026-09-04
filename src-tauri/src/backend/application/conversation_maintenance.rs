@@ -310,7 +310,7 @@ impl AppService {
 fn create_conversation_repair_backup(
     service: &AppService,
 ) -> AppResult<crate::backend::data_backup::DatabaseBackupReport> {
-    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    let settings = service.app_settings_value();
     crate::backend::data_backup::backup_database_from_settings_value(&service.db_path, &settings)
 }
 

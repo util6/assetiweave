@@ -56,8 +56,7 @@ impl AppService {
     ) -> AppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
         let adapters = self.list_conversation_adapters()?;
         let sources = self.list_conversation_sources()?;
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         crate::backend::conversations::list_conversation_adapter_runtime_statuses_with_settings(
             &adapters, &sources, &settings,
         )
@@ -69,8 +68,7 @@ impl AppService {
         params: crate::backend::conversations::ExternalAdapterRegisterParams,
     ) -> AppResult<Value> {
         let dry_run = params.dry_run;
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let preview = crate::backend::conversations::register_external_adapter_with_settings(
             params, &settings,
         )
@@ -244,8 +242,7 @@ impl AppService {
         &self,
         params: crate::backend::conversations::ExternalAdapterTryRunParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         crate::backend::conversations::try_run_external_adapter_with_settings(params, &settings)
             .map_err(conversation_external_error)
     }
@@ -268,8 +265,7 @@ impl AppService {
             .capabilities
             .iter()
             .any(|capability| capability == "project_command_parts");
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         if supports_adapter_projection {
             match crate::backend::conversations::project_external_adapter_command_parts_with_settings(
                 &adapter,
@@ -423,8 +419,7 @@ impl AppService {
     {
         ensure_conversation_sync_not_cancelled(cancellation)?;
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let sources = self

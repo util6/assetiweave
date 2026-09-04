@@ -80,7 +80,7 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         }
     };
 
-    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    let settings = service.app_settings_value();
     let preview = crate::backend::conversations::register_external_adapter_with_settings(
         crate::backend::conversations::ExternalAdapterRegisterParams {
             manifest_path: installed.validation.adapter_manifest_path.clone(),

@@ -81,6 +81,34 @@ pub(crate) fn get_with_redirects(
     }
 }
 
+pub(crate) const DEFAULT_MAX_TEXT_RESPONSE_BYTES: u64 = 10 * 1024 * 1024;
+
+pub(crate) fn read_response_text_with_limit(
+    mut response: reqwest::blocking::Response,
+    max_bytes: u64,
+) -> AppResult<String> {
+    use std::io::Read;
+    if let Some(content_length) = response.content_length() {
+        if content_length > max_bytes {
+            return Err(AppError::External(format!(
+                "HTTP response body size ({content_length} bytes) exceeds maximum limit of {max_bytes} bytes"
+            )));
+        }
+    }
+    let mut buffer = Vec::new();
+    let mut reader = (&mut response).take(max_bytes + 1);
+    reader
+        .read_to_end(&mut buffer)
+        .map_err(AppError::external)?;
+    if buffer.len() > max_bytes as usize {
+        return Err(AppError::External(format!(
+            "HTTP response body exceeded maximum limit of {max_bytes} bytes"
+        )));
+    }
+    String::from_utf8(buffer)
+        .map_err(|error| AppError::External(format!("HTTP response was not valid text: {error}")))
+}
+
 pub(crate) struct DownloadSpec<'a> {
     pub(crate) url: &'a str,
     pub(crate) path: &'a std::path::Path,
@@ -470,5 +498,62 @@ mod tests {
         }
         let source = include_str!("agent_market/installers/binary.rs");
         assert!(source.contains("materialize_file"));
+    }
+
+    #[test]
+    fn read_response_text_with_limit_enforces_size_limit() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let body = "abcdefghijklmnopqrstuvwxyz";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let client = build_http_client().unwrap();
+        let resp = client
+            .get(format!("http://{addr}/oversize"))
+            .send()
+            .unwrap();
+        let err = read_response_text_with_limit(resp, 10).unwrap_err();
+        assert!(
+            err.to_string().contains("exceeds maximum limit")
+                || err.to_string().contains("exceeds"),
+            "Expected size error, got: {err}"
+        );
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn read_response_text_with_limit_reads_valid_content() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let body = "hello world text";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        let client = build_http_client().unwrap();
+        let resp = client.get(format!("http://{addr}/valid")).send().unwrap();
+        let text = read_response_text_with_limit(resp, 1024).unwrap();
+        assert_eq!(text, "hello world text");
+        handle.join().unwrap();
     }
 }
