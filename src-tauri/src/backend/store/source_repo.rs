@@ -7,7 +7,7 @@ use crate::backend::{
     runtime::{AppError, AppResult},
     target_catalog::TargetCatalog,
 };
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use sqlx::SqlitePool;
 
 use super::{
     codec::{
@@ -17,28 +17,79 @@ use super::{
     sql,
 };
 
+#[derive(sqlx::FromRow)]
+struct SourceRow {
+    id: String,
+    name: String,
+    kind: String,
+    root_path: String,
+    scanner_kind: String,
+    source_origin: String,
+    repo_root: Option<String>,
+    scan_root: String,
+    origin_app_kind: Option<String>,
+    origin_provider_id: Option<String>,
+    include_globs: String,
+    exclude_globs: String,
+    default_kind: Option<String>,
+    enabled: i64,
+    priority: i32,
+    last_scanned_at: Option<String>,
+    last_scan_status: Option<String>,
+}
+
+impl TryFrom<SourceRow> for Source {
+    type Error = AppError;
+
+    fn try_from(row: SourceRow) -> Result<Self, Self::Error> {
+        Ok(Source {
+            id: row.id,
+            name: row.name,
+            kind: decode_enum_app(row.kind)?,
+            root_path: normalize_path_for_storage(&row.root_path)?,
+            scanner_kind: decode_enum_app(row.scanner_kind)?,
+            source_origin: decode_enum_app(row.source_origin)?,
+            repo_root: row
+                .repo_root
+                .as_deref()
+                .map(normalize_path_for_storage)
+                .transpose()?,
+            scan_root: row.scan_root,
+            origin_app_kind: decode_optional_enum_app(row.origin_app_kind)?,
+            origin_provider_id: row.origin_provider_id,
+            include_globs: decode_json_app(row.include_globs)?,
+            exclude_globs: decode_json_app(row.exclude_globs)?,
+            default_kind: decode_optional_enum_app::<AssetKind>(row.default_kind)?,
+            enabled: row.enabled == 1,
+            priority: row.priority,
+            last_scanned_at: row.last_scanned_at,
+            last_scan_status: row.last_scan_status,
+        })
+    }
+}
+
 pub(crate) async fn load_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Vec<Source>> {
-    let rows = sqlx::query(sql::LIST_SOURCES)
+    let rows = sqlx::query_as::<_, SourceRow>(sql::LIST_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
-    rows.iter().map(map_sqlx_source_row).collect()
+    rows.into_iter().map(Source::try_from).collect()
 }
 
 pub(crate) async fn load_skill_sources_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Vec<Source>> {
-    let rows = sqlx::query(sql::LIST_SKILL_SOURCES)
+    let rows = sqlx::query_as::<_, SourceRow>(sql::LIST_SKILL_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
-    rows.iter().map(map_sqlx_source_row).collect()
+    rows.into_iter().map(Source::try_from).collect()
 }
 
 pub(crate) async fn load_source_sqlx(
@@ -46,44 +97,14 @@ pub(crate) async fn load_source_sqlx(
     tenant_id: &str,
     source_id: &str,
 ) -> AppResult<Option<Source>> {
-    sqlx::query(sql::LOAD_SOURCE)
+    sqlx::query_as::<_, SourceRow>(sql::LOAD_SOURCE)
         .bind(tenant_id)
         .bind(source_id)
         .fetch_optional(pool)
         .await
         .map_err(AppError::external)?
-        .as_ref()
-        .map(map_sqlx_source_row)
+        .map(Source::try_from)
         .transpose()
-}
-
-fn map_sqlx_source_row(row: &SqliteRow) -> AppResult<Source> {
-    let root_path: String = row.try_get(3).map_err(AppError::external)?;
-    let repo_root: Option<String> = row.try_get(6).map_err(AppError::external)?;
-    Ok(Source {
-        id: row.try_get(0).map_err(AppError::external)?,
-        name: row.try_get(1).map_err(AppError::external)?,
-        kind: decode_enum_app(row.try_get::<String, _>(2).map_err(AppError::external)?)?,
-        root_path: normalize_path_for_storage(&root_path)?,
-        scanner_kind: decode_enum_app(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
-        source_origin: decode_enum_app(row.try_get::<String, _>(5).map_err(AppError::external)?)?,
-        repo_root: repo_root
-            .as_deref()
-            .map(normalize_path_for_storage)
-            .transpose()?,
-        scan_root: row.try_get(7).map_err(AppError::external)?,
-        origin_app_kind: decode_optional_enum_app(row.try_get(8).map_err(AppError::external)?)?,
-        origin_provider_id: row.try_get(9).map_err(AppError::external)?,
-        include_globs: decode_json_app(row.try_get::<String, _>(10).map_err(AppError::external)?)?,
-        exclude_globs: decode_json_app(row.try_get::<String, _>(11).map_err(AppError::external)?)?,
-        default_kind: decode_optional_enum_app::<AssetKind>(
-            row.try_get(12).map_err(AppError::external)?,
-        )?,
-        enabled: row.try_get::<i64, _>(13).map_err(AppError::external)? == 1,
-        priority: row.try_get(14).map_err(AppError::external)?,
-        last_scanned_at: row.try_get(15).map_err(AppError::external)?,
-        last_scan_status: row.try_get(16).map_err(AppError::external)?,
-    })
 }
 
 pub(crate) async fn upsert_source_sqlx(
@@ -362,6 +383,49 @@ mod tests {
 
         assert_eq!(loaded.root_path, "~/portable-source-test");
         assert_eq!(loaded.repo_root.as_deref(), Some("~/code-space"));
+        drop(database);
+        cleanup_database(&db_path);
+    }
+
+    #[test]
+    fn sqlx_source_repo_decodes_source_row_and_detects_invalid_json() {
+        let db_path = std::env::temp_dir().join(format!(
+            "assetiweave-source-decode-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let database = Database::open(&db_path).expect("open database");
+        let mut source = test_source("json-test", SourceScannerKind::Mixed);
+        source.include_globs = vec!["*.md".to_string(), "*.txt".to_string()];
+        source.exclude_globs = vec!["node_modules/**".to_string()];
+
+        database
+            .block_on(async {
+                upsert_source_sqlx(database.pool(), "default", &source).await?;
+                let loaded = load_source_sqlx(database.pool(), "default", &source.id)
+                    .await?
+                    .expect("source exists");
+                assert_eq!(loaded.include_globs, vec!["*.md", "*.txt"]);
+                assert_eq!(loaded.exclude_globs, vec!["node_modules/**"]);
+                assert_eq!(loaded.repo_root, None);
+
+                // Now corrupt include_globs with invalid JSON
+                sqlx::query("UPDATE sources SET include_globs = '{not_valid_json' WHERE tenant_id = ?1 AND id = ?2")
+                    .bind("default")
+                    .bind(&source.id)
+                    .execute(database.pool())
+                    .await
+                    .expect("corrupt row");
+
+                // Loading should return an error and NOT swallow it into an empty vec
+                let err = load_source_sqlx(database.pool(), "default", &source.id)
+                    .await
+                    .expect_err("should fail on invalid JSON");
+                assert_eq!(err.code(), "external_error");
+
+                AppResult::Ok(())
+            })
+            .expect("test operations");
+
         drop(database);
         cleanup_database(&db_path);
     }

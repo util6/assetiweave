@@ -1314,6 +1314,39 @@ pub(crate) async fn mark_team_run_terminal_sqlx(
     Ok(())
 }
 
+#[derive(sqlx::FromRow)]
+struct TeamMailboxRow {
+    id: String,
+    team_id: String,
+    run_id: String,
+    task_id: Option<String>,
+    sender_member_id: String,
+    recipient_member_id: String,
+    message_type: String,
+    body: String,
+    created_at: String,
+    read_at: Option<String>,
+    acked_at: Option<String>,
+}
+
+impl From<TeamMailboxRow> for crate::backend::models::TeamMailboxMessage {
+    fn from(row: TeamMailboxRow) -> Self {
+        Self {
+            id: row.id,
+            team_id: row.team_id,
+            run_id: row.run_id,
+            task_id: row.task_id,
+            sender_member_id: row.sender_member_id,
+            recipient_member_id: row.recipient_member_id,
+            message_type: row.message_type,
+            body: row.body,
+            created_at: row.created_at,
+            read_at: row.read_at,
+            acked_at: row.acked_at,
+        }
+    }
+}
+
 pub(crate) async fn send_team_mailbox_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1328,25 +1361,9 @@ pub(crate) async fn send_team_mailbox_sqlx(
     let now = Utc::now().to_rfc3339();
     sqlx::query("INSERT OR IGNORE INTO team_mailbox_messages (tenant_id, id, team_id, run_id, task_id, sender_member_id, recipient_member_id, message_type, body, idempotency_key, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)")
         .bind(tenant_id).bind(&id).bind(&input.team_id).bind(&input.run_id).bind(&input.task_id).bind(&input.sender_member_id).bind(&input.recipient_member_id).bind(&input.message_type).bind(input.body.trim()).bind(input.idempotency_key.trim()).bind(&now).execute(pool).await.map_err(AppError::external)?;
-    let row = sqlx::query("SELECT id, team_id, run_id, task_id, sender_member_id, recipient_member_id, message_type, body, created_at, read_at, acked_at FROM team_mailbox_messages WHERE tenant_id = ?1 AND id = (SELECT id FROM team_mailbox_messages WHERE tenant_id = ?1 AND idempotency_key = ?2)")
+    let row = sqlx::query_as::<_, TeamMailboxRow>("SELECT id, team_id, run_id, task_id, sender_member_id, recipient_member_id, message_type, body, created_at, read_at, acked_at FROM team_mailbox_messages WHERE tenant_id = ?1 AND id = (SELECT id FROM team_mailbox_messages WHERE tenant_id = ?1 AND idempotency_key = ?2)")
         .bind(tenant_id).bind(input.idempotency_key.trim()).fetch_one(pool).await.map_err(AppError::external)?;
-    Ok(crate::backend::models::TeamMailboxMessage {
-        id: row.try_get("id").map_err(AppError::external)?,
-        team_id: row.try_get("team_id").map_err(AppError::external)?,
-        run_id: row.try_get("run_id").map_err(AppError::external)?,
-        task_id: row.try_get("task_id").map_err(AppError::external)?,
-        sender_member_id: row
-            .try_get("sender_member_id")
-            .map_err(AppError::external)?,
-        recipient_member_id: row
-            .try_get("recipient_member_id")
-            .map_err(AppError::external)?,
-        message_type: row.try_get("message_type").map_err(AppError::external)?,
-        body: row.try_get("body").map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        read_at: row.try_get("read_at").map_err(AppError::external)?,
-        acked_at: row.try_get("acked_at").map_err(AppError::external)?,
-    })
+    Ok(row.into())
 }
 
 pub(crate) async fn read_team_mailbox_sqlx(
@@ -1367,7 +1384,7 @@ pub(crate) async fn read_team_mailbox_sqlx(
     } else {
         "SELECT id, team_id, run_id, task_id, sender_member_id, recipient_member_id, message_type, body, created_at, read_at, acked_at FROM team_mailbox_messages WHERE tenant_id = ?1 AND team_id = ?2 AND run_id = ?3 AND recipient_member_id = ?4 AND acked_at IS NULL ORDER BY created_at ASC"
     };
-    let rows = sqlx::query(query)
+    let rows = sqlx::query_as::<_, TeamMailboxRow>(query)
         .bind(tenant_id)
         .bind(&input.team_id)
         .bind(&input.run_id)
@@ -1375,27 +1392,7 @@ pub(crate) async fn read_team_mailbox_sqlx(
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok(crate::backend::models::TeamMailboxMessage {
-                id: row.try_get("id").map_err(AppError::external)?,
-                team_id: row.try_get("team_id").map_err(AppError::external)?,
-                run_id: row.try_get("run_id").map_err(AppError::external)?,
-                task_id: row.try_get("task_id").map_err(AppError::external)?,
-                sender_member_id: row
-                    .try_get("sender_member_id")
-                    .map_err(AppError::external)?,
-                recipient_member_id: row
-                    .try_get("recipient_member_id")
-                    .map_err(AppError::external)?,
-                message_type: row.try_get("message_type").map_err(AppError::external)?,
-                body: row.try_get("body").map_err(AppError::external)?,
-                created_at: row.try_get("created_at").map_err(AppError::external)?,
-                read_at: row.try_get("read_at").map_err(AppError::external)?,
-                acked_at: row.try_get("acked_at").map_err(AppError::external)?,
-            })
-        })
-        .collect()
+    Ok(rows.into_iter().map(Into::into).collect())
 }
 
 pub(crate) async fn create_team_tool_credential_sqlx(
@@ -1548,5 +1545,25 @@ mod tests {
         let source = include_str!("team_repo.rs");
         assert!(!source.contains(concat!("if member.", "agent_id.trim().is_empty()")));
         assert!(source.contains("input.validate().map_err(map_team_validation_error)"));
+    }
+
+    #[tokio::test]
+    async fn typed_mailbox_row_preserves_nulls() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let row = sqlx::query_as::<_, TeamMailboxRow>(
+            "SELECT 'm' AS id, 't' AS team_id, 'r' AS run_id, NULL AS task_id, 's' AS sender_member_id, 'u' AS recipient_member_id, 'note' AS message_type, 'body' AS body, '2026-09-03T00:00:00Z' AS created_at, NULL AS read_at, NULL AS acked_at",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let message: crate::backend::models::TeamMailboxMessage = row.into();
+        assert_eq!(message.id, "m");
+        assert_eq!(message.body, "body");
+        assert_eq!(message.task_id, None);
+        assert_eq!(message.acked_at, None);
     }
 }
