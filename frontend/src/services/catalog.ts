@@ -106,7 +106,10 @@ export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
 export async function listSourceAssets(kind?: AssetKind): Promise<Asset[]> {
   try {
     return await invoke<Asset[]>("list_source_assets", { kind: kind ?? null });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return kind
       ? fallbackAssets.filter((asset) => asset.kind === kind)
       : fallbackAssets;
@@ -455,7 +458,10 @@ export async function listSources(): Promise<Source[]> {
 export async function listSkillSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_skill_sources");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return fallbackSources.filter((source) => source.scanner_kind === "skill");
   }
 }
@@ -469,7 +475,10 @@ export async function createSource(source: SourceInput): Promise<Source> {
 
   try {
     return await invoke<Source>("create_source", { source: parsedSource });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return {
       ...parsedSource,
       id: parsedSource.id ?? crypto.randomUUID(),
@@ -482,7 +491,10 @@ export async function createSource(source: SourceInput): Promise<Source> {
 export async function updateSource(source: Source): Promise<Source> {
   try {
     return await invoke<Source>("update_source", { source });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return source;
   }
 }
@@ -490,7 +502,10 @@ export async function updateSource(source: Source): Promise<Source> {
 export async function deleteSource(id: string): Promise<void> {
   try {
     await invoke<void>("delete_source", { id });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return;
   }
 }
@@ -625,7 +640,10 @@ export async function updateNavigationModel(
         model: normalizedModel,
       }),
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     localStorage.setItem(
       FALLBACK_NAVIGATION_STORAGE_KEY,
       JSON.stringify(normalizedModel),
@@ -637,7 +655,10 @@ export async function updateNavigationModel(
 export async function listAppShortcuts(): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("list_app_shortcuts");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackAppShortcuts().filter(
       (shortcut) => shortcut.enabled,
     );
@@ -660,7 +681,10 @@ export async function updateAppShortcuts(
 ): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("update_app_shortcuts", { shortcuts });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     setStoredFallbackAppShortcuts(shortcuts);
     return shortcuts;
   }
@@ -669,7 +693,10 @@ export async function updateAppShortcuts(
 export async function listAssetMounts(assetId?: string): Promise<AssetMount[]> {
   try {
     return await invoke<AssetMount[]>("list_asset_mounts", { assetId });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return [];
   }
 }
@@ -775,7 +802,10 @@ export async function listSkillGroups(): Promise<AssetGroupDetail[]> {
       await invoke<AssetGroupDetail[]>("list_skill_groups"),
       "Invalid skill group list",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackSkillGroups();
   }
 }
@@ -797,7 +827,10 @@ export async function createSkillGroup(
       }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const now = new Date().toISOString();
     const detail: AssetGroupDetail = {
       group: {
@@ -837,7 +870,10 @@ export async function updateSkillGroup(
       await invoke<AssetGroupDetail>("update_skill_group", { group }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const groups = getStoredFallbackSkillGroups().map((detail) =>
       detail.group.id === group.id
         ? resolveFallbackGroupDetail({ ...detail, group })
@@ -854,7 +890,10 @@ export async function updateSkillGroup(
 export async function deleteSkillGroup(groupId: string): Promise<void> {
   try {
     await invoke<void>("delete_skill_group", { groupId });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     setStoredFallbackSkillGroups(
       getStoredFallbackSkillGroups().filter(
         (detail) => detail.group.id !== groupId,
@@ -876,7 +915,10 @@ export async function setSkillGroupManualMembers(
       }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const groups = getStoredFallbackSkillGroups().map((detail) =>
       detail.group.id === groupId
         ? resolveFallbackGroupDetail({

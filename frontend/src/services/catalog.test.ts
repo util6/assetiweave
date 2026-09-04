@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
 import {
   backupSkills,
+  createSource,
   getNavigationModel,
   getOverview,
   listAppShortcutSettings,
   listAssetMountStatuses,
   listAssets,
   listProfiles,
+  listSkillGroups,
+  listSkillSources,
+  listSourceAssets,
   listSources,
   scanSources,
   startSkillBackupTask,
@@ -189,6 +193,45 @@ describe("catalog services", () => {
       invokeMock.mockRejectedValueOnce(new Error("tauri error"));
 
       await expect(getNavigationModel()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSourceAssets in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSourceAssets("skill")).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSkillSources in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSkillSources()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects createSource in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(
+        createSource({
+          name: "Test",
+          kind: "local",
+          scanner_kind: "skill",
+          root_path: "/test",
+          include_globs: [],
+          exclude_globs: [],
+          enabled: true,
+          priority: 0,
+        }),
+      ).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSkillGroups in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSkillGroups()).rejects.toThrow("tauri error");
     });
   });
 });

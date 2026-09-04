@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getAppSettings,
   initializeAppLocaleIfUnset,
@@ -15,6 +15,20 @@ import { invoke } from "@tauri-apps/api/core";
 const invokeMock = vi.mocked(invoke);
 
 describe("appSettings service", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("Tauri 失败保留公开错误而不回退成 mock 成功", async () => {
+    const wireError = {
+      code: "conflict",
+      message: "The task is already running.",
+      retryable: true,
+      details: { taskId: "fixture-task" },
+    };
+    invokeMock.mockRejectedValue(wireError);
+    await expect(getAppSettings()).rejects.toMatchObject(wireError);
+  });
   it("getAppSettings invokes get_app_settings", async () => {
     const mockResult = {
       config_dir: "/test/dir",

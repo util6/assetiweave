@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createTenant,
   getActiveTenant,
@@ -29,6 +29,28 @@ describe("tenant services", () => {
     if (typeof window !== "undefined") {
       Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
     }
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects in desktop environment when invoke fails", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const wireError = {
+      code: "conflict",
+      message: "The task is already running.",
+      retryable: true,
+      details: { taskId: "fixture-task" },
+    };
+    invokeMock.mockRejectedValue(wireError);
+
+    await expect(listTenants()).rejects.toMatchObject(wireError);
+    await expect(getActiveTenant()).rejects.toMatchObject(wireError);
+    await expect(createTenant({ name: "Client A" })).rejects.toMatchObject(
+      wireError,
+    );
+    await expect(switchTenant("client-a")).rejects.toMatchObject(wireError);
   });
 
   it("reads the tenant list and active tenant from Tauri", async () => {
