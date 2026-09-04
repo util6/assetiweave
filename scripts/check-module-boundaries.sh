@@ -174,6 +174,34 @@ if [ -f "$ROOT/package.json" ]; then
   fi
 fi
 
+# Runtime bridge monotonic baseline check (Issue #24 / B2-R01)
+BASELINE_FILE=${BOUNDARY_ALLOWLIST:-"$SCRIPT_DIR/rust-runtime-bridge-baseline.txt"}
+if [ -f "$BASELINE_FILE" ]; then
+  CURRENT_HITS=${TMPDIR:-/tmp}/assetiweave-runtime-hits.$$.txt
+  grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src" 2>/dev/null \
+    | cut -d: -f1 \
+    | sed "s|^$ROOT/||" \
+    | sort \
+    | uniq -c \
+    | awk '{print $1 "\t" $2}' > "$CURRENT_HITS" || true
+
+  while IFS="$(printf '\t')" read -r curr_count file; do
+    [ -z "$file" ] && continue
+    base_count=$(awk -v f="$file" -F'\t' '$2 == f {print $1}' "$BASELINE_FILE")
+    if [ -z "$base_count" ]; then
+      printf '%s\n' "RUNTIME BRIDGE VIOLATION: $file contains $curr_count runtime bridge hits but is not in baseline"
+      fail=1
+    elif [ "$curr_count" -gt "$base_count" ]; then
+      printf '%s\n' "RUNTIME BRIDGE VIOLATION: $file count $curr_count exceeds baseline $base_count"
+      fail=1
+    fi
+  done < "$CURRENT_HITS"
+  rm -f "$CURRENT_HITS"
+elif [ "${BOUNDARY_ALLOW_MISSING_ALLOWLIST:-0}" != "1" ]; then
+  printf '%s\n' "RUNTIME BRIDGE ERROR: baseline file $BASELINE_FILE not found"
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

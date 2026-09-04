@@ -414,3 +414,89 @@ async fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
     let report = tasks.shutdown_with_grace(Duration::from_millis(50)).await;
     assert!(report.unfinished_task_ids.is_empty());
 }
+
+#[test]
+fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_services() {
+    let temp_db =
+        std::env::temp_dir().join(format!("assetiweave-test-role-{}.db", uuid::Uuid::new_v4()));
+
+    // 1. Bootstrap OneShot
+    let oneshot_runtime =
+        AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot).expect("bootstrap OneShot");
+    assert_eq!(oneshot_runtime.config().db_path, temp_db);
+
+    // OneShot does not register background startup refresh tasks
+    let oneshot_tasks = oneshot_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+    });
+    assert!(!oneshot_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe persistent data through the initialized database
+    let settings_oneshot =
+        crate::backend::app_settings::get_app_settings_for_database(oneshot_runtime.db())
+            .expect("load settings via oneshot");
+    assert!(settings_oneshot.settings.is_object());
+
+    // Cleanly shutdown OneShot
+    let oneshot_report = oneshot_runtime.shutdown_with_grace(Duration::from_millis(200));
+    assert!(oneshot_report.unfinished_task_ids.is_empty());
+
+    // 2. Bootstrap ResidentHost on the exact same database file
+    let resident_runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .expect("bootstrap ResidentHost");
+    assert_eq!(resident_runtime.config().db_path, temp_db);
+
+    // ResidentHost registers resident startup services in task runtime
+    let resident_tasks = resident_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+    });
+    assert!(resident_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe identical persistent settings through the shared database
+    let settings_resident =
+        crate::backend::app_settings::get_app_settings_for_database(resident_runtime.db())
+            .expect("load settings via resident");
+    assert_eq!(settings_oneshot.settings, settings_resident.settings);
+
+    // Cleanly shutdown ResidentHost
+    let resident_report = resident_runtime.shutdown_with_grace(Duration::from_millis(200));
+    assert!(resident_report.unfinished_task_ids.is_empty());
+    assert!(resident_report.dispatcher_drained);
+
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[test]
+fn shutdown_is_idempotent_when_called_twice() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-idempotent-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .expect("bootstrap ResidentHost");
+
+    let first_report = runtime.shutdown_with_grace(Duration::from_millis(200));
+    assert!(first_report.dispatcher_drained);
+    assert!(first_report.unfinished_task_ids.is_empty());
+
+    // Second call to shutdown_with_grace must be idempotent and cleanly return default report
+    let second_report = runtime.shutdown_with_grace(Duration::from_millis(200));
+    assert!(second_report.dispatcher_drained);
+    assert!(second_report.unfinished_task_ids.is_empty());
+    assert_eq!(second_report.dispatcher_remaining_events, 0);
+
+    // Task runtime rejects new tasks once stopped
+    let spawn_res = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+        Box::new(|_| Ok(serde_json::Value::Null)),
+    );
+    assert!(spawn_res.is_err());
+
+    let _ = std::fs::remove_file(&temp_db);
+}
