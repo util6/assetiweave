@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clearSharedResourceCache } from "../../lib/asyncCache";
 import type { Asset, Source } from "../../types";
 
 const catalogService = vi.hoisted(() => ({
@@ -21,9 +21,23 @@ vi.mock("../../services/catalog", () => catalogService);
 import { useSourcesController } from "./useSourcesController";
 
 describe("useSourcesController", () => {
+  let queryClient: QueryClient;
+
+  function createWrapper() {
+    queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+    return ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
-    clearSharedResourceCache();
   });
 
   it("keeps duplicate source copies visible after a scan refreshes the global catalog", async () => {
@@ -38,7 +52,9 @@ describe("useSourcesController", () => {
     catalogService.listSourceAssets.mockResolvedValue([sourceAsset]);
     catalogService.scanSkillSources.mockResolvedValue([canonicalAsset]);
 
-    const { result } = renderHook(() => useSourcesController(onCatalogRefresh));
+    const { result } = renderHook(() => useSourcesController(onCatalogRefresh), {
+      wrapper: createWrapper(),
+    });
 
     await waitFor(() =>
       expect(result.current.sourceAssets).toEqual([sourceAsset]),
@@ -69,7 +85,10 @@ describe("useSourcesController", () => {
     const { result, rerender } = renderHook(
       ({ snapshot }) =>
         useSourcesController(onCatalogRefresh, startBackgroundScan, snapshot),
-      { initialProps: { snapshot: null as typeof terminal | null } },
+      {
+        initialProps: { snapshot: null as typeof terminal | null },
+        wrapper: createWrapper(),
+      },
     );
     await waitFor(() => expect(result.current.sources).toEqual([source]));
 

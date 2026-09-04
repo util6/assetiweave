@@ -85,8 +85,15 @@ import {
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { PageHeader } from "../../components/foundation/PageHeader";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import {
+  conversationAdaptersQueryOptions,
+  conversationKeys,
+  conversationSessionsQueryOptions,
+  loadAllConversationSessionPages,
+} from "../../app/query/conversationQueries";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
 import { DEFAULT_COLUMN_MIN_WIDTH } from "../../store/settings/settingsSchema";
@@ -175,31 +182,7 @@ interface ConversationSearchAppChipMeta {
 
 type ConversationPageNotification = Omit<NotificationMessage, "id">;
 
-export async function loadAllConversationSessionPages(
-  listSessions: ListConversationSessionPage,
-  query: string | null,
-  pageSize = SESSION_PAGE_SIZE,
-) {
-  const sessions: ConversationSessionListItem[] = [];
-  for (let offset = 0; ; offset += pageSize) {
-    const page = await listSessions({ query, limit: pageSize, offset });
-    sessions.push(...page);
-    if (page.length < pageSize) {
-      return sessions;
-    }
-  }
-}
-
-function conversationAdapterCacheKey(recordKind: ConversationRecordKind) {
-  return `conversation.adapters.${recordKind}`;
-}
-
-function conversationSessionCacheKey(
-  recordKind: ConversationRecordKind,
-  query: string,
-) {
-  return `conversation.sessions.${recordKind}.${query}`;
-}
+export { loadAllConversationSessionPages };
 
 export function ConversationsPage({
   appShortcuts,
@@ -296,37 +279,37 @@ export function ConversationsPage({
   } = searchIndex;
   const syncTask = taskFor(currentRecordKind);
   const webRecordMode = currentRecordKind === "web";
-  const [adapters, setAdapters] = useState<ConversationAdapter[]>(
-    () =>
-      readSharedResource<ConversationAdapter[]>(
-        conversationAdapterCacheKey(currentRecordKind),
-      ) ?? [],
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+
+  const adaptersQuery = useQuery(
+    conversationAdaptersQueryOptions(activeScope, currentRecordKind),
   );
-  const [sessions, setSessions] = useState<ConversationSessionListItem[]>(
-    () =>
-      readSharedResource<ConversationSessionListItem[]>(
-        conversationSessionCacheKey(currentRecordKind, ""),
-      ) ?? [],
+  const sessionsQuery = useQuery(
+    conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
   );
+
+  const adapters = adaptersQuery.data ?? [];
+  const sessions = sessionsQuery.data ?? [];
   const [sessionDetail, setSessionDetail] =
     useState<ConversationSessionDetail | null>(null);
   const handledSyncTaskIdRef = useRef<string | null>(null);
-  const sessionSearchRequestIdRef = useRef(0);
   const syncRunning =
     syncTask?.status === "running" || syncTask?.status === "cancelling";
   const searchIndexRunning = searchIndexTask?.status === "running";
-  const [sessionSearchLoading, setSessionSearchLoading] = useState(false);
   const sessionDetailRequestIdRef = useRef(0);
-  const [sessionCatalogReady, setSessionCatalogReady] = useState(
-    () =>
-      readSharedResource<ConversationSessionListItem[]>(
-        conversationSessionCacheKey(currentRecordKind, ""),
-      ) !== undefined,
-  );
+  const sessionSearchLoading = sessionsQuery.isFetching;
+  const sessionCatalogReady = sessionsQuery.data !== undefined;
+
+  useEffect(() => {
+    if (sessionsQuery.data !== undefined) {
+      reconcileSessionSelection(sessionsQuery.data.map((session) => session.id));
+    }
+  }, [sessionsQuery.data]);
   const importedSourceNamesRef = useRef<Map<string, string>>(new Map());
   const startedNavigationNonceRef = useRef<string | null>(null);
   const consumedNavigationNonceRef = useRef<string | null>(null);
-  const previousQueryRef = useRef(query);
 
   function clearSessionDetail() {
     sessionDetailRequestIdRef.current += 1;
@@ -421,13 +404,10 @@ export function ConversationsPage({
 
   useEffect(() => {
     setSessionDetail(null);
-    sessionSearchRequestIdRef.current += 1;
-    setSessionSearchLoading(false);
-    setSessionCatalogReady(false);
+    clearConversationSelection();
     sessionDetailRequestIdRef.current += 1;
     handledSyncTaskIdRef.current = null;
-    void refreshCatalog();
-  }, [currentRecordKind]);
+  }, [clearConversationSelection, currentRecordKind]);
 
   useEffect(
     () => () => {
@@ -440,15 +420,7 @@ export function ConversationsPage({
     if (sessionCatalogReady) {
       onReady?.();
     }
-  }, [sessionCatalogReady]);
-
-  useEffect(() => {
-    if (previousQueryRef.current === query) {
-      return;
-    }
-    previousQueryRef.current = query;
-    void refreshSessions();
-  }, [query]);
+  }, [onReady, sessionCatalogReady]);
 
   useEffect(() => {
     const kinds =
@@ -833,16 +805,22 @@ export function ConversationsPage({
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
-      const nextAdapters = await loadSharedResource(
-        conversationAdapterCacheKey(currentRecordKind),
-        async () =>
-          (await listConversationAdapters()).filter(
-            (adapter) => isWebRecordAdapter(adapter) === webRecordMode,
+      await queryClient.invalidateQueries({
+        queryKey: conversationKeys.root(activeScope),
+      });
+      const [nextAdapters, nextSessions] = await Promise.all([
+        queryClient.fetchQuery(
+          conversationAdaptersQueryOptions(activeScope, currentRecordKind),
+        ),
+        queryClient.fetchQuery(
+          conversationSessionsQueryOptions(
+            activeScope,
+            currentRecordKind,
+            query,
           ),
-        { force: true },
-      );
-      setAdapters(nextAdapters);
-      await refreshSessions({ rethrow: true });
+        ),
+      ]);
+      reconcileSessionSelection(nextSessions.map((session) => session.id));
     } catch (error) {
       if (options.rethrow) throw error;
       onNotifyError(errorMessage(error));
@@ -850,31 +828,22 @@ export function ConversationsPage({
   }
 
   async function refreshSessions(options: { rethrow?: boolean } = {}) {
-    const requestId = sessionSearchRequestIdRef.current + 1;
-    sessionSearchRequestIdRef.current = requestId;
-    setSessionSearchLoading(true);
     try {
-      const listSessions = webRecordMode
-        ? listWebRecordSessions
-        : listConversationSessions;
-      const nextSessions = await loadSharedResource(
-        conversationSessionCacheKey(currentRecordKind, query),
-        () => loadAllConversationSessionPages(listSessions, query || null),
-        { force: true },
+      await queryClient.invalidateQueries({
+        queryKey: conversationKeys.sessions(
+          activeScope,
+          currentRecordKind,
+          query,
+        ),
+      });
+      const nextSessions = await queryClient.fetchQuery(
+        conversationSessionsQueryOptions(activeScope, currentRecordKind, query),
       );
-      if (sessionSearchRequestIdRef.current !== requestId) return;
-      setSessions(nextSessions);
       reconcileSessionSelection(nextSessions.map((session) => session.id));
+      return nextSessions;
     } catch (error) {
       if (options.rethrow) throw error;
-      if (sessionSearchRequestIdRef.current === requestId) {
-        onNotifyError(errorMessage(error));
-      }
-    } finally {
-      if (sessionSearchRequestIdRef.current === requestId) {
-        setSessionSearchLoading(false);
-        setSessionCatalogReady(true);
-      }
+      onNotifyError(errorMessage(error));
     }
   }
 

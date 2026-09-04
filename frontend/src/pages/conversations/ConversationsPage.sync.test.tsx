@@ -10,8 +10,8 @@ import {
 } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { clearSharedResourceCache } from "../../lib/asyncCache";
 import { defaultSettings } from "../../store/settings/settingsSchema";
 import type { ConversationNavigationTarget } from "../../router/navigationTargets";
 import type {
@@ -90,9 +90,19 @@ vi.mock("../../services/conversations", async () => {
   };
 });
 
+let testQueryClient: QueryClient;
+
 describe("ConversationsPage sync scope", () => {
   beforeEach(() => {
-    clearSharedResourceCache();
+    testQueryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: 0,
+          staleTime: 0,
+        },
+      },
+    });
     conversationSyncTaskMock.current = null;
     window.scrollTo = vi.fn();
     vi.stubGlobal(
@@ -155,6 +165,7 @@ describe("ConversationsPage sync scope", () => {
 
   afterEach(() => {
     cleanup();
+    testQueryClient.clear();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -418,18 +429,20 @@ describe("ConversationsPage sync scope", () => {
       );
 
       view.rerender(
-        <I18nProvider>
-          <ConversationsPage
-            appShortcuts={[]}
-            navigationTarget={navigationTarget}
-            onManualOpen={vi.fn()}
-            onNavigationTargetConsumed={onNavigationTargetConsumed}
-            onNotify={() => undefined}
-            onNotifyError={vi.fn()}
-            onOpenSettings={vi.fn()}
-            recordKind={recordKind}
-          />
-        </I18nProvider>,
+        <QueryClientProvider client={testQueryClient}>
+          <I18nProvider>
+            <ConversationsPage
+              appShortcuts={[]}
+              navigationTarget={navigationTarget}
+              onManualOpen={vi.fn()}
+              onNavigationTargetConsumed={onNavigationTargetConsumed}
+              onNotify={() => undefined}
+              onNotifyError={vi.fn()}
+              onOpenSettings={vi.fn()}
+              recordKind={recordKind}
+            />
+          </I18nProvider>
+        </QueryClientProvider>,
       );
       await waitFor(() =>
         expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1),
@@ -1005,16 +1018,18 @@ describe("ConversationsPage sync scope", () => {
     ).toBeTruthy();
 
     view.rerender(
-      <I18nProvider>
-        <ConversationsPage
-          appShortcuts={[]}
-          onManualOpen={vi.fn()}
-          onNotify={() => undefined}
-          onNotifyError={vi.fn()}
-          onOpenSettings={vi.fn()}
-          recordKind="web"
-        />
-      </I18nProvider>,
+      <QueryClientProvider client={testQueryClient}>
+        <I18nProvider>
+          <ConversationsPage
+            appShortcuts={[]}
+            onManualOpen={vi.fn()}
+            onNotify={() => undefined}
+            onNotifyError={vi.fn()}
+            onOpenSettings={vi.fn()}
+            recordKind="web"
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
     );
 
     await waitFor(() => {
@@ -1040,16 +1055,18 @@ describe("ConversationsPage sync scope", () => {
       progress: { current_source_name: "Codex · 写入会话 2/3" },
     };
     view.rerender(
-      <I18nProvider>
-        <ConversationsPage
-          appShortcuts={[]}
-          onManualOpen={vi.fn()}
-          onNotify={() => undefined}
-          onNotifyError={vi.fn()}
-          onOpenSettings={vi.fn()}
-          recordKind="session"
-        />
-      </I18nProvider>,
+      <QueryClientProvider client={testQueryClient}>
+        <I18nProvider>
+          <ConversationsPage
+            appShortcuts={[]}
+            onManualOpen={vi.fn()}
+            onNotify={() => undefined}
+            onNotifyError={vi.fn()}
+            onOpenSettings={vi.fn()}
+            recordKind="session"
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
     );
     expect(await screen.findByText(/Codex · 写入会话 2\/3/)).toBeTruthy();
     expect(screen.queryByText(/Codex · 读取会话 1\/3/)).toBeNull();
@@ -1254,18 +1271,20 @@ function renderConversationsPage(
   const onNotify = options.onNotify ?? (() => undefined);
 
   return render(
-    <I18nProvider>
-      <ConversationsPage
-        appShortcuts={[]}
-        navigationTarget={options.navigationTarget}
-        onManualOpen={vi.fn()}
-        onNavigationTargetConsumed={options.onNavigationTargetConsumed}
-        onNotify={onNotify}
-        onNotifyError={vi.fn()}
-        onOpenSettings={vi.fn()}
-        recordKind={recordKind}
-      />
-    </I18nProvider>,
+    <QueryClientProvider client={testQueryClient}>
+      <I18nProvider>
+        <ConversationsPage
+          appShortcuts={[]}
+          navigationTarget={options.navigationTarget}
+          onManualOpen={vi.fn()}
+          onNavigationTargetConsumed={options.onNavigationTargetConsumed}
+          onNotify={onNotify}
+          onNotifyError={vi.fn()}
+          onOpenSettings={vi.fn()}
+          recordKind={recordKind}
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
 

@@ -20,7 +20,10 @@ export type CatalogInvalidation =
   | "profiles"
   | "overview"
   | "mountStatuses"
-  | "shortcuts";
+  | "shortcuts"
+  | "groups"
+  | "skillSources"
+  | "skillAssets";
 
 export async function invalidateCatalog(
   client: QueryClient,
@@ -64,6 +67,25 @@ export async function invalidateCatalog(
       case "shortcuts":
         tasks.push(
           client.invalidateQueries({ queryKey: catalogKeys.shortcuts(scope) }),
+        );
+        break;
+      case "groups":
+        tasks.push(
+          client.invalidateQueries({ queryKey: catalogKeys.groups(scope) }),
+        );
+        break;
+      case "skillSources":
+        tasks.push(
+          client.invalidateQueries({
+            queryKey: catalogKeys.skillSources(scope),
+          }),
+        );
+        break;
+      case "skillAssets":
+        tasks.push(
+          client.invalidateQueries({
+            queryKey: catalogKeys.skillAssets(scope),
+          }),
         );
         break;
     }

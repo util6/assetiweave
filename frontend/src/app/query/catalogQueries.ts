@@ -6,6 +6,9 @@ import {
   listAssetMountStatuses,
   listAssets,
   listProfiles,
+  listSkillGroups,
+  listSkillSources,
+  listSourceAssets,
   listSources,
 } from "../../services/catalog";
 import type { AssetKind, Tenant } from "../../types";
@@ -35,6 +38,12 @@ export const catalogKeys = {
     [...catalogKeys.root(scope), "mountStatuses"] as const,
   navigation: (scope: QueryScope) =>
     [...catalogKeys.root(scope), "navigation"] as const,
+  groups: (scope: QueryScope) =>
+    [...catalogKeys.root(scope), "groups"] as const,
+  skillSources: (scope: QueryScope) =>
+    [...catalogKeys.root(scope), "skillSources"] as const,
+  skillAssets: (scope: QueryScope) =>
+    [...catalogKeys.root(scope), "skillAssets"] as const,
 };
 
 const DEFAULT_CATALOG_STALE_TIME = 1000 * 60;
@@ -108,3 +117,34 @@ export function navigationQueryOptions(scope: QueryScope) {
     staleTime: DEFAULT_CATALOG_STALE_TIME,
   });
 }
+
+export function groupsQueryOptions(scope: QueryScope) {
+  return queryOptions({
+    queryKey: catalogKeys.groups(scope),
+    queryFn: () => listSkillGroups(),
+    networkMode: "always",
+    retry: false,
+    staleTime: DEFAULT_CATALOG_STALE_TIME,
+  });
+}
+
+export function skillSourcesQueryOptions(scope: QueryScope) {
+  return queryOptions({
+    queryKey: catalogKeys.skillSources(scope),
+    queryFn: () => listSkillSources(),
+    networkMode: "always",
+    retry: false,
+    staleTime: DEFAULT_CATALOG_STALE_TIME,
+  });
+}
+
+export function skillAssetsQueryOptions(scope: QueryScope) {
+  return queryOptions({
+    queryKey: catalogKeys.skillAssets(scope),
+    queryFn: () => listSourceAssets("skill"),
+    networkMode: "always",
+    retry: false,
+    staleTime: DEFAULT_CATALOG_STALE_TIME,
+  });
+}
+

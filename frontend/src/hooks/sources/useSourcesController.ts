@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import {
+  catalogKeys,
+  skillAssetsQueryOptions,
+  skillSourcesQueryOptions,
+} from "../../app/query/catalogQueries";
 import {
   createSource,
   deleteSource as deleteSourceById,
-  listSkillSources,
-  listSourceAssets,
   revealPath,
   scanSkillSources,
-  startSourceScan,
   updateSource,
 } from "../../services/catalog";
 import type { Asset, Source, SourceInput } from "../../types";
@@ -15,9 +18,6 @@ import type {
   SourceScanScope,
   SourceScanTaskSnapshot,
 } from "../../services/catalog";
-
-const SKILL_SOURCES_CACHE_KEY = "catalog.skill-sources";
-const SKILL_SOURCE_ASSETS_CACHE_KEY = "catalog.skill-source-assets";
 
 export function useSourcesController(
   onCatalogRefresh?: (assets?: Asset[]) => Promise<void>,
@@ -27,27 +27,21 @@ export function useSourcesController(
   ) => Promise<SourceScanTaskSnapshot>,
   sourceScan?: SourceScanTaskSnapshot | null,
 ) {
-  const [sources, setSources] = useState<Source[]>(
-    () => readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) ?? [],
-  );
-  const [sourceAssets, setSourceAssets] = useState<Asset[]>(
-    () => readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) ?? [],
-  );
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+
+  const sourcesQuery = useQuery(skillSourcesQueryOptions(activeScope));
+  const sourceAssetsQuery = useQuery(skillAssetsQueryOptions(activeScope));
+
+  const sources = sourcesQuery.data ?? [];
+  const sourceAssets = sourceAssetsQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(
-    () =>
-      readSharedResource<Source[]>(SKILL_SOURCES_CACHE_KEY) === undefined ||
-      readSharedResource<Asset[]>(SKILL_SOURCE_ASSETS_CACHE_KEY) === undefined,
-  );
+  const loading = sourcesQuery.isLoading || sourceAssetsQuery.isLoading;
+
   const startedScanIdsRef = useRef(new Set<string>());
   const settledScanIdsRef = useRef(new Set<string>());
-
-  useEffect(() => {
-    void Promise.all([refreshSources(), refreshSourceAssets()]).finally(() =>
-      setLoading(false),
-    );
-  }, []);
 
   useEffect(() => {
     if (
@@ -104,6 +98,7 @@ export function useSourcesController(
       ).length,
     };
   }, [assetCounts, sources]);
+
   const nextPriority = useMemo(
     () =>
       sources.reduce(
@@ -114,33 +109,29 @@ export function useSourcesController(
   );
 
   async function refreshSources() {
-    const nextSources = await loadSharedResource(
-      SKILL_SOURCES_CACHE_KEY,
-      listSkillSources,
-      { force: true },
-    );
-    setSources(nextSources);
-    return nextSources;
+    await queryClient.invalidateQueries({
+      queryKey: catalogKeys.skillSources(activeScope),
+    });
+    return await queryClient.fetchQuery(skillSourcesQueryOptions(activeScope));
   }
 
   async function refreshSourceAssets() {
-    const nextAssets = await loadSharedResource(
-      SKILL_SOURCE_ASSETS_CACHE_KEY,
-      () => listSourceAssets("skill"),
-      { force: true },
-    );
-    setSourceAssets(nextAssets);
-    return nextAssets;
+    await queryClient.invalidateQueries({
+      queryKey: catalogKeys.skillAssets(activeScope),
+    });
+    return await queryClient.fetchQuery(skillAssetsQueryOptions(activeScope));
   }
 
   async function toggleSource(source: Source) {
     setBusy(true);
     try {
       const saved = await updateSource({ ...source, enabled: !source.enabled });
-      setSources((currentSources) =>
-        currentSources.map((candidate) =>
-          candidate.id === saved.id ? saved : candidate,
-        ),
+      queryClient.setQueryData<Source[]>(
+        catalogKeys.skillSources(activeScope),
+        (current = []) =>
+          current.map((candidate) =>
+            candidate.id === saved.id ? saved : candidate,
+          ),
       );
     } finally {
       setBusy(false);
@@ -151,11 +142,15 @@ export function useSourcesController(
     setBusy(true);
     try {
       await deleteSourceById(source.id);
-      setSources((currentSources) =>
-        currentSources.filter((candidate) => candidate.id !== source.id),
+      queryClient.setQueryData<Source[]>(
+        catalogKeys.skillSources(activeScope),
+        (current = []) =>
+          current.filter((candidate) => candidate.id !== source.id),
       );
-      setSourceAssets((currentAssets) =>
-        currentAssets.filter((candidate) => candidate.source_id !== source.id),
+      queryClient.setQueryData<Asset[]>(
+        catalogKeys.skillAssets(activeScope),
+        (current = []) =>
+          current.filter((candidate) => candidate.source_id !== source.id),
       );
       await onCatalogRefresh?.();
     } finally {
@@ -167,8 +162,9 @@ export function useSourcesController(
     setBusy(true);
     try {
       const saved = await updateSource(source);
-      setSources((currentSources) =>
-        upsertAndSortSources(currentSources, saved),
+      queryClient.setQueryData<Source[]>(
+        catalogKeys.skillSources(activeScope),
+        (current = []) => upsertAndSortSources(current, saved),
       );
       if (saved.enabled && saved.last_scan_status !== "preview") {
         await startSkillScan();
@@ -184,8 +180,9 @@ export function useSourcesController(
     setBusy(true);
     try {
       const saved = await createSource(sourceInput);
-      setSources((currentSources) =>
-        upsertAndSortSources(currentSources, saved),
+      queryClient.setQueryData<Source[]>(
+        catalogKeys.skillSources(activeScope),
+        (current = []) => upsertAndSortSources(current, saved),
       );
       if (saved.enabled && saved.last_scan_status !== "preview") {
         await startSkillScan();
@@ -233,10 +230,12 @@ export function useSourcesController(
 
   return {
     applySourceAssetUpdate: (asset: Asset) =>
-      setSourceAssets((currentAssets) =>
-        currentAssets.map((candidate) =>
-          candidate.id === asset.id ? asset : candidate,
-        ),
+      queryClient.setQueryData<Asset[]>(
+        catalogKeys.skillAssets(activeScope),
+        (current = []) =>
+          current.map((candidate) =>
+            candidate.id === asset.id ? asset : candidate,
+          ),
       ),
     assetCounts,
     busy,
@@ -255,8 +254,9 @@ export function useSourcesController(
     summary,
     toggleSource,
     removeSourceAsset: (assetId: string) =>
-      setSourceAssets((currentAssets) =>
-        currentAssets.filter((asset) => asset.id !== assetId),
+      queryClient.setQueryData<Asset[]>(
+        catalogKeys.skillAssets(activeScope),
+        (current = []) => current.filter((asset) => asset.id !== assetId),
       ),
   };
 }

@@ -15,7 +15,6 @@ import {
   RefreshCw,
   Settings,
   Trash2,
-  X,
 } from "lucide-react";
 import {
   useEffect,
@@ -25,7 +24,9 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import { catalogKeys, groupsQueryOptions } from "../../app/query/catalogQueries";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import {
   AssetToolbar,
@@ -69,7 +70,6 @@ import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
   createProfile,
   deleteProfile,
-  listSkillGroups,
   selectTargetDirectory,
   type SkillBackupTaskSnapshot,
   updateProfile,
@@ -103,8 +103,6 @@ type SkillMountViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 type MountScopeKind = "source" | "group";
 type ProfileStatusFilter = "enabled" | "disabled";
 type ProfileSortBy = "name" | "app-kind" | "mounted-count";
-
-const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
 
 interface MountScope {
   assetIds: string[];
@@ -176,15 +174,17 @@ export function SkillMountsPage({
 }: SkillMountsPageProps) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+  const groupsQuery = useQuery(groupsQueryOptions(activeScope));
+  const groups = groupsQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<SkillMountViewMode>("list");
   const [appKindFilters, setAppKindFilters] = useState<AppKind[]>([]);
   const [statusFilters, setStatusFilters] = useState<ProfileStatusFilter[]>([]);
   const [sortBy, setSortBy] = useState<ProfileSortBy>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [groups, setGroups] = useState<AssetGroupDetail[]>(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
-  );
   const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(
     new Set(),
   );
@@ -203,11 +203,7 @@ export function SkillMountsPage({
   const [pendingDefaultPathChange, setPendingDefaultPathChange] =
     useState<PendingDefaultPathChange | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(
-    () =>
-      readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ===
-      undefined,
-  );
+  const loading = groupsQuery.isLoading;
 
   const skillAssets = useMemo(
     () => assets.filter((asset) => asset.kind === "skill"),
@@ -309,16 +305,14 @@ export function SkillMountsPage({
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(
-        await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, {
-          force: true,
-        }),
-      );
+      await queryClient.invalidateQueries({
+        queryKey: catalogKeys.groups(activeScope),
+      });
+      await queryClient.fetchQuery(groupsQueryOptions(activeScope));
     } catch (error) {
       onNotifyError(errorMessage(error));
     } finally {
       setBusy(false);
-      setLoading(false);
     }
   }
 

@@ -15,7 +15,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import { catalogKeys, groupsQueryOptions } from "../../app/query/catalogQueries";
 import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
@@ -46,7 +48,6 @@ import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   createSkillGroup,
   deleteSkillGroup,
-  listSkillGroups,
   setSkillGroupManualMembers,
   updateSkillGroup,
 } from "../../services/catalog";
@@ -116,8 +117,6 @@ type GroupViewMode = "list" | "columns";
 type GroupStatusFilter = "enabled" | "disabled";
 type GroupSortBy = "sort-order" | "name" | "member-count" | "updated";
 
-const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
-
 export function SkillGroupsPage({
   appShortcuts,
   assetMountStatuses,
@@ -141,9 +140,25 @@ export function SkillGroupsPage({
 }: SkillGroupsPageProps) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const [groups, setGroups] = useState<AssetGroupDetail[]>(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
-  );
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+  const groupsQuery = useQuery(groupsQueryOptions(activeScope));
+  const groups = groupsQuery.data ?? [];
+
+  const setGroups = (
+    updater:
+      | AssetGroupDetail[]
+      | ((current: AssetGroupDetail[]) => AssetGroupDetail[]),
+  ) => {
+    queryClient.setQueryData<AssetGroupDetail[]>(
+      catalogKeys.groups(activeScope),
+      typeof updater === "function"
+        ? (current = []) =>
+            (updater as (c: AssetGroupDetail[]) => AssetGroupDetail[])(current)
+        : updater,
+    );
+  };
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
     new Set(),
   );
@@ -172,11 +187,7 @@ export function SkillGroupsPage({
     useState<GroupMountMode>("exclusive");
   const [exclusiveBusy, setExclusiveBusy] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(
-    () =>
-      readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ===
-      undefined,
-  );
+  const loading = groupsQuery.isLoading;
 
   const skillAssetsById = useMemo(() => {
     return new Map(
@@ -313,16 +324,14 @@ export function SkillGroupsPage({
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(
-        await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, {
-          force: true,
-        }),
-      );
+      await queryClient.invalidateQueries({
+        queryKey: catalogKeys.groups(activeScope),
+      });
+      await queryClient.fetchQuery(groupsQueryOptions(activeScope));
     } catch (loadError) {
       onNotifyError(errorMessage(loadError));
     } finally {
       setBusy(false);
-      setLoading(false);
     }
   }
 
