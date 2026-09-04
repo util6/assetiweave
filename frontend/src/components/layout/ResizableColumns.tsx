@@ -10,23 +10,25 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  Group,
+  Panel,
+  Separator,
+  type GroupImperativeHandle,
+  type Layout,
+  type LayoutChangedMeta,
+} from "react-resizable-panels";
 import { cn } from "../../lib/utils";
+import { useAppSettings } from "../../store/settings/useAppSettings";
+import {
+  fromPanelLayout,
+  sanitizeColumnWeights,
+  toPanelLayout,
+} from "./columnLayouts";
 
 export interface ResizableColumnConfig {
   defaultWeight: number;
   minWidthScale?: number;
-}
-
-export interface ResizeColumnWeightsOptions {
-  containerWidth: number;
-  deltaPx: number;
-  handleIndex: number;
-  minWidths: number[];
-  weights: number[];
-}
-
-export interface ResizeColumnDragWeightsOptions extends ResizeColumnWeightsOptions {
-  committedWeights: number[];
 }
 
 export interface ResizableColumnsProps {
@@ -51,14 +53,6 @@ export interface ScrollMetrics {
 
 type ResizableColumnsStyle = CSSProperties & Record<`--${string}`, string>;
 
-interface ColumnDragState {
-  committedWeights: number[];
-  containerWidth: number;
-  handleIndex: number;
-  startClientX: number;
-  startWeights: number[];
-}
-
 interface ScrollDragState {
   maxScroll: number;
   startClientX: number;
@@ -66,8 +60,6 @@ interface ScrollDragState {
   trackTravelWidth: number;
 }
 
-const KEYBOARD_RESIZE_STEP = 32;
-const KEYBOARD_RESIZE_STEP_LARGE = 80;
 const SCROLL_BUTTON_STEP = 160;
 
 const EMPTY_SCROLL_METRICS: ScrollMetrics = {
@@ -89,6 +81,8 @@ export function ResizableColumns({
   scrollRightLabel,
   storageKey,
 }: ResizableColumnsProps) {
+  const { settings, settingsLoaded, setColumnLayoutAsync } = useAppSettings();
+
   const fallbackWeights = useMemo(
     () => columns.map((column) => column.defaultWeight),
     [columns],
@@ -100,37 +94,96 @@ export function ResizableColumns({
   const totalMinimumWidth = minWidths.reduce((sum, width) => sum + width, 0);
   const resizableCanvasWidth =
     totalMinimumWidth + Math.round(minimumWidth * 0.5);
-  const [weights, setWeights] = useState(() =>
-    readStoredColumnWeights(storageKey, fallbackWeights),
-  );
-  const [columnDragState, setColumnDragState] =
-    useState<ColumnDragState | null>(null);
-  const [handlePositions, setHandlePositions] = useState<number[]>([]);
+
+  const [weights, setWeights] = useState<number[]>(() => {
+    if (storageKey && settings.columnLayouts?.[storageKey]) {
+      const stored = settings.columnLayouts[storageKey];
+      if (Array.isArray(stored) && stored.length === fallbackWeights.length) {
+        return sanitizeColumnWeights(stored, fallbackWeights);
+      }
+    }
+    return readStoredColumnWeights(storageKey, fallbackWeights);
+  });
+
   const [scrollDragState, setScrollDragState] =
     useState<ScrollDragState | null>(null);
   const [scrollMetrics, setScrollMetrics] =
     useState<ScrollMetrics>(EMPTY_SCROLL_METRICS);
-  const gridRef = useRef<HTMLDivElement>(null);
+
+  const groupRef = useRef<GroupImperativeHandle>(null);
+  const groupElementRef = useRef<HTMLDivElement | null>(null);
+  const lastCommittedWeightsRef = useRef<number[]>(weights);
+  const migratedStorageKeyRef = useRef<string | null>(null);
+
   const scrollTrackRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const childArray = Children.toArray(children);
 
+  // Settings 异步到达后同步到 Group 布局
   useEffect(() => {
-    setWeights((currentWeights) =>
-      sanitizeColumnWeights(currentWeights, fallbackWeights),
-    );
-  }, [fallbackWeights]);
+    if (!storageKey || !settingsLoaded) return;
+    const stored = settings.columnLayouts?.[storageKey];
+    if (!stored || stored.length !== columns.length) return;
+    const sanitized = sanitizeColumnWeights(stored, fallbackWeights);
+    if (!arraysAlmostEqual(sanitized, weights)) {
+      setWeights(sanitized);
+      lastCommittedWeightsRef.current = sanitized;
+      groupRef.current?.setLayout(toPanelLayout(sanitized));
+    }
+  }, [
+    storageKey,
+    settingsLoaded,
+    settings.columnLayouts,
+    columns.length,
+    fallbackWeights,
+    weights,
+  ]);
 
+  // 旧 localStorage 权重迁移至 SQLite 设置
   useEffect(() => {
-    if (!storageKey) return;
-    writeStoredColumnWeights(storageKey, weights);
-  }, [storageKey, weights]);
+    if (!storageKey || !settingsLoaded) return;
+    if (migratedStorageKeyRef.current === storageKey) return;
 
+    const existingInSettings = settings.columnLayouts?.[storageKey];
+    if (existingInSettings && existingInSettings.length === columns.length) {
+      return;
+    }
+
+    if (typeof localStorage === "undefined") return;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length === columns.length) {
+        const sanitized = sanitizeColumnWeights(parsed, fallbackWeights);
+        migratedStorageKeyRef.current = storageKey;
+        void setColumnLayoutAsync(storageKey, sanitized)
+          .then(() => {
+            try {
+              localStorage.removeItem(storageKey);
+            } catch {
+              // ignore
+            }
+          })
+          .catch(() => undefined);
+      }
+    } catch {
+      // ignore
+    }
+  }, [
+    storageKey,
+    settingsLoaded,
+    settings.columnLayouts,
+    columns.length,
+    fallbackWeights,
+    setColumnLayoutAsync,
+  ]);
+
+  // 滚动条尺寸观测
   useEffect(() => {
-    const grid = gridRef.current;
+    const groupElement = groupElementRef.current;
     const viewport = scrollViewportRef.current;
-    if (!grid || !viewport) return;
-    const activeGrid = grid;
+    if (!viewport) return;
     const activeViewport = viewport;
 
     function updateScrollMetrics() {
@@ -139,19 +192,22 @@ export function ResizableColumns({
         scrollLeft: activeViewport.scrollLeft,
         scrollWidth: activeViewport.scrollWidth,
       });
-      setHandlePositions((currentPositions) => {
-        const nextPositions = readColumnBoundaryPositions(
-          activeGrid,
-          childArray.length,
-        );
-        return arraysEqual(currentPositions, nextPositions)
-          ? currentPositions
-          : nextPositions;
+    }
+
+    if (typeof ResizeObserver === "undefined") {
+      updateScrollMetrics();
+      activeViewport.addEventListener("scroll", updateScrollMetrics, {
+        passive: true,
       });
+      return () => {
+        activeViewport.removeEventListener("scroll", updateScrollMetrics);
+      };
     }
 
     const resizeObserver = new ResizeObserver(updateScrollMetrics);
-    resizeObserver.observe(activeGrid);
+    if (groupElement) {
+      resizeObserver.observe(groupElement);
+    }
     resizeObserver.observe(activeViewport);
     activeViewport.addEventListener("scroll", updateScrollMetrics, {
       passive: true,
@@ -164,36 +220,7 @@ export function ResizableColumns({
     };
   }, [childArray.length, minWidths, weights]);
 
-  useEffect(() => {
-    if (!columnDragState) return;
-    const activeDragState = columnDragState;
-
-    function handlePointerMove(event: PointerEvent) {
-      setWeights(
-        resizeColumnDragWeights({
-          committedWeights: activeDragState.committedWeights,
-          containerWidth: activeDragState.containerWidth,
-          deltaPx: event.clientX - activeDragState.startClientX,
-          handleIndex: activeDragState.handleIndex,
-          minWidths,
-          weights: activeDragState.startWeights,
-        }),
-      );
-    }
-
-    function handlePointerUp() {
-      setColumnDragState(null);
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp, { once: true });
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-    };
-  }, [columnDragState, minWidths]);
-
+  // 滚动条拖拽支持
   useEffect(() => {
     if (!scrollDragState) return;
     const activeDragState = scrollDragState;
@@ -228,22 +255,10 @@ export function ResizableColumns({
     };
   }, [scrollDragState]);
 
-  const columnTemplate = minWidths
-    .map(
-      (width, index) =>
-        `minmax(${width}px, ${formatWeight(weights[index] ?? columns[index].defaultWeight)}fr)`,
-    )
-    .join(" ");
-  const boundaries = getColumnBoundaries(weights);
   const style: ResizableColumnsStyle = {
     "--resizable-columns-width": `${resizableCanvasWidth}px`,
     "--resizable-columns-min-width": `${totalMinimumWidth}px`,
-    "--resizable-columns-template": columnTemplate,
   };
-
-  boundaries.forEach((boundary, index) => {
-    style[`--resizable-column-boundary-${index}`] = String(boundary);
-  });
 
   const maxScroll = Math.max(
     0,
@@ -251,54 +266,21 @@ export function ResizableColumns({
   );
   const thumb = calculateScrollThumb(scrollMetrics);
 
-  function startResize(
-    handleIndex: number,
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    const grid = gridRef.current;
-    const containerWidth = grid?.getBoundingClientRect().width ?? 0;
-    if (!grid || containerWidth <= 0) return;
+  const handleLayoutChanged = (layout: Layout, meta: LayoutChangedMeta) => {
+    const nextWeights = fromPanelLayout(layout, childArray.length);
+    if (!nextWeights) return;
 
-    event.preventDefault();
-    setColumnDragState({
-      committedWeights: weights,
-      containerWidth,
-      handleIndex,
-      startClientX: event.clientX,
-      startWeights: readMeasuredColumnWeights(grid, childArray.length, weights),
-    });
-  }
+    setWeights(nextWeights);
 
-  function resizeFromKeyboard(
-    handleIndex: number,
-    event: KeyboardEvent<HTMLDivElement>,
-  ) {
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    // 只有直接用户交互操作且配置了 storageKey 时才持久化
+    if (!meta.isUserInteraction || !storageKey) return;
 
-    const grid = gridRef.current;
-    const containerWidth = grid?.getBoundingClientRect().width ?? 0;
-    if (!grid || containerWidth <= 0) return;
-
-    event.preventDefault();
-    const direction = event.key === "ArrowRight" ? 1 : -1;
-    const step = event.shiftKey
-      ? KEYBOARD_RESIZE_STEP_LARGE
-      : KEYBOARD_RESIZE_STEP;
-
-    setWeights((currentWeights) =>
-      resizeColumnWeights({
-        containerWidth,
-        deltaPx: direction * step,
-        handleIndex,
-        minWidths,
-        weights: readMeasuredColumnWeights(
-          grid,
-          childArray.length,
-          currentWeights,
-        ),
-      }),
-    );
-  }
+    if (arraysAlmostEqual(nextWeights, lastCommittedWeightsRef.current)) {
+      return;
+    }
+    lastCommittedWeightsRef.current = nextWeights;
+    void setColumnLayoutAsync(storageKey, nextWeights).catch(() => undefined);
+  };
 
   function scrollColumns(delta: number) {
     scrollViewportRef.current?.scrollBy({ behavior: "smooth", left: delta });
@@ -357,12 +339,42 @@ export function ResizableColumns({
     }
   }
 
+  const totalWeight = weights.reduce((sum, w) => sum + w, 0) || 1;
+  const elements: ReactNode[] = [];
+  childArray.forEach((child, index) => {
+    if (index > 0) {
+      elements.push(
+        <Separator
+          aria-label={`${ariaLabel} ${index}`}
+          className={cn(
+            "relative z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
+            "aurora-resize-handle before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
+            "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1.5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
+            "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
+            handleClassName,
+          )}
+          id={`separator-${index}`}
+          key={`separator-${index}`}
+        />,
+      );
+    }
+    elements.push(
+      <Panel
+        defaultSize={`${(weights[index] / totalWeight) * 100}%`}
+        id={`column-${index}`}
+        key={`column-${index}`}
+        minSize={minWidths[index]}
+      >
+        {child}
+      </Panel>,
+    );
+  });
+
   return (
     <div
       className={cn(
         "relative isolate z-0 grid min-w-0 grid-rows-[minmax(0,1fr)_auto] overflow-visible",
         className,
-        "overflow-visible",
       )}
     >
       <div className="min-h-0 min-w-0 overflow-hidden rounded-t-[inherit]">
@@ -370,41 +382,21 @@ export function ResizableColumns({
           className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden"
           ref={scrollViewportRef}
         >
-          <div
+          <Group
             className={cn(
-              "relative grid h-full min-h-0 w-[max(100%,var(--resizable-columns-width))] grid-cols-[var(--resizable-columns-template)]",
+              "relative h-full min-h-0 w-[max(100%,var(--resizable-columns-width))]",
               responsiveClassName,
             )}
-            ref={gridRef}
+            defaultLayout={toPanelLayout(weights)}
+            elementRef={groupElementRef}
+            groupRef={groupRef}
+            id={storageKey ? `resizable-group-${storageKey}` : undefined}
+            onLayoutChanged={handleLayoutChanged}
+            orientation="horizontal"
             style={style}
           >
-            {childArray}
-            {boundaries.map((boundary, index) => (
-              <div
-                aria-label={`${ariaLabel} ${index + 1}`}
-                aria-orientation="vertical"
-                className={cn(
-                  "absolute inset-y-0 z-10 w-3 -translate-x-1/2 cursor-col-resize touch-none outline-none",
-                  "aurora-resize-handle before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-theme-card-border",
-                  "after:absolute after:left-1/2 after:top-1/2 after:h-10 after:w-1.5 after:-translate-x-1/2 after:-translate-y-1/2 after:rounded-full after:bg-theme-control-border after:opacity-0 after:transition-opacity",
-                  "hover:after:opacity-100 focus-visible:after:opacity-100 focus-visible:ring-2 focus-visible:ring-primary-strong/55",
-                  columnDragState?.handleIndex === index && "after:opacity-100",
-                  handleClassName,
-                )}
-                key={index}
-                onKeyDown={(event) => resizeFromKeyboard(index, event)}
-                onPointerDown={(event) => startResize(index, event)}
-                role="separator"
-                style={{
-                  left:
-                    handlePositions[index] === undefined
-                      ? `calc(var(--resizable-column-boundary-${index}) * 100%)`
-                      : `${handlePositions[index]}px`,
-                }}
-                tabIndex={0}
-              />
-            ))}
-          </div>
+            {elements}
+          </Group>
         </div>
       </div>
 
@@ -466,95 +458,6 @@ export function ResizableColumns({
   );
 }
 
-export function resizeColumnWeights({
-  containerWidth,
-  deltaPx,
-  handleIndex,
-  minWidths,
-  weights,
-}: ResizeColumnWeightsOptions) {
-  if (
-    containerWidth <= 0 ||
-    handleIndex < 0 ||
-    handleIndex >= weights.length - 1
-  )
-    return weights;
-
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  if (totalWeight <= 0) return weights;
-
-  const leftWeight = weights[handleIndex];
-  const rightWeight = weights[handleIndex + 1];
-  const pairWeight = leftWeight + rightWeight;
-  const pairWidth = (pairWeight / totalWeight) * containerWidth;
-  const minLeft = minWidths[handleIndex] ?? 0;
-  const minRight = minWidths[handleIndex + 1] ?? 0;
-  const minPairWidth = minLeft + minRight;
-
-  if (pairWidth < minPairWidth) return weights;
-
-  const currentLeftWidth = (leftWeight / pairWeight) * pairWidth;
-  const nextLeftWidth = clamp(
-    currentLeftWidth + deltaPx,
-    minLeft,
-    pairWidth - minRight,
-  );
-  const nextWeights = [...weights];
-
-  nextWeights[handleIndex] = (nextLeftWidth / pairWidth) * pairWeight;
-  nextWeights[handleIndex + 1] =
-    ((pairWidth - nextLeftWidth) / pairWidth) * pairWeight;
-
-  return nextWeights;
-}
-
-export function resizeColumnDragWeights({
-  committedWeights,
-  containerWidth,
-  deltaPx,
-  handleIndex,
-  minWidths,
-  weights,
-}: ResizeColumnDragWeightsOptions) {
-  const nextWeights = resizeColumnWeights({
-    containerWidth,
-    deltaPx,
-    handleIndex,
-    minWidths,
-    weights,
-  });
-
-  return arraysAlmostEqual(nextWeights, weights)
-    ? committedWeights
-    : nextWeights;
-}
-
-export function sanitizeColumnWeights(
-  weights: number[],
-  fallbackWeights: number[],
-) {
-  if (weights.length !== fallbackWeights.length) return fallbackWeights;
-  if (weights.some((weight) => !Number.isFinite(weight) || weight <= 0))
-    return fallbackWeights;
-  return scaleWeightsToTotal(
-    weights,
-    fallbackWeights.reduce((sum, weight) => sum + weight, 0),
-  );
-}
-
-export function getColumnBoundaries(weights: number[]) {
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-  if (totalWeight <= 0) {
-    return weights.slice(0, -1).map((_, index) => (index + 1) / weights.length);
-  }
-
-  let runningWeight = 0;
-  return weights.slice(0, -1).map((weight) => {
-    runningWeight += weight;
-    return runningWeight / totalWeight;
-  });
-}
-
 export function resolveColumnMinWidths(
   minimumWidth: number,
   columns: ResizableColumnConfig[],
@@ -583,95 +486,29 @@ export function calculateScrollThumb({
   };
 }
 
-function readMeasuredColumnWeights(
-  grid: HTMLDivElement,
-  columnCount: number,
-  fallbackWeights: number[],
-) {
-  const widths = Array.from(grid.children)
-    .slice(0, columnCount)
-    .map((child) => child.getBoundingClientRect().width);
-  const totalWidth = widths.reduce((sum, width) => sum + width, 0);
-
-  if (
-    widths.length !== fallbackWeights.length ||
-    totalWidth <= 0 ||
-    widths.some((width) => width <= 0)
-  ) {
-    return fallbackWeights;
-  }
-
-  return scaleWeightsToTotal(
-    widths,
-    fallbackWeights.reduce((sum, weight) => sum + weight, 0),
-  );
-}
-
-function readColumnBoundaryPositions(
-  grid: HTMLDivElement,
-  columnCount: number,
-) {
-  return Array.from(grid.children)
-    .slice(0, Math.max(0, columnCount - 1))
-    .map((child) => {
-      const element = child as HTMLElement;
-      return element.offsetLeft + element.offsetWidth;
-    });
-}
-
 function readStoredColumnWeights(
   storageKey: string | undefined,
-  fallbackWeights: number[],
-) {
-  if (!storageKey || typeof localStorage === "undefined")
-    return fallbackWeights;
+  fallbackWeights: readonly number[],
+): number[] {
+  if (!storageKey || typeof localStorage === "undefined") {
+    return [...fallbackWeights];
+  }
 
   try {
     const storedValue = localStorage.getItem(storageKey);
-    if (!storedValue) return fallbackWeights;
+    if (!storedValue) return [...fallbackWeights];
     const parsedValue = JSON.parse(storedValue);
-    if (!Array.isArray(parsedValue)) return fallbackWeights;
     return sanitizeColumnWeights(parsedValue, fallbackWeights);
   } catch {
-    return fallbackWeights;
+    return [...fallbackWeights];
   }
-}
-
-function writeStoredColumnWeights(storageKey: string, weights: number[]) {
-  if (typeof localStorage === "undefined") return;
-
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(weights));
-  } catch {
-    // Persisted UI preference is best-effort only.
-  }
-}
-
-function formatWeight(weight: number) {
-  return Number.isFinite(weight) && weight > 0 ? Number(weight.toFixed(4)) : 1;
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function arraysEqual(left: number[], right: number[]) {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => value === right[index])
-  );
-}
-
-function arraysAlmostEqual(left: number[], right: number[]) {
-  return (
-    left.length === right.length &&
-    left.every((value, index) => Math.abs(value - right[index]) < 0.001)
-  );
-}
-
-function scaleWeightsToTotal(weights: number[], targetTotal: number) {
-  const currentTotal = weights.reduce((sum, weight) => sum + weight, 0);
-  if (currentTotal <= 0 || targetTotal <= 0) return weights;
-  const scale = targetTotal / currentTotal;
-  return weights.map((weight) => weight * scale);
+function arraysAlmostEqual(left: readonly number[], right: readonly number[]) {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => Math.abs(value - right[index]) < 0.001);
 }

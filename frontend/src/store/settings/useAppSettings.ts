@@ -1,8 +1,10 @@
+import { useContext } from "react";
 import {
+  QueryClient,
+  QueryClientContext,
   useMutationState,
   useQuery,
-  useQueryClient,
-  type QueryClient,
+  type QueryClient as QueryClientType,
 } from "@tanstack/react-query";
 import {
   appSettingsKey,
@@ -18,6 +20,13 @@ import {
   type AppSettingsStorageInfo,
 } from "./settingsSchema";
 import type { AppSettingsFile } from "../../services/appSettings";
+
+const fallbackQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: { enabled: false, retry: false },
+    mutations: { retry: false },
+  },
+});
 
 export interface AppSettingsContextValue {
   resetSettings: () => void;
@@ -38,7 +47,7 @@ export interface AppSettingsContextValue {
 }
 
 export function getCurrentProjectedSettings(
-  queryClient: QueryClient,
+  queryClient: QueryClientType,
 ): AppSettings {
   const mutationCache = queryClient.getMutationCache();
   const saveMutations = mutationCache
@@ -66,19 +75,31 @@ export function getCurrentProjectedSettings(
 }
 
 export function useAppSettings(): AppSettingsContextValue {
-  const queryClient = useQueryClient();
-  const query = useQuery(settingsQueryOptions());
-  const saveMutation = useSaveAppSettings();
+  const contextClient = useContext(QueryClientContext);
+  const queryClient = contextClient ?? fallbackQueryClient;
+  const isEnabled = Boolean(contextClient);
 
-  const mutationStates = useMutationState({
-    filters: { mutationKey: saveAppSettingsMutationKey },
-    select: (mutation) => ({
-      error: mutation.state.error,
-      id: mutation.mutationId,
-      status: mutation.state.status,
-      variables: mutation.state.variables as AppSettings | undefined,
-    }),
-  });
+  const query = useQuery(
+    {
+      ...settingsQueryOptions(),
+      enabled: isEnabled,
+    },
+    queryClient,
+  );
+  const saveMutation = useSaveAppSettings(queryClient);
+
+  const mutationStates = useMutationState(
+    {
+      filters: { mutationKey: saveAppSettingsMutationKey },
+      select: (mutation) => ({
+        error: mutation.state.error,
+        id: mutation.mutationId,
+        status: mutation.state.status,
+        variables: mutation.state.variables as AppSettings | undefined,
+      }),
+    },
+    queryClient,
+  );
 
   const sortedMutations = [...mutationStates].sort((a, b) => a.id - b.id);
   const latestMutation = sortedMutations[sortedMutations.length - 1];
