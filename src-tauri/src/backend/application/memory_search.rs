@@ -25,24 +25,26 @@ impl AppService {
             if record_kind == MemoryRecordKind::Web && params.scope.project_path.is_some() {
                 continue;
             }
-            let result = self.search_conversation_records(ConversationSearchParams {
-                record_kind: Some(label.to_string()),
-                adapter_id: params.scope.app_id.clone(),
-                source_id: params.scope.source_id.clone(),
-                project_path: params.scope.project_path.clone(),
-                query: query.clone(),
-                content_types: Vec::new(),
-                card_kinds: Vec::new(),
-                semantic_roles: Vec::new(),
-                include_questions: None,
-                include_cards: None,
-                since: params.since.clone(),
-                until: params.until.clone(),
-                timeline: false,
-                limit: Some(RECALL_SEARCH_MAX_LIMIT),
-                offset: Some(0),
-                search_options: None,
-            })?;
+            let result =
+                self.db
+                    .block_on(self.search_conversation_records(ConversationSearchParams {
+                        record_kind: Some(label.to_string()),
+                        adapter_id: params.scope.app_id.clone(),
+                        source_id: params.scope.source_id.clone(),
+                        project_path: params.scope.project_path.clone(),
+                        query: query.clone(),
+                        content_types: Vec::new(),
+                        card_kinds: Vec::new(),
+                        semantic_roles: Vec::new(),
+                        include_questions: None,
+                        include_cards: None,
+                        since: params.since.clone(),
+                        until: params.until.clone(),
+                        timeline: false,
+                        limit: Some(RECALL_SEARCH_MAX_LIMIT),
+                        offset: Some(0),
+                        search_options: None,
+                    }))?;
             lexical_backends.insert(result.backend);
             for hit in result.hits {
                 let reference = MemoryRecallQuestionRef {
@@ -278,17 +280,18 @@ impl AppService {
         reference: &MemoryRecallQuestionRef,
     ) -> AppResult<crate::backend::dto::ConversationQuestionDetail> {
         match reference.record_kind {
-            MemoryRecordKind::Session => self.get_conversation_question(
+            MemoryRecordKind::Session => self.db.block_on(self.get_conversation_question(
                 crate::backend::application::ConversationQuestionGetParams {
                     question_id: reference.question_id.clone(),
                 },
-            ),
+            )),
             MemoryRecordKind::Web => self
-                .get_web_record_session(
+                .db
+                .block_on(self.get_web_record_session(
                     crate::backend::application::ConversationSessionGetParams {
                         session_id: reference.session_id.clone(),
                     },
-                )?
+                ))?
                 .questions
                 .into_iter()
                 .find(|detail| detail.question.id == reference.question_id)

@@ -79,6 +79,10 @@ impl AppService {
         &self.context.tenant.id
     }
 
+    pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
+        self.db.pool()
+    }
+
     pub(crate) async fn overview(&self) -> AppResult<AppOverview> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
@@ -248,7 +252,7 @@ impl AppService {
     pub(crate) async fn run_doctor(&self) -> AppResult<Value> {
         let backup_root =
             capabilities::skill_backup_root_sqlx(self.db.pool(), self.tenant_id()).await?;
-        let runtime_statuses = self.list_conversation_adapter_runtime_statuses()?;
+        let runtime_statuses = self.list_conversation_adapter_runtime_statuses().await?;
         let (runtime_status, runtime_message) =
             conversation_runtime_doctor_summary(&runtime_statuses);
         let pool = self.db.pool();

@@ -47,20 +47,17 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
             let Some(database) = database else {
                 return Ok(());
             };
-            tokio::task::spawn_blocking(move || {
-                for tenant_id in tenants {
-                    crate::backend::search::conversation::rebuild_conversation_search_index_with_offset(
-                        &database,
-                        &db_path,
-                        &tenant_id,
-                        &consumer_id,
-                        batch_last_seq,
-                    )?;
-                }
-                Ok::<(), AppError>(())
-            })
-            .await
-            .map_err(|e| AppError::External(e.to_string()))?
+            for tenant_id in tenants {
+                crate::backend::search::conversation::rebuild_conversation_search_index_with_offset(
+                    database.pool(),
+                    &db_path,
+                    &tenant_id,
+                    &consumer_id,
+                    batch_last_seq,
+                )
+                .await?;
+            }
+            Ok(())
         })
     }
 }

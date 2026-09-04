@@ -39,8 +39,8 @@ fn clear_test_tables(service: &AppService, tables: &[&str]) {
 }
 
 #[cfg(unix)]
-#[test]
-fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
+#[tokio::test(flavor = "multi_thread")]
+async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-command-projector-fallback-{}",
         Uuid::new_v4()
@@ -69,20 +69,13 @@ fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
         updated_at: now,
     };
     let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(
-                &pool,
-                "default",
-                &legacy_adapter,
-            )
-            .await
-        })
+    crate::backend::store::upsert_conversation_adapter_sqlx(&pool, "default", &legacy_adapter)
+        .await
         .expect("save legacy conversation adapter");
     service
         .runtime
         .refresh_conversation_adapter_catalog()
+        .await
         .expect("refresh adapter catalog");
 
     let projections = service
@@ -114,8 +107,8 @@ fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
 }
 
 #[cfg(unix)]
-#[test]
-fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
+#[tokio::test(flavor = "multi_thread")]
+async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-command-projector-unavailable-{}",
         Uuid::new_v4()
@@ -151,20 +144,13 @@ fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
         updated_at: now,
     };
     let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(
-                &pool,
-                "default",
-                &unavailable_adapter,
-            )
-            .await
-        })
+    crate::backend::store::upsert_conversation_adapter_sqlx(&pool, "default", &unavailable_adapter)
+        .await
         .expect("save unavailable conversation adapter");
     service
         .runtime
         .refresh_conversation_adapter_catalog()
+        .await
         .expect("refresh adapter catalog");
 
     let projections = service
@@ -675,8 +661,8 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotently() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotently() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-maintenance-{}",
         Uuid::new_v4()
@@ -734,6 +720,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             record_kind: Some("session".to_string()),
             include_resolved: false,
         })
+        .await
         .expect("audit conversation data");
     assert!(audit["issue_count"].as_i64().unwrap_or_default() >= 2);
     assert!(audit["issues"]
@@ -755,6 +742,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             resync: false,
             ..ConversationDataRepairParams::default()
         })
+        .await
         .expect("dry-run conversation repair");
     assert_eq!(dry_run["dry_run"], true);
     let orphan_count: i64 = service
@@ -770,13 +758,15 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
         .expect("count orphan after dry-run");
     assert_eq!(orphan_count, 1);
 
-    let resync_error = service.repair_conversation_data(ConversationDataRepairParams {
-        source_id: Some("missing-source".to_string()),
-        record_kind: Some("session".to_string()),
-        yes: true,
-        resync: true,
-        ..ConversationDataRepairParams::default()
-    });
+    let resync_error = service
+        .repair_conversation_data(ConversationDataRepairParams {
+            source_id: Some("missing-source".to_string()),
+            record_kind: Some("session".to_string()),
+            yes: true,
+            resync: true,
+            ..ConversationDataRepairParams::default()
+        })
+        .await;
     assert!(resync_error.is_err());
     let orphan_count_after_failed_resync: i64 = service
         .db
@@ -799,6 +789,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             resync: false,
             ..ConversationDataRepairParams::default()
         })
+        .await
         .expect("apply source-scoped conversation repair");
     assert_eq!(scoped_repair["applied"]["deleted_parts"], 0);
     assert_eq!(scoped_repair["applied"]["deleted_memberships"], 0);
@@ -830,6 +821,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             resync: false,
             ..ConversationDataRepairParams::default()
         })
+        .await
         .expect("apply conversation repair");
     assert_eq!(repaired["dry_run"], false);
     assert_eq!(repaired["applied"]["deleted_parts"], 1);
@@ -858,6 +850,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             resync: false,
             ..ConversationDataRepairParams::default()
         })
+        .await
         .expect("repeat conversation repair");
     assert_eq!(second["applied"]["deleted_parts"], 0);
     assert_eq!(second["applied"]["deleted_memberships"], 0);
@@ -897,6 +890,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             record_kind: Some("session".to_string()),
             ..ConversationDataAuditParams::default()
         })
+        .await
         .expect("audit a recurrent resolved issue");
     assert!(recurrent["issues"]
         .as_array()
@@ -909,6 +903,7 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
             yes: true,
             ..ConversationDataRepairParams::default()
         })
+        .await
         .expect("repair a recurrent resolved issue");
     assert_eq!(recurrent_repair["applied"]["deleted_parts"], 1);
 
@@ -916,8 +911,8 @@ fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idempotentl
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn conversation_data_maintenance_stops_before_work_when_cancelled() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_data_maintenance_stops_before_work_when_cancelled() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-maintenance-cancelled-{}",
         Uuid::new_v4()
@@ -928,29 +923,33 @@ fn conversation_data_maintenance_stops_before_work_when_cancelled() {
     let cancellation = tokio_util::sync::CancellationToken::new();
     cancellation.cancel();
 
-    let audit = service.audit_conversation_data_with_progress_and_cancellation(
-        ConversationDataAuditParams::default(),
-        Some(&cancellation),
-        &mut |_, _, _| panic!("cancelled audit must not report progress"),
-    );
+    let audit = service
+        .audit_conversation_data_with_progress_and_cancellation(
+            ConversationDataAuditParams::default(),
+            Some(&cancellation),
+            &mut |_, _, _| panic!("cancelled audit must not report progress"),
+        )
+        .await;
     assert!(matches!(audit, Err(AppError::Canceled(_))));
 
-    let repair = service.repair_conversation_data_with_progress_and_cancellation(
-        ConversationDataRepairParams {
-            yes: true,
-            ..ConversationDataRepairParams::default()
-        },
-        Some(&cancellation),
-        &mut |_, _, _| panic!("cancelled repair must not report progress"),
-    );
+    let repair = service
+        .repair_conversation_data_with_progress_and_cancellation(
+            ConversationDataRepairParams {
+                yes: true,
+                ..ConversationDataRepairParams::default()
+            },
+            Some(&cancellation),
+            &mut |_, _, _| panic!("cancelled repair must not report progress"),
+        )
+        .await;
     assert!(matches!(repair, Err(AppError::Canceled(_))));
 
     drop(service);
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn conversation_data_audit_reports_affected_snapshot_rows() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_data_audit_reports_affected_snapshot_rows() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-audit-dependencies-{}",
         Uuid::new_v4()
@@ -976,6 +975,7 @@ fn conversation_data_audit_reports_affected_snapshot_rows() {
 
     let audit = service
         .audit_conversation_data(ConversationDataAuditParams::default())
+        .await
         .expect("audit conversation dependencies");
     let issues = audit["issues"].as_array().expect("audit issues");
     let snapshot_issue = issues
@@ -987,8 +987,8 @@ fn conversation_data_audit_reports_affected_snapshot_rows() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-rollback-{}",
         Uuid::new_v4()
@@ -1027,16 +1027,19 @@ fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup
             dry_run: true,
             yes: false,
         })
+        .await
         .expect("preview rollback");
     assert_eq!(preview["dry_run"], true);
     assert_eq!(preview["restored"], false);
     assert_eq!(preview["requires_app_restart"], true);
 
-    let confirmation_error = service.rollback_conversation_data(ConversationDataRollbackParams {
-        backup_path: backup_path.to_string_lossy().into_owned(),
-        dry_run: false,
-        yes: false,
-    });
+    let confirmation_error = service
+        .rollback_conversation_data(ConversationDataRollbackParams {
+            backup_path: backup_path.to_string_lossy().into_owned(),
+            dry_run: false,
+            yes: false,
+        })
+        .await;
     assert!(confirmation_error.is_err());
 
     let restored = service
@@ -1045,6 +1048,7 @@ fn conversation_data_rollback_previews_requires_confirmation_and_restores_backup
             dry_run: false,
             yes: true,
         })
+        .await
         .expect("restore rollback backup");
     assert_eq!(restored["restored"], true);
     drop(service);
@@ -1382,8 +1386,8 @@ async fn doctor_reports_conversation_adapter_runtime_statuses() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn runtime_status_includes_harvester_runtime_requirements() {
+#[tokio::test(flavor = "multi_thread")]
+async fn runtime_status_includes_harvester_runtime_requirements() {
     let root =
         std::env::temp_dir().join(format!("assetiweave-harvester-runtime-{}", Uuid::new_v4()));
     let source_dir = root.join("source");
@@ -1411,15 +1415,13 @@ fn runtime_status_includes_harvester_runtime_requirements() {
     };
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source).await
-        })
+    crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+        .await
         .expect("save source");
 
     let statuses = service
         .list_conversation_adapter_runtime_statuses()
+        .await
         .expect("list runtime statuses");
     let python_requirement = statuses
         .iter()
@@ -1675,8 +1677,8 @@ fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> Conver
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_kind() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_kind() {
     for (web_record, record_kind) in [(false, "session"), (true, "web")] {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-conversation-blocks-{record_kind}-{}",
@@ -1705,11 +1707,13 @@ fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_ki
                 offset: Some(0),
                 search_options: None,
             })
+            .await
             .expect("locate fixture question");
         let question_id = search.hits[0].question_id.clone();
 
         let blocks = service
             .list_conversation_blocks(ConversationBlockListParams { question_id })
+            .await
             .expect("list block locators");
         assert_eq!(blocks.len(), 2);
         assert!(blocks.iter().all(|block| block.record_kind == record_kind));
@@ -1735,6 +1739,7 @@ fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_ki
             .get_conversation_block(ConversationBlockGetParams {
                 block_id: question_block.block_id.clone(),
             })
+            .await
             .expect("load only the question block");
         assert_eq!(question.content, "Export this");
 
@@ -1742,6 +1747,7 @@ fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_ki
             .get_conversation_block(ConversationBlockGetParams {
                 block_id: answer_block.block_id.clone(),
             })
+            .await
             .expect("load only the answer block");
         assert_eq!(answer.content, "Rust fallback should not appear");
         assert_eq!(answer.locator.kind, "answer");
@@ -1750,8 +1756,8 @@ fn conversation_blocks_list_locators_and_get_selected_content_for_each_record_ki
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_uses_adapter_markdown_formatter() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_uses_adapter_markdown_formatter() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-plugin-{}",
         Uuid::new_v4()
@@ -1786,6 +1792,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
+        .await
         .expect("export through adapter");
 
     let path = PathBuf::from(result["path"].as_str().expect("export path"));
@@ -1800,8 +1807,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_sync_reports_read_and_import_progress_in_full_and_incremental_modes() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_sync_reports_read_and_import_progress_in_full_and_incremental_modes() {
     let root = std::env::temp_dir().join(format!("assetiweave-sync-progress-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
     let service = AppService::open_with_db_path(root.join("app.db")).unwrap();
@@ -1829,16 +1836,14 @@ esac
         Some(&script),
         false,
     );
-    let source_id: String = service.db.block_on(async {
-        sqlx::query_scalar(
-            "SELECT source_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
-        )
-        .bind(service.tenant_id())
-        .bind(&session_id)
-        .fetch_one(service.db.pool())
-        .await
-        .unwrap()
-    });
+    let source_id: String = sqlx::query_scalar(
+        "SELECT source_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(service.tenant_id())
+    .bind(&session_id)
+    .fetch_one(service.db.pool())
+    .await
+    .unwrap();
     for (mode, active_count) in [
         (ConversationSyncMode::Full, 1),
         (ConversationSyncMode::Incremental, 0),
@@ -1856,6 +1861,7 @@ esac
                 },
                 |done, total, label| progress.push((done, total, label)),
             )
+            .await
             .unwrap();
         assert_eq!(result["results"][0]["active_session_count"], active_count);
         assert!(progress
@@ -1871,8 +1877,8 @@ esac
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-dry-run-{}",
         Uuid::new_v4()
@@ -1909,6 +1915,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect("dry-run export through adapter");
 
     let path = PathBuf::from(result["path"].as_str().expect("export path"));
@@ -1922,8 +1929,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn web_record_export_uses_adapter_markdown_formatter() {
+#[tokio::test(flavor = "multi_thread")]
+async fn web_record_export_uses_adapter_markdown_formatter() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-web-record-export-plugin-{}",
         Uuid::new_v4()
@@ -1958,6 +1965,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
+        .await
         .expect("export web record through adapter");
 
     let path = PathBuf::from(result["path"].as_str().expect("export path"));
@@ -1971,8 +1979,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capability() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capability() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-no-cap-{}",
         Uuid::new_v4()
@@ -1997,6 +2005,7 @@ fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capab
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect("Core exporter should handle adapters without export_markdown");
 
     assert_eq!(result["dry_run"], true);
@@ -2006,8 +2015,8 @@ fn conversation_session_export_falls_back_to_core_without_adapter_markdown_capab
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshots() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshots() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-raw-export-{}",
         Uuid::new_v4()
@@ -2030,6 +2039,7 @@ fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshot
             format: crate::backend::dto::ConversationExportFormat::Raw,
             dry_run: false,
         })
+        .await
         .expect("export raw session facts");
     let session_path = PathBuf::from(session_result["path"].as_str().expect("raw path"));
     let session_json: Value =
@@ -2061,6 +2071,7 @@ fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshot
             format: crate::backend::dto::ConversationExportFormat::Raw,
             dry_run: true,
         })
+        .await
         .expect("preview raw web facts");
     assert_eq!(web_result["format"], "raw");
     assert_eq!(
@@ -2078,8 +2089,8 @@ fn conversation_raw_export_preserves_source_facts_and_excludes_question_snapshot
 }
 
 #[cfg(unix)]
-#[test]
-fn card_contract_v1_export_uses_core_and_preserves_reasoning() {
+#[tokio::test(flavor = "multi_thread")]
+async fn card_contract_v1_export_uses_core_and_preserves_reasoning() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-v1-reasoning-{}",
         Uuid::new_v4()
@@ -2154,6 +2165,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
+        .await
         .expect("export v1 reasoning through Core");
 
     let path = PathBuf::from(result["path"].as_str().expect("export path"));
@@ -2175,8 +2187,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-web-export-v1-reasoning-{}",
         Uuid::new_v4()
@@ -2238,6 +2250,7 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect("dry-run web export through Core");
     assert_eq!(dry_run["legacy_adapter_exporter_used"], false);
     assert!(!marker.exists());
@@ -2251,6 +2264,7 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
+        .await
         .expect("write web export through Core");
     let markdown = fs::read_to_string(written["path"].as_str().unwrap()).unwrap();
     assert!(markdown.contains("Web reasoning survives"));
@@ -2260,8 +2274,8 @@ fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_rejects_unsafe_adapter_relative_path() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_rejects_unsafe_adapter_relative_path() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-unsafe-path-{}",
         Uuid::new_v4()
@@ -2295,6 +2309,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect_err("unsafe adapter relative path should fail");
 
     assert!(error.to_string().contains("relative_path"));
@@ -2304,8 +2319,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_requires_manifest_markdown_capability() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_requires_manifest_markdown_capability() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-manifest-no-cap-{}",
         Uuid::new_v4()
@@ -2356,6 +2371,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect_err("manifest missing export_markdown should fail");
 
     assert!(error.to_string().contains("export_markdown"));
@@ -2364,8 +2380,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_rejects_trusted_hash_mismatch() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_rejects_trusted_hash_mismatch() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-hash-mismatch-{}",
         Uuid::new_v4()
@@ -2413,6 +2429,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect_err("trusted hash mismatch should fail");
 
     assert!(error.to_string().contains("trusted hash mismatch"));
@@ -2421,8 +2438,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_rejects_manifest_tampering_after_trust() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_rejects_manifest_tampering_after_trust() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-manifest-tamper-{}",
         Uuid::new_v4()
@@ -2498,6 +2515,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: true,
         })
+        .await
         .expect_err("manifest tampering should fail trusted hash check");
 
     assert!(error.to_string().contains("trusted hash mismatch"));
@@ -2605,8 +2623,8 @@ printf '%s\n' '{"type":"complete","item":{}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_session_export_rejects_symlink_escape_under_output_root() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_session_export_rejects_symlink_escape_under_output_root() {
     use std::os::unix::fs::symlink;
 
     let root = std::env::temp_dir().join(format!(
@@ -2647,6 +2665,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
             format: crate::backend::dto::ConversationExportFormat::Rendered,
             dry_run: false,
         })
+        .await
         .expect_err("symlink escape under output root should fail");
 
     assert!(error.to_string().contains("symlink") || error.to_string().contains("output_root"));
@@ -4239,8 +4258,8 @@ fn concrete_skill_candidate_scores_above_repo_fallback() {
             > skill_candidate_score(&repo_candidate, &terms)
     );
 }
-#[test]
-fn conversation_search_index_status_reports_missing_lexical_index() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_index_status_reports_missing_lexical_index() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-search-index-status-{}",
         Uuid::new_v4()
@@ -4250,6 +4269,7 @@ fn conversation_search_index_status_reports_missing_lexical_index() {
 
     let status = service
         .get_conversation_search_index_status()
+        .await
         .expect("load conversation search index status");
 
     assert_eq!(status.health, "missing");
@@ -4262,8 +4282,8 @@ fn conversation_search_index_status_reports_missing_lexical_index() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[test]
-fn conversation_search_index_rebuild_publishes_a_ready_generation() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_index_rebuild_publishes_a_ready_generation() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-search-index-rebuild-{}",
         Uuid::new_v4()
@@ -4273,9 +4293,11 @@ fn conversation_search_index_rebuild_publishes_a_ready_generation() {
 
     let report = service
         .rebuild_conversation_search_index()
+        .await
         .expect("rebuild conversation search index");
     let status = service
         .get_conversation_search_index_status()
+        .await
         .expect("load rebuilt conversation search index status");
 
     assert_eq!(report.document_count, 0);
@@ -4290,8 +4312,8 @@ fn conversation_search_index_rebuild_publishes_a_ready_generation() {
     let _ = std::fs::remove_dir_all(root);
 }
 
-#[test]
-fn conversation_search_index_rebuild_failure_releases_writer_lease() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_index_rebuild_failure_releases_writer_lease() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-search-index-failure-{}",
         Uuid::new_v4()
@@ -4301,9 +4323,10 @@ fn conversation_search_index_rebuild_failure_releases_writer_lease() {
     fs::write(root.join("conversation-search-index"), "not a directory")
         .expect("block search index directory");
 
-    assert!(service.rebuild_conversation_search_index().is_err());
+    assert!(service.rebuild_conversation_search_index().await.is_err());
     let status = service
         .get_conversation_search_index_status()
+        .await
         .expect("load failed conversation search index status");
     assert_eq!(status.health, "failed");
     assert!(!status.is_rebuilding);
@@ -4313,8 +4336,8 @@ fn conversation_search_index_rebuild_failure_releases_writer_lease() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
     let root =
         std::env::temp_dir().join(format!("assetiweave-search-index-query-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp search index query directory");
@@ -4339,6 +4362,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search without stale question snapshot fields");
     assert_eq!(stale_legacy.total_count, 0);
     assert!(service
@@ -4349,6 +4373,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             limit: Some(20),
             offset: Some(0),
         })
+        .await
         .expect("list sessions without stale question snapshot fields")
         .is_empty());
     let legacy = service
@@ -4370,12 +4395,14 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search SQLite projection before the derived index exists");
     assert_eq!(legacy.backend, "legacy_scan");
     assert_eq!(legacy.total_count, 1);
     assert_eq!(legacy.hits[0].question_title, "Export this");
     let report = service
         .rebuild_conversation_search_index()
+        .await
         .expect("rebuild conversation search index");
     assert_eq!(report.document_count, 2);
 
@@ -4398,6 +4425,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search rebuilt conversation index");
 
     assert_eq!(result.backend, "tantivy");
@@ -4427,6 +4455,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
         .get_conversation_question(ConversationQuestionGetParams {
             question_id: result.hits[0].question_id.clone(),
         })
+        .await
         .expect("load the same persisted Part through the detail DTO");
     assert_eq!(detail.question_turns.len(), 1);
     assert_eq!(detail.question_turns[0].turn_id, detail.turns[0].id);
@@ -4525,6 +4554,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             question_ids: vec![question_id.clone(), second_question_id],
             dry_run: false,
         })
+        .await
         .expect("merge question memberships through AppService");
     assert_eq!(merged.questions.len(), 1);
     assert_eq!(merged.questions[0].question.id, question_id);
@@ -4563,6 +4593,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search rebuilt conversation index by session id fragment");
     assert_eq!(id_result.backend, "id_lookup");
     assert_eq!(id_result.total_count, 1);
@@ -4575,6 +4606,7 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             part_id: result.hits[0].part_id.clone().expect("answer part id"),
             translated_text: "Rust 回退不应出现".to_string(),
         })
+        .await
         .expect("update indexed conversation part");
     let fallback = service
         .search_conversation_records(ConversationSearchParams {
@@ -4595,11 +4627,13 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("fall back after indexed content changes");
     assert_eq!(fallback.backend, "legacy_scan");
     assert_eq!(
         service
             .get_conversation_search_index_status()
+            .await
             .expect("load stale status")
             .health,
         "stale"
@@ -4608,8 +4642,8 @@ fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_records() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-content-node-app-service-{}",
         Uuid::new_v4()
@@ -4624,6 +4658,7 @@ fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
             limit: Some(10),
             offset: Some(0),
         })
+        .await
         .expect("load fixture question through AppService");
     assert_eq!(initial.len(), 1);
     assert_eq!(initial[0].parts.len(), 1);
@@ -4683,6 +4718,7 @@ fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
 
     let expanded = service
         .get_conversation_question(ConversationQuestionGetParams { question_id })
+        .await
         .expect("reload canonical content nodes through AppService");
     assert_eq!(expanded.parts.len(), 3);
     assert_eq!(expanded.projected_content_nodes.len(), 2);
@@ -4706,8 +4742,8 @@ fn conversation_question_detail_projects_canonical_nodes_through_app_service() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-codex-shell-projection-app-service-{}",
         Uuid::new_v4()
@@ -4722,6 +4758,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             limit: Some(10),
             offset: Some(0),
         })
+        .await
         .expect("load Codex shell projection question");
     let question_id = initial[0].question.id.clone();
     let turn_id = initial[0].turns[0].id.clone();
@@ -4785,6 +4822,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
 
     let detail = service
         .get_conversation_question(ConversationQuestionGetParams { question_id })
+        .await
         .expect("reload Codex shell projection through AppService");
     assert_eq!(detail.parts.len(), 3);
     assert_eq!(
@@ -4885,6 +4923,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search historical split command Part");
     assert_eq!(historical_split_search.total_count, 1);
     assert_eq!(
@@ -4917,6 +4956,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search raw shell command Part");
     assert_eq!(command_search.total_count, 1);
     assert_eq!(
@@ -4935,6 +4975,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .list_conversation_blocks(ConversationBlockListParams {
             question_id: detail.question.id.clone(),
         })
+        .await
         .expect("list raw shell command locators");
     let command_blocks = blocks
         .iter()
@@ -4952,11 +4993,13 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         .get_conversation_block(ConversationBlockGetParams {
             block_id: "conversation-part-codex-shell-command".to_string(),
         })
+        .await
         .expect("load raw shell command Part");
     assert_eq!(status_block.content, raw_command);
 
     let report = service
         .rebuild_conversation_search_index()
+        .await
         .expect("rebuild raw shell search index");
     assert_eq!(report.document_count, 6);
     let indexed_command_search = service
@@ -4980,6 +5023,7 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search raw shell command Part in Tantivy");
     assert_eq!(indexed_command_search.backend, "tantivy");
     assert_eq!(indexed_command_search.total_count, 1);
@@ -4990,8 +5034,8 @@ fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_history() {
+#[tokio::test(flavor = "multi_thread")]
+async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_history() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-recent-incremental-search-{}",
         Uuid::new_v4()
@@ -5127,6 +5171,7 @@ fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_histor
             offset: Some(0),
             search_options: None,
         })
+        .await
         .expect("search the latest incremental delta");
 
     assert_eq!(result.backend, "incremental_delta_scan");

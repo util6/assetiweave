@@ -14,99 +14,103 @@ struct AuditIssue {
 }
 
 impl AppService {
-    pub(crate) fn audit_conversation_data(
+    pub(crate) async fn audit_conversation_data(
         &self,
         params: ConversationDataAuditParams,
     ) -> AppResult<Value> {
         self.audit_conversation_data_with_progress(params, |_, _, _| {})
+            .await
     }
 
-    pub(crate) fn audit_conversation_data_with_progress<F>(
+    pub(crate) async fn audit_conversation_data_with_progress<F>(
         &self,
         params: ConversationDataAuditParams,
         mut on_progress: F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         self.audit_conversation_data_with_progress_and_cancellation(params, None, &mut on_progress)
+            .await
     }
 
-    pub(crate) fn audit_conversation_data_with_progress_and_cancellation<F>(
+    pub(crate) async fn audit_conversation_data_with_progress_and_cancellation<F>(
         &self,
         params: ConversationDataAuditParams,
         cancellation: Option<&tokio_util::sync::CancellationToken>,
         on_progress: &mut F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         validate_conversation_maintenance_scope(
             params.record_kind.as_deref(),
             params.source_id.as_deref(),
         )?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
+        let pool = self.pool();
+        let tenant_id = self.tenant_id();
         let include_resolved = params.include_resolved;
         let record_kind = params.record_kind.clone();
         let source_id = params.source_id.clone();
-        self.db.block_on(async move {
-            audit_conversation_data_sqlx(
-                &pool,
-                &tenant_id,
-                record_kind.as_deref(),
-                source_id.as_deref(),
-                include_resolved,
-                cancellation,
-                on_progress,
-            )
-            .await
-        })
+        audit_conversation_data_sqlx(
+            pool,
+            tenant_id,
+            record_kind.as_deref(),
+            source_id.as_deref(),
+            include_resolved,
+            cancellation,
+            on_progress,
+        )
+        .await
     }
 
-    pub(crate) fn repair_conversation_data(
+    pub(crate) async fn repair_conversation_data(
         &self,
         params: ConversationDataRepairParams,
     ) -> AppResult<Value> {
         self.repair_conversation_data_with_progress(params, |_, _, _| {})
+            .await
     }
 
-    pub(crate) fn repair_conversation_data_with_progress<F>(
+    pub(crate) async fn repair_conversation_data_with_progress<F>(
         &self,
         params: ConversationDataRepairParams,
         mut on_progress: F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         self.repair_conversation_data_with_progress_and_cancellation(params, None, &mut on_progress)
+            .await
     }
 
-    pub(crate) fn repair_conversation_data_with_progress_and_cancellation<F>(
+    pub(crate) async fn repair_conversation_data_with_progress_and_cancellation<F>(
         &self,
         params: ConversationDataRepairParams,
         cancellation: Option<&tokio_util::sync::CancellationToken>,
         on_progress: &mut F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         validate_conversation_maintenance_scope(
             params.record_kind.as_deref(),
             params.source_id.as_deref(),
         )?;
         ensure_maintenance_not_cancelled(cancellation)?;
-        let audit = self.audit_conversation_data_with_progress_and_cancellation(
-            ConversationDataAuditParams {
-                source_id: params.source_id.clone(),
-                record_kind: params.record_kind.clone(),
-                include_resolved: false,
-            },
-            cancellation,
-            &mut |current, total, note| {
-                on_progress(current.min(2), total.max(AUDIT_STAGE_COUNT), note)
-            },
-        )?;
+        let audit = self
+            .audit_conversation_data_with_progress_and_cancellation(
+                ConversationDataAuditParams {
+                    source_id: params.source_id.clone(),
+                    record_kind: params.record_kind.clone(),
+                    include_resolved: false,
+                },
+                cancellation,
+                &mut |current, total, note| {
+                    on_progress(current.min(2), total.max(AUDIT_STAGE_COUNT), note)
+                },
+            )
+            .await?;
         ensure_maintenance_not_cancelled(cancellation)?;
         if params.dry_run {
             return Ok(json!({
@@ -155,46 +159,48 @@ impl AppService {
                         on_progress(stage, AUDIT_STAGE_COUNT, note);
                     },
                 )
+                .await
                 .map(|value| json!(value))?;
             ensure_maintenance_not_cancelled(cancellation)?;
         }
 
         on_progress(5, AUDIT_STAGE_COUNT, Some("apply".to_string()));
         ensure_maintenance_not_cancelled(cancellation)?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
+        let pool = self.pool();
+        let tenant_id = self.tenant_id();
         let repair_record_kind = params.record_kind.clone();
         let repair_source_id = params.source_id.clone();
-        let applied = self.db.block_on(async move {
-            apply_safe_conversation_repairs_sqlx(
-                &pool,
-                &tenant_id,
-                repair_record_kind.as_deref(),
-                repair_source_id.as_deref(),
-                cancellation,
-            )
-            .await
-        })?;
+        let applied = apply_safe_conversation_repairs_sqlx(
+            pool,
+            tenant_id,
+            repair_record_kind.as_deref(),
+            repair_source_id.as_deref(),
+            cancellation,
+        )
+        .await?;
 
         on_progress(6, AUDIT_STAGE_COUNT, Some("reindex".to_string()));
         ensure_maintenance_not_cancelled(cancellation)?;
         let index = self
             .rebuild_conversation_search_index_with_cancellation(cancellation)
+            .await
             .map(|report| json!(report))?;
 
         on_progress(8, AUDIT_STAGE_COUNT, Some("verify".to_string()));
         ensure_maintenance_not_cancelled(cancellation)?;
         let verification_source_id = params.source_id.clone();
         let verification_record_kind = params.record_kind.clone();
-        let verification = self.audit_conversation_data_with_progress_and_cancellation(
-            ConversationDataAuditParams {
-                source_id: verification_source_id.clone(),
-                record_kind: verification_record_kind.clone(),
-                include_resolved: false,
-            },
-            cancellation,
-            &mut |_, _, _| {},
-        )?;
+        let verification = self
+            .audit_conversation_data_with_progress_and_cancellation(
+                ConversationDataAuditParams {
+                    source_id: verification_source_id.clone(),
+                    record_kind: verification_record_kind.clone(),
+                    include_resolved: false,
+                },
+                cancellation,
+                &mut |_, _, _| {},
+            )
+            .await?;
         let active_fingerprints = verification["issues"]
             .as_array()
             .into_iter()
@@ -209,20 +215,16 @@ impl AppService {
                 ))
             })
             .collect::<HashSet<_>>();
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
         let resolution_source_id = verification_source_id.clone();
-        let resolved = self.db.block_on(async move {
-            resolve_safe_conversation_audit_issues_sqlx(
-                &pool,
-                &tenant_id,
-                verification_record_kind.as_deref(),
-                resolution_source_id.as_deref(),
-                &active_fingerprints,
-                cancellation,
-            )
-            .await
-        })?;
+        let resolved = resolve_safe_conversation_audit_issues_sqlx(
+            pool,
+            tenant_id,
+            verification_record_kind.as_deref(),
+            resolution_source_id.as_deref(),
+            &active_fingerprints,
+            cancellation,
+        )
+        .await?;
         ensure_maintenance_not_cancelled(cancellation)?;
         let backup_path = backup
             .targets
@@ -257,7 +259,7 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn rollback_conversation_data(
+    pub(crate) async fn rollback_conversation_data(
         &self,
         params: ConversationDataRollbackParams,
     ) -> AppResult<Value> {
@@ -290,11 +292,9 @@ impl AppService {
             ));
         }
 
-        let pool = self.db.pool().clone();
-        self.db.block_on(async move {
-            crate::backend::store::checkpoint_database_wal_sqlx(&pool).await
-        })?;
-        self.db.block_on(async { self.db.pool().close().await });
+        let pool = self.pool();
+        crate::backend::store::checkpoint_database_wal_sqlx(pool).await?;
+        self.pool().close().await;
         std::fs::copy(&backup_path, &self.db_path).map_err(AppError::external)?;
         Ok(json!({
             "dry_run": false,

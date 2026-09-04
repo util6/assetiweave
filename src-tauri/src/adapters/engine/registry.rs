@@ -1391,7 +1391,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        ServiceAsync => |service, _params| service.list_conversation_adapter_runtime_statuses().await,
         &[],
         None
     ),
@@ -1403,7 +1403,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::conversations::ExternalAdapterRegisterParams,
-        Service => |service, params| service.register_conversation_adapter(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1419,7 +1419,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterUnregisterParams,
-        Service => |service, params| service.unregister_conversation_adapter(params),
+        ServiceAsync => |service, params| service.unregister_conversation_adapter(params).await,
         &[
             param!("adapter_id", "Adapter identifier", ["adapterId"]),
             param!("dry_run", "Preview without unregistering", ["dryRun"]),
@@ -1453,7 +1453,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_sources(),
+        ServiceAsync => |service, _params| service.list_conversation_sources().await,
         &[],
         Some("assetiweave-cli conversation source list")
     ),
@@ -1465,7 +1465,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1480,7 +1480,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1495,7 +1495,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceDisableParams,
-        Service => |service, params| service.disable_conversation_source(params),
+        ServiceAsync => |service, params| service.disable_conversation_source(params).await,
         &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
@@ -1510,7 +1510,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationScriptCatalogParams,
-        Service => |service, params| service.list_conversation_script_catalog(params),
+        ServiceAsync => |service, params| service.list_conversation_script_catalog(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -1526,7 +1526,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationScriptInstallParams,
-        Service => |service, params| service.install_conversation_script(params),
+        ServiceAsync => |service, params| service.install_conversation_script(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1547,7 +1547,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterLocalRegisterParams,
-        Service => |service, params| service.register_conversation_adapter_local(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter_local(params).await,
         &[
             param!("package_dir", "Existing local package directory", ["packageDir"]),
             param!("origin", "Local package origin"),
@@ -1567,7 +1567,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterWorkspaceUpgradeParams,
-        Service => |service, params| service.upgrade_conversation_adapter_workspace(params),
+        ServiceAsync => |service, params| service.upgrade_conversation_adapter_workspace(params).await,
         &[
             param!("package_dir", "Optional adapter workspace directory", ["packageDir"]),
             param!("developer", "Use builtin-assets/adapters from the current repository"),
@@ -1583,7 +1583,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageInspectParams,
-        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.inspect_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Optional package identifier", ["packageId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -1598,7 +1598,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageChangeParams,
-        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        ServiceAsync => |service, params| service.prepare_conversation_adapter_package_change(params).await,
         &[
             param!("action", "Lifecycle action to preview"),
             param!("package_id", "Optional package identifier", ["packageId"]),
@@ -1614,7 +1614,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageCatalogParams,
-        Service => |service, params| service.list_conversation_adapter_packages(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_packages(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -1630,7 +1630,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageReleaseListParams,
-        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_package_releases(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("package_id", "Package identifier", ["packageId"]),
@@ -1646,7 +1646,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        ServiceAsync => |service, params| service.list_installed_conversation_adapter_package_versions(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"])],
         None
     ),
@@ -1658,7 +1658,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.switch_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
         None
     ),
@@ -1670,7 +1670,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.rollback_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
         None
     ),
@@ -1682,7 +1682,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.delete_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
         None
     ),
@@ -1694,7 +1694,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterCatalogRefreshParams,
-        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        ServiceAsync => |service, params| service.refresh_conversation_adapter_catalogs(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Ignore the 24 hour cache window"),
@@ -1709,7 +1709,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
-        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        ServiceAsync => |service, params| service.check_conversation_adapter_package_updates(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
@@ -1724,7 +1724,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
-        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        ServiceAsync => |service, params| service.set_conversation_adapter_package_update_policy(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
@@ -1736,7 +1736,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.install_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.install_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1758,7 +1758,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.update_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.update_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1780,7 +1780,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageUninstallParams,
-        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.uninstall_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Installed package identifier", ["packageId"]),
             param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
@@ -1796,7 +1796,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSyncParams,
-        Service => |service, params| service.sync_conversations(params),
+        ServiceAsync => |service, params| service.sync_conversations(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -1813,7 +1813,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationDataAuditParams,
-        Service => |service, params| service.audit_conversation_data(params),
+        ServiceAsync => |service, params| service.audit_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -1829,7 +1829,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationDataRepairParams,
-        Service => |service, params| service.repair_conversation_data(params),
+        ServiceAsync => |service, params| service.repair_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -1847,7 +1847,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationDataRollbackParams,
-        Service => |service, params| service.rollback_conversation_data(params),
+        ServiceAsync => |service, params| service.rollback_conversation_data(params).await,
         &[
             param!("backup_path", "Verified database backup path", ["backupPath"]),
             param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
@@ -1863,7 +1863,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_conversation_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -1896,7 +1896,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSearchParams,
-        Service => |service, params| service.search_conversation_records(params),
+        ServiceAsync => |service, params| service.search_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -1921,7 +1921,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationIncrementalSearchParams,
-        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        ServiceAsync => |service, params| service.search_recent_incremental_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -1944,7 +1944,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.get_conversation_search_index_status(),
+        ServiceAsync => |service, _params| service.get_conversation_search_index_status().await,
         &[],
         Some("assetiweave-cli conversation search index status")
     ),
@@ -1956,7 +1956,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.rebuild_conversation_search_index(),
+        ServiceAsync => |service, _params| service.rebuild_conversation_search_index().await,
         &[],
         Some("assetiweave-cli conversation search index rebuild")
     ),
@@ -1968,7 +1968,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_conversation_session(params),
+        ServiceAsync => |service, params| service.get_conversation_session(params).await,
         &[param!("session_id", "Session identifier", ["sessionId"])],
         Some("assetiweave-cli conversation session get <session-id>")
     ),
@@ -1980,7 +1980,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_conversation_session(params),
+        ServiceAsync => |service, params| service.export_conversation_session(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -2011,7 +2011,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_web_record_sessions(params),
+        ServiceAsync => |service, params| service.list_web_record_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -2029,7 +2029,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_web_record_session(params),
+        ServiceAsync => |service, params| service.get_web_record_session(params).await,
         &[param!("session_id", "Web record identifier", ["sessionId"])],
         Some("assetiweave-cli conversation web-record get <record-id>")
     ),
@@ -2041,7 +2041,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_web_record_session(params),
+        ServiceAsync => |service, params| service.export_web_record_session(params).await,
         &[
             param!("session_id", "Web record identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -2072,7 +2072,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationQuestionListParams,
-        Service => |service, params| service.list_conversation_questions(params),
+        ServiceAsync => |service, params| service.list_conversation_questions(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("query", "Search query"),
@@ -2089,7 +2089,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationQuestionGetParams,
-        Service => |service, params| service.get_conversation_question(params),
+        ServiceAsync => |service, params| service.get_conversation_question(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         Some("assetiweave-cli conversation question get <question-id>")
     ),
@@ -2101,7 +2101,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationBlockListParams,
-        Service => |service, params| service.list_conversation_blocks(params),
+        ServiceAsync => |service, params| service.list_conversation_blocks(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         Some("assetiweave-cli conversation block list <question-id>")
     ),
@@ -2113,7 +2113,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationBlockGetParams,
-        Service => |service, params| service.get_conversation_block(params),
+        ServiceAsync => |service, params| service.get_conversation_block(params).await,
         &[param!("block_id", "Block identifier", ["blockId"])],
         Some("assetiweave-cli conversation block get <block-id>")
     ),
@@ -2125,7 +2125,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationQuestionMergeParams,
-        Service => |service, params| service.merge_conversation_questions(params),
+        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
         &[
             param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
             param!("dry_run", "Preview without merging", ["dryRun"]),
@@ -2140,7 +2140,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationQuestionSplitParams,
-        Service => |service, params| service.split_conversation_question(params),
+        ServiceAsync => |service, params| service.split_conversation_question(params).await,
         &[
             param!("question_id", "Question identifier", ["questionId"]),
             param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
@@ -2156,7 +2156,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationPartTranslationUpdateParams,
-        Service => |service, params| service.update_conversation_part_translation(params),
+        ServiceAsync => |service, params| service.update_conversation_part_translation(params).await,
         &[
             param!("record_kind", "Conversation record table family", ["recordKind"]),
             param!("part_id", "Conversation part identifier", ["partId"]),
@@ -3114,7 +3114,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        ServiceAsync => |service, _params| service.list_conversation_adapter_runtime_statuses().await,
         &[],
         None
     ),
@@ -3478,7 +3478,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ExternalAdapterRegisterParams,
-        Service => |service, params| service.register_conversation_adapter(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -3494,7 +3494,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterUnregisterParams,
-        Service => |service, params| service.unregister_conversation_adapter(params),
+        ServiceAsync => |service, params| service.unregister_conversation_adapter(params).await,
         &[
             param!("adapter_id", "Adapter identifier", ["adapterId"]),
             param!("dry_run", "Preview without unregistering", ["dryRun"]),
@@ -3528,7 +3528,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_sources(),
+        ServiceAsync => |service, _params| service.list_conversation_sources().await,
         &[],
         None
     ),
@@ -3540,7 +3540,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -3555,7 +3555,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSourceDisableParams,
-        Service => |service, params| service.disable_conversation_source(params),
+        ServiceAsync => |service, params| service.disable_conversation_source(params).await,
         &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
@@ -3570,7 +3570,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationScriptCatalogParams,
-        Service => |service, params| service.list_conversation_script_catalog(params),
+        ServiceAsync => |service, params| service.list_conversation_script_catalog(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -3586,7 +3586,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterLocalRegisterParams,
-        Service => |service, params| service.register_conversation_adapter_local(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter_local(params).await,
         &[
             param!("package_dir", "Existing local package directory", ["packageDir"]),
             param!("origin", "Local package origin"),
@@ -3606,7 +3606,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInspectParams,
-        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.inspect_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Optional package identifier", ["packageId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -3621,7 +3621,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageChangeParams,
-        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        ServiceAsync => |service, params| service.prepare_conversation_adapter_package_change(params).await,
         &[
             param!("action", "Lifecycle action to preview"),
             param!("package_id", "Optional package identifier", ["packageId"]),
@@ -3637,7 +3637,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageCatalogParams,
-        Service => |service, params| service.list_conversation_adapter_packages(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_packages(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -3653,7 +3653,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageReleaseListParams,
-        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_package_releases(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("package_id", "Package identifier", ["packageId"]),
@@ -3669,7 +3669,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        ServiceAsync => |service, params| service.list_installed_conversation_adapter_package_versions(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"])],
         None
     ),
@@ -3681,7 +3681,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.switch_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
         None
     ),
@@ -3693,7 +3693,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.rollback_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
         None
     ),
@@ -3705,7 +3705,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.delete_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
         None
     ),
@@ -3717,7 +3717,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterCatalogRefreshParams,
-        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        ServiceAsync => |service, params| service.refresh_conversation_adapter_catalogs(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Ignore the 24 hour cache window"),
@@ -3732,7 +3732,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
-        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        ServiceAsync => |service, params| service.check_conversation_adapter_package_updates(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
@@ -3747,7 +3747,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
-        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        ServiceAsync => |service, params| service.set_conversation_adapter_package_update_policy(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
@@ -3759,7 +3759,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.install_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.install_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3781,7 +3781,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.update_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.update_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3803,7 +3803,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUninstallParams,
-        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.uninstall_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Installed package identifier", ["packageId"]),
             param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
@@ -3819,7 +3819,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationScriptInstallParams,
-        Service => |service, params| service.install_conversation_script(params),
+        ServiceAsync => |service, params| service.install_conversation_script(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3840,7 +3840,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSyncParams,
-        Service => |service, params| service.sync_conversations(params),
+        ServiceAsync => |service, params| service.sync_conversations(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -3857,7 +3857,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataAuditParams,
-        Service => |service, params| service.audit_conversation_data(params),
+        ServiceAsync => |service, params| service.audit_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -3873,7 +3873,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataRepairParams,
-        Service => |service, params| service.repair_conversation_data(params),
+        ServiceAsync => |service, params| service.repair_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -3891,7 +3891,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataRollbackParams,
-        Service => |service, params| service.rollback_conversation_data(params),
+        ServiceAsync => |service, params| service.rollback_conversation_data(params).await,
         &[
             param!("backup_path", "Verified database backup path", ["backupPath"]),
             param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
@@ -3907,7 +3907,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_conversation_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -3940,7 +3940,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_conversation_session(params),
+        ServiceAsync => |service, params| service.get_conversation_session(params).await,
         &[param!("session_id", "Session identifier", ["sessionId"])],
         None
     ),
@@ -3952,7 +3952,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_conversation_session(params),
+        ServiceAsync => |service, params| service.export_conversation_session(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -3983,7 +3983,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_web_record_sessions(params),
+        ServiceAsync => |service, params| service.list_web_record_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -4001,7 +4001,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_web_record_session(params),
+        ServiceAsync => |service, params| service.get_web_record_session(params).await,
         &[param!("session_id", "Web record identifier", ["sessionId"])],
         None
     ),
@@ -4013,7 +4013,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSearchParams,
-        Service => |service, params| service.search_conversation_records(params),
+        ServiceAsync => |service, params| service.search_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -4038,7 +4038,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationIncrementalSearchParams,
-        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        ServiceAsync => |service, params| service.search_recent_incremental_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -4061,7 +4061,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_conversation_search_index_status(),
+        ServiceAsync => |service, _params| service.get_conversation_search_index_status().await,
         &[],
         None
     ),
@@ -4073,7 +4073,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.rebuild_conversation_search_index(),
+        ServiceAsync => |service, _params| service.rebuild_conversation_search_index().await,
         &[],
         None
     ),
@@ -4085,7 +4085,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_web_record_session(params),
+        ServiceAsync => |service, params| service.export_web_record_session(params).await,
         &[
             param!("session_id", "Web record identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -4116,7 +4116,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionListParams,
-        Service => |service, params| service.list_conversation_questions(params),
+        ServiceAsync => |service, params| service.list_conversation_questions(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("query", "Search query"),
@@ -4133,7 +4133,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionGetParams,
-        Service => |service, params| service.get_conversation_question(params),
+        ServiceAsync => |service, params| service.get_conversation_question(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         None
     ),
@@ -4145,7 +4145,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationBlockListParams,
-        Service => |service, params| service.list_conversation_blocks(params),
+        ServiceAsync => |service, params| service.list_conversation_blocks(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         None
     ),
@@ -4157,7 +4157,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationBlockGetParams,
-        Service => |service, params| service.get_conversation_block(params),
+        ServiceAsync => |service, params| service.get_conversation_block(params).await,
         &[param!("block_id", "Block identifier", ["blockId"])],
         None
     ),
@@ -4169,7 +4169,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionMergeParams,
-        Service => |service, params| service.merge_conversation_questions(params),
+        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
         &[
             param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
             param!("dry_run", "Preview without merging", ["dryRun"]),
@@ -4184,7 +4184,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionSplitParams,
-        Service => |service, params| service.split_conversation_question(params),
+        ServiceAsync => |service, params| service.split_conversation_question(params).await,
         &[
             param!("question_id", "Question identifier", ["questionId"]),
             param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
@@ -4200,7 +4200,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationPartTranslationUpdateParams,
-        Service => |service, params| service.update_conversation_part_translation(params),
+        ServiceAsync => |service, params| service.update_conversation_part_translation(params).await,
         &[
             param!("record_kind", "Conversation record table family", ["recordKind"]),
             param!("part_id", "Conversation part identifier", ["partId"]),

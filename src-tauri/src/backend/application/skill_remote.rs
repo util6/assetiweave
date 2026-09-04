@@ -77,7 +77,8 @@ impl AppService {
         params: SkillAcquireParams,
         cancellation: Option<&CancellationToken>,
     ) -> AppResult<Value> {
-        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None).await
+        self.acquire_skill_with_cancellation_and_progress(params, cancellation, None)
+            .await
     }
 
     pub(crate) async fn acquire_skill_with_cancellation_and_progress(
@@ -102,13 +103,10 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = capabilities::skill_backup_root_sqlx(
-            self.db.pool(),
-            self.tenant_id(),
-        )
-        .await?
-        .join(".staging")
-        .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
+        let staging_dir = capabilities::skill_backup_root_sqlx(self.db.pool(), self.tenant_id())
+            .await?
+            .join(".staging")
+            .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 
         if params.dry_run {
@@ -142,14 +140,16 @@ impl AppService {
             .or_else(|| git_current_branch(&staging_dir))
             .unwrap_or_else(|| "HEAD".to_string());
         report_skill_acquire_phase(phase_sink, "importing");
-        let import_result = self.import_skill_with_progress(
-            ImportSkillParams {
-                from: skill_dir.to_string_lossy().to_string(),
-                name: Some(name.clone()),
-                dry_run: false,
-            },
-            phase_sink,
-        ).await?;
+        let import_result = self
+            .import_skill_with_progress(
+                ImportSkillParams {
+                    from: skill_dir.to_string_lossy().to_string(),
+                    name: Some(name.clone()),
+                    dry_run: false,
+                },
+                phase_sink,
+            )
+            .await?;
         ensure_not_cancelled(cancellation)?;
         let imported_asset = import_result
             .get("asset")
@@ -235,14 +235,14 @@ impl AppService {
             crate::backend::store::delete_orphan_skill_remote_sources_sqlx(pool, tenant_id)
                 .await
                 .map_err(AppError::external)?;
-            vec![crate::backend::store::load_skill_remote_source_sqlx(
-                pool, tenant_id, asset_id,
-            )
-            .await
-            .map_err(AppError::external)?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("skill remote source not found: {asset_id}"))
-            })?]
+            vec![
+                crate::backend::store::load_skill_remote_source_sqlx(pool, tenant_id, asset_id)
+                    .await
+                    .map_err(AppError::external)?
+                    .ok_or_else(|| {
+                        AppError::NotFound(format!("skill remote source not found: {asset_id}"))
+                    })?,
+            ]
         } else {
             self.list_skill_remote_sources().await?
         };

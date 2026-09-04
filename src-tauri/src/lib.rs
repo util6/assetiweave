@@ -205,7 +205,7 @@ pub fn run() {
                 true
             }
         };
-    let conversation_payload_policy_reparse_required = {
+    {
         let service = AppService::from_runtime(&runtime);
         if let Err(error) = service.recover_team_runs() {
             log_error(
@@ -235,18 +235,6 @@ pub fn run() {
                 );
             }
         });
-        match service.conversation_payload_policy_reparse_required() {
-            Ok(required) => required,
-            Err(error) => {
-                log_error(
-                    "app.startup.conversation_policy",
-                    "failed to inspect Conversation payload policy state",
-                    &error,
-                    &[],
-                );
-                false
-            }
-        }
     };
     if let Err(error) = write_startup_log() {
         log_error(
@@ -397,28 +385,47 @@ pub fn run() {
             }
         }
     });
-    if conversation_full_sync_on_startup_enabled && conversation_payload_policy_reparse_required {
-        let state = app.state::<AppState>();
-        let params = backend::application::ConversationSyncParams {
-            source_id: None,
-            adapter_id: None,
-            record_kind: None,
-            mode: backend::application::ConversationSyncMode::Full,
-            dry_run: false,
-        };
-        if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
-            app.handle().clone(),
-            state.runtime.clone(),
-            state.background_tasks.clone(),
-            params,
-        ) {
-            log_error(
-                "app.startup.conversation_policy_reparse",
-                "failed to start Conversation payload policy reparse",
-                &error,
-                &[],
-            );
-        }
+    if conversation_full_sync_on_startup_enabled {
+        let app_handle = app.handle().clone();
+        let sync_runtime = runtime.clone();
+        let background_tasks = app.state::<AppState>().background_tasks.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = backend::application::AppService::from_runtime(&sync_runtime);
+            let required = match service.conversation_payload_policy_reparse_required().await {
+                Ok(required) => required,
+                Err(error) => {
+                    log_error(
+                        "app.startup.conversation_policy",
+                        "failed to inspect Conversation payload policy state",
+                        &error,
+                        &[],
+                    );
+                    false
+                }
+            };
+            if required {
+                let params = backend::application::ConversationSyncParams {
+                    source_id: None,
+                    adapter_id: None,
+                    record_kind: None,
+                    mode: backend::application::ConversationSyncMode::Full,
+                    dry_run: false,
+                };
+                if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
+                    app_handle,
+                    sync_runtime,
+                    background_tasks,
+                    params,
+                ) {
+                    log_error(
+                        "app.startup.conversation_policy_reparse",
+                        "failed to start Conversation payload policy reparse",
+                        &error,
+                        &[],
+                    );
+                }
+            }
+        });
     }
     app.run(move |app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {

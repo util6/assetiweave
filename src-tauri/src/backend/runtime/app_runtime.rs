@@ -726,14 +726,13 @@ impl AppRuntime {
         self.builtin_conversation_adapters.clone()
     }
 
-    pub(crate) fn refresh_conversation_adapter_catalog(&self) -> AppResult<()> {
-        let _update_guard = self.context_update_gate.blocking_lock();
+    pub(crate) async fn refresh_conversation_adapter_catalog(&self) -> AppResult<()> {
+        let _update_guard = self.context_update_gate.lock().await;
         let current = self.context();
         let tenant_id = current.tenant.id.clone();
         let pool = self.pool().clone();
-        let adapters = self.block_on(crate::backend::store::list_conversation_adapters_sqlx(
-            &pool, &tenant_id,
-        ))?;
+        let adapters =
+            crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id).await?;
         let mut next = (*current).clone();
         next.conversation_adapter_catalog = Arc::new(ConversationAdapterCatalog::new(adapters));
         self.context.store(Arc::new(next));

@@ -36,7 +36,7 @@ impl GitHubInstallLocation {
 /// Canonical package installer entry point. The installer core consumes the
 /// version-neutral spec directly; legacy Script Catalog items only reverse-map
 /// into this boundary in `install_conversation_adapter_package_from_item`.
-pub(super) fn install_conversation_adapter_package_from_spec(
+pub(super) async fn install_conversation_adapter_package_from_spec(
     service: &AppService,
     spec: &ConversationAdapterPackageInstallSpec,
     dry_run: bool,
@@ -63,7 +63,9 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         }));
     }
 
-    let previous_package = service.load_conversation_adapter_package(spec.package_id())?;
+    let previous_package = service
+        .load_conversation_adapter_package(spec.package_id())
+        .await?;
     let installed = match install_conversation_adapter_package_files(spec, &version_dir) {
         Ok(installed) => installed,
         Err(error) => {
@@ -74,7 +76,8 @@ pub(super) fn install_conversation_adapter_package_from_spec(
                     spec,
                     &version_dir,
                     &error_message,
-                )?;
+                )
+                .await?;
             }
             return Err(error);
         }
@@ -147,17 +150,10 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         installed_at: package.updated_at.clone(),
     };
     let pool = service.db.pool().clone();
-    let adapter_to_save = adapter.clone();
-    let package_to_save = package.clone();
-    let activation = service.db.block_on(async move {
-        crate::backend::store::activate_conversation_adapter_package_sqlx(
-            &pool,
-            &adapter_to_save,
-            &package_to_save,
-            &version,
-        )
-        .await
-    });
+    let activation = crate::backend::store::activate_conversation_adapter_package_sqlx(
+        &pool, &adapter, &package, &version,
+    )
+    .await;
     if let Err(error) = activation {
         if installed.created_version_dir {
             let _ = fs::remove_dir_all(&version_dir);
@@ -169,7 +165,8 @@ pub(super) fn install_conversation_adapter_package_from_spec(
                 spec,
                 &version_dir,
                 &error_message,
-            )?;
+            )
+            .await?;
         }
         return Err(error);
     }
@@ -490,7 +487,7 @@ pub(super) fn extract_install_artifact_reader<R: Read + Seek>(
     }
 }
 
-fn persist_failed_conversation_adapter_package(
+async fn persist_failed_conversation_adapter_package(
     service: &AppService,
     spec: &ConversationAdapterPackageInstallSpec,
     current_dir: &Path,
@@ -536,7 +533,7 @@ fn persist_failed_conversation_adapter_package(
         created_at: now.clone(),
         updated_at: now,
     };
-    service.save_conversation_adapter_package(&package)
+    service.save_conversation_adapter_package(&package).await
 }
 
 fn validate_installed_package_for_spec(

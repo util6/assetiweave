@@ -5,10 +5,10 @@ use super::engine::{
 use crate::backend::{
     dto::ConversationSearchIndexRebuildReport,
     runtime::{AppError, AppResult},
-    store::Database,
 };
 use chrono::{Duration, Utc};
 use sha2::{Digest, Sha256};
+use sqlx::SqlitePool;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -16,41 +16,42 @@ use std::{
 };
 use uuid::Uuid;
 
-pub(crate) fn rebuild_conversation_search_index(
-    database: &Database,
+pub(crate) async fn rebuild_conversation_search_index(
+    pool: &SqlitePool,
     db_path: &Path,
     tenant_id: &str,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
-    rebuild_conversation_search_index_with_cancellation(database, db_path, tenant_id, None)
+    rebuild_conversation_search_index_with_cancellation(pool, db_path, tenant_id, None).await
 }
 
-pub(crate) fn rebuild_conversation_search_index_with_cancellation(
-    database: &Database,
+pub(crate) async fn rebuild_conversation_search_index_with_cancellation(
+    pool: &SqlitePool,
     db_path: &Path,
     tenant_id: &str,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
-    rebuild_conversation_search_index_inner(database, db_path, tenant_id, None, cancellation)
+    rebuild_conversation_search_index_inner(pool, db_path, tenant_id, None, cancellation).await
 }
 
-pub(crate) fn rebuild_conversation_search_index_with_offset(
-    database: &Database,
+pub(crate) async fn rebuild_conversation_search_index_with_offset(
+    pool: &SqlitePool,
     db_path: &Path,
     tenant_id: &str,
     consumer_id: &str,
     last_seq: i64,
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
     rebuild_conversation_search_index_inner(
-        database,
+        pool,
         db_path,
         tenant_id,
         Some((consumer_id, last_seq)),
         None,
     )
+    .await
 }
 
-fn rebuild_conversation_search_index_inner(
-    database: &Database,
+async fn rebuild_conversation_search_index_inner(
+    pool: &SqlitePool,
     db_path: &Path,
     tenant_id: &str,
     consumer_offset: Option<(&str, i64)>,
@@ -58,43 +59,31 @@ fn rebuild_conversation_search_index_inner(
 ) -> AppResult<ConversationSearchIndexRebuildReport> {
     ensure_rebuild_not_cancelled(cancellation)?;
     let started = Instant::now();
-    let pool = database.pool().clone();
-    let tenant_id_owned = tenant_id.to_string();
     let owner = format!("rebuild-{}", Uuid::new_v4());
     let now = Utc::now();
     let lease_expires_at = now + Duration::minutes(10);
-    let state = database.block_on(async {
-        let acquired = crate::backend::store::try_acquire_conversation_search_writer_lease_sqlx(
-            &pool,
-            &tenant_id_owned,
-            &owner,
-            &now.to_rfc3339(),
-            &lease_expires_at.to_rfc3339(),
-        )
-        .await?;
-        if !acquired {
-            return Err(AppError::Conflict(
-                "conversation search index is already being rebuilt".to_string(),
-            ));
-        }
-        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
-            &pool,
-            &tenant_id_owned,
-        )
-        .await
-    })?;
+    let acquired = crate::backend::store::try_acquire_conversation_search_writer_lease_sqlx(
+        pool,
+        tenant_id,
+        &owner,
+        &now.to_rfc3339(),
+        &lease_expires_at.to_rfc3339(),
+    )
+    .await?;
+    if !acquired {
+        return Err(AppError::Conflict(
+            "conversation search index is already being rebuilt".to_string(),
+        ));
+    }
+    let state =
+        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(pool, tenant_id)
+            .await?;
 
     let mut staged_paths = Vec::new();
-    let result: AppResult<ConversationSearchIndexRebuildReport> = (|| {
-        let pool = database.pool().clone();
-        let tenant_for_load = tenant_id.to_string();
-        let rows = database.block_on(async move {
-            crate::backend::store::load_conversation_search_index_documents_sqlx(
-                &pool,
-                &tenant_for_load,
-            )
-            .await
-        })?;
+    let result: AppResult<ConversationSearchIndexRebuildReport> = async {
+        let rows =
+            crate::backend::store::load_conversation_search_index_documents_sqlx(pool, tenant_id)
+                .await?;
         let documents = rows
             .into_iter()
             .map(|row| {
@@ -126,34 +115,41 @@ fn rebuild_conversation_search_index_inner(
         let generation_path = root.join(&generation);
         staged_paths.push(temporary_path.clone());
         staged_paths.push(generation_path.clone());
-        let index = DiskConversationIndex::create(&temporary_path)?;
-        set_private_directory_permissions(&temporary_path)?;
-        index.replace_documents_with_checkpoint(&documents, &mut || {
-            ensure_rebuild_not_cancelled(cancellation)
-        })?;
-        drop(index);
-        ensure_rebuild_not_cancelled(cancellation)?;
-        fs::rename(&temporary_path, &generation_path)?;
-        let size_bytes = directory_size(&generation_path, cancellation)?;
-        let document_count = i64::try_from(documents.len()).map_err(|_| {
-            AppError::External("conversation search document count overflow".to_string())
-        })?;
 
-        let pool = database.pool().clone();
-        let tenant_for_publish = tenant_id.to_string();
-        let generation_for_publish = generation.clone();
-        let published = database.block_on(async move {
+        let cancellation_clone = cancellation.cloned();
+        let temporary_path_clone = temporary_path.clone();
+        let generation_path_clone = generation_path.clone();
+        let documents_for_index = documents;
+
+        let (document_count, size_bytes) = tokio::task::spawn_blocking(move || {
+            let index = DiskConversationIndex::create(&temporary_path_clone)?;
+            set_private_directory_permissions(&temporary_path_clone)?;
+            index.replace_documents_with_checkpoint(&documents_for_index, &mut || {
+                ensure_rebuild_not_cancelled(cancellation_clone.as_ref())
+            })?;
+            drop(index);
+            ensure_rebuild_not_cancelled(cancellation_clone.as_ref())?;
+            fs::rename(&temporary_path_clone, &generation_path_clone)?;
+            let size_bytes = directory_size(&generation_path_clone, cancellation_clone.as_ref())?;
+            let document_count = i64::try_from(documents_for_index.len()).map_err(|_| {
+                AppError::External("conversation search document count overflow".to_string())
+            })?;
+            Ok::<_, AppError>((document_count, size_bytes))
+        })
+        .await
+        .map_err(|e| AppError::External(e.to_string()))??;
+
+        let published =
             crate::backend::store::complete_conversation_search_index_rebuild_with_offset_sqlx(
-                &pool,
-                &tenant_for_publish,
+                pool,
+                tenant_id,
                 state.source_revision,
-                &generation_for_publish,
+                &generation,
                 document_count,
                 size_bytes,
                 consumer_offset,
             )
-            .await
-        })?;
+            .await?;
         if !published {
             let _ = fs::remove_dir_all(&generation_path);
             return Err(AppError::Conflict(
@@ -171,29 +167,25 @@ fn rebuild_conversation_search_index_inner(
         cleanup_old_generations(&root, &report.generation);
         staged_paths.clear();
         Ok(report)
-    })();
+    }
+    .await;
 
     if let Err(error) = &result {
         for path in staged_paths {
             let _ = fs::remove_dir_all(path);
         }
-        let pool = database.pool().clone();
-        let tenant = tenant_id.to_string();
-        let owner = owner.clone();
-        let error = error.to_string();
-        let _ = database.block_on(async move {
-            crate::backend::store::fail_conversation_search_index_rebuild_sqlx(
-                &pool, &tenant, &owner, &error,
-            )
-            .await
-        });
+        let error_str = error.to_string();
+        let _ = crate::backend::store::fail_conversation_search_index_rebuild_sqlx(
+            pool, tenant_id, &owner, &error_str,
+        )
+        .await;
     }
     result
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn search_ready_conversation_index(
-    database: &Database,
+pub(crate) async fn search_ready_conversation_index(
+    pool: &SqlitePool,
     db_path: &Path,
     tenant_id: &str,
     query: String,
@@ -208,21 +200,19 @@ pub(crate) fn search_ready_conversation_index(
     limit: usize,
     offset: usize,
 ) -> AppResult<Option<ConversationSearchMatches>> {
-    let pool = database.pool().clone();
-    let tenant = tenant_id.to_string();
-    let state = database.block_on(async move {
-        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(&pool, &tenant)
-            .await
-    })?;
+    let state =
+        crate::backend::store::load_or_create_conversation_search_index_state_sqlx(pool, tenant_id)
+            .await?;
     if state.health.as_str() != "ready" || state.indexed_revision != Some(state.source_revision) {
         return Ok(None);
     }
     if !state.is_compatible() {
         mark_index_unusable(
-            database,
+            pool,
             tenant_id,
             "conversation search index schema or tokenizer version is incompatible",
-        );
+        )
+        .await;
         return Ok(None);
     }
     let Some(generation) = state.active_generation else {
@@ -231,20 +221,22 @@ pub(crate) fn search_ready_conversation_index(
     let path = conversation_search_index_root(db_path, tenant_id).join(generation);
     if !path.is_dir() {
         mark_index_unusable(
-            database,
+            pool,
             tenant_id,
             "active conversation search index generation is missing",
-        );
+        )
+        .await;
         return Ok(None);
     }
     let index = match DiskConversationIndex::open(&path) {
         Ok(index) => index,
         Err(error) => {
             mark_index_unusable(
-                database,
+                pool,
                 tenant_id,
                 &format!("cannot open conversation search index: {error}"),
-            );
+            )
+            .await;
             return Ok(None);
         }
     };
@@ -275,14 +267,10 @@ fn conversation_search_index_root(db_path: &Path, tenant_id: &str) -> PathBuf {
         .join(&tenant_hash[..16])
 }
 
-fn mark_index_unusable(database: &Database, tenant_id: &str, error: &str) {
-    let pool = database.pool().clone();
-    let tenant = tenant_id.to_string();
-    let error = error.to_string();
-    let _ = database.block_on(async move {
-        crate::backend::store::mark_conversation_search_index_unusable_sqlx(&pool, &tenant, &error)
-            .await
-    });
+async fn mark_index_unusable(pool: &SqlitePool, tenant_id: &str, error: &str) {
+    let _ =
+        crate::backend::store::mark_conversation_search_index_unusable_sqlx(pool, tenant_id, error)
+            .await;
 }
 
 fn set_private_directory_permissions(path: &Path) -> AppResult<()> {

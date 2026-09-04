@@ -4,39 +4,38 @@ use crate::backend::dto::ConversationSearchIndexStatus;
 use crate::backend::runtime::AppResult;
 
 impl AppService {
-    pub(crate) fn rebuild_conversation_search_index(
+    pub(crate) async fn rebuild_conversation_search_index(
         &self,
     ) -> AppResult<ConversationSearchIndexRebuildReport> {
         crate::backend::search::conversation::rebuild_conversation_search_index(
-            &self.db,
+            self.pool(),
             &self.db_path,
             self.tenant_id(),
         )
+        .await
     }
 
-    pub(crate) fn rebuild_conversation_search_index_with_cancellation(
+    pub(crate) async fn rebuild_conversation_search_index_with_cancellation(
         &self,
         cancellation: Option<&tokio_util::sync::CancellationToken>,
     ) -> AppResult<ConversationSearchIndexRebuildReport> {
         crate::backend::search::conversation::rebuild_conversation_search_index_with_cancellation(
-            &self.db,
+            self.pool(),
             &self.db_path,
             self.tenant_id(),
             cancellation,
         )
+        .await
     }
 
-    pub(crate) fn get_conversation_search_index_status(
+    pub(crate) async fn get_conversation_search_index_status(
         &self,
     ) -> AppResult<ConversationSearchIndexStatus> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let state = self.db.block_on(async move {
-            crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
-                &pool, &tenant_id,
-            )
-            .await
-        })?;
+        let state = crate::backend::store::load_or_create_conversation_search_index_state_sqlx(
+            self.pool(),
+            self.tenant_id(),
+        )
+        .await?;
 
         Ok(status_from_state(state))
     }

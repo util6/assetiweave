@@ -13,7 +13,7 @@ const DEFAULT_CONVERSATION_SCRIPT_CATALOG_URL: &str =
 const LOCAL_DEFAULT_CONVERSATION_SCRIPT_CATALOG: &str =
     include_str!("../../../../builtin-assets/catalog.json");
 impl AppService {
-    pub(crate) fn upgrade_conversation_adapter_workspace(
+    pub(crate) async fn upgrade_conversation_adapter_workspace(
         &self,
         params: ConversationAdapterWorkspaceUpgradeParams,
     ) -> AppResult<Value> {
@@ -55,15 +55,18 @@ impl AppService {
 
         let mut upgraded = Vec::with_capacity(package_dirs.len());
         for package_dir in package_dirs {
-            upgraded.push(promote_conversation_adapter_workspace_package(
-                self,
-                &package_dir,
-                &managed_root,
-                params.dry_run,
-            )?);
+            upgraded.push(
+                promote_conversation_adapter_workspace_package(
+                    self,
+                    &package_dir,
+                    &managed_root,
+                    params.dry_run,
+                )
+                .await?,
+            );
         }
         if !params.dry_run {
-            self.runtime.refresh_conversation_adapter_catalog()?;
+            self.runtime.refresh_conversation_adapter_catalog().await?;
         }
         Ok(json!({
             "dry_run": params.dry_run,
@@ -73,7 +76,7 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn inspect_conversation_adapter_package(
+    pub(crate) async fn inspect_conversation_adapter_package(
         &self,
         params: ConversationAdapterPackageInspectParams,
     ) -> AppResult<ConversationAdapterPackageInspection> {
@@ -93,10 +96,13 @@ impl AppService {
         }
 
         let mut package = match package_id.as_deref() {
-            Some(package_id) => self.load_conversation_adapter_package(package_id)?,
-            None => self.load_conversation_adapter_package_by_adapter(
-                adapter_id.as_deref().expect("adapter id checked above"),
-            )?,
+            Some(package_id) => self.load_conversation_adapter_package(package_id).await?,
+            None => {
+                self.load_conversation_adapter_package_by_adapter(
+                    adapter_id.as_deref().expect("adapter id checked above"),
+                )
+                .await?
+            }
         };
         let resolved_adapter_id = package
             .as_ref()
@@ -110,7 +116,8 @@ impl AppService {
             None => None,
         };
         if let Some(package) = package.as_mut() {
-            self.refresh_conversation_adapter_package_runtime(package, adapter.as_ref())?;
+            self.refresh_conversation_adapter_package_runtime(package, adapter.as_ref())
+                .await?;
         }
         if package.is_none() && adapter.is_none() {
             let id = package_id.or(adapter_id).unwrap_or_default();
@@ -123,18 +130,15 @@ impl AppService {
             .as_ref()
             .map(|package| package.origin)
             .unwrap_or_else(|| infer_unmanaged_adapter_origin(adapter.as_ref()));
-        let affected_sources = resolved_adapter_id
-            .as_deref()
-            .map(|adapter_id| {
-                self.list_conversation_sources().map(|sources| {
-                    sources
-                        .into_iter()
-                        .filter(|source| source.adapter_id == adapter_id)
-                        .collect::<Vec<_>>()
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let affected_sources = if let Some(adapter_id) = resolved_adapter_id.as_deref() {
+            self.list_conversation_sources()
+                .await?
+                .into_iter()
+                .filter(|source| source.adapter_id == adapter_id)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         Ok(ConversationAdapterPackageInspection {
             origin,
             package,
@@ -143,7 +147,7 @@ impl AppService {
         })
     }
 
-    pub(crate) fn register_conversation_adapter_local(
+    pub(crate) async fn register_conversation_adapter_local(
         &self,
         params: ConversationAdapterLocalRegisterParams,
     ) -> AppResult<Value> {
@@ -179,8 +183,9 @@ impl AppService {
         let validation =
             crate::backend::conversations::validate_conversation_adapter_package_dir(&package_dir)
                 .map_err(AppError::external)?;
-        if let Some(existing) =
-            self.load_conversation_adapter_package(&validation.manifest.package_id)?
+        if let Some(existing) = self
+            .load_conversation_adapter_package(&validation.manifest.package_id)
+            .await?
         {
             if existing.origin == ConversationAdapterPackageOrigin::ManagedRelease {
                 return Err(AppError::Validation(format!(
@@ -196,6 +201,7 @@ impl AppService {
                 package_id: None,
                 adapter_id: Some(validation.adapter_validation.manifest.id.clone()),
             })
+            .await
             .map_err(AppError::external)?;
         reject_conversation_package_task_conflicts(&preflight)?;
         let settings = self.app_settings_value();
@@ -257,20 +263,14 @@ impl AppService {
             created_at: now.clone(),
             updated_at: now,
         };
-        let pool = self.db.pool().clone();
-        let adapter_to_save = adapter.clone();
-        let package_to_save = package.clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::activate_conversation_adapter_workspace_sqlx(
-                    &pool,
-                    &adapter_to_save,
-                    &package_to_save,
-                )
-                .await
-            })
-            .map_err(AppError::external)?;
-        self.runtime.refresh_conversation_adapter_catalog()?;
+        crate::backend::store::activate_conversation_adapter_workspace_sqlx(
+            self.db.pool(),
+            &adapter,
+            &package,
+        )
+        .await
+        .map_err(AppError::external)?;
+        self.runtime.refresh_conversation_adapter_catalog().await?;
 
         Ok(json!({
             "dry_run": false,
@@ -283,7 +283,7 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn prepare_conversation_adapter_package_change(
+    pub(crate) async fn prepare_conversation_adapter_package_change(
         &self,
         params: ConversationAdapterPackageChangeParams,
     ) -> AppResult<ConversationAdapterPackageChangePreflight> {
@@ -298,12 +298,15 @@ impl AppService {
         let inspection = match params.action {
             ConversationAdapterPackageChangeAction::Install if package_id.is_some() => None,
             ConversationAdapterPackageChangeAction::Register if adapter_id.is_some() => None,
-            _ => Some(self.inspect_conversation_adapter_package(
-                ConversationAdapterPackageInspectParams {
-                    package_id: package_id.clone(),
-                    adapter_id: adapter_id.clone(),
-                },
-            )?),
+            _ => Some(
+                self.inspect_conversation_adapter_package(
+                    ConversationAdapterPackageInspectParams {
+                        package_id: package_id.clone(),
+                        adapter_id: adapter_id.clone(),
+                    },
+                )
+                .await?,
+            ),
         };
         let origin = inspection
             .as_ref()
@@ -347,7 +350,8 @@ impl AppService {
                 let managed_root = crate::backend::app_settings::conversation_adapter_dir()?;
                 let mut install_dirs = vec![package.install_dir.clone()];
                 install_dirs.extend(
-                    self.load_conversation_adapter_package_versions(&package.package_id)?
+                    self.load_conversation_adapter_package_versions(&package.package_id)
+                        .await?
                         .into_iter()
                         .map(|version| version.install_dir),
                 );
@@ -373,18 +377,12 @@ impl AppService {
             .or(adapter_id);
         let mut task_conflicts = Vec::new();
         if let Some(adapter_id) = resolved_adapter_id.as_deref() {
-            let pool = self.db.pool().clone();
-            let adapter_id = adapter_id.to_string();
-            if self
-                .db
-                .block_on(async move {
-                    crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
-                        &pool,
-                        &adapter_id,
-                    )
-                    .await
-                })
-                .map_err(AppError::external)?
+            if crate::backend::store::has_running_conversation_sync_for_adapter_sqlx(
+                self.db.pool(),
+                adapter_id,
+            )
+            .await
+            .map_err(AppError::external)?
             {
                 task_conflicts.push("conversation_sync".to_string());
             }
@@ -427,7 +425,7 @@ impl AppService {
         })
     }
 
-    pub(crate) fn list_conversation_adapter_packages(
+    pub(crate) async fn list_conversation_adapter_packages(
         &self,
         params: ConversationAdapterPackageCatalogParams,
     ) -> AppResult<Vec<ConversationAdapterPackageCatalogEntry>> {
@@ -446,12 +444,13 @@ impl AppService {
             }
         }
         let adapters = self.list_conversation_adapters()?;
-        let mut packages = self.load_conversation_adapter_packages()?;
+        let mut packages = self.load_conversation_adapter_packages().await?;
         for package in &mut packages {
             let adapter = adapters
                 .iter()
                 .find(|adapter| adapter.id == package.adapter_id);
-            self.refresh_conversation_adapter_package_runtime(package, adapter)?;
+            self.refresh_conversation_adapter_package_runtime(package, adapter)
+                .await?;
         }
         Ok(resolve_conversation_adapter_package_catalog_entries(
             catalog.items,
@@ -460,31 +459,32 @@ impl AppService {
         ))
     }
 
-    pub(crate) fn list_conversation_script_catalog(
+    pub(crate) async fn list_conversation_script_catalog(
         &self,
         params: ConversationScriptCatalogParams,
     ) -> AppResult<Vec<ConversationScriptCatalogEntry>> {
-        let entries =
-            self.list_conversation_adapter_packages(ConversationAdapterPackageCatalogParams {
+        let entries = self
+            .list_conversation_adapter_packages(ConversationAdapterPackageCatalogParams {
                 catalog_url: params.catalog_url,
-            })?;
+            })
+            .await?;
         Ok(entries
             .into_iter()
             .map(ConversationScriptCatalogEntry::from)
             .collect())
     }
 
-    pub(crate) fn install_conversation_adapter_package(
+    pub(crate) async fn install_conversation_adapter_package(
         &self,
         params: ConversationAdapterPackageInstallParams,
     ) -> AppResult<Value> {
-        let preflight = self.prepare_conversation_adapter_package_change(
-            ConversationAdapterPackageChangeParams {
+        let preflight = self
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
                 action: ConversationAdapterPackageChangeAction::Install,
                 package_id: Some(params.package_id.clone()),
                 adapter_id: None,
-            },
-        )?;
+            })
+            .await?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
@@ -497,8 +497,10 @@ impl AppService {
             .and_then(clean_non_empty_string)
             .is_some()
         {
-            let result = self.install_conversation_adapter_package_release(params)?;
-            self.runtime.refresh_conversation_adapter_catalog()?;
+            let result = self
+                .install_conversation_adapter_package_release(params)
+                .await?;
+            self.runtime.refresh_conversation_adapter_catalog().await?;
             return Ok(result);
         }
 
@@ -517,24 +519,25 @@ impl AppService {
             &item,
             params.dry_run,
             params.catalog_url.as_deref(),
-        )?;
+        )
+        .await?;
         if !params.dry_run {
-            self.runtime.refresh_conversation_adapter_catalog()?;
+            self.runtime.refresh_conversation_adapter_catalog().await?;
         }
         Ok(result)
     }
 
-    pub(crate) fn update_conversation_adapter_package(
+    pub(crate) async fn update_conversation_adapter_package(
         &self,
         params: ConversationAdapterPackageInstallParams,
     ) -> AppResult<Value> {
-        let preflight = self.prepare_conversation_adapter_package_change(
-            ConversationAdapterPackageChangeParams {
+        let preflight = self
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
                 action: ConversationAdapterPackageChangeAction::Update,
                 package_id: Some(params.package_id.clone()),
                 adapter_id: None,
-            },
-        )?;
+            })
+            .await?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
@@ -547,8 +550,10 @@ impl AppService {
             .and_then(clean_non_empty_string)
             .is_some()
         {
-            let result = self.install_conversation_adapter_package_release(params)?;
-            self.runtime.refresh_conversation_adapter_catalog()?;
+            let result = self
+                .install_conversation_adapter_package_release(params)
+                .await?;
+            self.runtime.refresh_conversation_adapter_catalog().await?;
             return Ok(result);
         }
 
@@ -566,24 +571,25 @@ impl AppService {
             &item,
             params.dry_run,
             params.catalog_url.as_deref(),
-        )?;
+        )
+        .await?;
         if !params.dry_run {
-            self.runtime.refresh_conversation_adapter_catalog()?;
+            self.runtime.refresh_conversation_adapter_catalog().await?;
         }
         Ok(result)
     }
 
-    pub(crate) fn uninstall_conversation_adapter_package(
+    pub(crate) async fn uninstall_conversation_adapter_package(
         &self,
         params: ConversationAdapterPackageUninstallParams,
     ) -> AppResult<Value> {
-        let preflight = self.prepare_conversation_adapter_package_change(
-            ConversationAdapterPackageChangeParams {
+        let preflight = self
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
                 action: ConversationAdapterPackageChangeAction::Uninstall,
                 package_id: Some(params.package_id.clone()),
                 adapter_id: None,
-            },
-        )?;
+            })
+            .await?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
@@ -597,7 +603,8 @@ impl AppService {
             ));
         }
         let package = self
-            .load_conversation_adapter_package(package_id)?
+            .load_conversation_adapter_package(package_id)
+            .await?
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
             .map_err(AppError::external)?;
 
@@ -610,21 +617,14 @@ impl AppService {
             }));
         }
 
-        let pool = self.db.pool().clone();
-        let package_id = package.package_id.clone();
-        let adapter_id = package.adapter_id.clone();
-        let uninstalled = self
-            .db
-            .block_on(async move {
-                crate::backend::store::deactivate_conversation_adapter_package_sqlx(
-                    &pool,
-                    &package_id,
-                    &adapter_id,
-                )
-                .await
-            })
-            .map_err(AppError::external)?;
-        self.runtime.refresh_conversation_adapter_catalog()?;
+        let uninstalled = crate::backend::store::deactivate_conversation_adapter_package_sqlx(
+            self.db.pool(),
+            &package.package_id,
+            &package.adapter_id,
+        )
+        .await
+        .map_err(AppError::external)?;
+        self.runtime.refresh_conversation_adapter_catalog().await?;
         Ok(json!({
             "dry_run": false,
             "uninstalled": true,
@@ -633,7 +633,7 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn install_conversation_script(
+    pub(crate) async fn install_conversation_script(
         &self,
         params: ConversationScriptInstallParams,
     ) -> AppResult<Value> {
@@ -644,58 +644,43 @@ impl AppService {
             dry_run: params.dry_run,
             yes: params.yes,
         })
+        .await
     }
 
-    pub(crate) fn load_conversation_adapter_packages(
+    pub(crate) async fn load_conversation_adapter_packages(
         &self,
     ) -> AppResult<Vec<ConversationAdapterPackage>> {
-        let pool = self.db.pool().clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::list_conversation_adapter_packages_sqlx(&pool).await
-            })
-            .map_err(|error| error)
+        crate::backend::store::list_conversation_adapter_packages_sqlx(self.db.pool()).await
     }
 
-    pub(crate) fn load_conversation_adapter_package(
+    pub(crate) async fn load_conversation_adapter_package(
         &self,
         package_id: &str,
     ) -> AppResult<Option<ConversationAdapterPackage>> {
-        let pool = self.db.pool().clone();
-        let package_id = package_id.to_string();
-        self.db
-            .block_on(async move {
-                crate::backend::store::load_conversation_adapter_package_sqlx(&pool, &package_id)
-                    .await
-            })
-            .map_err(|error| error)
+        crate::backend::store::load_conversation_adapter_package_sqlx(self.db.pool(), package_id)
+            .await
     }
 
-    pub(crate) fn load_conversation_adapter_package_versions(
+    pub(crate) async fn load_conversation_adapter_package_versions(
         &self,
         package_id: &str,
     ) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
-        let pool = self.db.pool().clone();
-        let package_id = package_id.to_string();
-        self.db
-            .block_on(async move {
-                crate::backend::store::list_conversation_adapter_package_versions_sqlx(
-                    &pool,
-                    &package_id,
-                )
-                .await
-            })
-            .map_err(|error| error)
+        crate::backend::store::list_conversation_adapter_package_versions_sqlx(
+            self.db.pool(),
+            package_id,
+        )
+        .await
     }
 
-    pub(crate) fn list_installed_conversation_adapter_package_versions(
+    pub(crate) async fn list_installed_conversation_adapter_package_versions(
         &self,
         params: ConversationAdapterPackageVersionChangeParams,
     ) -> AppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
         self.load_conversation_adapter_package_versions(params.package_id.trim())
+            .await
     }
 
-    pub(crate) fn switch_conversation_adapter_package_version(
+    pub(crate) async fn switch_conversation_adapter_package_version(
         &self,
         params: ConversationAdapterPackageVersionChangeParams,
     ) -> AppResult<Value> {
@@ -712,17 +697,21 @@ impl AppService {
             params.dry_run,
             params.yes,
         )
+        .await
     }
 
-    pub(crate) fn rollback_conversation_adapter_package_version(
+    pub(crate) async fn rollback_conversation_adapter_package_version(
         &self,
         params: ConversationAdapterPackageVersionChangeParams,
     ) -> AppResult<Value> {
         let package = self
-            .load_conversation_adapter_package(params.package_id.trim())?
+            .load_conversation_adapter_package(params.package_id.trim())
+            .await?
             .ok_or_else(|| "conversation adapter package not found".to_string())
             .map_err(AppError::external)?;
-        let versions = self.load_conversation_adapter_package_versions(&package.package_id)?;
+        let versions = self
+            .load_conversation_adapter_package_versions(&package.package_id)
+            .await?;
         let target = select_rollback_version(&versions, &package.version)
             .ok_or_else(|| "no inactive installed version is available for rollback".to_string())
             .map_err(AppError::external)?;
@@ -733,9 +722,10 @@ impl AppService {
             params.dry_run,
             params.yes,
         )
+        .await
     }
 
-    pub(crate) fn delete_conversation_adapter_package_version(
+    pub(crate) async fn delete_conversation_adapter_package_version(
         &self,
         params: ConversationAdapterPackageVersionChangeParams,
     ) -> AppResult<Value> {
@@ -747,7 +737,8 @@ impl AppService {
             .ok_or_else(|| "conversation adapter package version is required".to_string())
             .map_err(AppError::external)?;
         let package = self
-            .load_conversation_adapter_package(package_id)?
+            .load_conversation_adapter_package(package_id)
+            .await?
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
             .map_err(AppError::external)?;
         if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
@@ -765,7 +756,9 @@ impl AppService {
                     .to_string(),
             ));
         }
-        let versions = self.load_conversation_adapter_package_versions(package_id)?;
+        let versions = self
+            .load_conversation_adapter_package_versions(package_id)
+            .await?;
         let target = versions
             .iter()
             .find(|candidate| candidate.version == version)
@@ -811,20 +804,14 @@ impl AppService {
         }
         let staged = version_dir.with_file_name(format!(".{}-delete-{}", version, short_uuid()));
         fs::rename(&version_dir, &staged).map_err(AppError::external)?;
-        let pool = self.db.pool().clone();
-        let package_id_owned = package_id.to_string();
-        let version_owned = version.clone();
-        let replacement_package_owned = replacement_package.clone();
-        let deleted = self.db.block_on(async move {
-            crate::backend::store::delete_conversation_adapter_package_version_sqlx(
-                &pool,
-                &package_id_owned,
-                &version_owned,
-                replacement_package_owned.as_ref(),
-                delete_package,
-            )
-            .await
-        });
+        let deleted = crate::backend::store::delete_conversation_adapter_package_version_sqlx(
+            self.db.pool(),
+            package_id,
+            &version,
+            replacement_package.as_ref(),
+            delete_package,
+        )
+        .await;
         match deleted {
             Ok(true) => fs::remove_dir_all(&staged).map_err(AppError::external)?,
             Ok(false) => {
@@ -838,7 +825,7 @@ impl AppService {
                 return Err(error);
             }
         }
-        self.runtime.refresh_conversation_adapter_catalog()?;
+        self.runtime.refresh_conversation_adapter_catalog().await?;
         Ok(json!({
             "dry_run": false,
             "deleted": true,
@@ -849,7 +836,7 @@ impl AppService {
         }))
     }
 
-    fn activate_installed_conversation_adapter_package_version(
+    async fn activate_installed_conversation_adapter_package_version(
         &self,
         package_id: &str,
         version: &str,
@@ -857,13 +844,13 @@ impl AppService {
         dry_run: bool,
         yes: bool,
     ) -> AppResult<Value> {
-        let preflight = self.prepare_conversation_adapter_package_change(
-            ConversationAdapterPackageChangeParams {
+        let preflight = self
+            .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
                 action,
                 package_id: Some(package_id.to_string()),
                 adapter_id: None,
-            },
-        )?;
+            })
+            .await?;
         reject_conversation_package_task_conflicts(&preflight)?;
         if !dry_run && !yes {
             return Err(AppError::Validation(
@@ -871,7 +858,8 @@ impl AppService {
             ));
         }
         let mut package = self
-            .load_conversation_adapter_package(package_id)?
+            .load_conversation_adapter_package(package_id)
+            .await?
             .ok_or_else(|| format!("conversation adapter package not found: {package_id}"))
             .map_err(AppError::external)?;
         if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
@@ -879,7 +867,9 @@ impl AppService {
                 "only managed package versions can be activated".to_string(),
             ));
         }
-        let versions = self.load_conversation_adapter_package_versions(package_id)?;
+        let versions = self
+            .load_conversation_adapter_package_versions(package_id)
+            .await?;
         let target = versions
             .iter()
             .find(|candidate| candidate.version == version)
@@ -928,65 +918,51 @@ impl AppService {
         package.trusted_package_hash = Some(target.content_hash.clone());
         package.error_message = None;
         package.updated_at = now;
-        let pool = self.db.pool().clone();
-        let version_record = target.clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::activate_conversation_adapter_package_sqlx(
-                    &pool,
-                    &adapter,
-                    &package,
-                    &version_record,
-                )
-                .await
-            })
-            .map_err(AppError::external)?;
-        self.runtime.refresh_conversation_adapter_catalog()?;
+        crate::backend::store::activate_conversation_adapter_package_sqlx(
+            self.db.pool(),
+            &adapter,
+            &package,
+            target,
+        )
+        .await
+        .map_err(AppError::external)?;
+        self.runtime.refresh_conversation_adapter_catalog().await?;
         Ok(
             json!({"dry_run": false, "activated": true, "package_id": package_id, "version": version}),
         )
     }
 
-    pub(crate) fn load_conversation_adapter_package_by_adapter(
+    pub(crate) async fn load_conversation_adapter_package_by_adapter(
         &self,
         adapter_id: &str,
     ) -> AppResult<Option<ConversationAdapterPackage>> {
-        let pool = self.db.pool().clone();
-        let adapter_id = adapter_id.to_string();
-        self.db
-            .block_on(async move {
-                crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
-                    &pool,
-                    &adapter_id,
-                )
-                .await
-            })
-            .map_err(|error| error)
+        crate::backend::store::load_conversation_adapter_package_by_adapter_sqlx(
+            self.db.pool(),
+            adapter_id,
+        )
+        .await
     }
 
-    pub(crate) fn save_conversation_adapter_package(
+    pub(crate) async fn save_conversation_adapter_package(
         &self,
         package: &ConversationAdapterPackage,
     ) -> AppResult<()> {
-        let pool = self.db.pool().clone();
-        let package = package.clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_package_sqlx(&pool, &package)
-                    .await
-            })
-            .map_err(|error| error)
+        crate::backend::store::upsert_conversation_adapter_package_sqlx(self.db.pool(), package)
+            .await
     }
 
-    pub(crate) fn ensure_conversation_adapter_package_runtime_ready(
+    pub(crate) async fn ensure_conversation_adapter_package_runtime_ready(
         &self,
         adapter: &ConversationAdapter,
     ) -> AppResult<()> {
-        let Some(mut package) = self.load_conversation_adapter_package_by_adapter(&adapter.id)?
+        let Some(mut package) = self
+            .load_conversation_adapter_package_by_adapter(&adapter.id)
+            .await?
         else {
             return Ok(());
         };
-        self.refresh_conversation_adapter_package_runtime(&mut package, Some(adapter))?;
+        self.refresh_conversation_adapter_package_runtime(&mut package, Some(adapter))
+            .await?;
         if package.runtime_ready {
             Ok(())
         } else {
@@ -994,7 +970,7 @@ impl AppService {
         }
     }
 
-    fn refresh_conversation_adapter_package_runtime(
+    async fn refresh_conversation_adapter_package_runtime(
         &self,
         package: &mut ConversationAdapterPackage,
         adapter: Option<&ConversationAdapter>,
@@ -1068,7 +1044,7 @@ impl AppService {
         }
         package.runtime_validated_at = Some(now.clone());
         package.updated_at = now;
-        self.save_conversation_adapter_package(package)
+        self.save_conversation_adapter_package(package).await
     }
 }
 
@@ -1111,7 +1087,7 @@ fn discover_conversation_adapter_workspace_dirs(root: &Path) -> AppResult<Vec<Pa
     Ok(package_dirs)
 }
 
-fn promote_conversation_adapter_workspace_package(
+async fn promote_conversation_adapter_workspace_package(
     service: &AppService,
     package_dir: &Path,
     managed_root: &Path,
@@ -1145,8 +1121,9 @@ fn promote_conversation_adapter_workspace_package(
     let source_version = semver::Version::parse(&version)
         .map_err(|error| format!("conversation adapter package version must be SemVer: {error}"))
         .map_err(AppError::external)?;
-    if let Some(active_package) =
-        service.load_conversation_adapter_package_by_adapter(adapter_id)?
+    if let Some(active_package) = service
+        .load_conversation_adapter_package_by_adapter(adapter_id)
+        .await?
     {
         if let Ok(active_version) = semver::Version::parse(active_package.version.trim()) {
             if active_version > source_version {
@@ -1164,13 +1141,13 @@ fn promote_conversation_adapter_workspace_package(
             }
         }
     }
-    let preflight = service.prepare_conversation_adapter_package_change(
-        ConversationAdapterPackageChangeParams {
+    let preflight = service
+        .prepare_conversation_adapter_package_change(ConversationAdapterPackageChangeParams {
             action: ConversationAdapterPackageChangeAction::Register,
             package_id: None,
             adapter_id: Some(adapter_id.to_string()),
-        },
-    )?;
+        })
+        .await?;
     reject_conversation_package_task_conflicts(&preflight)?;
 
     let revision = format!(
@@ -1201,7 +1178,7 @@ fn promote_conversation_adapter_workspace_package(
         fs::create_dir_all(parent).map_err(AppError::external)?;
     }
     capabilities::copy_dir(&source_dir, &prepared_dir)?;
-    let promotion = (|| {
+    let promotion: AppResult<_> = async {
         let prepared_validation =
             crate::backend::conversations::validate_conversation_adapter_package_dir(&prepared_dir)
                 .map_err(AppError::external)?;
@@ -1259,8 +1236,9 @@ fn promote_conversation_adapter_workspace_package(
         .map_err(AppError::external)?;
         let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
             .map_err(AppError::external)?;
-        let previous_package =
-            service.load_conversation_adapter_package(&final_validation.manifest.package_id)?;
+        let previous_package = service
+            .load_conversation_adapter_package(&final_validation.manifest.package_id)
+            .await?;
         let now = Utc::now().to_rfc3339();
         let package = ConversationAdapterPackage {
             package_id: final_validation.manifest.package_id.clone(),
@@ -1297,17 +1275,12 @@ fn promote_conversation_adapter_workspace_package(
                 .unwrap_or_else(|| now.clone()),
             updated_at: now,
         };
-        let pool = service.db.pool().clone();
-        let adapter_to_save = adapter.clone();
-        let package_to_save = package.clone();
-        let activation = service.db.block_on(async move {
-            crate::backend::store::activate_conversation_adapter_workspace_sqlx(
-                &pool,
-                &adapter_to_save,
-                &package_to_save,
-            )
-            .await
-        });
+        let activation = crate::backend::store::activate_conversation_adapter_workspace_sqlx(
+            service.db.pool(),
+            &adapter,
+            &package,
+        )
+        .await;
         if let Err(error) = activation {
             if created_version_dir {
                 let _ = fs::remove_dir_all(&version_dir);
@@ -1326,7 +1299,7 @@ fn promote_conversation_adapter_workspace_package(
             "preflight": preflight,
             "cleanup_warning": cleanup_warning,
         }))
-    })();
+    }.await;
     if promotion.is_err() {
         let _ = fs::remove_dir_all(&prepared_dir);
     }
@@ -1606,7 +1579,7 @@ fn validate_managed_package_version_delete_target(
     Ok(canonical_install)
 }
 
-pub(super) fn install_conversation_adapter_package_from_item(
+pub(super) async fn install_conversation_adapter_package_from_item(
     service: &AppService,
     item: &ConversationScriptCatalogItem,
     dry_run: bool,
@@ -1619,6 +1592,7 @@ pub(super) fn install_conversation_adapter_package_from_item(
         dry_run,
         catalog_url,
     )
+    .await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -2958,8 +2932,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unregister_preflight_lists_affected_sources_and_running_sync_conflicts() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unregister_preflight_lists_affected_sources_and_running_sync_conflicts() {
         let root =
             std::env::temp_dir().join(format!("assetiweave-package-preflight-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create preflight test root");
@@ -2978,40 +2952,43 @@ mod tests {
             created_at: "2026-07-15T00:00:00Z".to_string(),
             updated_at: "2026-07-15T00:00:00Z".to_string(),
         };
-        let pool = service.db.pool().clone();
         let tenant_id = service.tenant_id().to_string();
-        service
-            .db
-            .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(
-                    &pool, &tenant_id, &adapter,
-                )
-                .await
-                .map_err(AppError::external)?;
-                crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                    .await
-                    .map_err(AppError::external)?;
-                sqlx::query(
-                    r#"
-                    INSERT INTO conversation_sync_runs (
-                        tenant_id, id, source_id, adapter_id, status, started_at,
-                        session_count, turn_count, warning_count
-                    ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
-                              '2026-07-15T00:00:00Z', 0, 0, 0)
-                    "#,
-                )
-                .bind(&tenant_id)
-                .bind(&source.id)
-                .bind(&adapter.id)
-                .execute(&pool)
-                .await
-                .map_err(AppError::external)?;
-                AppResult::Ok(())
-            })
-            .expect("seed preflight records");
+        crate::backend::store::upsert_conversation_adapter_sqlx(
+            service.db.pool(),
+            &tenant_id,
+            &adapter,
+        )
+        .await
+        .map_err(AppError::external)
+        .expect("seed adapter");
+        crate::backend::store::upsert_conversation_source_sqlx(
+            service.db.pool(),
+            &tenant_id,
+            &source,
+        )
+        .await
+        .map_err(AppError::external)
+        .expect("seed source");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sync_runs (
+                tenant_id, id, source_id, adapter_id, status, started_at,
+                session_count, turn_count, warning_count
+            ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
+                      '2026-07-15T00:00:00Z', 0, 0, 0)
+            "#,
+        )
+        .bind(&tenant_id)
+        .bind(&source.id)
+        .bind(&adapter.id)
+        .execute(service.db.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("seed preflight records");
         service
             .runtime
             .refresh_conversation_adapter_catalog()
+            .await
             .expect("refresh test adapter catalog");
 
         let preflight = service
@@ -3020,6 +2997,7 @@ mod tests {
                 package_id: None,
                 adapter_id: Some("external-preflight".to_string()),
             })
+            .await
             .expect("prepare unregister");
 
         assert_eq!(
@@ -3034,8 +3012,8 @@ mod tests {
         drop(service);
         let _ = fs::remove_dir_all(root);
     }
-    #[test]
-    fn package_preflight_detects_running_sync_in_another_tenant() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn package_preflight_detects_running_sync_in_another_tenant() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-cross-tenant-package-preflight-{}",
             Uuid::new_v4()
@@ -3057,56 +3035,44 @@ mod tests {
             created_at: "2026-07-15T00:00:00Z".to_string(),
             updated_at: "2026-07-15T00:00:00Z".to_string(),
         };
-        let pool = service.db.pool().clone();
+        let pool = service.db.pool();
         let other_tenant = service
-            .db
-            .block_on(async {
-                let other_tenant = service
-                    .create_tenant(TenantCreateParams {
-                        name: "Other tenant".to_string(),
-                        slug: Some("other-tenant".to_string()),
-                        set_active: false,
-                    })
-                    .await?;
-                crate::backend::store::upsert_conversation_adapter_sqlx(
-                    &pool,
-                    &current_tenant_id,
-                    &adapter,
-                )
-                .await?;
-                crate::backend::store::upsert_conversation_adapter_sqlx(
-                    &pool,
-                    &other_tenant.id,
-                    &adapter,
-                )
-                .await?;
-                crate::backend::store::upsert_conversation_source_sqlx(
-                    &pool,
-                    &other_tenant.id,
-                    &source,
-                )
-                .await?;
-                sqlx::query(
-                    r#"
-                    INSERT INTO conversation_sync_runs (
-                        tenant_id, id, source_id, adapter_id, status, started_at,
-                        session_count, turn_count, warning_count
-                    ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
-                              '2026-07-15T00:00:00Z', 0, 0, 0)
-                    "#,
-                )
-                .bind(&other_tenant.id)
-                .bind(&source.id)
-                .bind(&source.adapter_id)
-                .execute(&pool)
-                .await
-                .map_err(AppError::external)?;
-                AppResult::Ok(other_tenant)
+            .create_tenant(TenantCreateParams {
+                name: "Other tenant".to_string(),
+                slug: Some("other-tenant".to_string()),
+                set_active: false,
             })
-            .expect("seed cross-tenant preflight records");
+            .await
+            .expect("create tenant");
+        crate::backend::store::upsert_conversation_adapter_sqlx(pool, &current_tenant_id, &adapter)
+            .await
+            .expect("seed current tenant adapter");
+        crate::backend::store::upsert_conversation_adapter_sqlx(pool, &other_tenant.id, &adapter)
+            .await
+            .expect("seed other tenant adapter");
+        crate::backend::store::upsert_conversation_source_sqlx(pool, &other_tenant.id, &source)
+            .await
+            .expect("seed other tenant source");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sync_runs (
+                tenant_id, id, source_id, adapter_id, status, started_at,
+                session_count, turn_count, warning_count
+            ) VALUES (?1, 'running-sync', ?2, ?3, 'running',
+                      '2026-07-15T00:00:00Z', 0, 0, 0)
+            "#,
+        )
+        .bind(&other_tenant.id)
+        .bind(&source.id)
+        .bind(&source.adapter_id)
+        .execute(pool)
+        .await
+        .map_err(AppError::external)
+        .expect("seed sync run");
         service
             .runtime
             .refresh_conversation_adapter_catalog()
+            .await
             .expect("refresh test adapter catalog");
 
         let preflight = service
@@ -3115,6 +3081,7 @@ mod tests {
                 package_id: None,
                 adapter_id: Some("cross-tenant-preflight".to_string()),
             })
+            .await
             .expect("prepare unregister");
 
         assert_eq!(preflight.task_conflicts, vec!["conversation_sync"]);
@@ -3123,8 +3090,8 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn builtin_unregister_preflight_allows_disable_and_retains_registration() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn builtin_unregister_preflight_allows_disable_and_retains_registration() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-builtin-disable-preflight-{}",
             Uuid::new_v4()
@@ -3133,18 +3100,18 @@ mod tests {
         let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
         let mut builtin = adapter("builtin-preflight", "1.0.0");
         builtin.trust_state = crate::backend::models::ConversationAdapterTrustState::BuiltIn;
-        let pool = service.db.pool().clone();
         let tenant_id = service.tenant_id().to_string();
-        service
-            .db
-            .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &builtin)
-                    .await
-            })
-            .expect("seed built-in adapter");
+        crate::backend::store::upsert_conversation_adapter_sqlx(
+            service.db.pool(),
+            &tenant_id,
+            &builtin,
+        )
+        .await
+        .expect("seed built-in adapter");
         service
             .runtime
             .refresh_conversation_adapter_catalog()
+            .await
             .expect("refresh test adapter catalog");
 
         let preflight = service
@@ -3153,6 +3120,7 @@ mod tests {
                 package_id: None,
                 adapter_id: Some("builtin-preflight".to_string()),
             })
+            .await
             .expect("built-in disable preflight");
         assert_eq!(preflight.origin, ConversationAdapterPackageOrigin::BuiltIn);
 
@@ -3162,6 +3130,7 @@ mod tests {
                 dry_run: false,
                 yes: true,
             })
+            .await
             .expect("disable built-in adapter");
         let retained = service
             .list_conversation_adapters()
@@ -3176,8 +3145,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn workspace_upgrade_promotes_only_a_probed_immutable_runtime_copy() {
         use std::os::unix::fs::PermissionsExt;
 
         let root =
@@ -3235,6 +3204,7 @@ mod tests {
             &managed_root,
             false,
         )
+        .await
         .expect("promote first workspace revision");
         let first_install = PathBuf::from(
             first["package"]["install_dir"]
@@ -3253,6 +3223,7 @@ mod tests {
             &managed_root,
             false,
         )
+        .await
         .expect("promote second workspace revision");
         let second_install = PathBuf::from(
             second["package"]["install_dir"]
@@ -3270,10 +3241,12 @@ mod tests {
             &managed_root,
             false,
         )
+        .await
         .expect_err("reject invalid workspace revision");
         assert!(error.to_string().contains("probe failed"));
         let retained = service
             .load_conversation_adapter_package("com.util6.external-test")
+            .await
             .expect("load retained package")
             .expect("retained package");
         assert_eq!(PathBuf::from(retained.install_dir), second_install);
@@ -3302,6 +3275,7 @@ mod tests {
             &managed_root,
             false,
         )
+        .await
         .expect("skip older workspace revision");
         assert_eq!(skipped["upgraded"], false);
         assert_eq!(skipped["skipped"], true);
@@ -3309,6 +3283,7 @@ mod tests {
         assert_eq!(skipped["active_version"], "1.0.0");
         let retained_after_skip = service
             .load_conversation_adapter_package("com.util6.external-test")
+            .await
             .expect("load package after skipped downgrade")
             .expect("retained package after skipped downgrade");
         assert_eq!(
@@ -3321,8 +3296,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn local_registration_and_unregistration_never_modify_external_package_files() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn local_registration_and_unregistration_never_modify_external_package_files() {
         use std::os::unix::fs::PermissionsExt;
 
         let root =
@@ -3396,9 +3371,11 @@ mod tests {
                 dry_run: false,
                 yes: true,
             })
+            .await
             .expect("register local package");
         let registered = service
             .load_conversation_adapter_package("com.util6.external-test")
+            .await
             .expect("load package")
             .expect("registered package");
         assert_eq!(
@@ -3412,6 +3389,7 @@ mod tests {
                 dry_run: false,
                 yes: true,
             })
+            .await
             .expect("unregister local package");
 
         assert!(package_dir.is_dir());
@@ -3423,6 +3401,7 @@ mod tests {
         );
         assert!(service
             .load_conversation_adapter_package("com.util6.external-test")
+            .await
             .expect("load unregistered package")
             .is_none());
 
