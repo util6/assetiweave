@@ -123,16 +123,24 @@ pub(crate) fn run_host_command(
     stdout_cap: usize,
     stderr_cap: usize,
 ) -> Result<crate::backend::host_process::HostProcessOutput, InstallError> {
+    let cancellation_token = if let Some(flag) = context.cancellation.as_ref() {
+        let token = tokio_util::sync::CancellationToken::new();
+        if flag.load(std::sync::atomic::Ordering::Acquire) {
+            token.cancel();
+        }
+        Some(token)
+    } else {
+        None
+    };
     crate::backend::host_process::run_command_with_control(
         command,
         crate::backend::host_process::HostProcessControl {
             timeout: context.timeout,
             stdout_cap,
             stderr_cap,
-            cancellation: context
-                .cancellation
-                .as_deref()
-                .map(crate::backend::host_process::HostCancellation::Atomic),
+            cancellation: cancellation_token
+                .as_ref()
+                .map(crate::backend::host_process::HostCancellation::Token),
         },
     )
     .map_err(|error| match error {

@@ -2,16 +2,18 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread,
     time::{Duration, Instant},
 };
+
+#[cfg(windows)]
+use process_wrap::tokio::JobObject;
+#[cfg(unix)]
+use process_wrap::tokio::ProcessGroup;
+use process_wrap::tokio::{CommandWrap, KillOnDrop};
+use tokio::io::AsyncReadExt;
+use tokio_util::sync::CancellationToken;
 
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
 const DISCOVERY_OUTPUT_CAP: usize = 8 * 1024;
@@ -67,37 +69,64 @@ impl HostCommandOutput {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum HostProcessError {
-    MissingProgram {
-        program: PathBuf,
-    },
+    #[error("program not found: {program}")]
+    MissingProgram { program: PathBuf },
+    #[error("failed to spawn process: {0}")]
     Spawn(String),
+    #[error("process output error: {0}")]
     Output(String),
+    #[error("process timed out")]
     Timeout {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         stdout_truncated: bool,
         stderr_truncated: bool,
     },
+    #[error("process execution was cancelled")]
     Cancelled,
-    OutputLimitExceeded {
-        stdout: bool,
-        stderr: bool,
-    },
+    #[error("process output limit exceeded (stdout={stdout}, stderr={stderr})")]
+    OutputLimitExceeded { stdout: bool, stderr: bool },
+    #[error("process cleanup failed: {0}")]
     Cleanup(String),
+}
+
+impl From<HostProcessError> for crate::backend::runtime::AppError {
+    fn from(error: HostProcessError) -> Self {
+        match error {
+            HostProcessError::MissingProgram { program } => {
+                crate::backend::runtime::AppError::NotFound(format!(
+                    "executable not found: {}",
+                    program.display()
+                ))
+            }
+            HostProcessError::Spawn(reason) => crate::backend::runtime::AppError::Process(reason),
+            HostProcessError::Output(reason) => crate::backend::runtime::AppError::Process(reason),
+            HostProcessError::Timeout { .. } => crate::backend::runtime::AppError::Timeout(
+                "process execution timed out".to_string(),
+            ),
+            HostProcessError::Cancelled => crate::backend::runtime::AppError::Cancelled(
+                "process execution was cancelled".to_string(),
+            ),
+            HostProcessError::OutputLimitExceeded { stdout, stderr } => {
+                crate::backend::runtime::AppError::Process(format!(
+                    "process output limit exceeded (stdout={stdout}, stderr={stderr})"
+                ))
+            }
+            HostProcessError::Cleanup(reason) => crate::backend::runtime::AppError::Process(reason),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum HostCancellation<'a> {
-    Atomic(&'a std::sync::atomic::AtomicBool),
-    Token(&'a tokio_util::sync::CancellationToken),
+    Token(&'a CancellationToken),
 }
 
 impl HostCancellation<'_> {
     pub(crate) fn is_cancelled(self) -> bool {
         match self {
-            Self::Atomic(flag) => flag.load(std::sync::atomic::Ordering::Acquire),
             Self::Token(token) => token.is_cancelled(),
         }
     }
@@ -111,16 +140,28 @@ pub(crate) struct HostProcessControl<'a> {
     pub(crate) cancellation: Option<HostCancellation<'a>>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HostProcessSignal {
-    Terminate,
-    Kill,
+pub(crate) fn wrap_tokio_command(cmd: tokio::process::Command) -> CommandWrap {
+    let mut wrap = CommandWrap::from(cmd);
+    #[cfg(unix)]
+    {
+        wrap.wrap(ProcessGroup::leader());
+    }
+    #[cfg(windows)]
+    {
+        wrap.wrap(JobObject);
+    }
+    wrap.wrap(KillOnDrop);
+    wrap
 }
 
 pub(crate) fn resolve_host_executable(command_name: &str) -> Option<PathBuf> {
     let command_path = Path::new(command_name);
     if command_path.components().count() > 1 {
         return is_executable_file(command_path).then(|| command_path.to_path_buf());
+    }
+
+    if let Ok(path) = which::which(command_name) {
+        return Some(path);
     }
 
     let path_env = env::var_os("PATH");
@@ -141,7 +182,8 @@ pub(crate) fn resolve_host_executable_from_sources(
     login_shell_candidate: Option<PathBuf>,
     search_candidates: &[PathBuf],
 ) -> Option<PathBuf> {
-    if let Some(path) = find_program_on_path(command_name, path_env) {
+    let cwd = env::current_dir().unwrap_or_default();
+    if let Ok(path) = which::which_in(command_name, path_env, cwd) {
         return Some(path);
     }
 
@@ -218,9 +260,6 @@ pub(crate) fn run_command_with_timeout(
     )
 }
 
-/// Build and execute a host command inside the process boundary. Application
-/// code should use this helper instead of constructing `std::process::Command`
-/// so executable lookup, output limits and timeout behavior remain uniform.
 pub(crate) fn run_program_with_timeout(
     program: &Path,
     args: &[String],
@@ -240,9 +279,6 @@ pub(crate) fn run_program_with_timeout(
     )
 }
 
-/// Execute a bounded host command while observing a task cancellation token.
-/// The watcher only flips the existing process-control flag; the command
-/// runner remains responsible for terminating and reaping the process group.
 pub(crate) fn run_program_with_cancellation(
     program: &Path,
     args: &[String],
@@ -250,16 +286,13 @@ pub(crate) fn run_program_with_cancellation(
     timeout: Duration,
     stdout_cap: usize,
     stderr_cap: usize,
-    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<HostProcessOutput, HostProcessError> {
     let spec = HostCommandSpec {
         program: program.to_path_buf(),
         args: args.to_vec(),
         env: Vec::new(),
         working_dir: current_dir.map(Path::to_path_buf),
-        // An explicit empty input stream gives one-shot tools a deterministic
-        // EOF while still exercising the same bounded stdin path as callers
-        // that provide request bytes.
         stdin: HostInput::Bytes(Vec::new()),
         timeout,
         stdout_limit: stdout_cap,
@@ -277,27 +310,28 @@ pub(crate) fn run_program_with_cancellation(
 
 pub(crate) fn run_host_command_with_cancellation(
     spec: HostCommandSpec,
-    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    let mut command = build_host_command(&spec)?;
-    let started = Instant::now();
-    let output = run_command_with_control_and_input(
-        &mut command,
-        HostProcessControl {
-            timeout: spec.timeout,
-            stdout_cap: spec.stdout_limit,
-            stderr_cap: spec.stderr_limit,
-            cancellation: cancellation.map(HostCancellation::Token),
-        },
-        spec.stdin,
-    )?;
-    Ok(HostCommandOutput {
-        status: output.status,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        stdout_truncated: output.stdout_truncated,
-        stderr_truncated: output.stderr_truncated,
-        elapsed: started.elapsed(),
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            let cancel = cancellation.cloned();
+            return tokio::task::block_in_place(|| {
+                handle.block_on(run_host_command_async(spec, cancel.as_ref()))
+            });
+        }
+    }
+
+    let cancel = cancellation.cloned();
+    std::thread::scope(|s| {
+        s.spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| HostProcessError::Spawn(e.to_string()))?;
+            rt.block_on(run_host_command_async(spec, cancel.as_ref()))
+        })
+        .join()
+        .map_err(|_| HostProcessError::Output("process runner thread panicked".to_string()))?
     })
 }
 
@@ -307,72 +341,137 @@ pub(crate) fn run_host_command_blocking(
     run_host_command_with_cancellation(spec, None)
 }
 
-fn run_host_command_blocking_with_cancellation(
-    spec: HostCommandSpec,
-    cancellation: Option<&AtomicBool>,
-) -> Result<HostCommandOutput, HostProcessError> {
-    let mut command = build_host_command(&spec)?;
-    let started = Instant::now();
-    let output = run_command_with_control_and_input(
-        &mut command,
-        HostProcessControl {
-            timeout: spec.timeout,
-            stdout_cap: spec.stdout_limit,
-            stderr_cap: spec.stderr_limit,
-            cancellation: cancellation.map(HostCancellation::Atomic),
-        },
-        spec.stdin,
-    )?;
-    Ok(HostCommandOutput {
-        status: output.status,
-        stdout: output.stdout,
-        stderr: output.stderr,
-        stdout_truncated: output.stdout_truncated,
-        stderr_truncated: output.stderr_truncated,
-        elapsed: started.elapsed(),
-    })
-}
-
 pub(crate) async fn run_host_command(
     spec: HostCommandSpec,
-    cancellation: tokio_util::sync::CancellationToken,
+    cancellation: CancellationToken,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    let worker_cancellation = cancellation.clone();
-    let join = tokio::task::spawn_blocking(move || {
-        let mut command = build_host_command(&spec)?;
-        let started = Instant::now();
-        let output = run_command_with_control_and_input(
-            &mut command,
-            HostProcessControl {
-                timeout: spec.timeout,
-                stdout_cap: spec.stdout_limit,
-                stderr_cap: spec.stderr_limit,
-                cancellation: Some(HostCancellation::Token(&worker_cancellation)),
-            },
-            spec.stdin,
-        )?;
-        Ok(HostCommandOutput {
-            status: output.status,
-            stdout: output.stdout,
-            stderr: output.stderr,
-            stdout_truncated: output.stdout_truncated,
-            stderr_truncated: output.stderr_truncated,
-            elapsed: started.elapsed(),
-        })
-    });
-    tokio::pin!(join);
+    run_host_command_async(spec, Some(&cancellation)).await
+}
 
-    tokio::select! {
-        output = &mut join => output
-            .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?,
-        _ = cancellation.cancelled() => {
-            join.await
-                .map_err(|error| HostProcessError::Output(format!("host command worker failed: {error}")))?
+pub(crate) async fn run_host_command_async(
+    spec: HostCommandSpec,
+    cancellation: Option<&CancellationToken>,
+) -> Result<HostCommandOutput, HostProcessError> {
+    if let Some(token) = cancellation {
+        if token.is_cancelled() {
+            return Err(HostProcessError::Cancelled);
+        }
+    }
+
+    let mut cmd = build_tokio_host_command(&spec)?;
+    let has_stdin_bytes = matches!(&spec.stdin, HostInput::Bytes(_));
+    cmd.stdin(if has_stdin_bytes {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut wrap = wrap_tokio_command(cmd);
+    let mut child = wrap
+        .spawn()
+        .map_err(|e| HostProcessError::Spawn(e.to_string()))?;
+
+    if let HostInput::Bytes(bytes) = spec.stdin {
+        if let Some(mut stdin) = child.stdin().take() {
+            tokio::spawn(async move {
+                let _ = tokio::io::AsyncWriteExt::write_all(&mut stdin, &bytes).await;
+            });
+        }
+    }
+
+    let stdout_pipe = child.stdout().take();
+    let stderr_pipe = child.stderr().take();
+
+    let stdout_limit = spec.stdout_limit;
+    let stderr_limit = spec.stderr_limit;
+
+    let mut stdout_task = tokio::spawn(async move {
+        match stdout_pipe {
+            Some(r) => read_stream_capped_and_drain(r, stdout_limit).await,
+            None => (Vec::new(), false),
+        }
+    });
+    let mut stderr_task = tokio::spawn(async move {
+        match stderr_pipe {
+            Some(r) => read_stream_capped_and_drain(r, stderr_limit).await,
+            None => (Vec::new(), false),
+        }
+    });
+
+    let started = Instant::now();
+    let timeout_sleep = tokio::time::sleep(spec.timeout);
+    tokio::pin!(timeout_sleep);
+
+    enum ExitReason {
+        Exited(Result<ExitStatus, std::io::Error>),
+        TimedOut,
+        Cancelled,
+    }
+
+    let reason = tokio::select! {
+        res = child.wait() => ExitReason::Exited(res),
+        _ = &mut timeout_sleep => ExitReason::TimedOut,
+        _ = async {
+            if let Some(token) = cancellation {
+                token.cancelled().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => ExitReason::Cancelled,
+    };
+
+    match reason {
+        ExitReason::Exited(res) => {
+            let status = res.map_err(|e| HostProcessError::Output(e.to_string()))?;
+            let (stdout_res, stderr_res) = tokio::select! {
+                joined = async {
+                    let out = (&mut stdout_task).await.unwrap_or_default();
+                    let err = (&mut stderr_task).await.unwrap_or_default();
+                    (out, err)
+                } => joined,
+                _ = tokio::time::sleep(Duration::from_millis(300)) => {
+                    let _ = child.start_kill();
+                    let out = stdout_task.await.unwrap_or_default();
+                    let err = stderr_task.await.unwrap_or_default();
+                    (out, err)
+                }
+            };
+            Ok(HostCommandOutput {
+                status,
+                stdout: stdout_res.0,
+                stderr: stderr_res.0,
+                stdout_truncated: stdout_res.1,
+                stderr_truncated: stderr_res.1,
+                elapsed: started.elapsed(),
+            })
+        }
+        ExitReason::TimedOut => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            let out = stdout_task.await.unwrap_or_default();
+            let err = stderr_task.await.unwrap_or_default();
+            Err(HostProcessError::Timeout {
+                stdout: out.0,
+                stderr: err.0,
+                stdout_truncated: out.1,
+                stderr_truncated: err.1,
+            })
+        }
+        ExitReason::Cancelled => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            let _ = stderr_task.await;
+            Err(HostProcessError::Cancelled)
         }
     }
 }
 
-fn build_host_command(spec: &HostCommandSpec) -> Result<Command, HostProcessError> {
+fn build_tokio_host_command(
+    spec: &HostCommandSpec,
+) -> Result<tokio::process::Command, HostProcessError> {
     let resolved = if spec.program.components().count() > 1 {
         if !is_executable_file(&spec.program) {
             return Err(HostProcessError::MissingProgram {
@@ -387,7 +486,7 @@ fn build_host_command(spec: &HostCommandSpec) -> Result<Command, HostProcessErro
             }
         })?
     };
-    let mut command = Command::new(resolved);
+    let mut command = tokio::process::Command::new(resolved);
     command
         .args(&spec.args)
         .envs(spec.env.iter().map(|(key, value)| (key, value)));
@@ -401,159 +500,43 @@ pub(crate) fn run_command_with_control(
     command: &mut Command,
     control: HostProcessControl<'_>,
 ) -> Result<HostProcessOutput, HostProcessError> {
-    run_command_with_control_and_input(command, control, HostInput::Null)
-}
-
-fn run_command_with_control_and_input(
-    command: &mut Command,
-    control: HostProcessControl<'_>,
-    input: HostInput,
-) -> Result<HostProcessOutput, HostProcessError> {
-    if is_cancelled(control.cancellation) {
-        return Err(HostProcessError::Cancelled);
-    }
-
-    configure_process_tree(command);
-    let stdin = if matches!(&input, HostInput::Bytes(_)) {
-        Stdio::piped()
-    } else {
-        Stdio::null()
-    };
-    let mut child = command
-        .stdin(stdin)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| HostProcessError::Spawn(error.to_string()))?;
-    let _stdin_writer = match input {
-        HostInput::Null => None,
-        HostInput::Bytes(bytes) => child.stdin.take().map(|mut stdin| {
-            thread::spawn(move || {
-                let _ = stdin.write_all(&bytes);
+    let spec = HostCommandSpec {
+        program: PathBuf::from(command.get_program()),
+        args: command
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect(),
+        env: command
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|val| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        val.to_string_lossy().into_owned(),
+                    )
+                })
             })
-        }),
+            .collect(),
+        working_dir: command.get_current_dir().map(Path::to_path_buf),
+        stdin: HostInput::Null,
+        timeout: control.timeout,
+        stdout_limit: control.stdout_cap,
+        stderr_limit: control.stderr_cap,
     };
-    let Some(stdout) = child.stdout.take() else {
-        if let Err(error) = cleanup_child_tree(&mut child) {
-            return Err(HostProcessError::Cleanup(error));
-        }
-        return Err(HostProcessError::Output(
-            "process stdout was not available".to_string(),
-        ));
+
+    let cancellation_token = match control.cancellation {
+        Some(HostCancellation::Token(token)) => Some(token.clone()),
+        None => None,
     };
-    let Some(stderr) = child.stderr.take() else {
-        if let Err(error) = cleanup_child_tree(&mut child) {
-            return Err(HostProcessError::Cleanup(error));
-        }
-        return Err(HostProcessError::Output(
-            "process stderr was not available".to_string(),
-        ));
-    };
-    let stdout_reader = thread::spawn(move || read_capped_and_drain(stdout, control.stdout_cap));
-    let stderr_reader = thread::spawn(move || read_capped_and_drain(stderr, control.stderr_cap));
-    let started = Instant::now();
 
-    loop {
-        let status = match child.try_wait() {
-            Ok(status) => status,
-            Err(error) => {
-                let cleanup = cleanup_child_tree(&mut child);
-                let _ = join_output_reader(stdout_reader, "stdout");
-                let _ = join_output_reader(stderr_reader, "stderr");
-                if let Err(cleanup) = cleanup {
-                    return Err(HostProcessError::Cleanup(cleanup));
-                }
-                return Err(HostProcessError::Output(error.to_string()));
-            }
-        };
-        if let Some(status) = status {
-            // A launcher may exit successfully while a descendant keeps the
-            // inherited stdout/stderr pipes open. Kill the owned process group
-            // before joining readers so a normal exit cannot wait forever on a
-            // descendant that escaped the launcher's lifecycle.
-            if !stdout_reader.is_finished() || !stderr_reader.is_finished() {
-                if let Err(error) = signal_process_tree(child.id(), HostProcessSignal::Kill) {
-                    let _ = join_output_reader(stdout_reader, "stdout");
-                    let _ = join_output_reader(stderr_reader, "stderr");
-                    return Err(HostProcessError::Cleanup(error));
-                }
-            }
-            let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
-            let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
-            return Ok(HostProcessOutput {
-                status,
-                stdout,
-                stderr,
-                stdout_truncated,
-                stderr_truncated,
-            });
-        }
-
-        if is_cancelled(control.cancellation) {
-            let cleanup = cleanup_child_tree(&mut child);
-            let _ = join_output_reader(stdout_reader, "stdout")?;
-            let _ = join_output_reader(stderr_reader, "stderr")?;
-            if let Err(error) = cleanup {
-                return Err(HostProcessError::Cleanup(error));
-            }
-            return Err(HostProcessError::Cancelled);
-        }
-
-        if started.elapsed() >= control.timeout {
-            let cleanup = cleanup_child_tree(&mut child);
-            let (stdout, stdout_truncated) = join_output_reader(stdout_reader, "stdout")?;
-            let (stderr, stderr_truncated) = join_output_reader(stderr_reader, "stderr")?;
-            if let Err(error) = cleanup {
-                return Err(HostProcessError::Cleanup(error));
-            }
-            return Err(HostProcessError::Timeout {
-                stdout,
-                stderr,
-                stdout_truncated,
-                stderr_truncated,
-            });
-        }
-
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn is_cancelled(cancellation: Option<HostCancellation<'_>>) -> bool {
-    cancellation.is_some_and(HostCancellation::is_cancelled)
-}
-
-fn find_program_on_path(program: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
-    let path_env = path_env?;
-    for directory in env::split_paths(path_env) {
-        if directory.as_os_str().is_empty() {
-            continue;
-        }
-        for file_name in executable_file_names(program) {
-            let candidate = directory.join(file_name);
-            if is_executable_file(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-#[cfg(not(windows))]
-fn executable_file_names(program: &str) -> Vec<OsString> {
-    vec![OsString::from(program)]
-}
-
-#[cfg(windows)]
-fn executable_file_names(program: &str) -> Vec<OsString> {
-    let program_path = Path::new(program);
-    if program_path.extension().is_some() {
-        return vec![OsString::from(program)];
-    }
-
-    ["exe", "cmd", "bat", "com"]
-        .into_iter()
-        .map(|extension| OsString::from(format!("{program}.{extension}")))
-        .collect()
+    let output = run_host_command_with_cancellation(spec, cancellation_token.as_ref())?;
+    Ok(HostProcessOutput {
+        status: output.status,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        stdout_truncated: output.stdout_truncated,
+        stderr_truncated: output.stderr_truncated,
+    })
 }
 
 #[cfg(not(windows))]
@@ -636,62 +619,25 @@ fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-fn read_capped_and_drain<R: Read>(mut reader: R, cap: usize) -> Result<(Vec<u8>, bool), String> {
+async fn read_stream_capped_and_drain<R: tokio::io::AsyncRead + Unpin>(
+    mut reader: R,
+    cap: usize,
+) -> (Vec<u8>, bool) {
     let mut output = Vec::with_capacity(cap.min(8192));
     let mut buffer = [0_u8; 8192];
     let mut truncated = false;
     loop {
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
-        }
+        let read = match reader.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
         let remaining = cap.saturating_sub(output.len());
         let retained = remaining.min(read);
         output.extend_from_slice(&buffer[..retained]);
         truncated |= retained < read;
     }
-    Ok((output, truncated))
-}
-
-fn join_output_reader(
-    reader: thread::JoinHandle<Result<(Vec<u8>, bool), String>>,
-    stream: &str,
-) -> Result<(Vec<u8>, bool), HostProcessError> {
-    reader
-        .join()
-        .map_err(|_| HostProcessError::Output(format!("process {stream} reader panicked")))?
-        .map_err(HostProcessError::Output)
-}
-
-fn cleanup_child_tree(child: &mut std::process::Child) -> Result<(), String> {
-    let signal_error = signal_process_tree(child.id(), HostProcessSignal::Kill).err();
-    let kill_error = if signal_error.is_some() {
-        child.kill().err().map(|error| error.to_string())
-    } else {
-        None
-    };
-    let wait_error = child.wait().err().map(|error| error.to_string());
-    if kill_error.is_none() && wait_error.is_none() {
-        return Ok(());
-    }
-    Err(format!(
-        "process cleanup failed: signal={:?}, kill={:?}, wait={:?}",
-        signal_error, kill_error, wait_error
-    ))
-}
-
-#[cfg(unix)]
-pub(crate) fn configure_process_tree(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-
-    command.process_group(0);
-}
-
-#[cfg(windows)]
-pub(crate) fn configure_process_tree(command: &mut Command) {
-    configure_background_process(command);
+    (output, truncated)
 }
 
 #[cfg(windows)]
@@ -707,74 +653,6 @@ pub(crate) fn configure_background_process(_command: &mut Command) {}
 #[cfg(any(test, windows))]
 fn windows_background_process_creation_flags() -> u32 {
     WINDOWS_CREATE_NO_WINDOW
-}
-
-#[cfg(unix)]
-pub(crate) fn signal_process_tree(
-    process_group_id: u32,
-    signal: HostProcessSignal,
-) -> Result<(), String> {
-    let process_group_id = libc::pid_t::try_from(process_group_id)
-        .map_err(|_| "process group id is outside the platform range".to_string())?;
-    if process_group_id <= 0 {
-        return Err("process group id must be positive".to_string());
-    }
-
-    let signal = match signal {
-        HostProcessSignal::Terminate => libc::SIGTERM,
-        HostProcessSignal::Kill => libc::SIGKILL,
-    };
-    // SAFETY: managed children are spawned into a dedicated group whose id is
-    // recorded from the direct child pid. A negative pid signals that group.
-    if unsafe { libc::kill(-process_group_id, signal) } == 0 {
-        return Ok(());
-    }
-
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-    Err(format!("failed to signal process group: {error}"))
-}
-
-#[cfg(windows)]
-pub(crate) fn signal_process_tree(
-    process_id: u32,
-    signal: HostProcessSignal,
-) -> Result<(), String> {
-    if process_id == 0 {
-        return Err("process id must be positive".to_string());
-    }
-
-    let mut command = Command::new("taskkill");
-    command.args(["/PID", &process_id.to_string(), "/T"]);
-    if signal == HostProcessSignal::Kill {
-        command.arg("/F");
-    }
-    configure_background_process(&mut command);
-    let output = command
-        .output()
-        .map_err(|error| format!("failed to launch taskkill: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if stderr.contains("not found")
-            || stderr.contains("PID")
-            || stdout.contains("not found")
-            || stdout.contains("PID")
-            || output.status.code() == Some(128)
-            || output.status.code() == Some(1)
-        {
-            Ok(())
-        } else {
-            Err(format!(
-                "taskkill exited with status {}: {stderr}",
-                output.status
-            ))
-        }
-    }
 }
 
 #[cfg(test)]
@@ -941,21 +819,6 @@ mod tests {
         assert!(matches!(error, HostProcessError::Cancelled));
     }
 
-    #[test]
-    #[cfg(unix)]
-    fn process_tree_signal_is_idempotent_after_the_group_exits() {
-        let mut command = fixture_command("timeout");
-        configure_process_tree(&mut command);
-        let mut child = command.spawn().expect("spawn process-group fixture");
-        let process_group_id = child.id();
-
-        signal_process_tree(process_group_id, HostProcessSignal::Terminate)
-            .expect("first process-group terminate");
-        child.wait().expect("reap process-group fixture");
-        signal_process_tree(process_group_id, HostProcessSignal::Kill)
-            .expect("second process-group kill is a no-op");
-    }
-
     fn fixture_command(mode: &str) -> Command {
         let mut command = Command::new(env::current_exe().expect("resolve test binary"));
         command
@@ -1042,213 +905,100 @@ mod tests {
         assert!(matches!(error, HostProcessError::Cancelled));
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn public_seam_host_command_normal_exit() {
+        let output = run_host_command(
+            HostCommandSpec {
+                program: env::current_exe().expect("resolve test binary"),
+                args: vec![
+                    "--exact".to_string(),
+                    "backend::host_process::tests::process_fixture".to_string(),
+                    "--nocapture".to_string(),
+                ],
+                env: vec![(
+                    "ASSETIWEAVE_HOST_PROCESS_FIXTURE".to_string(),
+                    "normal-exit".to_string(),
+                )],
+                working_dir: None,
+                stdin: HostInput::Null,
+                timeout: Duration::from_secs(5),
+                stdout_limit: 32 * 1024,
+                stderr_limit: 32 * 1024,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("normal exit succeeds");
+
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("fixture-stdout-content"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("fixture-stderr-content"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn public_seam_host_command_nonzero_exit() {
+        let output = run_host_command(
+            HostCommandSpec {
+                program: env::current_exe().expect("resolve test binary"),
+                args: vec![
+                    "--exact".to_string(),
+                    "backend::host_process::tests::process_fixture".to_string(),
+                    "--nocapture".to_string(),
+                ],
+                env: vec![(
+                    "ASSETIWEAVE_HOST_PROCESS_FIXTURE".to_string(),
+                    "nonzero-exit".to_string(),
+                )],
+                working_dir: None,
+                stdin: HostInput::Null,
+                timeout: Duration::from_secs(5),
+                stdout_limit: 32 * 1024,
+                stderr_limit: 32 * 1024,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .expect("runs to nonzero completion");
+
+        assert!(!output.status.success());
+        assert_eq!(output.status.code(), Some(42));
+        assert_eq!(output.stderr, b"exiting with error 42");
+    }
+
+    #[test]
+    fn host_process_error_into_app_error_mapping() {
+        use crate::backend::runtime::AppError;
+
+        let missing = HostProcessError::MissingProgram {
+            program: PathBuf::from("nonexistent-tool"),
+        };
+        let app_err: AppError = missing.into();
+        assert!(matches!(app_err, AppError::NotFound(_)));
+
+        let timeout = HostProcessError::Timeout {
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        let app_err: AppError = timeout.into();
+        assert!(matches!(app_err, AppError::Timeout(_)));
+
+        let cancelled = HostProcessError::Cancelled;
+        let app_err: AppError = cancelled.into();
+        assert!(matches!(app_err, AppError::Cancelled(_)));
+
+        let limit = HostProcessError::OutputLimitExceeded {
+            stdout: true,
+            stderr: false,
+        };
+        let app_err: AppError = limit.into();
+        assert!(matches!(app_err, AppError::Process(_)));
+    }
+
     // =========================================================================
     // C-PROCESS-01 & B2-P01: Contract Tests for process-wrap 10.0.0 and which 8.0.6
     // =========================================================================
-
-    #[cfg(windows)]
-    use process_wrap::tokio::JobObject;
-    #[cfg(unix)]
-    use process_wrap::tokio::ProcessGroup;
-    use process_wrap::tokio::{CommandWrap, KillOnDrop};
-    use tokio::io::AsyncReadExt;
-
-    /// C-PROCESS-01 Canonical Wrapper Combination & Child Methods (Recorded for B2-P02 consumption):
-    ///
-    /// 1. Construction:
-    ///    `let mut wrap = process_wrap::tokio::CommandWrap::from(tokio_command);`
-    /// 2. Platform Process Grouping:
-    ///    - Unix: `wrap.wrap(process_wrap::tokio::ProcessGroup::leader());`
-    ///    - Windows: `wrap.wrap(process_wrap::tokio::JobObject);`
-    /// 3. Drop Safety:
-    ///    `wrap.wrap(process_wrap::tokio::KillOnDrop);`
-    /// 4. Spawning & Child Management:
-    ///    - Spawn: `let mut child = wrap.spawn()?;` (returns Box<dyn ChildWrapper>)
-    ///    - Pipes: `child.stdout().take()`, `child.stderr().take()`
-    ///    - Try Wait: `child.try_wait()? -> Option<ExitStatus>`
-    ///    - Wait: `child.wait().await? -> ExitStatus`
-    ///    - Termination: `child.start_kill()?` (sends SIGKILL to PGID on Unix, terminates job on Windows)
-    ///    - Graceful Signal (Unix): `child.signal(libc::SIGTERM)?`
-    fn wrap_test_command(cmd: tokio::process::Command) -> CommandWrap {
-        let mut wrap = CommandWrap::from(cmd);
-        #[cfg(unix)]
-        {
-            wrap.wrap(ProcessGroup::leader());
-        }
-        #[cfg(windows)]
-        {
-            wrap.wrap(JobObject);
-        }
-        wrap.wrap(KillOnDrop);
-        wrap
-    }
-
-    fn make_tokio_fixture_command(mode: &str) -> tokio::process::Command {
-        let mut cmd =
-            tokio::process::Command::new(env::current_exe().expect("resolve test binary"));
-        cmd.args([
-            "--exact",
-            "backend::host_process::tests::process_fixture",
-            "--nocapture",
-        ])
-        .env("ASSETIWEAVE_HOST_PROCESS_FIXTURE", mode)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
-        cmd
-    }
-
-    async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
-        mut reader: R,
-        cap: usize,
-    ) -> (Vec<u8>, bool) {
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 8192];
-        let mut truncated = false;
-        loop {
-            match reader.read(&mut chunk).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    if buf.len() < cap {
-                        let to_take = n.min(cap - buf.len());
-                        buf.extend_from_slice(&chunk[..to_take]);
-                        if to_take < n {
-                            truncated = true;
-                        }
-                    } else {
-                        truncated = true;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        (buf, truncated)
-    }
-
-    #[derive(Debug)]
-    struct TestWrapOutput {
-        status: ExitStatus,
-        stdout: Vec<u8>,
-        stderr: Vec<u8>,
-        stdout_truncated: bool,
-        stderr_truncated: bool,
-    }
-
-    #[derive(Debug)]
-    #[allow(dead_code)]
-    enum TestWrapError {
-        Timeout {
-            stdout: Vec<u8>,
-            stderr: Vec<u8>,
-            stdout_truncated: bool,
-            stderr_truncated: bool,
-        },
-        Cancelled,
-        Spawn(String),
-        Wait(String),
-    }
-
-    async fn run_tokio_wrap_fixture(
-        mode: &str,
-        timeout: Duration,
-        stdout_limit: usize,
-        stderr_limit: usize,
-        cancellation: Option<&tokio_util::sync::CancellationToken>,
-    ) -> Result<TestWrapOutput, TestWrapError> {
-        if let Some(token) = cancellation {
-            if token.is_cancelled() {
-                return Err(TestWrapError::Cancelled);
-            }
-        }
-
-        let cmd = make_tokio_fixture_command(mode);
-        let mut wrap = wrap_test_command(cmd);
-        let mut child = wrap
-            .spawn()
-            .map_err(|e| TestWrapError::Spawn(e.to_string()))?;
-
-        let stdout_pipe = child.stdout().take();
-        let stderr_pipe = child.stderr().take();
-
-        let mut stdout_task = tokio::spawn(async move {
-            match stdout_pipe {
-                Some(r) => read_stream_capped(r, stdout_limit).await,
-                None => (Vec::new(), false),
-            }
-        });
-        let mut stderr_task = tokio::spawn(async move {
-            match stderr_pipe {
-                Some(r) => read_stream_capped(r, stderr_limit).await,
-                None => (Vec::new(), false),
-            }
-        });
-
-        let timeout_sleep = tokio::time::sleep(timeout);
-        tokio::pin!(timeout_sleep);
-
-        enum ExitReason {
-            Exited(Result<ExitStatus, std::io::Error>),
-            TimedOut,
-            Cancelled,
-        }
-
-        let reason = tokio::select! {
-            res = child.wait() => ExitReason::Exited(res),
-            _ = &mut timeout_sleep => ExitReason::TimedOut,
-            _ = async {
-                if let Some(token) = cancellation {
-                    token.cancelled().await;
-                } else {
-                    std::future::pending::<()>().await;
-                }
-            } => ExitReason::Cancelled,
-        };
-
-        match reason {
-            ExitReason::Exited(res) => {
-                let status = res.map_err(|e| TestWrapError::Wait(e.to_string()))?;
-                let (stdout_res, stderr_res) = tokio::select! {
-                    joined = async {
-                        let out = (&mut stdout_task).await.unwrap_or_default();
-                        let err = (&mut stderr_task).await.unwrap_or_default();
-                        (out, err)
-                    } => joined,
-                    _ = tokio::time::sleep(Duration::from_millis(300)) => {
-                        let _ = child.start_kill();
-                        let out = stdout_task.await.unwrap_or_default();
-                        let err = stderr_task.await.unwrap_or_default();
-                        (out, err)
-                    }
-                };
-                Ok(TestWrapOutput {
-                    status,
-                    stdout: stdout_res.0,
-                    stderr: stderr_res.0,
-                    stdout_truncated: stdout_res.1,
-                    stderr_truncated: stderr_res.1,
-                })
-            }
-            ExitReason::TimedOut => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                let out = stdout_task.await.unwrap_or_default();
-                let err = stderr_task.await.unwrap_or_default();
-                Err(TestWrapError::Timeout {
-                    stdout: out.0,
-                    stderr: err.0,
-                    stdout_truncated: out.1,
-                    stderr_truncated: err.1,
-                })
-            }
-            ExitReason::Cancelled => {
-                let _ = child.start_kill();
-                let _ = child.wait().await;
-                let _ = stdout_task.await;
-                let _ = stderr_task.await;
-                Err(TestWrapError::Cancelled)
-            }
-        }
-    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn contract_process_wrap_normal_exit() {
@@ -1266,14 +1016,8 @@ mod tests {
         assert_eq!(output.status.code(), Some(0));
         let stdout_str = String::from_utf8_lossy(&output.stdout);
         let stderr_str = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stdout_str.contains("fixture-stdout-content"),
-            "stdout must contain fixture output: {stdout_str}"
-        );
-        assert!(
-            stderr_str.contains("fixture-stderr-content"),
-            "stderr must contain fixture output: {stderr_str}"
-        );
+        assert!(stdout_str.contains("fixture-stdout-content"));
+        assert!(stderr_str.contains("fixture-stderr-content"));
         assert!(!output.stdout_truncated);
         assert!(!output.stderr_truncated);
     }
@@ -1403,7 +1147,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn contract_process_wrap_ignored_graceful_termination() {
         let cmd = make_tokio_fixture_command("ignore-term");
-        let mut wrap = wrap_test_command(cmd);
+        let mut wrap = wrap_tokio_command(cmd);
         let mut child = wrap.spawn().expect("spawn ignore-term fixture");
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1456,13 +1200,11 @@ mod tests {
 
         let cmd_name = "test-tool";
 
-        // 1. 当 bin_dir 在 PATH 中时，which::which_in 必须找到该可执行文件
         let custom_path = env::join_paths([&bin_dir]).expect("join paths");
         let found = which::which_in(cmd_name, Some(&custom_path), &work_dir)
             .expect("which must find executable in PATH");
         assert_eq!(found, exe_path);
 
-        // 2. 当 PATH 不包含 bin_dir 且 cwd 为 work_dir 时，which 必须返回错误（standard lookup miss）
         let empty_path = OsString::from("");
         let miss = which::which_in(cmd_name, Some(&empty_path), &work_dir);
         assert!(
@@ -1470,11 +1212,8 @@ mod tests {
             "which must report error when not on PATH and not in cwd"
         );
 
-        // 3. 验证 fallback 逻辑契约：
-        // 只有在 which (标准 lookup) miss 时，现有 desktop fallback 才会被使用
         let standard_lookup = which::which_in(cmd_name, Some(&empty_path), &work_dir).ok();
         let resolved = standard_lookup.or_else(|| {
-            // Desktop fallback candidates:
             let candidates = vec![exe_path.clone()];
             candidates.into_iter().find(|p| is_executable_file(p))
         });
@@ -1484,12 +1223,151 @@ mod tests {
             "fallback is triggered on lookup miss"
         );
 
-        // 当 standard lookup 成功时，优先使用标准结果，不执行 fallback
         let resolved_direct = which::which_in(cmd_name, Some(&custom_path), &work_dir)
             .ok()
             .or_else(|| panic!("fallback should not be reached when standard lookup succeeds"));
         assert_eq!(resolved_direct, Some(exe_path));
 
         let _ = fs::remove_dir_all(&root_temp);
+    }
+
+    fn make_tokio_fixture_command(mode: &str) -> tokio::process::Command {
+        let mut cmd =
+            tokio::process::Command::new(env::current_exe().expect("resolve test binary"));
+        cmd.args([
+            "--exact",
+            "backend::host_process::tests::process_fixture",
+            "--nocapture",
+        ])
+        .env("ASSETIWEAVE_HOST_PROCESS_FIXTURE", mode)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+        cmd
+    }
+
+    #[derive(Debug)]
+    struct TestWrapOutput {
+        status: ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        stdout_truncated: bool,
+        stderr_truncated: bool,
+    }
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    enum TestWrapError {
+        Timeout {
+            stdout: Vec<u8>,
+            stderr: Vec<u8>,
+            stdout_truncated: bool,
+            stderr_truncated: bool,
+        },
+        Cancelled,
+        Spawn(String),
+        Wait(String),
+    }
+
+    async fn run_tokio_wrap_fixture(
+        mode: &str,
+        timeout: Duration,
+        stdout_limit: usize,
+        stderr_limit: usize,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<TestWrapOutput, TestWrapError> {
+        if let Some(token) = cancellation {
+            if token.is_cancelled() {
+                return Err(TestWrapError::Cancelled);
+            }
+        }
+
+        let cmd = make_tokio_fixture_command(mode);
+        let mut wrap = wrap_tokio_command(cmd);
+        let mut child = wrap
+            .spawn()
+            .map_err(|e| TestWrapError::Spawn(e.to_string()))?;
+
+        let stdout_pipe = child.stdout().take();
+        let stderr_pipe = child.stderr().take();
+
+        let mut stdout_task = tokio::spawn(async move {
+            match stdout_pipe {
+                Some(r) => read_stream_capped_and_drain(r, stdout_limit).await,
+                None => (Vec::new(), false),
+            }
+        });
+        let mut stderr_task = tokio::spawn(async move {
+            match stderr_pipe {
+                Some(r) => read_stream_capped_and_drain(r, stderr_limit).await,
+                None => (Vec::new(), false),
+            }
+        });
+
+        let timeout_sleep = tokio::time::sleep(timeout);
+        tokio::pin!(timeout_sleep);
+
+        enum ExitReason {
+            Exited(Result<ExitStatus, std::io::Error>),
+            TimedOut,
+            Cancelled,
+        }
+
+        let reason = tokio::select! {
+            res = child.wait() => ExitReason::Exited(res),
+            _ = &mut timeout_sleep => ExitReason::TimedOut,
+            _ = async {
+                if let Some(token) = cancellation {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => ExitReason::Cancelled,
+        };
+
+        match reason {
+            ExitReason::Exited(res) => {
+                let status = res.map_err(|e| TestWrapError::Wait(e.to_string()))?;
+                let (stdout_res, stderr_res) = tokio::select! {
+                    joined = async {
+                        let out = (&mut stdout_task).await.unwrap_or_default();
+                        let err = (&mut stderr_task).await.unwrap_or_default();
+                        (out, err)
+                    } => joined,
+                    _ = tokio::time::sleep(Duration::from_millis(300)) => {
+                        let _ = child.start_kill();
+                        let out = stdout_task.await.unwrap_or_default();
+                        let err = stderr_task.await.unwrap_or_default();
+                        (out, err)
+                    }
+                };
+                Ok(TestWrapOutput {
+                    status,
+                    stdout: stdout_res.0,
+                    stderr: stderr_res.0,
+                    stdout_truncated: stdout_res.1,
+                    stderr_truncated: stderr_res.1,
+                })
+            }
+            ExitReason::TimedOut => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let out = stdout_task.await.unwrap_or_default();
+                let err = stderr_task.await.unwrap_or_default();
+                Err(TestWrapError::Timeout {
+                    stdout: out.0,
+                    stderr: err.0,
+                    stdout_truncated: out.1,
+                    stderr_truncated: err.1,
+                })
+            }
+            ExitReason::Cancelled => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                Err(TestWrapError::Cancelled)
+            }
+        }
     }
 }

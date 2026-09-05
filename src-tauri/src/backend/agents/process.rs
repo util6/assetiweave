@@ -2,32 +2,41 @@ use std::{
     collections::VecDeque,
     fmt,
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     sync::{Arc, Mutex},
     time::Duration,
 };
 
+use process_wrap::tokio::ChildWrapper;
 use tokio::{
     io::AsyncReadExt,
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{ChildStdin, ChildStdout, Command},
     sync::watch,
 };
 
-use crate::backend::host_process::{
-    configure_process_tree, resolve_host_executable, signal_process_tree, HostProcessSignal,
-};
+use crate::backend::host_process::{resolve_host_executable, wrap_tokio_command};
 
 use super::types::{AgentDefinition, AgentDefinitionError};
 
 const EXIT_WAIT_AFTER_KILL: Duration = Duration::from_secs(2);
 
+enum ChildControlAction {
+    Terminate {
+        grace: Duration,
+        reply: tokio::sync::oneshot::Sender<ProcessTerminationReport>,
+    },
+    ForceKill {
+        reply: tokio::sync::oneshot::Sender<ProcessTerminationReport>,
+    },
+}
+
 pub(crate) struct ManagedAgentProcess {
     process_id: u32,
-    process_group_id: u32,
     stdio: Mutex<Option<(ChildStdin, ChildStdout)>>,
     stderr_tail: Arc<Mutex<BoundedByteTail>>,
     stderr_done: watch::Receiver<bool>,
     exit: watch::Receiver<Option<ProcessExit>>,
+    control_tx: tokio::sync::mpsc::Sender<ChildControlAction>,
 }
 
 impl ManagedAgentProcess {
@@ -62,9 +71,9 @@ impl ManagedAgentProcess {
         if let Some(current_dir) = current_dir {
             command.current_dir(current_dir);
         }
-        configure_process_tree(command.as_std_mut());
 
-        let mut child = command
+        let mut wrap = wrap_tokio_command(command);
+        let mut child = wrap
             .spawn()
             .map_err(|error| ManagedAgentProcessError::Spawn {
                 preview,
@@ -73,28 +82,28 @@ impl ManagedAgentProcess {
         let process_id = match child.id() {
             Some(process_id) => process_id,
             None => {
-                cleanup_failed_spawn(&mut child, None).await;
+                cleanup_failed_spawn(&mut child).await;
                 return Err(ManagedAgentProcessError::MissingProcessId);
             }
         };
-        let stdin = match child.stdin.take() {
+        let stdin = match child.stdin().take() {
             Some(stdin) => stdin,
             None => {
-                cleanup_failed_spawn(&mut child, Some(process_id)).await;
+                cleanup_failed_spawn(&mut child).await;
                 return Err(ManagedAgentProcessError::MissingStdio("stdin"));
             }
         };
-        let stdout = match child.stdout.take() {
+        let stdout = match child.stdout().take() {
             Some(stdout) => stdout,
             None => {
-                cleanup_failed_spawn(&mut child, Some(process_id)).await;
+                cleanup_failed_spawn(&mut child).await;
                 return Err(ManagedAgentProcessError::MissingStdio("stdout"));
             }
         };
-        let stderr = match child.stderr.take() {
+        let stderr = match child.stderr().take() {
             Some(stderr) => stderr,
             None => {
-                cleanup_failed_spawn(&mut child, Some(process_id)).await;
+                cleanup_failed_spawn(&mut child).await;
                 return Err(ManagedAgentProcessError::MissingStdio("stderr"));
             }
         };
@@ -108,29 +117,173 @@ impl ManagedAgentProcess {
         });
 
         let (exit_tx, exit) = watch::channel(None);
+        let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<ChildControlAction>(4);
+
         tokio::spawn(async move {
-            let snapshot = match child.wait().await {
-                Ok(status) => ProcessExit {
-                    code: status.code(),
-                    success: status.success(),
-                    wait_error: None,
-                },
-                Err(error) => ProcessExit {
-                    code: None,
-                    success: false,
-                    wait_error: Some(error.to_string()),
-                },
-            };
-            let _ = exit_tx.send(Some(snapshot));
+            let mut child_exited = false;
+            let mut child_exit_snapshot: Option<ProcessExit> = None;
+
+            loop {
+                let action = if !child_exited {
+                    tokio::select! {
+                        res = child.wait() => {
+                            let snapshot = match res {
+                                Ok(status) => ProcessExit {
+                                    code: status.code(),
+                                    success: status.success(),
+                                    wait_error: None,
+                                },
+                                Err(error) => ProcessExit {
+                                    code: None,
+                                    success: false,
+                                    wait_error: Some(error.to_string()),
+                                },
+                            };
+                            child_exit_snapshot = Some(snapshot.clone());
+                            let _ = exit_tx.send(Some(snapshot));
+                            child_exited = true;
+                            continue;
+                        }
+                        action = control_rx.recv() => action,
+                    }
+                } else {
+                    control_rx.recv().await
+                };
+
+                match action {
+                    None => {
+                        let _ = child.start_kill();
+                        break;
+                    }
+                    Some(ChildControlAction::Terminate { grace, reply }) => {
+                        let mut signal_errors = Vec::new();
+                        #[cfg(unix)]
+                        {
+                            if let Err(e) = child.signal(libc::SIGTERM) {
+                                if !is_ignorable_signal_error(&e) {
+                                    signal_errors.push(e.to_string());
+                                }
+                            }
+                        }
+                        #[cfg(windows)]
+                        {
+                            if let Err(e) = child.start_kill() {
+                                if !is_ignorable_signal_error(&e) {
+                                    signal_errors.push(e.to_string());
+                                }
+                            }
+                        }
+
+                        if !child_exited && !grace.is_zero() {
+                            tokio::select! {
+                                res = child.wait() => {
+                                    let snapshot = match res {
+                                        Ok(status) => ProcessExit {
+                                            code: status.code(),
+                                            success: status.success(),
+                                            wait_error: None,
+                                        },
+                                        Err(error) => ProcessExit {
+                                            code: None,
+                                            success: false,
+                                            wait_error: Some(error.to_string()),
+                                        },
+                                    };
+                                    child_exit_snapshot = Some(snapshot.clone());
+                                    let _ = exit_tx.send(Some(snapshot));
+                                    child_exited = true;
+                                }
+                                _ = tokio::time::sleep(grace) => {}
+                            }
+                        }
+
+                        if let Err(e) = child.start_kill() {
+                            if !is_ignorable_signal_error(&e) {
+                                signal_errors.push(e.to_string());
+                            }
+                        }
+
+                        if !child_exited {
+                            tokio::select! {
+                                res = child.wait() => {
+                                    let snapshot = match res {
+                                        Ok(status) => ProcessExit {
+                                            code: status.code(),
+                                            success: status.success(),
+                                            wait_error: None,
+                                        },
+                                        Err(error) => ProcessExit {
+                                            code: None,
+                                            success: false,
+                                            wait_error: Some(error.to_string()),
+                                        },
+                                    };
+                                    child_exit_snapshot = Some(snapshot.clone());
+                                    let _ = exit_tx.send(Some(snapshot));
+                                    child_exited = true;
+                                }
+                                _ = tokio::time::sleep(EXIT_WAIT_AFTER_KILL) => {}
+                            }
+                        }
+
+                        let _ = reply.send(ProcessTerminationReport {
+                            terminate_requested: true,
+                            force_kill_requested: true,
+                            exit: child_exit_snapshot,
+                            signal_errors,
+                        });
+                        break;
+                    }
+                    Some(ChildControlAction::ForceKill { reply }) => {
+                        let mut signal_errors = Vec::new();
+                        if let Err(e) = child.start_kill() {
+                            if !is_ignorable_signal_error(&e) {
+                                signal_errors.push(e.to_string());
+                            }
+                        }
+
+                        if !child_exited {
+                            tokio::select! {
+                                res = child.wait() => {
+                                    let snapshot = match res {
+                                        Ok(status) => ProcessExit {
+                                            code: status.code(),
+                                            success: status.success(),
+                                            wait_error: None,
+                                        },
+                                        Err(error) => ProcessExit {
+                                            code: None,
+                                            success: false,
+                                            wait_error: Some(error.to_string()),
+                                        },
+                                    };
+                                    child_exit_snapshot = Some(snapshot.clone());
+                                    let _ = exit_tx.send(Some(snapshot));
+                                    child_exited = true;
+                                }
+                                _ = tokio::time::sleep(EXIT_WAIT_AFTER_KILL) => {}
+                            }
+                        }
+
+                        let _ = reply.send(ProcessTerminationReport {
+                            terminate_requested: false,
+                            force_kill_requested: true,
+                            exit: child_exit_snapshot,
+                            signal_errors,
+                        });
+                        break;
+                    }
+                }
+            }
         });
 
         Ok(Self {
             process_id,
-            process_group_id: process_id,
             stdio: Mutex::new(Some((stdin, stdout))),
             stderr_tail,
             stderr_done,
             exit,
+            control_tx,
         })
     }
 
@@ -192,56 +345,53 @@ impl ManagedAgentProcess {
     }
 
     pub(crate) async fn terminate(&self, grace: Duration) -> ProcessTerminationReport {
-        let mut signal_errors = Vec::new();
-        if let Err(error) = signal_process_tree(self.process_group_id, HostProcessSignal::Terminate)
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        if self
+            .control_tx
+            .send(ChildControlAction::Terminate {
+                grace,
+                reply: reply_tx,
+            })
+            .await
+            .is_err()
         {
-            signal_errors.push(error);
+            return ProcessTerminationReport {
+                terminate_requested: true,
+                force_kill_requested: false,
+                exit: self.current_exit(),
+                signal_errors: Vec::new(),
+            };
         }
-
-        let mut exit = self.current_exit();
-        if exit.is_none() && !grace.is_zero() {
-            exit = tokio::time::timeout(grace, self.wait_for_exit())
-                .await
-                .ok()
-                .flatten();
-        }
-
-        // Always address the recorded group after the grace window. This also
-        // cleans descendants when a launcher exits before its process tree.
-        if let Err(error) = signal_process_tree(self.process_group_id, HostProcessSignal::Kill) {
-            signal_errors.push(error);
-        }
-        if exit.is_none() {
-            exit = tokio::time::timeout(EXIT_WAIT_AFTER_KILL, self.wait_for_exit())
-                .await
-                .ok()
-                .flatten();
-        }
-
-        ProcessTerminationReport {
+        reply_rx.await.unwrap_or_else(|_| ProcessTerminationReport {
             terminate_requested: true,
             force_kill_requested: true,
-            exit,
-            signal_errors,
-        }
+            exit: self.current_exit(),
+            signal_errors: Vec::new(),
+        })
     }
 
     #[cfg(test)]
     pub(crate) async fn force_kill_tree(&self) -> ProcessTerminationReport {
-        let mut signal_errors = Vec::new();
-        if let Err(error) = signal_process_tree(self.process_group_id, HostProcessSignal::Kill) {
-            signal_errors.push(error);
-        }
-        let exit = tokio::time::timeout(EXIT_WAIT_AFTER_KILL, self.wait_for_exit())
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        if self
+            .control_tx
+            .send(ChildControlAction::ForceKill { reply: reply_tx })
             .await
-            .ok()
-            .flatten();
-        ProcessTerminationReport {
+            .is_err()
+        {
+            return ProcessTerminationReport {
+                terminate_requested: false,
+                force_kill_requested: true,
+                exit: self.current_exit(),
+                signal_errors: Vec::new(),
+            };
+        }
+        reply_rx.await.unwrap_or_else(|_| ProcessTerminationReport {
             terminate_requested: false,
             force_kill_requested: true,
-            exit,
-            signal_errors,
-        }
+            exit: self.current_exit(),
+            signal_errors: Vec::new(),
+        })
     }
 }
 
@@ -250,21 +400,12 @@ impl fmt::Debug for ManagedAgentProcess {
         formatter
             .debug_struct("ManagedAgentProcess")
             .field("process_id", &self.process_id)
-            .field("process_group_id", &self.process_group_id)
             .field(
                 "stdio_taken",
                 &self.stdio.lock().map_or(true, |stdio| stdio.is_none()),
             )
             .field("exit", &self.current_exit())
             .finish_non_exhaustive()
-    }
-}
-
-impl Drop for ManagedAgentProcess {
-    fn drop(&mut self) {
-        if self.current_exit().is_none() {
-            let _ = signal_process_tree(self.process_group_id, HostProcessSignal::Kill);
-        }
     }
 }
 
@@ -437,12 +578,25 @@ async fn drain_stderr(mut stderr: tokio::process::ChildStderr, tail: Arc<Mutex<B
     }
 }
 
-async fn cleanup_failed_spawn(child: &mut Child, process_id: Option<u32>) {
-    if let Some(process_id) = process_id {
-        let _ = signal_process_tree(process_id, HostProcessSignal::Kill);
-    }
+async fn cleanup_failed_spawn(child: &mut Box<dyn ChildWrapper>) {
     let _ = child.start_kill();
     let _ = tokio::time::timeout(EXIT_WAIT_AFTER_KILL, child.wait()).await;
+}
+
+fn is_ignorable_signal_error(_err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        if _err.raw_os_error() == Some(libc::ESRCH) {
+            return true;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if matches!(_err.raw_os_error(), Some(5) | Some(87)) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
