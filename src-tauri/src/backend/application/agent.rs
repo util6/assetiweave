@@ -13,7 +13,7 @@ impl AppService {
         Ok(self.agent_runtime.list_agent_catalog())
     }
 
-    pub(crate) fn check_agent_connection(
+    pub(crate) async fn check_agent_connection(
         &self,
         params: AgentConnectionCheckRequest,
     ) -> AppResult<AgentConnectionResult> {
@@ -21,7 +21,8 @@ impl AppService {
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let mode = params.mode;
         let existing_installation = self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .into_iter()
             .find(|item| item.agent_id == agent_id.to_string());
         let mut result = if matches!(mode, AgentConnectionCheckMode::Connection)
@@ -31,8 +32,8 @@ impl AppService {
             }) {
             let models = self
                 .agent_runtime_manager
-                .clone()
-                .refresh_acp_health_blocking(agent_id.as_str().to_string())
+                .refresh_acp_health(agent_id.as_str())
+                .await
                 .map_err(AppError::external)?;
             AgentConnectionResult {
                 agent_id: agent_id.to_string(),
@@ -58,18 +59,20 @@ impl AppService {
             })
         {
             self.agent_runtime_manager
-                .clone()
-                .refresh_native_health_blocking(agent_id.as_str().to_string())
+                .refresh_native_health(agent_id.as_str())
+                .await
                 .map_err(AppError::external)?
         } else {
-            crate::backend::ai_execution::check_agent_connection_blocking(
+            crate::backend::ai_execution::check_agent_connection(
                 self.agent_runtime.clone(),
                 agent_id.clone(),
                 mode,
             )
+            .await
         };
         if let Some(installation) = self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .into_iter()
             .find(|item| item.agent_id == agent_id.to_string())
         {
@@ -108,14 +111,15 @@ impl AppService {
         Ok(result)
     }
 
-    pub(crate) fn list_agent_models(
+    pub(crate) async fn list_agent_models(
         &self,
         params: AgentModelsRequest,
     ) -> AppResult<AgentModelsResult> {
         let agent_id = AgentId::parse(params.agent_id)
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let existing_installation = self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id.to_string());
         if existing_installation.as_ref().is_some_and(|installation| {
@@ -123,8 +127,8 @@ impl AppService {
         }) {
             return self
                 .agent_runtime_manager
-                .clone()
-                .refresh_acp_health_blocking(agent_id.as_str().to_string())
+                .refresh_acp_health(agent_id.as_str())
+                .await
                 .map_err(AppError::external);
         }
         if existing_installation.as_ref().is_some_and(|installation| {
@@ -133,16 +137,15 @@ impl AppService {
         }) {
             return self
                 .agent_runtime_manager
-                .clone()
-                .refresh_native_models_blocking(agent_id.as_str().to_string())
+                .refresh_native_models(agent_id.as_str())
+                .await
                 .map_err(AppError::external);
         }
-        Ok(
-            crate::backend::ai_execution::discover_agent_models_blocking(
-                self.agent_runtime.clone(),
-                agent_id,
-            ),
+        Ok(crate::backend::ai_execution::discover_agent_models(
+            self.agent_runtime.clone(),
+            agent_id,
         )
+        .await)
     }
 }
 
@@ -162,8 +165,8 @@ mod tests {
     };
     use std::sync::Arc;
 
-    #[test]
-    fn persisted_acp_probe_uses_a_process_capable_runtime_after_restart() {
+    #[tokio::test]
+    async fn persisted_acp_probe_uses_a_process_capable_runtime_after_restart() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-agent-application-restart-{}",
             uuid::Uuid::new_v4()
@@ -178,8 +181,8 @@ mod tests {
 
         let db = Database::open_initialized(&db_path).expect("open database");
         let pool = db.pool().clone();
-        let context = db
-            .block_on(async move { load_local_request_context_sqlx(&pool).await })
+        let context = load_local_request_context_sqlx(&pool)
+            .await
             .expect("load request context");
         let now = chrono::Utc::now().to_rfc3339();
         let installation = AgentInstallation {
@@ -223,13 +226,17 @@ mod tests {
             updated_at: now,
         };
         let repository = AgentInstallationRepository::new(db.pool().clone());
-        db.block_on(repository.upsert_active(&installation))
+        repository
+            .upsert_active(&installation)
+            .await
             .expect("persist installed ACP fixture");
         let manager = Arc::new(AgentRuntimeManager::new(
             db.pool().clone(),
             root.join("agent-executions"),
         ));
-        db.block_on(manager.reload())
+        manager
+            .reload()
+            .await
             .expect("restore persisted ACP registry");
         let agent_runtime = manager.runtime();
         let app_runtime = AppRuntime::for_test(
@@ -253,6 +260,7 @@ mod tests {
             .list_agent_models(AgentModelsRequest {
                 agent_id: "fixture-agent".to_string(),
             })
+            .await
             .expect("persisted ACP model probe");
         assert!(models.available);
         assert_eq!(models.models.len(), 2);
@@ -261,6 +269,7 @@ mod tests {
                 agent_id: "fixture-agent".to_string(),
                 mode: AgentConnectionCheckMode::Connection,
             })
+            .await
             .expect("persisted ACP connection probe");
         assert!(connection.connected);
         assert!(connection.execution_ready);
@@ -269,15 +278,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn native_connection_probe_refreshes_persisted_health_after_it_becomes_stale() {
-        let (service, repository, root) = native_service_fixture();
+    #[tokio::test]
+    async fn native_connection_probe_refreshes_persisted_health_after_it_becomes_stale() {
+        let (service, repository, root) = native_service_fixture().await;
 
         let result = service
             .check_agent_connection(AgentConnectionCheckRequest {
                 agent_id: "native-fixture".to_string(),
                 mode: AgentConnectionCheckMode::Connection,
             })
+            .await
             .expect("native connection probe");
         assert!(result.available);
         assert!(result.connected);
@@ -286,6 +296,7 @@ mod tests {
 
         let installation = service
             .list_installed_agents()
+            .await
             .expect("list refreshed native installation")
             .into_iter()
             .find(|installation| installation.agent_id == "native-fixture")
@@ -297,23 +308,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn native_startup_health_refresh_checks_installed_native_agents() {
-        let (service, repository, root) = native_service_fixture();
+    #[tokio::test]
+    async fn native_startup_health_refresh_checks_installed_native_agents() {
+        let (service, repository, root) = native_service_fixture().await;
 
         let scheduled = service
-            .db
-            .block_on(
-                service
-                    .agent_runtime_manager
-                    .prepare_startup_health_refresh(),
-            )
+            .agent_runtime_manager
+            .prepare_startup_health_refresh()
+            .await
             .expect("mark native health unchecked");
         assert_eq!(scheduled, 1);
         let summary = service
             .agent_runtime_manager
             .clone()
-            .refresh_installed_agent_health_blocking()
+            .refresh_installed_agent_health()
+            .await
             .expect("refresh native startup health");
         assert_eq!(summary.checked, 1);
         assert_eq!(summary.available, 1);
@@ -321,6 +330,7 @@ mod tests {
 
         let installation = service
             .list_installed_agents()
+            .await
             .expect("list refreshed native installation")
             .into_iter()
             .find(|installation| installation.agent_id == "native-fixture")
@@ -332,14 +342,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn native_model_discovery_refreshes_persisted_health() {
-        let (service, repository, root) = native_service_fixture();
+    #[tokio::test]
+    async fn native_model_discovery_refreshes_persisted_health() {
+        let (service, repository, root) = native_service_fixture().await;
 
         let result = service
             .list_agent_models(AgentModelsRequest {
                 agent_id: "native-fixture".to_string(),
             })
+            .await
             .expect("native model discovery");
         assert!(result.available);
         assert_eq!(result.models.len(), 1);
@@ -347,6 +358,7 @@ mod tests {
 
         let installation = service
             .list_installed_agents()
+            .await
             .expect("list refreshed native installation")
             .into_iter()
             .find(|installation| installation.agent_id == "native-fixture")
@@ -358,7 +370,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
-    fn native_service_fixture() -> (
+    async fn native_service_fixture() -> (
         AppService,
         crate::backend::agent_market::AgentInstallationRepository,
         std::path::PathBuf,
@@ -371,8 +383,8 @@ mod tests {
         let db_path = root.join("app.db");
         let db = Database::open_initialized(&db_path).expect("open database");
         let pool = db.pool().clone();
-        let context = db
-            .block_on(async move { load_local_request_context_sqlx(&pool).await })
+        let context = load_local_request_context_sqlx(&pool)
+            .await
             .expect("load request context");
         let program = crate::backend::host_process::resolve_host_executable("sh")
             .expect("shell runtime for native fixture");
@@ -420,13 +432,17 @@ mod tests {
             updated_at: "2026-08-01T00:00:00Z".to_string(),
         };
         let repository = AgentInstallationRepository::new(db.pool().clone());
-        db.block_on(repository.upsert_active(&installation))
+        repository
+            .upsert_active(&installation)
+            .await
             .expect("persist native fixture");
         let manager = Arc::new(AgentRuntimeManager::new(
             db.pool().clone(),
             root.join("agent-executions"),
         ));
-        db.block_on(manager.reload())
+        manager
+            .reload()
+            .await
             .expect("restore native fixture registry");
         let agent_runtime = manager.runtime();
         let app_runtime = AppRuntime::for_test(

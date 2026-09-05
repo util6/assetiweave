@@ -227,7 +227,7 @@ impl CatalogCache {
             .map(str::to_owned);
 
         let mut bytes = Vec::new();
-        let mut reader = response;
+        let reader = response;
         reader
             .take((MAX_CATALOG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)

@@ -1,7 +1,7 @@
 use super::service::AppService;
 use crate::backend::{
     ai_execution::{
-        execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
+        execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
     app_settings,
@@ -263,7 +263,9 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
-        let result = self.execute_session_memory_agent(&job, &detail, context.cancellation());
+        let result = self
+            .execute_session_memory_agent(&job, &detail, context.cancellation())
+            .await;
         let output = match result {
             Ok(output) => output,
             Err(error) => {
@@ -452,7 +454,7 @@ impl AppService {
         Ok(scheduled)
     }
 
-    fn execute_session_memory_agent(
+    async fn execute_session_memory_agent(
         &self,
         job: &SessionMemoryJob,
         detail: &ConversationSessionDetail,
@@ -488,8 +490,9 @@ impl AppService {
             team_tools: None,
             recall_tools: None,
         };
-        let result =
-            execute_agent_blocking(self.agent_runtime.clone(), request).map_err(|error| {
+        let result = execute_agent(self.agent_runtime.clone(), request)
+            .await
+            .map_err(|error| {
                 let view = error.to_view();
                 AppError::Domain {
                     code: view.code,

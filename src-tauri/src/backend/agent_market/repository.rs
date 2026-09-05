@@ -318,26 +318,30 @@ mod tests {
     use crate::backend::store::Database;
     use std::time::SystemTime;
 
-    #[test]
-    fn repository_is_application_scoped_and_upsert_keeps_one_current_row() {
+    #[tokio::test]
+    async fn repository_is_application_scoped_and_upsert_keeps_one_current_row() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-agent-repo-{}.db",
             uuid::Uuid::new_v4()
         ));
-        let database = Database::open_initialized(&path).expect("database");
+        let database = Database::open_initialized_async(&path)
+            .await
+            .expect("database");
         let repository = AgentInstallationRepository::new(database.pool().clone());
         let now = format!("{:?}", SystemTime::now());
         let installation = fixture("agent", "installation", &now);
-        database
-            .block_on(repository.upsert_active(&installation))
+        repository
+            .upsert_active(&installation)
+            .await
             .expect("upsert");
-        database
-            .block_on(repository.upsert_active(&AgentInstallation {
+        repository
+            .upsert_active(&AgentInstallation {
                 installation_id: "replacement".to_string(),
                 ..installation.clone()
-            }))
+            })
+            .await
             .expect("replacement");
-        let rows = database.block_on(repository.list()).expect("list");
+        let rows = repository.list().await.expect("list");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].installation_id, "replacement");
         let _ = std::fs::remove_file(path);

@@ -189,22 +189,16 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
-    #[test]
-    fn client_can_be_built_used_and_dropped_in_blocking_worker() {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            tokio::task::spawn_blocking(|| {
-                let client = build_http_client().unwrap();
-                let second = client.clone();
-                drop(second);
-                drop(client);
-            })
-            .await
-            .unwrap();
-        });
+    #[tokio::test]
+    async fn client_can_be_built_used_and_dropped_in_blocking_worker() {
+        tokio::task::spawn_blocking(|| {
+            let client = build_http_client().unwrap();
+            let second = client.clone();
+            drop(second);
+            drop(client);
+        })
+        .await
+        .unwrap();
     }
 
     #[test]

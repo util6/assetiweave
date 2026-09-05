@@ -28,24 +28,18 @@ pub(crate) async fn list_agent_market(
     state: State<'_, AppState>,
     params: AgentMarketListRequest,
 ) -> AppResult<Vec<AgentMarketItemView>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_agent_market(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_agent_market(params)
+        .await
 }
 
 pub(crate) async fn inspect_agent_market_item(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentMarketItemView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).inspect_agent_market_item(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .inspect_agent_market_item(agent_id)
+        .await
 }
 
 pub(crate) fn refresh_agent_market(
@@ -94,59 +88,44 @@ pub(crate) async fn preview_agent_installation(
     state: State<'_, AppState>,
     params: AgentInstallPreviewRequest,
 ) -> AppResult<AgentInstallPreview> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).preview_agent_installation(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .preview_agent_installation(params)
+        .await
 }
 
 pub(crate) async fn list_installed_agents(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentInstallationView>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_installed_agents()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_installed_agents()
+        .await
 }
 
 pub(crate) async fn get_installed_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).get_installed_agent(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .get_installed_agent(agent_id)
+        .await
 }
 
 pub(crate) async fn check_agent_runtime(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_agent_runtime(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .check_agent_runtime(agent_id)
+        .await
 }
 
 pub(crate) async fn preview_agent_uninstall(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentUninstallPreview> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).preview_agent_uninstall(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .preview_agent_uninstall(agent_id)
+        .await
 }
 
 pub(crate) fn get_agent_lifecycle_task(
@@ -250,36 +229,28 @@ pub(crate) async fn enable_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let service = AppService::from_runtime(&runtime);
-        let installation = service.set_agent_enabled(agent_id, true)?;
-        service
-            .list_installed_agents()?
-            .into_iter()
-            .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    let service = AppService::from_runtime(&state.runtime);
+    let installation = service.set_agent_enabled(agent_id, true).await?;
+    service
+        .list_installed_agents()
+        .await?
+        .into_iter()
+        .find(|item| item.agent_id == installation.agent_id)
+        .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
 }
 
 pub(crate) async fn disable_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let service = AppService::from_runtime(&runtime);
-        let installation = service.set_agent_enabled(agent_id, false)?;
-        service
-            .list_installed_agents()?
-            .into_iter()
-            .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    let service = AppService::from_runtime(&state.runtime);
+    let installation = service.set_agent_enabled(agent_id, false).await?;
+    service
+        .list_installed_agents()
+        .await?
+        .into_iter()
+        .find(|item| item.agent_id == installation.agent_id)
+        .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
 }
 
 fn spawn_install_worker(
@@ -313,21 +284,26 @@ fn spawn_install_worker(
                     "Agent installation cancelled".to_string(),
                 ))
             } else {
-                AppService::from_runtime(&runtime).install_agent_with_cancellation_and_progress(
-                    params,
-                    Some(cancellation_flag.clone()),
-                    Some(Arc::new(move |phase| {
-                        if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
-                            &phase_task_id,
-                            phase,
-                            1,
-                            None,
-                            Vec::new(),
-                        ) {
-                            let _ = phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
-                        }
-                    })),
-                )
+                runtime.block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .install_agent_with_cancellation_and_progress(
+                            params,
+                            Some(cancellation_flag.clone()),
+                            Some(Arc::new(move |phase| {
+                                if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                    &phase_task_id,
+                                    phase,
+                                    1,
+                                    None,
+                                    Vec::new(),
+                                ) {
+                                    let _ = phase_app
+                                        .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                                }
+                            })),
+                        )
+                        .await
+                })
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();
@@ -392,21 +368,26 @@ fn spawn_uninstall_worker(
             let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
-                AppService::from_runtime(&runtime).uninstall_agent_with_cancellation_and_progress(
-                    params,
-                    Some(cancellation_flag.clone()),
-                    Some(Arc::new(move |phase| {
-                        if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
-                            &phase_task_id,
-                            phase,
-                            1,
-                            None,
-                            Vec::new(),
-                        ) {
-                            let _ = phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
-                        }
-                    })),
-                )
+                runtime.block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .uninstall_agent_with_cancellation_and_progress(
+                            params,
+                            Some(cancellation_flag.clone()),
+                            Some(Arc::new(move |phase| {
+                                if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                    &phase_task_id,
+                                    phase,
+                                    1,
+                                    None,
+                                    Vec::new(),
+                                ) {
+                                    let _ = phase_app
+                                        .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                                }
+                            })),
+                        )
+                        .await
+                })
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();

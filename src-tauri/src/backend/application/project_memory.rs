@@ -1,7 +1,7 @@
 use super::prelude::*;
 use crate::backend::{
     ai_execution::{
-        execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
+        execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
     app_settings,
@@ -224,7 +224,9 @@ impl AppService {
             store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
-        let output = match self.execute_project_memory_agent(&job, &inputs, context.cancellation())
+        let output = match self
+            .execute_project_memory_agent(&job, &inputs, context.cancellation())
+            .await
         {
             Ok(output) => output,
             Err(error) => {
@@ -327,7 +329,7 @@ impl AppService {
         Ok(Some(version))
     }
 
-    fn execute_project_memory_agent(
+    async fn execute_project_memory_agent(
         &self,
         job: &ProjectMemoryJob,
         inputs: &ProjectMemoryInputSet,
@@ -339,7 +341,7 @@ impl AppService {
             &settings,
         )?;
         let prompt = build_project_memory_prompt(&job.project_path, inputs)?;
-        let result = execute_agent_blocking(
+        let result = execute_agent(
             self.agent_runtime.clone(),
             AiExecutionRequest {
                 execution_id: format!("project-memory-execution-{}", job.id),
@@ -360,6 +362,7 @@ impl AppService {
                 recall_tools: None,
             },
         )
+        .await
         .map_err(|error| {
             let view = error.to_view();
             AppError::Domain {

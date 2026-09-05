@@ -6,7 +6,7 @@ use crate::backend::host_process::{
 use crate::backend::{
     agents::types::AgentId,
     ai_execution::{
-        execute_agent_blocking, AgentExecutionRuntime, AgentSessionMode, AiExecutionCancellation,
+        execute_agent, AgentExecutionRuntime, AgentSessionMode, AiExecutionCancellation,
         AiExecutionError, AiExecutionLimits, AiExecutionPurpose, AiExecutionRequest,
     },
     runtime::{AppError, AppResult},
@@ -193,54 +193,87 @@ pub(crate) fn check_prompt_optimization_availability_with_settings(
     )
 }
 
-pub(crate) fn test_conversation_translation_connection(
+pub(crate) async fn test_conversation_translation_connection(
     runtime: Arc<dyn AgentExecutionRuntime>,
     params: ConversationTranslationConnectionRequest,
 ) -> OpencodeTranslationAvailability {
     let result = match params.provider {
         ConversationTranslationProvider::Cli => {
             let model = normalize_model(&params.model);
-            model.and_then(|model| {
-                if let Some(agent_id) = params.agent_id.as_deref() {
-                    execute_agent_translation(
-                        runtime,
-                        resolve_agent_id(Some(agent_id), params.cli)?,
-                        params.prompt,
-                        model,
-                        AiExecutionPurpose::ConnectionTest,
-                        connection_test_limits(),
-                    )
-                } else {
-                    match params.cli {
-                        ConversationTranslationCli::Opencode => execute_opencode_translation(
+            match model {
+                Ok(model) => {
+                    if let Some(agent_id) = params.agent_id.as_deref() {
+                        let id = match resolve_agent_id(Some(agent_id), params.cli) {
+                            Ok(id) => id,
+                            Err(e) => {
+                                return OpencodeTranslationAvailability {
+                                    available: false,
+                                    version: None,
+                                    error: Some(e.to_string()),
+                                }
+                            }
+                        };
+                        execute_agent_translation(
                             runtime,
+                            id,
                             params.prompt,
                             model,
                             AiExecutionPurpose::ConnectionTest,
                             connection_test_limits(),
-                        ),
-                        cli => execute_agent_translation(
-                            runtime,
-                            resolve_agent_id(None, cli)?,
-                            params.prompt,
-                            model,
-                            AiExecutionPurpose::ConnectionTest,
-                            connection_test_limits(),
-                        ),
+                        )
+                        .await
+                    } else {
+                        match params.cli {
+                            ConversationTranslationCli::Opencode => {
+                                execute_opencode_translation(
+                                    runtime,
+                                    params.prompt,
+                                    model,
+                                    AiExecutionPurpose::ConnectionTest,
+                                    connection_test_limits(),
+                                )
+                                .await
+                            }
+                            cli => {
+                                let id = match resolve_agent_id(None, cli) {
+                                    Ok(id) => id,
+                                    Err(e) => {
+                                        return OpencodeTranslationAvailability {
+                                            available: false,
+                                            version: None,
+                                            error: Some(e.to_string()),
+                                        }
+                                    }
+                                };
+                                execute_agent_translation(
+                                    runtime,
+                                    id,
+                                    params.prompt,
+                                    model,
+                                    AiExecutionPurpose::ConnectionTest,
+                                    connection_test_limits(),
+                                )
+                                .await
+                            }
+                        }
                     }
                 }
-            })
+                Err(e) => Err(e),
+            }
         }
-        provider => translate_conversation_card(
-            runtime,
-            ConversationTranslationRequest {
-                provider,
-                agent_id: params.agent_id,
-                cli: params.cli,
-                model: params.model,
-                prompt: params.prompt,
-            },
-        ),
+        provider => {
+            translate_conversation_card(
+                runtime,
+                ConversationTranslationRequest {
+                    provider,
+                    agent_id: params.agent_id,
+                    cli: params.cli,
+                    model: params.model,
+                    prompt: params.prompt,
+                },
+            )
+            .await
+        }
     };
 
     match result {
@@ -293,7 +326,7 @@ pub(crate) fn list_conversation_translation_models(
     }
 }
 
-pub(crate) fn translate_conversation_card(
+pub(crate) async fn translate_conversation_card(
     runtime: Arc<dyn AgentExecutionRuntime>,
     params: ConversationTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
@@ -311,8 +344,9 @@ pub(crate) fn translate_conversation_card(
                     AiExecutionPurpose::Translation,
                     AiExecutionLimits::default(),
                 )
+                .await
             } else {
-                translate_with_cli(runtime, params.cli, model, params.prompt)
+                translate_with_cli(runtime, params.cli, model, params.prompt).await
             }
         }
         ConversationTranslationProvider::Google => Err(AppError::Validation(
@@ -324,7 +358,7 @@ pub(crate) fn translate_conversation_card(
     }
 }
 
-pub(crate) fn optimize_prompt(
+pub(crate) async fn optimize_prompt(
     runtime: Arc<dyn AgentExecutionRuntime>,
     params: PromptOptimizationRequest,
 ) -> AppResult<PromptOptimizationResult> {
@@ -342,7 +376,8 @@ pub(crate) fn optimize_prompt(
         model,
         AiExecutionPurpose::PromptOptimization,
         AiExecutionLimits::default(),
-    )?;
+    )
+    .await?;
     Ok(PromptOptimizationResult {
         optimized_text: result.translated_text,
     })
@@ -362,7 +397,7 @@ pub(crate) fn prepare_opencode_agent_translation(
     Ok((agent_id, params.prompt.trim().to_string(), model))
 }
 
-pub(crate) fn translate_conversation_card_with_opencode(
+pub(crate) async fn translate_conversation_card_with_opencode(
     runtime: Arc<dyn AgentExecutionRuntime>,
     params: OpencodeTranslationRequest,
 ) -> AppResult<OpencodeTranslationResult> {
@@ -374,30 +409,37 @@ pub(crate) fn translate_conversation_card_with_opencode(
         AiExecutionPurpose::Translation,
         AiExecutionLimits::default(),
     )
+    .await
 }
 
-fn translate_with_cli(
+async fn translate_with_cli(
     runtime: Arc<dyn AgentExecutionRuntime>,
     cli: ConversationTranslationCli,
     model: Option<String>,
     prompt: String,
 ) -> AppResult<OpencodeTranslationResult> {
     match cli {
-        ConversationTranslationCli::Opencode => execute_opencode_translation(
-            runtime,
-            prompt,
-            model,
-            AiExecutionPurpose::Translation,
-            AiExecutionLimits::default(),
-        ),
-        cli => execute_agent_translation(
-            runtime,
-            resolve_agent_id(None, cli)?,
-            prompt,
-            model,
-            AiExecutionPurpose::Translation,
-            AiExecutionLimits::default(),
-        ),
+        ConversationTranslationCli::Opencode => {
+            execute_opencode_translation(
+                runtime,
+                prompt,
+                model,
+                AiExecutionPurpose::Translation,
+                AiExecutionLimits::default(),
+            )
+            .await
+        }
+        cli => {
+            execute_agent_translation(
+                runtime,
+                resolve_agent_id(None, cli)?,
+                prompt,
+                model,
+                AiExecutionPurpose::Translation,
+                AiExecutionLimits::default(),
+            )
+            .await
+        }
     }
 }
 
@@ -416,7 +458,7 @@ fn default_translation_cli() -> ConversationTranslationCli {
     ConversationTranslationCli::Opencode
 }
 
-fn execute_agent_translation(
+async fn execute_agent_translation(
     runtime: Arc<dyn AgentExecutionRuntime>,
     agent_id: AgentId,
     prompt: String,
@@ -444,13 +486,15 @@ fn execute_agent_translation(
         recall_tools: None,
     };
     request.validate().map_err(app_error_from_ai)?;
-    let result = execute_agent_blocking(runtime, request).map_err(app_error_from_ai)?;
+    let result = execute_agent(runtime, request)
+        .await
+        .map_err(app_error_from_ai)?;
     Ok(OpencodeTranslationResult {
         translated_text: result.text,
     })
 }
 
-fn execute_opencode_translation(
+async fn execute_opencode_translation(
     runtime: Arc<dyn AgentExecutionRuntime>,
     prompt: String,
     model: Option<String>,
@@ -459,7 +503,7 @@ fn execute_opencode_translation(
 ) -> AppResult<OpencodeTranslationResult> {
     validate_translation_prompt(&prompt)?;
     let prompt = prompt.trim().to_string();
-    execute_agent_translation(runtime, opencode_agent_id(), prompt, model, purpose, limits)
+    execute_agent_translation(runtime, opencode_agent_id(), prompt, model, purpose, limits).await
 }
 
 fn opencode_agent_id() -> AgentId {
@@ -653,8 +697,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tr_01_02_03_opencode_translation_maps_to_agent_runtime_without_legacy_run() {
+    #[tokio::test]
+    async fn tr_01_02_03_opencode_translation_maps_to_agent_runtime_without_legacy_run() {
         let runtime = FakeRuntime::new("译文");
 
         let result = translate_conversation_card(
@@ -667,6 +711,7 @@ mod tests {
                 prompt: "  translate this  ".to_string(),
             },
         )
+        .await
         .unwrap();
 
         assert_eq!(result.translated_text, "译文");
@@ -678,8 +723,8 @@ mod tests {
         assert_eq!(requests[0].prompt, "translate this");
     }
 
-    #[test]
-    fn tr_01_gemini_translation_maps_to_agent_runtime_without_special_process_logic() {
+    #[tokio::test]
+    async fn tr_01_gemini_translation_maps_to_agent_runtime_without_special_process_logic() {
         let runtime = FakeRuntime::new("Gemini 译文");
 
         let result = translate_conversation_card(
@@ -692,6 +737,7 @@ mod tests {
                 prompt: "translate with Gemini".to_string(),
             },
         )
+        .await
         .unwrap();
 
         assert_eq!(result.translated_text, "Gemini 译文");
@@ -702,8 +748,8 @@ mod tests {
         assert_eq!(requests[0].model.as_deref(), Some("gemini-2.5-pro"));
     }
 
-    #[test]
-    fn prompt_optimization_has_a_distinct_execution_purpose_and_result_contract() {
+    #[tokio::test]
+    async fn prompt_optimization_has_a_distinct_execution_purpose_and_result_contract() {
         let runtime = FakeRuntime::new("优化后的提示词");
 
         let result = optimize_prompt(
@@ -716,6 +762,7 @@ mod tests {
                 prompt: "optimize this prompt".to_string(),
             },
         )
+        .await
         .unwrap();
 
         assert_eq!(result.optimized_text, "优化后的提示词");
@@ -725,8 +772,8 @@ mod tests {
         assert_eq!(requests[0].prompt, "optimize this prompt");
     }
 
-    #[test]
-    fn tr_01_gemini_connection_test_uses_the_same_agent_runtime() {
+    #[tokio::test]
+    async fn tr_01_gemini_connection_test_uses_the_same_agent_runtime() {
         let runtime = FakeRuntime::new("connection ok");
 
         let availability = test_conversation_translation_connection(
@@ -738,7 +785,8 @@ mod tests {
                 model: "gemini-2.5-pro".to_string(),
                 prompt: "connection test".to_string(),
             },
-        );
+        )
+        .await;
 
         assert!(availability.available);
         let requests = runtime.requests.lock().unwrap();
@@ -747,8 +795,8 @@ mod tests {
         assert_eq!(requests[0].purpose, AiExecutionPurpose::ConnectionTest);
     }
 
-    #[test]
-    fn tr_03_compatibility_opencode_request_maps_runtime_text() {
+    #[tokio::test]
+    async fn tr_03_compatibility_opencode_request_maps_runtime_text() {
         let runtime = FakeRuntime::new("compat result");
 
         let result = translate_conversation_card_with_opencode(
@@ -757,6 +805,7 @@ mod tests {
                 prompt: "translate".to_string(),
             },
         )
+        .await
         .unwrap();
 
         assert_eq!(result.translated_text, "compat result");
@@ -765,8 +814,8 @@ mod tests {
         assert_eq!(requests[0].model, None);
     }
 
-    #[test]
-    fn tr_04_05_invalid_prompt_and_model_fail_before_runtime() {
+    #[tokio::test]
+    async fn tr_04_05_invalid_prompt_and_model_fail_before_runtime() {
         let runtime = FakeRuntime::new("unused");
 
         let oversized = translate_conversation_card(
@@ -778,7 +827,8 @@ mod tests {
                 model: String::new(),
                 prompt: "x".repeat(200_001),
             },
-        );
+        )
+        .await;
         let invalid_model = translate_conversation_card(
             runtime.clone(),
             ConversationTranslationRequest {
@@ -788,7 +838,8 @@ mod tests {
                 model: "bad\nmodel".to_string(),
                 prompt: "translate".to_string(),
             },
-        );
+        )
+        .await;
 
         assert!(matches!(
             oversized.unwrap_err(),
@@ -801,8 +852,8 @@ mod tests {
         assert!(runtime.requests.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn tr_06_connection_test_uses_agent_runtime_and_shorter_limit() {
+    #[tokio::test]
+    async fn tr_06_connection_test_uses_agent_runtime_and_shorter_limit() {
         let runtime = FakeRuntime::new("OK");
 
         let availability = test_conversation_translation_connection(
@@ -814,7 +865,8 @@ mod tests {
                 model: "model/a".to_string(),
                 prompt: "Reply with OK only.".to_string(),
             },
-        );
+        )
+        .await;
 
         assert!(availability.available);
         let requests = runtime.requests.lock().unwrap();
@@ -859,8 +911,8 @@ mod tests {
         assert_eq!(parsed.last().map(String::as_str), Some("model/499"));
     }
 
-    #[test]
-    fn tr_10_reserved_providers_keep_existing_errors_without_execution() {
+    #[tokio::test]
+    async fn tr_10_reserved_providers_keep_existing_errors_without_execution() {
         let runtime = FakeRuntime::new("unused");
 
         let google = translate_conversation_card(
@@ -873,6 +925,7 @@ mod tests {
                 prompt: "translate".to_string(),
             },
         )
+        .await
         .unwrap_err();
         let apple = translate_conversation_card(
             runtime.clone(),
@@ -884,6 +937,7 @@ mod tests {
                 prompt: "translate".to_string(),
             },
         )
+        .await
         .unwrap_err();
 
         assert_eq!(

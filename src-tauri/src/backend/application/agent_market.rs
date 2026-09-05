@@ -138,12 +138,12 @@ impl AppService {
         })
     }
 
-    pub(crate) fn list_agent_market(
+    pub(crate) async fn list_agent_market(
         &self,
         request: AgentMarketListRequest,
     ) -> AppResult<Vec<AgentMarketItemView>> {
         let catalog = CatalogCache::best_available().map_err(AppError::external)?;
-        let installations = self.list_agent_installations()?;
+        let installations = self.list_agent_installations().await?;
         let context = host_distribution_context();
         let query = request
             .query
@@ -207,25 +207,27 @@ impl AppService {
             .collect::<Result<Vec<_>, AppError>>()
     }
 
-    pub(crate) fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
+    pub(crate) async fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        Ok(self
-            .db
-            .block_on(repository.list())
-            .map_err(AppError::external)?)
+        repository.list().await.map_err(AppError::external)
     }
 
-    pub(crate) fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
+    pub(crate) async fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
         Ok(self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .iter()
             .map(installation_view)
             .collect())
     }
 
-    pub(crate) fn get_installed_agent(&self, agent_id: String) -> AppResult<AgentInstallationView> {
-        self.list_agent_installations()?
+    pub(crate) async fn get_installed_agent(
+        &self,
+        agent_id: String,
+    ) -> AppResult<AgentInstallationView> {
+        self.list_agent_installations()
+            .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id)
             .map(|installation| installation_view(&installation))
@@ -238,12 +240,15 @@ impl AppService {
             })
     }
 
-    pub(crate) fn check_agent_runtime(&self, agent_id: String) -> AppResult<AgentInstallationView> {
+    pub(crate) async fn check_agent_runtime(
+        &self,
+        agent_id: String,
+    ) -> AppResult<AgentInstallationView> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        let mut installation = self
-            .db
-            .block_on(repository.get(&agent_id))
+        let mut installation = repository
+            .get(&agent_id)
+            .await
             .map_err(AppError::external)?
             .ok_or_else(|| {
                 AppError::from(AgentMarketError::new(
@@ -333,16 +338,18 @@ impl AppService {
         }
         installation.runtime_checked_at = Some(now.clone());
         installation.updated_at = now;
-        self.db
-            .block_on(repository.update_health(&installation))
+        repository
+            .update_health(&installation)
+            .await
             .map_err(AppError::external)?;
-        self.db
-            .block_on(self.agent_runtime_manager.reload())
+        self.agent_runtime_manager
+            .reload()
+            .await
             .map_err(AppError::external)?;
         Ok(installation_view(&installation))
     }
 
-    pub(crate) fn inspect_agent_market_item(
+    pub(crate) async fn inspect_agent_market_item(
         &self,
         agent_id: String,
     ) -> AppResult<AgentMarketItemView> {
@@ -350,7 +357,8 @@ impl AppService {
             query: Some(agent_id.clone()),
             protocol: None,
             installed_only: false,
-        })?
+        })
+        .await?
         .into_iter()
         .find(|item| item.id == agent_id)
         .ok_or_else(|| {
@@ -362,7 +370,7 @@ impl AppService {
         })
     }
 
-    pub(crate) fn preview_agent_installation(
+    pub(crate) async fn preview_agent_installation(
         &self,
         request: AgentInstallPreviewRequest,
     ) -> AppResult<AgentInstallPreview> {
@@ -397,7 +405,8 @@ impl AppService {
             .ok_or_else(|| "distribution_unsupported".to_string())
             .map_err(AppError::external)?;
         let current = self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .into_iter()
             .find(|installation| installation.agent_id == request.agent_id);
         match request.action.as_str() {
@@ -458,12 +467,13 @@ impl AppService {
         })
     }
 
-    pub(crate) fn preview_agent_uninstall(
+    pub(crate) async fn preview_agent_uninstall(
         &self,
         agent_id: String,
     ) -> AppResult<AgentUninstallPreview> {
         let installation = self
-            .list_agent_installations()?
+            .list_agent_installations()
+            .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id)
             .ok_or_else(|| {
@@ -514,22 +524,23 @@ impl AppService {
         })
     }
 
-    pub(crate) fn install_agent(
+    pub(crate) async fn install_agent(
         &self,
         request: crate::backend::agent_market::types::AgentInstallStartRequest,
     ) -> AppResult<AgentInstallResult> {
-        self.install_agent_with_cancellation(request, None)
+        self.install_agent_with_cancellation(request, None).await
     }
 
-    pub(crate) fn install_agent_with_cancellation(
+    pub(crate) async fn install_agent_with_cancellation(
         &self,
         request: crate::backend::agent_market::types::AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
     ) -> AppResult<AgentInstallResult> {
         self.install_agent_with_cancellation_and_progress(request, cancellation, None)
+            .await
     }
 
-    pub(crate) fn install_agent_with_cancellation_and_progress(
+    pub(crate) async fn install_agent_with_cancellation_and_progress(
         &self,
         request: crate::backend::agent_market::types::AgentInstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
@@ -538,12 +549,9 @@ impl AppService {
         >,
     ) -> AppResult<AgentInstallResult> {
         let lifecycle = self.agent_lifecycle()?;
-        self.db
-            .block_on(lifecycle.install_with_cancellation_and_progress(
-                request,
-                cancellation,
-                phase_sink,
-            ))
+        lifecycle
+            .install_with_cancellation_and_progress(request, cancellation, phase_sink)
+            .await
             .map(|outcome| AgentInstallResult {
                 installation: installation_view(&outcome.installation),
                 warnings: outcome.warnings,
@@ -551,22 +559,23 @@ impl AppService {
             .map_err(AppError::from)
     }
 
-    pub(crate) fn uninstall_agent(
+    pub(crate) async fn uninstall_agent(
         &self,
         request: crate::backend::agent_market::types::AgentUninstallStartRequest,
     ) -> AppResult<AgentInstallationView> {
-        self.uninstall_agent_with_cancellation(request, None)
+        self.uninstall_agent_with_cancellation(request, None).await
     }
 
-    pub(crate) fn uninstall_agent_with_cancellation(
+    pub(crate) async fn uninstall_agent_with_cancellation(
         &self,
         request: crate::backend::agent_market::types::AgentUninstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
     ) -> AppResult<AgentInstallationView> {
         self.uninstall_agent_with_cancellation_and_progress(request, cancellation, None)
+            .await
     }
 
-    pub(crate) fn uninstall_agent_with_cancellation_and_progress(
+    pub(crate) async fn uninstall_agent_with_cancellation_and_progress(
         &self,
         request: crate::backend::agent_market::types::AgentUninstallStartRequest,
         cancellation: Option<Arc<AtomicBool>>,
@@ -598,40 +607,36 @@ impl AppService {
         let pool = self.db.pool().clone();
         let runtime = self.runtime.clone();
         let lifecycle = self.agent_lifecycle()?;
-        let result = self.db.block_on(async move {
-            if assignments_changed {
-                let saved =
-                    crate::backend::app_settings::save_app_settings_sqlx(&pool, cleared_settings)
-                        .await
-                        .map_err(|e| {
-                            AgentMarketError::new("settings_save_failed", &e.code(), false)
-                        })?;
-                runtime.update_app_settings_value(saved.settings);
+        if assignments_changed {
+            let saved =
+                crate::backend::app_settings::save_app_settings_sqlx(&pool, cleared_settings)
+                    .await
+                    .map_err(|e| AgentMarketError::new("settings_save_failed", &e.code(), false))?;
+            runtime.update_app_settings_value(saved.settings);
+        }
+        let res = lifecycle
+            .uninstall_with_cancellation_and_progress(request, cancellation, phase_sink)
+            .await;
+        if res.is_err() && assignments_changed {
+            if let Ok(restored) =
+                crate::backend::app_settings::save_app_settings_sqlx(&pool, settings_before).await
+            {
+                runtime.update_app_settings_value(restored.settings);
             }
-            let res = lifecycle
-                .uninstall_with_cancellation_and_progress(request, cancellation, phase_sink)
-                .await;
-            if res.is_err() && assignments_changed {
-                if let Ok(restored) =
-                    crate::backend::app_settings::save_app_settings_sqlx(&pool, settings_before)
-                        .await
-                {
-                    runtime.update_app_settings_value(restored.settings);
-                }
-            }
-            res.map(|installation| installation_view(&installation))
-        });
-        result.map_err(AppError::from)
+        }
+        res.map(|installation| installation_view(&installation))
+            .map_err(AppError::from)
     }
 
-    pub(crate) fn set_agent_enabled(
+    pub(crate) async fn set_agent_enabled(
         &self,
         agent_id: String,
         enabled: bool,
     ) -> AppResult<AgentInstallationView> {
         let lifecycle = self.agent_lifecycle()?;
-        self.db
-            .block_on(lifecycle.set_enabled(&agent_id, enabled))
+        lifecycle
+            .set_enabled(&agent_id, enabled)
+            .await
             .map(|installation| installation_view(&installation))
             .map_err(AppError::from)
     }

@@ -499,24 +499,24 @@ impl AppRuntime {
             "domain": "agent_market",
             "operation": "startup_health_refresh",
         });
-        let spawn = self.task_runtime.spawn(
-            spec,
-            Box::new(move |context| {
+        let spawn = self
+            .task_runtime
+            .spawn_async(spec, move |context| async move {
                 if context.is_cancelled() {
                     return Err(AppError::Canceled(
                         "Agent startup health refresh was cancelled".to_string(),
                     ));
                 }
                 let summary = runtime_manager
-                    .refresh_installed_agent_health_blocking()
+                    .refresh_installed_agent_health()
+                    .await
                     .map_err(AppError::External)?;
                 Ok(serde_json::json!({
                     "checked": summary.checked,
                     "available": summary.available,
                     "unavailable": summary.unavailable,
                 }))
-            }),
-        );
+            });
         if let Err(error) = spawn {
             crate::backend::operation_log::log_warn(
                 "app.startup.agent_health_refresh",

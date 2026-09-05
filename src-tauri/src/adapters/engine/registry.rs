@@ -3126,7 +3126,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::card_translation::ConversationTranslationRequest,
-        Service => |service, params| service.translate_conversation_card(params),
+        ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),
@@ -3143,7 +3143,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::card_translation::PromptOptimizationRequest,
-        Service => |service, params| service.optimize_prompt(params),
+        ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
             param!("cli", "CLI Agent when provider is cli"),
@@ -3184,7 +3184,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agent_market::types::AgentMarketListRequest,
-        Service => |service, params| service.list_agent_market(params),
+        ServiceAsync => |service, params| service.list_agent_market(params).await,
         &[
             param!("query", "Optional Agent search query"),
             param!("protocol", "Optional Agent protocol filter"),
@@ -3200,7 +3200,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentMarketInspectParams,
-        Service => |service, params| service.inspect_agent_market_item(params.agent_id),
+        ServiceAsync => |service, params| service.inspect_agent_market_item(params.agent_id).await,
         &[param!("agentId", "Curated Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent market inspect")
     ),
@@ -3224,7 +3224,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agent_market::types::AgentInstallPreviewRequest,
-        Service => |service, params| service.preview_agent_installation(params),
+        ServiceAsync => |service, params| service.preview_agent_installation(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
             param!("distributionId", "Optional distribution identifier", ["distribution_id"]),
@@ -3240,7 +3240,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_installed_agents(),
+        ServiceAsync => |service, _params| service.list_installed_agents().await,
         &[],
         Some("assetiweave-cli agent installed")
     ),
@@ -3252,7 +3252,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentInstalledGetParams,
-        Service => |service, params| service.get_installed_agent(params.agent_id),
+        ServiceAsync => |service, params| service.get_installed_agent(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent installed get")
     ),
@@ -3264,7 +3264,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentUninstallPreviewParams,
-        Service => |service, params| service.preview_agent_uninstall(params.agent_id),
+        ServiceAsync => |service, params| service.preview_agent_uninstall(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent uninstall preview")
     ),
@@ -3276,7 +3276,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::agent_market::types::AgentInstallStartRequest,
-        Service => |service, params| service.install_agent(params),
+        ServiceAsync => |service, params| service.install_agent(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
             param!("action", "install, update or reinstall"),
@@ -3295,7 +3295,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::agent_market::types::AgentUninstallStartRequest,
-        Service => |service, params| service.uninstall_agent(params),
+        ServiceAsync => |service, params| service.uninstall_agent(params).await,
         &[
             param!("agentId", "Installed Agent identifier", ["agent_id"]),
             param!("clearCapabilityAssignments", "Explicit capability assignments to clear", ["clear_capability_assignments"]),
@@ -3311,7 +3311,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentToggleParams,
-        Service => |service, params| service.set_agent_enabled(params.agent_id, true),
+        ServiceAsync => |service, params| service.set_agent_enabled(params.agent_id, true).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent enable <agent-id>")
     ),
@@ -3323,7 +3323,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentToggleParams,
-        Service => |service, params| service.set_agent_enabled(params.agent_id, false),
+        ServiceAsync => |service, params| service.set_agent_enabled(params.agent_id, false).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent disable <agent-id>")
     ),
@@ -3335,7 +3335,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agents::types::AgentConnectionCheckRequest,
-        Service => |service, params| service.check_agent_connection(params),
+        ServiceAsync => |service, params| service.check_agent_connection(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"]),
             param!("mode", "Probe mode: installation or connection")
@@ -3350,7 +3350,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentRuntimeCheckParams,
-        Service => |service, params| service.check_agent_runtime(params.agent_id),
+        ServiceAsync => |service, params| service.check_agent_runtime(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent check")
     ),
@@ -3362,7 +3362,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agents::types::AgentModelsRequest,
-        Service => |service, params| service.list_agent_models(params),
+        ServiceAsync => |service, params| service.list_agent_models(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"])
         ],
@@ -3388,7 +3388,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::OpencodeTranslationRequest,
-        Service => |service, params| service.translate_conversation_card_with_opencode(params),
+        ServiceAsync => |service, params| service.translate_conversation_card_with_opencode(params).await,
         &[param!("prompt", "Rendered translation prompt passed to the OpenCode ACP agent")],
         None
     ),
@@ -3400,7 +3400,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::ConversationTranslationRequest,
-        Service => |service, params| service.translate_conversation_card(params),
+        ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),
@@ -3417,7 +3417,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::PromptOptimizationRequest,
-        Service => |service, params| service.optimize_prompt(params),
+        ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
             param!("cli", "CLI Agent when provider is cli"),
@@ -3446,7 +3446,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::ConversationTranslationConnectionRequest,
-        Service => |service, params| service.test_conversation_translation_connection(params),
+        ServiceAsync => |service, params| service.test_conversation_translation_connection(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),

@@ -298,27 +298,6 @@ impl AgentRuntimeManager {
         Ok(summary)
     }
 
-    pub(crate) fn refresh_installed_agent_health_blocking(
-        self: Arc<Self>,
-    ) -> Result<AgentHealthRefreshSummary, String> {
-        run_process_capable_runtime(
-            "aiw-agent-startup-health",
-            "The Agent startup health refresh did not complete.",
-            async move { self.refresh_installed_agent_health().await },
-        )
-    }
-
-    pub(crate) fn refresh_native_health_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentConnectionResult, String> {
-        run_process_capable_runtime(
-            "aiw-native-health",
-            "The native Agent health refresh did not complete.",
-            async move { self.refresh_native_health(&agent_id).await },
-        )
-    }
-
     pub(crate) async fn refresh_native_health(
         &self,
         agent_id: &str,
@@ -326,17 +305,6 @@ impl AgentRuntimeManager {
         let result = self.probe_native_health(agent_id).await?;
         self.reload().await?;
         Ok(result)
-    }
-
-    pub(crate) fn refresh_native_models_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentModelsResult, String> {
-        run_process_capable_runtime(
-            "aiw-native-models",
-            "The native Agent model discovery did not complete.",
-            async move { self.refresh_native_models(&agent_id).await },
-        )
     }
 
     pub(crate) async fn refresh_native_models(
@@ -518,17 +486,6 @@ impl AgentRuntimeManager {
         Ok(result)
     }
 
-    pub(crate) fn refresh_acp_health_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentModelsResult, String> {
-        run_process_capable_runtime(
-            "aiw-acp-health",
-            "The ACP health refresh did not complete.",
-            async move { self.refresh_acp_health(&agent_id).await },
-        )
-    }
-
     async fn probe_acp_health(&self, agent_id: &str) -> Result<AgentModelsResult, String> {
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
@@ -653,28 +610,6 @@ impl AgentRuntimeManager {
         self.repository.update_health(&installation).await?;
         Ok(result)
     }
-}
-
-fn run_process_capable_runtime<T, F>(
-    thread_name: &str,
-    join_error: &str,
-    future: F,
-) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: Future<Output = Result<T, String>> + Send + 'static,
-{
-    let handle = std::thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?;
-            runtime.block_on(future)
-        })
-        .map_err(|error| error.to_string())?;
-    handle.join().map_err(|_| join_error.to_string())?
 }
 
 fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
@@ -860,7 +795,7 @@ pub(crate) fn definition_from_installation(
     {
         return Err("runtime definition may not invoke a package manager".to_string());
     }
-    let mut definition = AgentDefinition {
+    let definition = AgentDefinition {
         id,
         installation_id: Some(installation.installation_id.clone()),
         display_name: resolved.display_name,

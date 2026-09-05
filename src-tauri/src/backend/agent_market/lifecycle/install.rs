@@ -9,7 +9,7 @@ use crate::backend::{
         registry::AgentRegistry,
         types::{AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol},
     },
-    ai_execution::{check_agent_connection_blocking, executor::AgentExecutor},
+    ai_execution::{check_agent_connection, executor::AgentExecutor},
 };
 
 use super::{
@@ -200,7 +200,7 @@ async fn materialize_and_activate(
     let definition = definition_for(item, distribution, &materialized)?;
     context.report_phase(LifecycleTaskPhase::ProbingProtocol);
     let (protocol_status, protocol_error, mut warnings) =
-        conformance(&definition, &service.runtime_root);
+        conformance(&definition, &service.runtime_root).await;
     if !matches!(protocol_status, ProtocolStatus::Ready)
         && matches!(materialized.ownership, Ownership::Managed)
     {
@@ -550,7 +550,7 @@ fn session_cleanup_args(distribution: &Distribution) -> Option<Vec<String>> {
     }
 }
 
-fn conformance(
+async fn conformance(
     definition: &AgentDefinition,
     workspace_root: &Path,
 ) -> (ProtocolStatus, Option<AgentMarketError>, Vec<String>) {
@@ -579,11 +579,12 @@ fn conformance(
         1,
     );
     let id = definition.id.clone();
-    let result = check_agent_connection_blocking(
+    let result = check_agent_connection(
         Arc::new(executor),
         id,
         crate::backend::agents::types::AgentConnectionCheckMode::Connection,
-    );
+    )
+    .await;
     if result.connected {
         (ProtocolStatus::Ready, None, Vec::new())
     } else {

@@ -2,7 +2,7 @@ use super::prelude::*;
 use crate::backend::{
     agents::types::AgentId,
     ai_execution::{
-        execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
+        execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
     models::{ConversationPartKind, ConversationPartRole, ConversationSourceKind},
@@ -357,15 +357,7 @@ impl AppService {
             }),
         };
         let agent_runtime = self.agent_runtime.clone();
-        let execution_result =
-            tokio::task::spawn_blocking(move || execute_agent_blocking(agent_runtime, request))
-                .await
-                .map_err(|join_err| AppError::Domain {
-                    code: "internal_error".to_string(),
-                    message: format!("Recall agent task join error: {join_err}"),
-                    retryable: false,
-                    details: None,
-                })?;
+        let execution_result = execute_agent(agent_runtime, request).await;
         let result = match execution_result {
             Ok(result) => result,
             Err(error) => {

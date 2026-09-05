@@ -1859,12 +1859,9 @@ pub(crate) async fn check_agent_connection(
     state: State<'_, AppState>,
     params: AgentConnectionCheckRequest,
 ) -> RuntimeAppResult<AgentConnectionResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_agent_connection(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .check_agent_connection(params)
+        .await
 }
 
 #[tauri::command]
@@ -1872,36 +1869,23 @@ pub(crate) async fn list_agent_models(
     state: State<'_, AppState>,
     params: AgentModelsRequest,
 ) -> RuntimeAppResult<AgentModelsResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_agent_models(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_agent_models(params)
+        .await
 }
 
 #[tauri::command]
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<OpencodeTranslationAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_opencode_translation_availability()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).check_opencode_translation_availability()
 }
 
 #[tauri::command]
 pub(crate) async fn check_prompt_optimization_availability(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_prompt_optimization_availability()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).check_prompt_optimization_availability()
 }
 
 #[tauri::command]
@@ -1909,12 +1893,9 @@ pub(crate) async fn translate_conversation_card_with_opencode(
     state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
 ) -> RuntimeAppResult<OpencodeTranslationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).translate_conversation_card_with_opencode(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .translate_conversation_card_with_opencode(params)
+        .await
 }
 
 #[tauri::command]
@@ -1922,12 +1903,9 @@ pub(crate) async fn translate_conversation_card(
     state: State<'_, AppState>,
     params: ConversationTranslationRequest,
 ) -> RuntimeAppResult<OpencodeTranslationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).translate_conversation_card(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .translate_conversation_card(params)
+        .await
 }
 
 #[tauri::command]
@@ -1935,12 +1913,9 @@ pub(crate) async fn optimize_prompt(
     state: State<'_, AppState>,
     params: PromptOptimizationRequest,
 ) -> RuntimeAppResult<PromptOptimizationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).optimize_prompt(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .optimize_prompt(params)
+        .await
 }
 
 #[tauri::command]
@@ -1948,12 +1923,9 @@ pub(crate) async fn test_conversation_translation_connection(
     state: State<'_, AppState>,
     params: ConversationTranslationConnectionRequest,
 ) -> RuntimeAppResult<OpencodeTranslationAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).test_conversation_translation_connection(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .test_conversation_translation_connection(params)
+        .await
 }
 
 #[tauri::command]
@@ -1961,12 +1933,7 @@ pub(crate) async fn list_conversation_translation_models(
     state: State<'_, AppState>,
     params: ConversationTranslationModelsRequest,
 ) -> RuntimeAppResult<ConversationTranslationModelsResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_conversation_translation_models(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).list_conversation_translation_models(params)
 }
 
 trait AiExecutionTaskEmitter: Send + Sync {
