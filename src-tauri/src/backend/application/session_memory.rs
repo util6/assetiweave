@@ -33,8 +33,7 @@ const MAX_AGENT_OUTPUT_LENGTH: usize = 200_000;
 const MAX_SESSION_MEMORY_CONCURRENCY: usize = 4;
 
 struct SessionMemoryLeaseGuard {
-    stop: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl SessionMemoryLeaseGuard {
@@ -45,44 +44,41 @@ impl SessionMemoryLeaseGuard {
         ownership_token: String,
         task_cancellation: CancellationToken,
     ) -> Self {
-        let stop = CancellationToken::new();
-        let thread_stop = stop.clone();
-        let join = thread::Builder::new()
-            .name("aiw-session-memory-heartbeat".to_string())
-            .spawn(move || {
-                while !thread_stop.is_cancelled() && !task_cancellation.is_cancelled() {
-                    thread::sleep(StdDuration::from_secs(1));
-                    if thread_stop.is_cancelled() || task_cancellation.is_cancelled() {
-                        break;
+        let task = tokio::spawn(async move {
+            let pool = database.pool().clone();
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(StdDuration::from_secs(1)) => {
+                        if task_cancellation.is_cancelled() {
+                            break;
+                        }
+                        let now = Utc::now().to_rfc3339();
+                        let healthy = store::heartbeat_session_memory_job_sqlx(
+                            &pool,
+                            &tenant_id,
+                            &job_id,
+                            &ownership_token,
+                            &now,
+                            store::SESSION_MEMORY_JOB_LEASE,
+                        )
+                        .await;
+                        if !healthy.unwrap_or(false) {
+                            break;
+                        }
                     }
-                    let now = Utc::now().to_rfc3339();
-                    let healthy = database.run_sync(store::heartbeat_session_memory_job_sqlx(
-                        database.pool(),
-                        &tenant_id,
-                        &job_id,
-                        &ownership_token,
-                        &now,
-                        store::SESSION_MEMORY_JOB_LEASE,
-                    ));
-                    if !healthy.unwrap_or(false) {
+                    _ = task_cancellation.cancelled() => {
                         break;
                     }
                 }
-            })
-            .expect("Session Memory heartbeat thread must start");
-        Self {
-            stop,
-            join: Some(join),
-        }
+            }
+        });
+        Self { task }
     }
 }
 
 impl Drop for SessionMemoryLeaseGuard {
     fn drop(&mut self) {
-        self.stop.cancel();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
+        self.task.abort();
     }
 }
 
@@ -145,7 +141,7 @@ struct PromptEvidence<'a> {
 }
 
 impl AppService {
-    pub(crate) fn enqueue_session_memory_jobs_at(
+    pub(crate) async fn enqueue_session_memory_jobs_at(
         &self,
         source_id: &str,
         sync_run_id: &str,
@@ -158,28 +154,28 @@ impl AppService {
         let tenant_id = self.tenant_id().to_string();
         let internal_agent_workspace =
             crate::backend::ai_execution::agent_execution_workspace_root(&self.db_path);
-        self.runtime
-            .run_sync(store::enqueue_session_memory_jobs_sqlx(
-                &pool,
-                &tenant_id,
-                source_id,
-                sync_run_id,
-                source_revision,
-                source_event_id,
-                changed_session_ids,
-                &internal_agent_workspace,
-                &now.to_rfc3339(),
-            ))
+        store::enqueue_session_memory_jobs_sqlx(
+            &pool,
+            &tenant_id,
+            source_id,
+            sync_run_id,
+            source_revision,
+            source_event_id,
+            changed_session_ids,
+            &internal_agent_workspace,
+            &now.to_rfc3339(),
+        )
+        .await
     }
 
-    pub(crate) fn run_session_memory_phase1(
+    pub(crate) async fn run_session_memory_phase1(
         &self,
         job_id: &str,
     ) -> AppResult<Option<SessionMemory>> {
-        self.run_session_memory_phase1_at(job_id, Utc::now())
+        self.run_session_memory_phase1_at(job_id, Utc::now()).await
     }
 
-    pub(crate) fn run_session_memory_phase1_at(
+    pub(crate) async fn run_session_memory_phase1_at(
         &self,
         job_id: &str,
         now: DateTime<Utc>,
@@ -191,9 +187,10 @@ impl AppService {
             now,
             TaskContext::detached(),
         )
+        .await
     }
 
-    pub(crate) fn run_session_memory_phase1_for_tenant_at(
+    pub(crate) async fn run_session_memory_phase1_for_tenant_at(
         &self,
         tenant_id: &str,
         job_id: &str,
@@ -202,11 +199,8 @@ impl AppService {
     ) -> AppResult<Option<SessionMemory>> {
         let now_text = now.to_rfc3339();
         let pool = self.db.pool().clone();
-        let job = self
-            .runtime
-            .run_sync(store::load_session_memory_job_sqlx(
-                &pool, tenant_id, job_id,
-            ))?
+        let job = store::load_session_memory_job_sqlx(&pool, tenant_id, job_id)
+            .await?
             .ok_or_else(|| AppError::NotFound("Session Memory job not found".to_string()))?;
         if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)?
             || crate::backend::app_settings::memory_session_excluded_for_database(
@@ -218,10 +212,7 @@ impl AppService {
                 &job.source_id,
             )?
         {
-            self.runtime
-                .run_sync(store::cancel_session_memory_job_sqlx(
-                    &pool, tenant_id, job_id, &now_text,
-                ))?;
+            store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
         if matches!(
@@ -231,41 +222,34 @@ impl AppService {
                 | SessionMemoryJobStatus::Canceled
                 | SessionMemoryJobStatus::Running
         ) {
-            return self
-                .runtime
-                .run_sync(store::load_session_memory_for_job_sqlx(
-                    &pool, tenant_id, &job,
-                ));
+            return store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await;
         }
 
-        let (detail, registered_roots) = self.runtime.run_sync(async {
-            let detail =
-                store::load_conversation_session_detail_sqlx(&pool, tenant_id, &job.session_id)
-                    .await?;
-            let roots = store::load_sources_sqlx(&pool, tenant_id)
-                .await?
-                .into_iter()
-                .filter_map(|source| source.repo_root)
-                .collect::<Vec<_>>();
-            Ok::<_, AppError>((detail, roots))
-        })?;
+        let detail =
+            store::load_conversation_session_detail_sqlx(&pool, tenant_id, &job.session_id).await?;
+        let roots = store::load_sources_sqlx(&pool, tenant_id)
+            .await?
+            .into_iter()
+            .filter_map(|source| source.repo_root)
+            .collect::<Vec<_>>();
+        let registered_roots = roots;
+
         let completed = session_has_completion_signal(&detail);
         let idle_ready = session_idle_ready(&detail, now);
         if !completed && !idle_ready {
             return Ok(None);
         }
         let ownership_token = format!("session-memory-owner-{}", Uuid::new_v4());
-        let claimed = self
-            .runtime
-            .run_sync(store::claim_session_memory_job_with_lease_sqlx(
-                &pool,
-                tenant_id,
-                job_id,
-                &now_text,
-                completed,
-                &ownership_token,
-                store::SESSION_MEMORY_JOB_LEASE,
-            ))?;
+        let claimed = store::claim_session_memory_job_with_lease_sqlx(
+            &pool,
+            tenant_id,
+            job_id,
+            &now_text,
+            completed,
+            &ownership_token,
+            store::SESSION_MEMORY_JOB_LEASE,
+        )
+        .await?;
         let Some(job) = claimed else {
             return Ok(None);
         };
@@ -285,10 +269,8 @@ impl AppService {
             Err(error) => {
                 drop(lease_guard);
                 if context.is_cancelled() {
-                    self.runtime
-                        .run_sync(store::cancel_session_memory_job_sqlx(
-                            &pool, tenant_id, job_id, &now_text,
-                        ))?;
+                    store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                        .await?;
                     return Err(AppError::Canceled(
                         "Session Memory task was canceled".to_string(),
                     ));
@@ -299,29 +281,26 @@ impl AppService {
                     .chars()
                     .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
                     .collect::<String>();
-                self.runtime
-                    .run_sync(store::mark_session_memory_job_failed_with_lease_sqlx(
-                        &pool,
-                        tenant_id,
-                        job_id,
-                        &ownership_token,
-                        if code.is_empty() {
-                            "phase1_failed"
-                        } else {
-                            &code
-                        },
-                        &now_text,
-                    ))?;
+                store::mark_session_memory_job_failed_with_lease_sqlx(
+                    &pool,
+                    tenant_id,
+                    job_id,
+                    &ownership_token,
+                    if code.is_empty() {
+                        "phase1_failed"
+                    } else {
+                        &code
+                    },
+                    &now_text,
+                )
+                .await?;
                 return Err(error);
             }
         };
         progress.progress(1, Some(3), Some("agent_completed"));
         if context.is_cancelled() {
             drop(lease_guard);
-            self.runtime
-                .run_sync(store::cancel_session_memory_job_sqlx(
-                    &pool, tenant_id, job_id, &now_text,
-                ))?;
+            store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Err(AppError::Canceled(
                 "Session Memory task was canceled".to_string(),
             ));
@@ -333,57 +312,47 @@ impl AppService {
                 Ok(persist) => persist,
                 Err(error) => {
                     drop(lease_guard);
-                    self.runtime.run_sync(
-                        store::mark_session_memory_job_failed_with_lease_sqlx(
-                            &pool,
-                            tenant_id,
-                            job_id,
-                            &ownership_token,
-                            "session_memory_validation_failed",
-                            &now_text,
-                        ),
-                    )?;
+                    store::mark_session_memory_job_failed_with_lease_sqlx(
+                        &pool,
+                        tenant_id,
+                        job_id,
+                        &ownership_token,
+                        "session_memory_validation_failed",
+                        &now_text,
+                    )
+                    .await?;
                     return Err(error);
                 }
             };
         progress.progress(2, Some(3), Some("validated"));
-        if let Err(error) = self
-            .runtime
-            .run_sync(store::persist_session_memory_sqlx(&pool, &persist))
-        {
+        if let Err(error) = store::persist_session_memory_sqlx(&pool, &persist).await {
             drop(lease_guard);
             if context.is_cancelled() {
-                self.runtime
-                    .run_sync(store::cancel_session_memory_job_sqlx(
-                        &pool, tenant_id, job_id, &now_text,
-                    ))?;
+                store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
                 return Err(AppError::Canceled(
                     "Session Memory task was canceled".to_string(),
                 ));
             }
-            self.runtime
-                .run_sync(store::mark_session_memory_job_failed_with_lease_sqlx(
-                    &pool,
-                    tenant_id,
-                    job_id,
-                    &ownership_token,
-                    "session_memory_persist_failed",
-                    &now_text,
-                ))?;
+            store::mark_session_memory_job_failed_with_lease_sqlx(
+                &pool,
+                tenant_id,
+                job_id,
+                &ownership_token,
+                "session_memory_persist_failed",
+                &now_text,
+            )
+            .await?;
             return Err(error);
         }
         drop(lease_guard);
         progress.progress(3, Some(3), Some("persisted"));
-        self.runtime
-            .run_sync(store::load_session_memory_for_job_sqlx(
-                &pool, tenant_id, &job,
-            ))
+        store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await
     }
 
     /// Reconcile durable Session Memory jobs into the in-memory TaskRuntime.
     /// SQLite remains the queue authority; rebuilding or clearing TaskRuntime
     /// only causes this bounded pass to register the work again.
-    pub(crate) fn reconcile_session_memory_jobs_for_tenant_at(
+    pub(crate) async fn reconcile_session_memory_jobs_for_tenant_at(
         &self,
         tenant_id: &str,
         now: DateTime<Utc>,
@@ -393,15 +362,10 @@ impl AppService {
         }
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
-        self.runtime
-            .run_sync(store::recover_expired_session_memory_leases_sqlx(
-                &pool, tenant_id, &now_text,
-            ))?;
+        store::recover_expired_session_memory_leases_sqlx(&pool, tenant_id, &now_text).await?;
         let job_ids =
-            self.runtime
-                .run_sync(store::list_session_memory_job_ids_for_scheduler_sqlx(
-                    &pool, tenant_id, &now_text, 32,
-                ))?;
+            store::list_session_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text, 32)
+                .await?;
         let mut scheduled = 0usize;
         for job_id in job_ids {
             if self
@@ -416,19 +380,17 @@ impl AppService {
             {
                 break;
             }
-            let Some(job) = self.runtime.run_sync(store::load_session_memory_job_sqlx(
-                &pool, tenant_id, &job_id,
-            ))?
+            let Some(job) = store::load_session_memory_job_sqlx(&pool, tenant_id, &job_id).await?
             else {
                 continue;
             };
-            let detail = match self
-                .runtime
-                .run_sync(store::load_conversation_session_detail_sqlx(
-                    &pool,
-                    tenant_id,
-                    &job.session_id,
-                )) {
+            let detail = match store::load_conversation_session_detail_sqlx(
+                &pool,
+                tenant_id,
+                &job.session_id,
+            )
+            .await
+            {
                 Ok(detail) => detail,
                 Err(AppError::NotFound(_)) => continue,
                 Err(error) => return Err(error),
@@ -460,9 +422,10 @@ impl AppService {
                 "job_id": job.id,
                 "session_id": session_id,
             });
-            match self.runtime.task_runtime().spawn(
-                spec,
-                Box::new(move |context| {
+            match self
+                .runtime
+                .task_runtime()
+                .spawn_async(spec, move |context| async move {
                     AppService::from_runtime(&runtime)
                         .run_session_memory_phase1_for_tenant_at(
                             &tenant_id_for_task,
@@ -470,6 +433,7 @@ impl AppService {
                             run_at,
                             context,
                         )
+                        .await
                         .map(|memory| {
                             json!({
                                 "domain": "session_memory",
@@ -477,8 +441,7 @@ impl AppService {
                                 "projected": memory.is_some(),
                             })
                         })
-                }),
-            ) {
+                }) {
                 Ok(crate::backend::runtime::tasks::SpawnOutcome::Started) => {
                     scheduled += 1;
                 }
@@ -1014,8 +977,8 @@ mod tests {
         assert_eq!(strip_json_fence("```\n{\"a\":1}\n```"), "{\"a\":1}");
     }
 
-    #[test]
-    fn phase1_worker_honors_idle_boundary_persists_redacted_output_and_is_idempotent() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn phase1_worker_honors_idle_boundary_persists_redacted_output_and_is_idempotent() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-{}",
             uuid::Uuid::new_v4()
@@ -1092,46 +1055,43 @@ mod tests {
         let pool = service.db.pool().clone();
         let source_for_import = source.clone();
         let adapter_for_import = adapter.clone();
-        service
-            .runtime
-            .run_sync(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(
-                    &pool,
-                    "default",
-                    &adapter_for_import,
-                )
-                .await?;
-                crate::backend::store::upsert_conversation_source_sqlx(
-                    &pool,
-                    "default",
-                    &source_for_import,
-                )
-                .await?;
-                crate::backend::store::import_conversation_sessions_sqlx(
-                    &pool,
-                    "default",
-                    &source_for_import,
-                    &[session],
-                    false,
-                )
-                .await
-                .map(|_| ())
-            })
-            .expect("import canonical conversation fixture");
+        crate::backend::store::upsert_conversation_adapter_sqlx(
+            &pool,
+            "default",
+            &adapter_for_import,
+        )
+        .await
+        .expect("upsert adapter fixture");
+        crate::backend::store::upsert_conversation_source_sqlx(
+            &pool,
+            "default",
+            &source_for_import,
+        )
+        .await
+        .expect("upsert source fixture");
+        crate::backend::store::import_conversation_sessions_sqlx(
+            &pool,
+            "default",
+            &source_for_import,
+            &[session],
+            false,
+        )
+        .await
+        .expect("import canonical conversation fixture");
 
-        let session_id: String = service.runtime.run_sync(sqlx::query_scalar(
+        let session_id: String = sqlx::query_scalar(
             "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = 'session-memory-fixture'",
-        ).fetch_one(service.db.pool())).expect("load imported session id");
-        let detail = service
-            .runtime
-            .run_sync(
-                crate::backend::store::load_conversation_session_detail_sqlx(
-                    service.db.pool(),
-                    "default",
-                    &session_id,
-                ),
-            )
-            .expect("load canonical session detail");
+        )
+        .fetch_one(service.db.pool())
+        .await
+        .expect("load imported session id");
+        let detail = crate::backend::store::load_conversation_session_detail_sqlx(
+            service.db.pool(),
+            "default",
+            &session_id,
+        )
+        .await
+        .expect("load canonical session detail");
         let reference_key = detail.questions[0]
             .projected_content_nodes
             .first()
@@ -1179,21 +1139,28 @@ mod tests {
                     Some(std::slice::from_ref(&session_id)),
                     now,
                 )
+                .await
                 .expect("enqueue phase1 job"),
             1
         );
-        let job_id: String = service.runtime.run_sync(sqlx::query_scalar(
+        let job_id: String = sqlx::query_scalar(
             "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1",
-        ).bind(&session_id).fetch_one(service.db.pool())).expect("load phase1 job id");
+        )
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("load phase1 job id");
         assert!(service
             .run_session_memory_phase1_at(
                 &job_id,
                 now + Duration::minutes(29) + Duration::seconds(59),
             )
+            .await
             .expect("idle boundary before deadline")
             .is_none());
         let memory = service
             .run_session_memory_phase1_at(&job_id, now + Duration::minutes(30))
+            .await
             .expect("run phase1 worker")
             .expect("phase1 memory result");
         assert_eq!(memory.source_revision, 1);
@@ -1210,84 +1177,99 @@ mod tests {
                     Some(std::slice::from_ref(&session_id)),
                     now + Duration::minutes(30),
                 )
+                .await
                 .expect("enqueue scheduler phase1 job"),
             1
         );
-        let scheduled_job_id: String = service.runtime.run_sync(sqlx::query_scalar(
+        let scheduled_job_id: String = sqlx::query_scalar(
             "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1 AND source_revision = 2",
-        ).bind(&session_id).fetch_one(service.db.pool())).expect("load scheduler job id");
+        )
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("load scheduler job id");
         let scheduled_task_id = format!("session-memory-{}-0", scheduled_job_id);
         assert_eq!(
             service
                 .reconcile_session_memory_jobs_for_tenant_at("default", now + Duration::minutes(30))
+                .await
                 .expect("schedule durable phase1 job"),
             1
         );
         for _ in 0..100 {
-            let status: String = service.runtime.run_sync(sqlx::query_scalar(
+            let status: String = sqlx::query_scalar(
                 "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-            ).bind(&scheduled_job_id).fetch_one(service.db.pool())).expect("read scheduled job status");
+            )
+            .bind(&scheduled_job_id)
+            .fetch_one(service.db.pool())
+            .await
+            .expect("read scheduled job status");
             if status == "succeeded" {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        let scheduled_status: String = service.runtime.run_sync(sqlx::query_scalar(
+        let scheduled_status: String = sqlx::query_scalar(
             "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-        ).bind(&scheduled_job_id).fetch_one(service.db.pool())).expect("read completed scheduled job");
+        )
+        .bind(&scheduled_job_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("read completed scheduled job");
         assert_eq!(scheduled_status, "succeeded");
-        let scheduled_task = (0..100)
-            .find_map(|_| {
-                let snapshot = service.runtime.task_runtime().get(&scheduled_task_id)?;
+        let mut scheduled_task = None;
+        for _ in 0..100 {
+            if let Some(snapshot) = service.runtime.task_runtime().get(&scheduled_task_id) {
                 if snapshot.progress.as_ref().map(|value| value.current) == Some(3) {
-                    Some(snapshot)
-                } else {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                    None
+                    scheduled_task = Some(snapshot);
+                    break;
                 }
-            })
-            .expect("read scheduled TaskRuntime projection");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let scheduled_task = scheduled_task.expect("read scheduled TaskRuntime projection");
         assert_eq!(
             scheduled_task.progress.as_ref().map(|value| value.current),
             Some(3)
         );
 
-        let row_counts = service.runtime.run_sync(async {
-            let jobs = crate::backend::store::count_session_memory_rows_sqlx(
-                service.db.pool(),
-                "default",
-                "jobs",
-            )
-            .await?;
-            let memories = crate::backend::store::count_session_memory_rows_sqlx(
-                service.db.pool(),
-                "default",
-                "memories",
-            )
-            .await?;
-            let references = crate::backend::store::count_session_memory_rows_sqlx(
-                service.db.pool(),
-                "default",
-                "references",
-            )
-            .await?;
-            let events = crate::backend::store::count_session_memory_rows_sqlx(
-                service.db.pool(),
-                "default",
-                "events",
-            )
-            .await?;
-            Ok::<_, AppError>((jobs, memories, references, events))
-        });
-        assert_eq!(row_counts.expect("count phase1 rows"), (2, 2, 2, 12));
-        let raw_output: String = service
-            .runtime
-            .run_sync(sqlx::query_scalar(
-                "SELECT raw_output_json FROM session_memories WHERE tenant_id = 'default' AND session_id = ?1",
-            )
-            .bind(&session_id)
-            .fetch_one(service.db.pool()))
-            .expect("read sanitized phase1 output");
+        let jobs = crate::backend::store::count_session_memory_rows_sqlx(
+            service.db.pool(),
+            "default",
+            "jobs",
+        )
+        .await
+        .expect("count jobs");
+        let memories = crate::backend::store::count_session_memory_rows_sqlx(
+            service.db.pool(),
+            "default",
+            "memories",
+        )
+        .await
+        .expect("count memories");
+        let references = crate::backend::store::count_session_memory_rows_sqlx(
+            service.db.pool(),
+            "default",
+            "references",
+        )
+        .await
+        .expect("count references");
+        let events = crate::backend::store::count_session_memory_rows_sqlx(
+            service.db.pool(),
+            "default",
+            "events",
+        )
+        .await
+        .expect("count events");
+        let row_counts = (jobs, memories, references, events);
+        assert_eq!(row_counts, (2, 2, 2, 12));
+        let raw_output: String = sqlx::query_scalar(
+            "SELECT raw_output_json FROM session_memories WHERE tenant_id = 'default' AND session_id = ?1",
+        )
+        .bind(&session_id)
+        .fetch_one(service.db.pool())
+        .await
+        .expect("read sanitized phase1 output");
         assert!(!raw_output.contains(secret));
         assert!(raw_output.contains("[REDACTED:api_key]"));
         assert_eq!(
@@ -1300,6 +1282,7 @@ mod tests {
                     Some(std::slice::from_ref(&session_id)),
                     now + Duration::minutes(31),
                 )
+                .await
                 .expect("replay phase1 event"),
             0
         );
@@ -1308,6 +1291,7 @@ mod tests {
                 crate::backend::application::RecentConversationSessionListParams::default(),
                 now + Duration::minutes(31),
             )
+            .await
             .expect("read Recent projection");
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].recent_events.len(), 6);

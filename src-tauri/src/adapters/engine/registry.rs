@@ -596,7 +596,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::RecentConversationSessionListParams,
-        Service => |service, params| service.list_recent_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
         &[
             param!("view", "project or time ordering"),
             param!("limit", "Maximum number of sessions"),
@@ -613,7 +613,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.get_recent_memory_event_target(params.id),
+        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
         &[param!("id", "Recent Memory event identifier")],
         None,
         since: "0.6.1", deprecated: false
@@ -626,7 +626,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryContextResolveParams,
-        Service => |service, params| service.resolve_memory_context(params),
+        ServiceAsync => |service, params| service.resolve_memory_context(params).await,
         &[
             param!("project_path", "Optional registered project path", ["projectPath"]),
             param!("query", "Optional query for relevance ordering"),
@@ -643,7 +643,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryProjectGetParams,
-        Service => |service, params| service.get_memory_project(params),
+        ServiceAsync => |service, params| service.get_memory_project(params).await,
         &[param!("project_path", "Registered project path", ["projectPath"])],
         Some("assetiweave-cli memory project get <project-path>"),
         since: "0.6.1", deprecated: false
@@ -656,7 +656,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryScopeRebuildParams,
-        Service => |service, params| service.rebuild_memory_scope(params),
+        ServiceAsync => |service, params| service.rebuild_memory_scope(params).await,
         &[param!("scope", "Optional Memory scope")],
         Some("assetiweave-cli memory rebuild"),
         since: "0.6.1", deprecated: false
@@ -708,7 +708,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryTaskRetryParams,
-        Service => |service, params| service.retry_memory_task(params),
+        ServiceAsync => |service, params| service.retry_memory_task(params).await,
         &[param!("task_id", "Memory task identifier", ["taskId"])],
         Some("assetiweave-cli memory task retry <task-id>"),
         since: "0.6.1", deprecated: false
@@ -2320,7 +2320,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::RecentConversationSessionListParams,
-        Service => |service, params| service.list_recent_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
         &[
             param!("view", "project or time ordering"),
             param!("limit", "Maximum number of sessions"),
@@ -2337,7 +2337,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.get_recent_memory_event_target(params.id),
+        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
         &[param!("id", "Recent Memory event identifier")],
         None,
         since: "0.6.1", deprecated: false
@@ -2350,7 +2350,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryContextResolveParams,
-        Service => |service, params| service.resolve_memory_context(params),
+        ServiceAsync => |service, params| service.resolve_memory_context(params).await,
         &[
             param!("project_path", "Optional registered project path", ["projectPath"]),
             param!("query", "Optional query for relevance ordering"),
@@ -2367,7 +2367,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryProjectGetParams,
-        Service => |service, params| service.get_memory_project(params),
+        ServiceAsync => |service, params| service.get_memory_project(params).await,
         &[param!("project_path", "Registered project path", ["projectPath"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2380,7 +2380,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryScopeRebuildParams,
-        Service => |service, params| service.rebuild_memory_scope(params),
+        ServiceAsync => |service, params| service.rebuild_memory_scope(params).await,
         &[param!("scope", "Optional Memory scope")],
         None,
         since: "0.6.1", deprecated: false
@@ -2432,7 +2432,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryTaskRetryParams,
-        Service => |service, params| service.retry_memory_task(params),
+        ServiceAsync => |service, params| service.retry_memory_task(params).await,
         &[param!("task_id", "Memory task identifier", ["taskId"])],
         None,
         since: "0.6.1", deprecated: false

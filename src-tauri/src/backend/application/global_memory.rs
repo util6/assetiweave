@@ -36,8 +36,7 @@ struct GlobalMemoryAgentOutput {
 }
 
 struct GlobalMemoryLeaseGuard {
-    stop: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl GlobalMemoryLeaseGuard {
@@ -48,47 +47,45 @@ impl GlobalMemoryLeaseGuard {
         ownership_token: String,
         cancellation: CancellationToken,
     ) -> Self {
-        let stop = CancellationToken::new();
-        let thread_stop = stop.clone();
-        let join = thread::Builder::new()
-            .name("aiw-global-memory-heartbeat".to_string())
-            .spawn(move || {
-                while !thread_stop.is_cancelled() && !cancellation.is_cancelled() {
-                    thread::sleep(Duration::from_secs(1));
-                    if thread_stop.is_cancelled() || cancellation.is_cancelled() {
-                        break;
+        let task = tokio::spawn(async move {
+            let pool = database.pool().clone();
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        if cancellation.is_cancelled() {
+                            break;
+                        }
+                        let now = Utc::now().to_rfc3339();
+                        let healthy = store::heartbeat_global_memory_job_sqlx(
+                            &pool,
+                            &tenant_id,
+                            &job_id,
+                            &ownership_token,
+                            &now,
+                        )
+                        .await;
+                        if !healthy.unwrap_or(false) {
+                            break;
+                        }
                     }
-                    let healthy = database.run_sync(store::heartbeat_global_memory_job_sqlx(
-                        database.pool(),
-                        &tenant_id,
-                        &job_id,
-                        &ownership_token,
-                        &Utc::now().to_rfc3339(),
-                    ));
-                    if !healthy.unwrap_or(false) {
+                    _ = cancellation.cancelled() => {
                         break;
                     }
                 }
-            })
-            .expect("Global Memory heartbeat thread must start");
-        Self {
-            stop,
-            join: Some(join),
-        }
+            }
+        });
+        Self { task }
     }
 }
 
 impl Drop for GlobalMemoryLeaseGuard {
     fn drop(&mut self) {
-        self.stop.cancel();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
+        self.task.abort();
     }
 }
 
 impl AppService {
-    pub(crate) fn reconcile_global_memory_jobs_for_tenant_at(
+    pub(crate) async fn reconcile_global_memory_jobs_for_tenant_at(
         &self,
         tenant_id: &str,
         now: DateTime<Utc>,
@@ -98,17 +95,13 @@ impl AppService {
         }
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
-        self.runtime
-            .run_sync(store::recover_expired_global_memory_leases_sqlx(
-                &pool, tenant_id, &now_text,
-            ))?;
+        store::recover_expired_global_memory_leases_sqlx(&pool, tenant_id, &now_text).await?;
         let job_ids =
-            self.runtime
-                .run_sync(store::list_global_memory_job_ids_for_scheduler_sqlx(
-                    &pool, tenant_id, &now_text,
-                ))?;
+            store::list_global_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text)
+                .await?;
         let Some(job_id) = job_ids.into_iter().next() else {
-            self.rebuild_global_memory_documents_for_tenant_at(tenant_id)?;
+            self.rebuild_global_memory_documents_for_tenant_at(tenant_id)
+                .await?;
             return Ok(0);
         };
         if self
@@ -130,11 +123,13 @@ impl AppService {
             .with_task_id(format!("global-memory-job-{tenant_id}"))
             .with_tenant_id(tenant_id.to_string())
             .with_conflict_key(format!("global-memory-tenant:{tenant_id}"));
-        match self.runtime.task_runtime().spawn(
-            spec,
-            Box::new(move |context| {
+        match self
+            .runtime
+            .task_runtime()
+            .spawn_async(spec, move |context| async move {
                 AppService::from_runtime(&runtime)
                     .run_global_memory_for_tenant_at(&tenant_for_task, &job_for_task, now, context)
+                    .await
                     .map(|version| {
                         json!({
                             "domain": "global_memory",
@@ -142,14 +137,13 @@ impl AppService {
                             "projected": version.is_some(),
                         })
                     })
-            }),
-        )? {
+            })? {
             crate::backend::runtime::tasks::SpawnOutcome::Started => Ok(1),
             crate::backend::runtime::tasks::SpawnOutcome::Existing => Ok(0),
         }
     }
 
-    pub(crate) fn run_global_memory_for_tenant_at(
+    pub(crate) async fn run_global_memory_for_tenant_at(
         &self,
         tenant_id: &str,
         job_id: &str,
@@ -158,10 +152,7 @@ impl AppService {
     ) -> AppResult<Option<GlobalMemoryVersion>> {
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
-        let Some(job) = self
-            .runtime
-            .run_sync(store::load_global_memory_job_sqlx(&pool, tenant_id, job_id))?
-        else {
+        let Some(job) = store::load_global_memory_job_sqlx(&pool, tenant_id, job_id).await? else {
             return Err(AppError::NotFound(
                 "Global Memory job not found".to_string(),
             ));
@@ -173,23 +164,20 @@ impl AppService {
             return Ok(None);
         }
         if context.is_cancelled() {
-            self.runtime.run_sync(store::cancel_global_memory_job_sqlx(
-                &pool, tenant_id, job_id, &now_text,
-            ))?;
+            store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Err(AppError::Canceled(
                 "Global Memory task was canceled".to_string(),
             ));
         }
         let ownership_token = format!("global-memory-owner-{}", Uuid::new_v4());
-        let Some(job) = self
-            .runtime
-            .run_sync(store::claim_global_memory_job_with_lease_sqlx(
-                &pool,
-                tenant_id,
-                job_id,
-                &now_text,
-                &ownership_token,
-            ))?
+        let Some(job) = store::claim_global_memory_job_with_lease_sqlx(
+            &pool,
+            tenant_id,
+            job_id,
+            &now_text,
+            &ownership_token,
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -202,14 +190,10 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
-        let inputs = self
-            .runtime
-            .run_sync(store::load_global_memory_inputs_sqlx(&pool, tenant_id))?;
+        let inputs = store::load_global_memory_inputs_sqlx(&pool, tenant_id).await?;
         if inputs.projects.is_empty() {
             drop(lease_guard);
-            self.runtime.run_sync(store::cancel_global_memory_job_sqlx(
-                &pool, tenant_id, job_id, &now_text,
-            ))?;
+            store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
         let output = match self.execute_global_memory_agent(&job, &inputs, context.cancellation()) {
@@ -217,41 +201,34 @@ impl AppService {
             Err(error) => {
                 drop(lease_guard);
                 if context.is_cancelled() {
-                    self.runtime.run_sync(store::cancel_global_memory_job_sqlx(
-                        &pool, tenant_id, job_id, &now_text,
-                    ))?;
+                    store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                        .await?;
                     return Err(AppError::Canceled(
                         "Global Memory task was canceled".to_string(),
                     ));
                 }
-                let _ =
-                    self.runtime
-                        .run_sync(store::mark_global_memory_job_failed_with_lease_sqlx(
-                            &pool,
-                            tenant_id,
-                            job_id,
-                            &ownership_token,
-                            "global_memory_agent_failed",
-                            &now_text,
-                        ))?;
+                let _ = store::mark_global_memory_job_failed_with_lease_sqlx(
+                    &pool,
+                    tenant_id,
+                    job_id,
+                    &ownership_token,
+                    "global_memory_agent_failed",
+                    &now_text,
+                )
+                .await?;
                 return Err(error);
             }
         };
         progress.progress(1, Some(3), Some("agent_completed"));
         if context.is_cancelled() {
             drop(lease_guard);
-            self.runtime.run_sync(store::cancel_global_memory_job_sqlx(
-                &pool, tenant_id, job_id, &now_text,
-            ))?;
+            store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Err(AppError::Canceled(
                 "Global Memory task was canceled".to_string(),
             ));
         }
         let version_number =
-            self.runtime
-                .run_sync(store::next_global_memory_version_number_sqlx(
-                    &pool, tenant_id,
-                ))?;
+            store::next_global_memory_version_number_sqlx(&pool, tenant_id).await?;
         let paths = global_document_paths(&self.db_path, tenant_id, version_number);
         write_global_version_files(
             &paths.version_summary_path,
@@ -282,34 +259,30 @@ impl AppService {
                 })
                 .collect(),
         };
-        let version = match self
-            .runtime
-            .run_sync(store::persist_global_memory_success_sqlx(
-                &pool, &persist, &now_text,
-            )) {
-            Ok(version) => version,
-            Err(error) => {
-                drop(lease_guard);
-                if context.is_cancelled() {
-                    self.runtime.run_sync(store::cancel_global_memory_job_sqlx(
-                        &pool, tenant_id, job_id, &now_text,
-                    ))?;
-                    return Err(AppError::Canceled(
-                        "Global Memory task was canceled".to_string(),
-                    ));
-                }
-                self.runtime
-                    .run_sync(store::mark_global_memory_job_failed_with_lease_sqlx(
+        let version =
+            match store::persist_global_memory_success_sqlx(&pool, &persist, &now_text).await {
+                Ok(version) => version,
+                Err(error) => {
+                    drop(lease_guard);
+                    if context.is_cancelled() {
+                        store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                            .await?;
+                        return Err(AppError::Canceled(
+                            "Global Memory task was canceled".to_string(),
+                        ));
+                    }
+                    store::mark_global_memory_job_failed_with_lease_sqlx(
                         &pool,
                         tenant_id,
                         job_id,
                         &persist.ownership_token,
                         "global_memory_persist_failed",
                         &now_text,
-                    ))?;
-                return Err(error);
-            }
-        };
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
         drop(lease_guard);
         publish_global_documents(
             &paths.summary_document_path,
@@ -323,16 +296,12 @@ impl AppService {
         Ok(Some(version))
     }
 
-    pub(crate) fn rebuild_global_memory_documents_for_tenant_at(
+    pub(crate) async fn rebuild_global_memory_documents_for_tenant_at(
         &self,
         tenant_id: &str,
     ) -> AppResult<()> {
         let Some(version) =
-            self.runtime
-                .run_sync(store::load_global_memory_latest_version_sqlx(
-                    self.db.pool(),
-                    tenant_id,
-                ))?
+            store::load_global_memory_latest_version_sqlx(self.db.pool(), tenant_id).await?
         else {
             return Ok(());
         };
@@ -456,68 +425,43 @@ impl AppService {
         })
     }
 
-    pub(crate) fn resolve_memory_context(
+    pub(crate) async fn resolve_memory_context(
         &self,
         params: MemoryContextResolveParams,
     ) -> AppResult<MemoryContextResult> {
         let token_budget = params.token_budget.unwrap_or(2_000).clamp(64, 32_000);
-        let project_path = self.resolve_context_project_path(params.project_path.as_deref())?;
+        let project_path = self
+            .resolve_context_project_path(params.project_path.as_deref())
+            .await?;
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
         let query = params.query.unwrap_or_default();
-        let tenant_id_for_load = tenant_id.clone();
-        let project_path_for_load = project_path.clone();
-        let (global_version, _project, project_version, project_sources, sessions) =
-            self.runtime.run_sync(async move {
-                let global_version =
-                    store::load_global_memory_latest_version_sqlx(&pool, &tenant_id_for_load)
-                        .await?;
-                let project = if let Some(path) = project_path_for_load.as_deref() {
-                    store::load_project_memory_sqlx(&pool, &tenant_id_for_load, path).await?
-                } else {
-                    None
-                };
-                let project_version = match project.as_ref() {
-                    Some(project) => {
-                        store::load_project_memory_latest_version_sqlx(
-                            &pool,
-                            &tenant_id_for_load,
-                            &project.id,
-                        )
-                        .await?
-                    }
-                    None => None,
-                };
-                let project_sources = match project_version.as_ref() {
-                    Some(version) => {
-                        store::load_project_memory_sources_sqlx(
-                            &pool,
-                            &tenant_id_for_load,
-                            &version.id,
-                        )
-                        .await?
-                    }
-                    None => Vec::new(),
-                };
-                let sessions = match project_path_for_load.as_deref() {
-                    Some(path) => {
-                        store::list_session_memories_for_project_sqlx(
-                            &pool,
-                            &tenant_id_for_load,
-                            path,
-                        )
-                        .await?
-                    }
-                    None => Vec::new(),
-                };
-                Ok::<_, AppError>((
-                    global_version,
-                    project,
-                    project_version,
-                    project_sources,
-                    sessions,
-                ))
-            })?;
+        let global_version =
+            store::load_global_memory_latest_version_sqlx(&pool, &tenant_id).await?;
+        let project = if let Some(path) = project_path.as_deref() {
+            store::load_project_memory_sqlx(&pool, &tenant_id, path).await?
+        } else {
+            None
+        };
+        let project_version = match project.as_ref() {
+            Some(project) => {
+                store::load_project_memory_latest_version_sqlx(&pool, &tenant_id, &project.id)
+                    .await?
+            }
+            None => None,
+        };
+        let project_sources = match project_version.as_ref() {
+            Some(version) => {
+                store::load_project_memory_sources_sqlx(&pool, &tenant_id, &version.id).await?
+            }
+            None => Vec::new(),
+        };
+        let sessions = match project_path.as_deref() {
+            Some(path) => {
+                store::list_session_memories_for_project_sqlx(&pool, &tenant_id, path).await?
+            }
+            None => Vec::new(),
+        };
         let compiled = compile_memory_context(
             &tenant_id,
             project_path.as_deref(),
@@ -531,34 +475,30 @@ impl AppService {
         if app_settings::memory_usage_enabled_for_database(&self.db)? {
             let used_at = Utc::now().to_rfc3339();
             for reference in &compiled.references {
-                self.runtime
-                    .run_sync(store::record_memory_usage_event_sqlx(
-                        &self.db.pool(),
-                        &tenant_id,
-                        &reference.kind,
-                        &reference.id,
-                        "context",
-                        &compiled.revision,
-                        &used_at,
-                    ))?;
+                store::record_memory_usage_event_sqlx(
+                    self.db.pool(),
+                    &tenant_id,
+                    &reference.kind,
+                    &reference.id,
+                    "context",
+                    &compiled.revision,
+                    &used_at,
+                )
+                .await?;
             }
         }
         Ok(compiled)
     }
 
-    pub(crate) fn resolve_context_project_path(
+    pub(crate) async fn resolve_context_project_path(
         &self,
         raw_path: Option<&str>,
     ) -> AppResult<Option<String>> {
         let Some(raw_path) = raw_path.filter(|path| !path.trim().is_empty()) else {
             return Ok(None);
         };
-        let roots = self
-            .runtime
-            .run_sync(crate::backend::store::load_sources_sqlx(
-                self.db.pool(),
-                self.tenant_id(),
-            ))?
+        let roots = crate::backend::store::load_sources_sqlx(self.db.pool(), self.tenant_id())
+            .await?
             .into_iter()
             .filter_map(|source| source.repo_root)
             .collect::<Vec<_>>();
@@ -1003,8 +943,8 @@ mod tests {
         assert_eq!(first.references[0].kind, "global_memory");
     }
 
-    #[test]
-    fn failed_global_revision_keeps_last_success_and_documents() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn failed_global_revision_keeps_last_success_and_documents() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-global-memory-{}",
             uuid::Uuid::new_v4()
@@ -1018,45 +958,45 @@ mod tests {
             .expect("open global memory service");
         let now = "2026-08-31T01:00:00Z";
         let project_id = crate::backend::store::project_memory_id("default", "/alpha");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "INSERT INTO project_memories (tenant_id,id,project_path,created_at,updated_at) VALUES ('default',?1,'/alpha',?2,?2)",
-            )
-            .bind(&project_id)
-            .bind(now)
-            .execute(service.db.pool()))
-            .expect("insert project fixture");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default','project-version-alpha-1',?1,1,'succeeded','project-fingerprint-alpha',1,'# alpha',?2,?2)",
-            )
-            .bind(&project_id)
-            .bind(now)
-            .execute(service.db.pool()))
-            .expect("insert project version fixture");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "UPDATE project_memories SET last_successful_version_id='project-version-alpha-1',last_successful_at=?1,last_successful_watermark=1,last_successful_input_fingerprint='project-fingerprint-alpha' WHERE tenant_id='default' AND id=?2",
-            )
-            .bind(now)
-            .bind(&project_id)
-            .execute(service.db.pool()))
-            .expect("point project at successful version");
-        let global_job_id = service
-            .runtime
-            .run_sync(async {
-                let mut tx = service.db.pool().begin().await.map_err(AppError::Db)?;
-                let job =
-                    crate::backend::store::enqueue_global_memory_job_tx(&mut tx, "default", now)
-                        .await?
-                        .expect("global job");
-                tx.commit().await.map_err(AppError::Db)?;
-                Ok::<_, AppError>(job)
-            })
-            .expect("enqueue global memory");
+        sqlx::query(
+            "INSERT INTO project_memories (tenant_id,id,project_path,created_at,updated_at) VALUES ('default',?1,'/alpha',?2,?2)",
+        )
+        .bind(&project_id)
+        .bind(now)
+        .execute(service.db.pool())
+        .await
+        .expect("insert project fixture");
+        sqlx::query(
+            "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default','project-version-alpha-1',?1,1,'succeeded','project-fingerprint-alpha',1,'# alpha',?2,?2)",
+        )
+        .bind(&project_id)
+        .bind(now)
+        .execute(service.db.pool())
+        .await
+        .expect("insert project version fixture");
+        sqlx::query(
+            "UPDATE project_memories SET last_successful_version_id='project-version-alpha-1',last_successful_at=?1,last_successful_watermark=1,last_successful_input_fingerprint='project-fingerprint-alpha' WHERE tenant_id='default' AND id=?2",
+        )
+        .bind(now)
+        .bind(&project_id)
+        .execute(service.db.pool())
+        .await
+        .expect("point project at successful version");
+        let global_job_id = {
+            let mut tx = service
+                .db
+                .pool()
+                .begin()
+                .await
+                .map_err(AppError::Db)
+                .expect("begin tx");
+            let job = crate::backend::store::enqueue_global_memory_job_tx(&mut tx, "default", now)
+                .await
+                .expect("enqueue global")
+                .expect("global job");
+            tx.commit().await.map_err(AppError::Db).expect("commit tx");
+            job
+        };
         service
             .run_global_memory_for_tenant_at(
                 "default",
@@ -1066,18 +1006,16 @@ mod tests {
                     .with_timezone(&Utc),
                 TaskContext::detached(),
             )
+            .await
             .expect("run global v1")
             .expect("global v1 exists");
-        let first = service
-            .runtime
-            .run_sync(
-                crate::backend::store::load_global_memory_latest_version_sqlx(
-                    service.db.pool(),
-                    "default",
-                ),
-            )
-            .expect("load global v1")
-            .expect("global v1");
+        let first = crate::backend::store::load_global_memory_latest_version_sqlx(
+            service.db.pool(),
+            "default",
+        )
+        .await
+        .expect("load global v1")
+        .expect("global v1");
         let first_id = first.id.clone();
         let paths = global_document_paths(&db_path, "default", 1);
         assert_eq!(
@@ -1086,44 +1024,45 @@ mod tests {
         );
 
         let beta_id = crate::backend::store::project_memory_id("default", "/beta");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "INSERT INTO project_memories (tenant_id,id,project_path,created_at,updated_at) VALUES ('default',?1,'/beta',?2,?2)",
+        sqlx::query(
+            "INSERT INTO project_memories (tenant_id,id,project_path,created_at,updated_at) VALUES ('default',?1,'/beta',?2,?2)",
+        )
+        .bind(&beta_id)
+        .bind("2026-08-31T01:01:00Z")
+        .execute(service.db.pool())
+        .await
+        .expect("insert second project fixture");
+        sqlx::query(
+            "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default','project-version-beta-1',?1,1,'succeeded','project-fingerprint-beta',2,'# beta','2026-08-31T01:01:00Z','2026-08-31T01:01:00Z')",
+        )
+        .bind(&beta_id)
+        .execute(service.db.pool())
+        .await
+        .expect("insert second project version fixture");
+        sqlx::query(
+            "UPDATE project_memories SET last_successful_version_id='project-version-beta-1',last_successful_at='2026-08-31T01:01:00Z',last_successful_watermark=2,last_successful_input_fingerprint='project-fingerprint-beta' WHERE tenant_id='default' AND id=?1",
+        )
+        .bind(&beta_id)
+        .execute(service.db.pool())
+        .await
+        .expect("point second project at successful version");
+        {
+            let mut tx = service
+                .db
+                .pool()
+                .begin()
+                .await
+                .map_err(AppError::Db)
+                .expect("begin tx");
+            crate::backend::store::enqueue_global_memory_job_tx(
+                &mut tx,
+                "default",
+                "2026-08-31T01:01:00Z",
             )
-            .bind(&beta_id)
-            .bind("2026-08-31T01:01:00Z")
-            .execute(service.db.pool()))
-            .expect("insert second project fixture");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default','project-version-beta-1',?1,1,'succeeded','project-fingerprint-beta',2,'# beta','2026-08-31T01:01:00Z','2026-08-31T01:01:00Z')",
-            )
-            .bind(&beta_id)
-            .execute(service.db.pool()))
-            .expect("insert second project version fixture");
-        service
-            .runtime
-            .run_sync(sqlx::query(
-                "UPDATE project_memories SET last_successful_version_id='project-version-beta-1',last_successful_at='2026-08-31T01:01:00Z',last_successful_watermark=2,last_successful_input_fingerprint='project-fingerprint-beta' WHERE tenant_id='default' AND id=?1",
-            )
-            .bind(&beta_id)
-            .execute(service.db.pool()))
-            .expect("point second project at successful version");
-        service
-            .runtime
-            .run_sync(async {
-                let mut tx = service.db.pool().begin().await.map_err(AppError::Db)?;
-                crate::backend::store::enqueue_global_memory_job_tx(
-                    &mut tx,
-                    "default",
-                    "2026-08-31T01:01:00Z",
-                )
-                .await?;
-                tx.commit().await.map_err(AppError::Db)
-            })
+            .await
             .expect("enqueue revised global memory");
+            tx.commit().await.map_err(AppError::Db).expect("commit tx");
+        }
         fake.set_result("{}");
         assert!(service
             .run_global_memory_for_tenant_at(
@@ -1134,17 +1073,15 @@ mod tests {
                     .with_timezone(&Utc),
                 TaskContext::detached(),
             )
+            .await
             .is_err());
-        let after = service
-            .runtime
-            .run_sync(
-                crate::backend::store::load_global_memory_latest_version_sqlx(
-                    service.db.pool(),
-                    "default",
-                ),
-            )
-            .expect("load preserved global")
-            .expect("preserved global");
+        let after = crate::backend::store::load_global_memory_latest_version_sqlx(
+            service.db.pool(),
+            "default",
+        )
+        .await
+        .expect("load preserved global")
+        .expect("preserved global");
         assert_eq!(after.id, first_id);
         assert_eq!(
             std::fs::read_to_string(paths.memory_document_path).unwrap(),

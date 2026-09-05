@@ -295,19 +295,25 @@ pub(crate) async fn list_source_assets(
 }
 
 #[tauri::command]
-pub(crate) fn list_memory_recent(
+pub(crate) async fn list_memory_recent(
     state: State<'_, AppState>,
     params: RecentConversationSessionListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::application::RecentConversationSession>> {
-    AppService::from_runtime(&state.runtime).list_recent_conversation_sessions(params)
+    AppService::from_runtime(&state.runtime)
+        .list_recent_conversation_sessions(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_recent_event_target(
+pub(crate) async fn get_memory_recent_event_target(
     state: State<'_, AppState>,
     event_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
-    AppService::from_runtime(&state.runtime).get_recent_memory_event_target(event_id)
+    AppService::from_runtime(&state.runtime)
+        .get_recent_memory_event_target(event_id)
+        .await
+        .into()
 }
 
 #[tauri::command]
@@ -319,27 +325,36 @@ pub(crate) fn search_memory_recall(
 }
 
 #[tauri::command]
-pub(crate) fn resolve_memory_context(
+pub(crate) async fn resolve_memory_context(
     state: State<'_, AppState>,
     params: MemoryContextResolveParams,
 ) -> RuntimeAppResult<MemoryContextResult> {
-    AppService::from_runtime(&state.runtime).resolve_memory_context(params)
+    AppService::from_runtime(&state.runtime)
+        .resolve_memory_context(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_project(
+pub(crate) async fn get_memory_project(
     state: State<'_, AppState>,
     params: MemoryProjectGetParams,
 ) -> RuntimeAppResult<Option<MemoryProjectView>> {
-    AppService::from_runtime(&state.runtime).get_memory_project(params)
+    AppService::from_runtime(&state.runtime)
+        .get_memory_project(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn rebuild_memory_scope(
+pub(crate) async fn rebuild_memory_scope(
     state: State<'_, AppState>,
     params: MemoryScopeRebuildParams,
 ) -> RuntimeAppResult<MemoryRebuildResult> {
-    AppService::from_runtime(&state.runtime).rebuild_memory_scope(params)
+    AppService::from_runtime(&state.runtime)
+        .rebuild_memory_scope(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
@@ -367,11 +382,14 @@ pub(crate) fn cancel_memory_public_task(
 }
 
 #[tauri::command]
-pub(crate) fn retry_memory_public_task(
+pub(crate) async fn retry_memory_public_task(
     state: State<'_, AppState>,
     params: MemoryTaskRetryParams,
 ) -> RuntimeAppResult<MemoryTaskView> {
-    AppService::from_runtime(&state.runtime).retry_memory_task(params)
+    AppService::from_runtime(&state.runtime)
+        .retry_memory_task(params)
+        .await
+        .into()
 }
 
 #[tauri::command]

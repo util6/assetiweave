@@ -215,8 +215,8 @@ fn load_test_assets(service: &AppService) -> Vec<Asset> {
 }
 
 #[cfg(unix)]
-#[test]
-fn recent_conversation_sessions_use_last_activity_and_resolve_project_directories() {
+#[tokio::test(flavor = "multi_thread")]
+async fn recent_conversation_sessions_use_last_activity_and_resolve_project_directories() {
     use chrono::Duration as ChronoDuration;
     use std::os::unix::fs::symlink;
 
@@ -539,6 +539,7 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
             },
             now,
         )
+        .await
         .expect("list recent sessions by project");
     let time_view = service
         .list_recent_conversation_sessions_at(
@@ -549,6 +550,7 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
             },
             now,
         )
+        .await
         .expect("list recent sessions by time");
 
     let project_ids = project_view
@@ -639,6 +641,7 @@ fn recent_conversation_sessions_use_last_activity_and_resolve_project_directorie
             },
             now,
         )
+        .await
         .expect("list recent sessions after reopening database");
     assert_eq!(
         reopened_view

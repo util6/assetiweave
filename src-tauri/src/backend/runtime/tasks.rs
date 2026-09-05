@@ -275,8 +275,10 @@ impl TaskRuntime {
         let _ = self.events.send(snapshot.clone());
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn spawn(&self, spec: TaskSpec, task: TaskFn) -> Result<SpawnOutcome, AppError> {
+    fn prepare_spawn(
+        &self,
+        spec: TaskSpec,
+    ) -> Result<Option<(String, CancellationToken, TaskTrackerToken)>, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(AppError::Canceled(
                 "应用正在关闭，不再接受新任务".to_string(),
@@ -298,7 +300,7 @@ impl TaskRuntime {
         }
         Self::prune_terminal_tasks_locked(&mut tasks);
         if tasks.contains_key(&task_id) {
-            return Ok(SpawnOutcome::Existing);
+            return Ok(None);
         }
         if spec.dedup_key.as_ref().is_some_and(|key| {
             tasks
@@ -311,7 +313,7 @@ impl TaskRuntime {
                 })
                 .is_some()
         }) {
-            return Ok(SpawnOutcome::Existing);
+            return Ok(None);
         }
         let tracking = self.tracker.token();
         let snapshot = TaskSnapshot {
@@ -340,7 +342,32 @@ impl TaskRuntime {
         drop(tasks);
         self.publish(&snapshot);
 
+        Ok(Some((task_id, cancellation, tracking)))
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn spawn(&self, spec: TaskSpec, task: TaskFn) -> Result<SpawnOutcome, AppError> {
+        let Some((task_id, cancellation, tracking)) = self.prepare_spawn(spec)? else {
+            return Ok(SpawnOutcome::Existing);
+        };
         self.launch_task(task_id, cancellation, tracking, task)?;
+        Ok(SpawnOutcome::Started)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn spawn_async<F, Fut>(
+        &self,
+        spec: TaskSpec,
+        task: F,
+    ) -> Result<SpawnOutcome, AppError>
+    where
+        F: FnOnce(TaskContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = AppResult<Value>> + Send + 'static,
+    {
+        let Some((task_id, cancellation, tracking)) = self.prepare_spawn(spec)? else {
+            return Ok(SpawnOutcome::Existing);
+        };
+        self.launch_task_async(task_id, cancellation, tracking, task)?;
         Ok(SpawnOutcome::Started)
     }
 
@@ -708,6 +735,58 @@ impl TaskRuntime {
             .unwrap_or(true)
     }
 
+    fn finish_task(
+        &self,
+        task_id: &str,
+        cancellation: &CancellationToken,
+        result: AppResult<Value>,
+    ) {
+        let mut terminal_snapshot = None;
+        if let Ok(mut tasks) = self.tasks.lock() {
+            if let Some(entry) = tasks.get_mut(task_id) {
+                if matches!(
+                    entry.snapshot.state,
+                    TaskState::Pending | TaskState::Running | TaskState::Cancelling
+                ) {
+                    entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+                    match result {
+                        Ok(_detail) if cancellation.is_cancelled() => {
+                            entry.snapshot.state = TaskState::Canceled;
+                            entry.snapshot.error =
+                                Some(AppError::Canceled("后台任务已取消".to_string()).view());
+                        }
+                        Ok(detail) => {
+                            entry.snapshot.state = TaskState::Succeeded;
+                            entry.snapshot.result = Some(detail);
+                        }
+                        Err(error)
+                            if cancellation.is_cancelled()
+                                || matches!(error, AppError::Canceled(_)) =>
+                        {
+                            entry.snapshot.state = TaskState::Canceled;
+                            entry.snapshot.error = Some(
+                                if matches!(error, AppError::Canceled(_)) {
+                                    error
+                                } else {
+                                    AppError::Canceled("后台任务已取消".to_string())
+                                }
+                                .view(),
+                            );
+                        }
+                        Err(error) => {
+                            entry.snapshot.state = TaskState::Failed;
+                            entry.snapshot.error = Some(error.view());
+                        }
+                    }
+                    terminal_snapshot = Some(entry.snapshot.clone());
+                }
+            }
+        }
+        if let Some(snapshot) = terminal_snapshot {
+            self.publish(&snapshot);
+        }
+    }
+
     fn launch_task(
         &self,
         task_id: String,
@@ -730,50 +809,7 @@ impl TaskRuntime {
             };
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
                 .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
-            let mut terminal_snapshot = None;
-            if let Ok(mut tasks) = runtime.tasks.lock() {
-                if let Some(entry) = tasks.get_mut(&run_task_id) {
-                    if matches!(
-                        entry.snapshot.state,
-                        TaskState::Pending | TaskState::Running | TaskState::Cancelling
-                    ) {
-                        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
-                        match result {
-                            Ok(_detail) if cancellation.is_cancelled() => {
-                                entry.snapshot.state = TaskState::Canceled;
-                                entry.snapshot.error =
-                                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
-                            }
-                            Ok(detail) => {
-                                entry.snapshot.state = TaskState::Succeeded;
-                                entry.snapshot.result = Some(detail);
-                            }
-                            Err(error)
-                                if cancellation.is_cancelled()
-                                    || matches!(error, AppError::Canceled(_)) =>
-                            {
-                                entry.snapshot.state = TaskState::Canceled;
-                                entry.snapshot.error = Some(
-                                    if matches!(error, AppError::Canceled(_)) {
-                                        error
-                                    } else {
-                                        AppError::Canceled("后台任务已取消".to_string())
-                                    }
-                                    .view(),
-                                );
-                            }
-                            Err(error) => {
-                                entry.snapshot.state = TaskState::Failed;
-                                entry.snapshot.error = Some(error.view());
-                            }
-                        }
-                        terminal_snapshot = Some(entry.snapshot.clone());
-                    }
-                }
-            }
-            if let Some(snapshot) = terminal_snapshot {
-                runtime.publish(&snapshot);
-            }
+            runtime.finish_task(&run_task_id, &cancellation, result);
         };
         if let Some(handle) = self.runtime_handle.clone() {
             handle.spawn_blocking(run);
@@ -796,6 +832,53 @@ impl TaskRuntime {
             }
             return Err(AppError::External(format!("启动后台任务失败: {error}")));
         }
+        Ok(())
+    }
+
+    fn launch_task_async<F, Fut>(
+        &self,
+        task_id: String,
+        cancellation: CancellationToken,
+        tracking: TaskTrackerToken,
+        task: F,
+    ) -> AppResult<()>
+    where
+        F: FnOnce(TaskContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = AppResult<Value>> + Send + 'static,
+    {
+        let handle = self
+            .runtime_handle
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())
+            .ok_or_else(|| {
+                AppError::external(
+                    "TaskRuntime requires runtime_handle for async tasks".to_string(),
+                )
+            })?;
+        let runtime = self.clone();
+        let run_task_id = task_id.clone();
+        handle.spawn(async move {
+            let _tracking = tracking;
+            let cancellation_for_finish = cancellation.clone();
+            let context = TaskContext {
+                cancellation: cancellation.clone(),
+                progress: ProgressHandle {
+                    task_id: run_task_id.clone(),
+                    runtime: runtime.clone(),
+                },
+            };
+            let result = match tokio::spawn(task(context)).await {
+                Ok(task_res) => task_res,
+                Err(join_err) => {
+                    if join_err.is_cancelled() {
+                        Err(AppError::Canceled("后台任务已取消".to_string()))
+                    } else {
+                        Err(AppError::External("后台任务发生 panic".to_string()))
+                    }
+                }
+            };
+            runtime.finish_task(&run_task_id, &cancellation_for_finish, result);
+        });
         Ok(())
     }
 

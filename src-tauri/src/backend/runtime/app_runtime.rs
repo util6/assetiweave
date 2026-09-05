@@ -391,65 +391,67 @@ impl AppRuntime {
                     let service = AppService::from_runtime(&runtime);
                     let principal_id = runtime.context().request_context.principal.id.clone();
                     let result = runtime.run_sync(async {
-                        store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id).await
-                    });
-                    match result {
-                        Ok(tenants) => {
-                            for tenant in tenants {
-                                if let Err(error) = service
-                                    .reconcile_session_memory_jobs_for_tenant_at(
-                                        &tenant.id,
-                                        chrono::Utc::now(),
-                                    )
-                                {
-                                    crate::backend::operation_log::log_warn(
-                                        "session_memory.coordinator.recovery",
-                                        "Session Memory durable coordinator reconciliation failed",
-                                        &[("error", error.to_string())],
-                                    );
-                                }
-                                if let Err(error) = service
-                                    .reconcile_project_memory_jobs_for_tenant_at(
-                                        &tenant.id,
-                                        chrono::Utc::now(),
-                                    )
-                                {
-                                    crate::backend::operation_log::log_warn(
-                                        "project_memory.coordinator.recovery",
-                                        "Project Memory durable coordinator reconciliation failed",
-                                        &[("error", error.to_string())],
-                                    );
-                                }
-                                if let Err(error) = service
-                                    .reconcile_global_memory_jobs_for_tenant_at(
-                                        &tenant.id,
-                                        chrono::Utc::now(),
-                                    )
-                                {
-                                    crate::backend::operation_log::log_warn(
-                                        "global_memory.coordinator.recovery",
-                                        "Global Memory durable coordinator reconciliation failed",
-                                        &[("error", error.to_string())],
-                                    );
-                                }
-                                if let Err(error) =
-                                    service.recover_memory_recall_turns_for_tenant(&tenant.id)
-                                {
-                                    crate::backend::operation_log::log_warn(
-                                        "memory_recall.coordinator.recovery",
-                                        "Recall durable workflow reconciliation failed",
-                                        &[("error", error.to_string())],
-                                    );
-                                }
+                        let tenants =
+                            store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id)
+                                .await?;
+                        for tenant in tenants {
+                            if let Err(error) = service
+                                .reconcile_session_memory_jobs_for_tenant_at(
+                                    &tenant.id,
+                                    chrono::Utc::now(),
+                                )
+                                .await
+                            {
+                                crate::backend::operation_log::log_warn(
+                                    "session_memory.coordinator.recovery",
+                                    "Session Memory durable coordinator reconciliation failed",
+                                    &[("error", error.to_string())],
+                                );
+                            }
+                            if let Err(error) = service
+                                .reconcile_project_memory_jobs_for_tenant_at(
+                                    &tenant.id,
+                                    chrono::Utc::now(),
+                                )
+                                .await
+                            {
+                                crate::backend::operation_log::log_warn(
+                                    "project_memory.coordinator.recovery",
+                                    "Project Memory durable coordinator reconciliation failed",
+                                    &[("error", error.to_string())],
+                                );
+                            }
+                            if let Err(error) = service
+                                .reconcile_global_memory_jobs_for_tenant_at(
+                                    &tenant.id,
+                                    chrono::Utc::now(),
+                                )
+                                .await
+                            {
+                                crate::backend::operation_log::log_warn(
+                                    "global_memory.coordinator.recovery",
+                                    "Global Memory durable coordinator reconciliation failed",
+                                    &[("error", error.to_string())],
+                                );
+                            }
+                            if let Err(error) =
+                                service.recover_memory_recall_turns_for_tenant(&tenant.id)
+                            {
+                                crate::backend::operation_log::log_warn(
+                                    "memory_recall.coordinator.recovery",
+                                    "Recall durable workflow reconciliation failed",
+                                    &[("error", error.to_string())],
+                                );
                             }
                         }
-                        Err(error) => {
-                            crate::backend::operation_log::log_warn(
-                                "session_memory.coordinator.tenants",
-                                "Session Memory tenant enumeration failed",
-                                &[("error", error.to_string())],
-                            );
-                        }
+                        Ok::<_, AppError>(())
+                    });
+                    if let Err(error) = result {
+                        crate::backend::operation_log::log_warn(
+                            "session_memory.coordinator.tenants",
+                            "Session Memory tenant enumeration failed",
+                            &[("error", error.to_string())],
+                        );
                     }
                     for _ in 0..10 {
                         if thread_cancellation.is_cancelled() {

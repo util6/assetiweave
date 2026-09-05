@@ -1071,17 +1071,18 @@ mod tests {
         assert_ne!(first, second);
     }
 
-    #[test]
-    fn a_new_source_watermark_invalidates_old_projection_and_is_idempotent() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_source_watermark_invalidates_old_projection_and_is_idempotent() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-invalidation-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
+        let database = crate::backend::store::Database::open_initialized_async(&path)
+            .await
             .expect("open invalidation fixture");
-        database.run_sync(sqlx::query(
+        sqlx::query(
             "INSERT INTO session_memories (tenant_id,id,session_id,source_id,source_revision,source_fingerprint,contract_version,prompt_version,status,project_path,summary,goal,result,decisions_json,verification_json,blockers_json,follow_up_json,topics_json,raw_output_json,generated_at,created_at,updated_at) VALUES ('default','memory-old','session-invalidation','source-invalidation',1,'fingerprint-old','session-memory.v1','session-memory-prompt.v1','active','/project','old summary','','','[]','[]','[]','[]','[]','{}','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z')",
-        ).execute(database.pool())).expect("insert active projection");
+        ).execute(database.pool()).await.expect("insert active projection");
         let old = SessionMemoryJobCandidate {
             session_id: "session-invalidation".to_string(),
             source_id: "source-invalidation".to_string(),
@@ -1096,64 +1097,67 @@ mod tests {
             ..old.clone()
         };
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &old,
-                    "event-old",
-                    "sync-old",
-                    "2026-08-31T00:00:00Z",
-                ))
-                .expect("insert old job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &old,
+                "event-old",
+                "sync-old",
+                "2026-08-31T00:00:00Z",
+            )
+            .await
+            .expect("insert old job"),
             1
         );
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &new,
-                    "event-new",
-                    "sync-new",
-                    "2026-08-31T00:01:00Z",
-                ))
-                .expect("insert new job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &new,
+                "event-new",
+                "sync-new",
+                "2026-08-31T00:01:00Z",
+            )
+            .await
+            .expect("insert new job"),
             1
         );
-        let projection_state: (String, String) = database
-            .run_sync(sqlx::query_as(
-                "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
-            ).fetch_one(database.pool()))
-            .expect("read invalidated projection");
+        let projection_state: (String, String) = sqlx::query_as(
+            "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("read invalidated projection");
         assert_eq!(
             projection_state,
             ("invalid".to_string(), "fingerprint-old".to_string())
         );
-        let old_job_status: String = database
-            .run_sync(sqlx::query_scalar(
-                "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",
-            ).fetch_one(database.pool()))
-            .expect("read superseded job");
+        let old_job_status: String = sqlx::query_scalar(
+            "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("read superseded job");
         assert_eq!(old_job_status, "skipped");
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &new,
-                    "event-new-repeat",
-                    "sync-new-repeat",
-                    "2026-08-31T00:02:00Z",
-                ))
-                .expect("repeat new job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &new,
+                "event-new-repeat",
+                "sync-new-repeat",
+                "2026-08-31T00:02:00Z",
+            )
+            .await
+            .expect("repeat new job"),
             0
         );
-        let active_count: i64 = database
-            .run_sync(sqlx::query_scalar(
-                "SELECT COUNT(*) FROM session_memories WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND status = 'active'",
-            ).fetch_one(database.pool()))
-            .expect("count active projections");
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_memories WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND status = 'active'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("count active projections");
         assert_eq!(active_count, 0);
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -1177,13 +1181,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn scheduler_prioritizes_the_most_recent_ready_session() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scheduler_prioritizes_the_most_recent_ready_session() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-scheduler-priority-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
+        let database = crate::backend::store::Database::open_initialized_async(&path)
+            .await
             .expect("open scheduler priority fixture");
         let old = SessionMemoryJobCandidate {
             session_id: "old-session".to_string(),
@@ -1198,236 +1203,236 @@ mod tests {
             not_before: "2026-08-31T23:30:00Z".to_string(),
             ..old.clone()
         };
-        database
-            .run_sync(insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &old,
-                "event-old",
-                "sync-old",
-                "2026-08-01T00:00:00Z",
-            ))
-            .expect("insert old job");
-        database
-            .run_sync(insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &recent,
-                "event-recent",
-                "sync-recent",
-                "2026-08-31T23:00:00Z",
-            ))
-            .expect("insert recent job");
+        insert_job_candidate_sqlx(
+            database.pool(),
+            "default",
+            &old,
+            "event-old",
+            "sync-old",
+            "2026-08-01T00:00:00Z",
+        )
+        .await
+        .expect("insert old job");
+        insert_job_candidate_sqlx(
+            database.pool(),
+            "default",
+            &recent,
+            "event-recent",
+            "sync-recent",
+            "2026-08-31T23:00:00Z",
+        )
+        .await
+        .expect("insert recent job");
 
-        let jobs = database
-            .run_sync(list_session_memory_job_ids_for_scheduler_sqlx(
-                database.pool(),
-                "default",
-                "2026-09-01T00:00:00Z",
-                2,
-            ))
-            .expect("list scheduler jobs");
-        let sessions = jobs
-            .iter()
-            .map(|job_id| {
-                database
-                    .run_sync(load_session_memory_job_sqlx(
-                        database.pool(),
-                        "default",
-                        job_id,
-                    ))
-                    .expect("load scheduler job")
-                    .expect("scheduler job exists")
-                    .session_id
-            })
-            .collect::<Vec<_>>();
+        let jobs = list_session_memory_job_ids_for_scheduler_sqlx(
+            database.pool(),
+            "default",
+            "2026-09-01T00:00:00Z",
+            2,
+        )
+        .await
+        .expect("list scheduler jobs");
+        let mut sessions = Vec::new();
+        for job_id in &jobs {
+            let job = load_session_memory_job_sqlx(database.pool(), "default", job_id)
+                .await
+                .expect("load scheduler job")
+                .expect("scheduler job exists");
+            sessions.push(job.session_id);
+        }
         assert_eq!(sessions, vec!["recent-session", "old-session"]);
 
         drop(database);
         let _ = std::fs::remove_file(&path);
     }
 
-    #[test]
-    fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-durable-red-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
-            .expect("open durable job fixture");
-        database.run_sync(async {
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_sessions (
-                    tenant_id, id, source_id, adapter_id, external_id, title,
-                    project_path, started_at, updated_at, source_locator,
-                    source_fingerprint, missing, created_at, imported_at
-                ) VALUES (
-                    'default', 'durable-session', 'durable-source', 'durable-adapter',
-                    'durable-external', 'Durable fixture', NULL,
-                    '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
-                    'fixture://durable-session', 'durable-revision', 0,
-                    '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
-                )
-                "#,
-            )
-            .execute(database.pool())
+        let database = crate::backend::store::Database::open_initialized_async(&path)
             .await
-            .expect("insert durable session");
-        });
+            .expect("open durable job fixture");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                project_path, started_at, updated_at, source_locator,
+                source_fingerprint, missing, created_at, imported_at
+            ) VALUES (
+                'default', 'durable-session', 'durable-source', 'durable-adapter',
+                'durable-external', 'Durable fixture', NULL,
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
+                'fixture://durable-session', 'durable-revision', 0,
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(database.pool())
+        .await
+        .expect("insert durable session");
         let now = "2026-08-31T00:00:00Z";
         assert_eq!(
-            database
-                .run_sync(enqueue_session_memory_jobs_sqlx(
-                    database.pool(),
-                    "default",
-                    "durable-source",
-                    "durable-sync",
-                    1,
-                    "durable-event",
-                    Some(&["durable-session".to_string()]),
-                    "",
-                    now,
-                ))
-                .expect("enqueue durable job"),
-            1
-        );
-        let job_id: String = database.run_sync(sqlx::query_scalar(
-            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'durable-session'",
-        ).fetch_one(database.pool())).expect("load durable job");
-        let first = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
+            enqueue_session_memory_jobs_sqlx(
                 database.pool(),
                 "default",
-                &job_id,
+                "durable-source",
+                "durable-sync",
+                1,
+                "durable-event",
+                Some(&["durable-session".to_string()]),
+                "",
                 now,
-                false,
-                "owner-a",
-                Duration::seconds(30),
-            ))
-            .expect("claim first owner")
-            .expect("first owner claim");
+            )
+            .await
+            .expect("enqueue durable job"),
+            1
+        );
+        let job_id: String = sqlx::query_scalar(
+            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'durable-session'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("load durable job");
+        let first = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            now,
+            false,
+            "owner-a",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim first owner")
+        .expect("first owner claim");
         assert_eq!(first.ownership_token.as_deref(), Some("owner-a"));
         assert_eq!(
-            database
-                .run_sync(heartbeat_session_memory_job_sqlx(
-                    database.pool(),
-                    "default",
-                    &job_id,
-                    "owner-old",
-                    "2026-08-31T00:00:10Z",
-                    Duration::seconds(30),
-                ))
-                .expect("reject stale heartbeat"),
+            heartbeat_session_memory_job_sqlx(
+                database.pool(),
+                "default",
+                &job_id,
+                "owner-old",
+                "2026-08-31T00:00:10Z",
+                Duration::seconds(30),
+            )
+            .await
+            .expect("reject stale heartbeat"),
             false
         );
         assert_eq!(
-            database
-                .run_sync(recover_expired_session_memory_leases_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:00:31Z",
-                ))
-                .expect("recover expired lease"),
+            recover_expired_session_memory_leases_sqlx(
+                database.pool(),
+                "default",
+                "2026-08-31T00:00:31Z",
+            )
+            .await
+            .expect("recover expired lease"),
             1
         );
-        let second = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:31Z",
-                false,
-                "owner-b",
-                Duration::seconds(30),
-            ))
-            .expect("claim recovered owner")
-            .expect("recovered owner claim");
+        let second = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:31Z",
+            false,
+            "owner-b",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim recovered owner")
+        .expect("recovered owner claim");
         assert_eq!(second.ownership_token.as_deref(), Some("owner-b"));
         assert_eq!(
-            database
-                .run_sync(mark_session_memory_job_failed_with_lease_sqlx(
-                    database.pool(),
-                    "default",
-                    &job_id,
-                    "owner-a",
-                    "phase1_failed",
-                    "2026-08-31T00:00:32Z",
-                ))
-                .expect("reject stale failure"),
-            false
-        );
-        assert!(database
-            .run_sync(mark_session_memory_job_failed_with_lease_sqlx(
+            mark_session_memory_job_failed_with_lease_sqlx(
                 database.pool(),
                 "default",
                 &job_id,
-                "owner-b",
+                "owner-a",
                 "phase1_failed",
                 "2026-08-31T00:00:32Z",
-            ))
-            .expect("record retryable failure"));
-        assert!(database
-            .run_sync(list_due_session_memory_job_ids_sqlx(
+            )
+            .await
+            .expect("reject stale failure"),
+            false
+        );
+        assert!(mark_session_memory_job_failed_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "owner-b",
+            "phase1_failed",
+            "2026-08-31T00:00:32Z",
+        )
+        .await
+        .expect("record retryable failure"));
+        assert!(list_due_session_memory_job_ids_sqlx(
+            database.pool(),
+            "default",
+            "2026-08-31T00:00:33Z",
+            10,
+        )
+        .await
+        .expect("list before retry")
+        .is_empty());
+        assert_eq!(
+            list_due_session_memory_job_ids_sqlx(
                 database.pool(),
                 "default",
-                "2026-08-31T00:00:33Z",
+                "2026-08-31T00:00:47Z",
                 10,
-            ))
-            .expect("list before retry")
-            .is_empty());
-        assert_eq!(
-            database
-                .run_sync(list_due_session_memory_job_ids_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:00:47Z",
-                    10,
-                ))
-                .expect("list after retry backoff"),
+            )
+            .await
+            .expect("list after retry backoff"),
             vec![job_id.clone()]
         );
-        let third = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:47Z",
-                false,
-                "owner-c",
-                Duration::seconds(30),
-            ))
-            .expect("claim retry owner")
-            .expect("retry owner claim");
+        let third = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:47Z",
+            false,
+            "owner-c",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim retry owner")
+        .expect("retry owner claim");
         assert_eq!(third.retry_count, 2);
-        assert!(database
-            .run_sync(cancel_session_memory_job_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:34Z",
-            ))
-            .expect("cancel retry job"));
-        assert!(!database
-            .run_sync(cancel_session_memory_job_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:35Z",
-            ))
-            .expect("cancel retry job idempotently"));
-        let status: String = database.run_sync(sqlx::query_scalar(
+        assert!(cancel_session_memory_job_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:34Z",
+        )
+        .await
+        .expect("cancel retry job"));
+        assert!(!cancel_session_memory_job_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:35Z",
+        )
+        .await
+        .expect("cancel retry job idempotently"));
+        let status: String = sqlx::query_scalar(
             "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-        ).bind(&job_id).fetch_one(database.pool())).expect("read cancelled job");
+        )
+        .bind(&job_id)
+        .fetch_one(database.pool())
+        .await
+        .expect("read cancelled job");
         assert_eq!(status, "canceled");
         assert_eq!(
-            database
-                .run_sync(recover_expired_session_memory_leases_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:48:00Z",
-                ))
-                .expect("do not recover cancelled job"),
+            recover_expired_session_memory_leases_sqlx(
+                database.pool(),
+                "default",
+                "2026-08-31T00:48:00Z",
+            )
+            .await
+            .expect("do not recover cancelled job"),
             0
         );
         drop(database);
