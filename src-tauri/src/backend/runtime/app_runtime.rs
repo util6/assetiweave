@@ -90,18 +90,12 @@ pub(crate) struct AppRuntime {
     shutdown: ShutdownState,
     dispatcher: Mutex<Option<EventDispatcherHandle>>,
     session_memory_coordinator: Mutex<Option<SessionMemoryCoordinatorHandle>>,
-    team_coordinator: Mutex<Option<TeamCoordinatorHandle>>,
     session_streams: session_streams::SessionStreamRegistry,
     target_catalog_dir: PathBuf,
     target_catalog: RegistrySnapshot<TargetCatalog>,
     builtin_conversation_adapters: Arc<Vec<ConversationAdapter>>,
     config: Arc<super::config::RuntimeConfig>,
     settings: ArcSwap<serde_json::Value>,
-}
-
-struct TeamCoordinatorHandle {
-    cancellation: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
 }
 
 struct SessionMemoryCoordinatorHandle {
@@ -112,18 +106,6 @@ struct SessionMemoryCoordinatorHandle {
 impl SessionMemoryCoordinatorHandle {
     fn stop(mut self) {
         self.cancellation.cancel();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
-    }
-}
-
-impl TeamCoordinatorHandle {
-    fn stop(mut self) {
-        self.cancellation.cancel();
-        // The coordinator performs only the bounded durable reconciliation
-        // query and task registration; join it before closing the shared pool
-        // so no recovery pass can race database shutdown.
         if let Some(join) = self.join.take() {
             let _ = join.join();
         }
@@ -250,7 +232,6 @@ impl AppRuntime {
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
-            team_coordinator: Mutex::new(None),
             session_streams: session_streams::SessionStreamRegistry::default(),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
@@ -327,7 +308,6 @@ impl AppRuntime {
             shutdown: ShutdownState::new(),
             dispatcher: Mutex::new(None),
             session_memory_coordinator: Mutex::new(None),
-            team_coordinator: Mutex::new(None),
             session_streams: session_streams::SessionStreamRegistry::default(),
             target_catalog_dir,
             target_catalog: RegistrySnapshot::new(target_catalog),
@@ -476,14 +456,21 @@ impl AppRuntime {
     /// loop then makes startup, duplicate delivery, and mid-run interruption
     /// converge through the same AppService scheduling path.
     fn start_team_coordinator(self: &Arc<Self>) {
-        let cancellation = CancellationToken::new();
-        let thread_cancellation = cancellation.clone();
         let runtime = self.clone();
-        let join = thread::Builder::new()
-            .name("aiw-team-coordinator".to_string())
-            .spawn(move || {
-                while !thread_cancellation.is_cancelled() {
-                    if let Err(error) = AppService::from_runtime(&runtime).recover_team_runs() {
+        let mut spec = super::tasks::TaskSpec::global(
+            super::tasks::TaskKind::Other,
+            Some("team-coordinator".to_string()),
+        );
+        spec.detail = serde_json::json!({
+            "domain": "team",
+            "operation": "coordinator_reconciliation",
+        });
+        let _ = self
+            .task_runtime
+            .spawn_async(spec, move |context| async move {
+                while !context.is_cancelled() {
+                    if let Err(error) = AppService::from_runtime(&runtime).recover_team_runs().await
+                    {
                         crate::backend::operation_log::log_warn(
                             "team.coordinator.recovery",
                             "Team durable coordinator reconciliation failed",
@@ -491,20 +478,14 @@ impl AppRuntime {
                         );
                     }
                     for _ in 0..10 {
-                        if thread_cancellation.is_cancelled() {
-                            return;
+                        if context.is_cancelled() {
+                            return Ok(serde_json::json!({ "status": "stopped" }));
                         }
-                        thread::sleep(Duration::from_millis(100));
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
                 }
-            })
-            .expect("Team coordinator thread must start");
-        if let Ok(mut slot) = self.team_coordinator.lock() {
-            *slot = Some(TeamCoordinatorHandle {
-                cancellation,
-                join: Some(join),
+                Ok(serde_json::json!({ "status": "stopped" }))
             });
-        }
     }
 
     fn start_agent_health_refresh(&self) {
@@ -760,11 +741,6 @@ impl AppRuntime {
         // resident dispatcher is still alive; only then can the dispatcher
         // drain and the database close.
         self.stop_session_memory_coordinator();
-        if let Ok(mut slot) = self.team_coordinator.lock() {
-            if let Some(handle) = slot.take() {
-                handle.stop();
-            }
-        }
         self.task_runtime.stop_accepting();
         let mut dispatcher_handle = self.dispatcher.lock().ok().and_then(|mut slot| slot.take());
         let (task_report, dispatcher_report) = self.run_sync(async {

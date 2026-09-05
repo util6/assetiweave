@@ -45,43 +45,36 @@ fn validate_team_agent_bindings(
 }
 
 impl AppService {
-    pub(crate) fn create_team(&self, input: CreateTeamInput) -> AppResult<TeamDetail> {
+    pub(crate) async fn create_team(&self, input: CreateTeamInput) -> AppResult<TeamDetail> {
         validate_team_agent_bindings(&self.agent_runtime, &input.members)?;
         let tenant_id = self.tenant_id();
-        let pool = self.db.pool().clone();
-        self.runtime
-            .run_sync(async move { create_team_sqlx(&pool, &tenant_id, &input).await })
+        let pool = self.db.pool();
+        create_team_sqlx(pool, &tenant_id, &input).await
     }
 
-    pub(crate) fn get_team(&self, team_id: &str) -> AppResult<Option<TeamDetail>> {
+    pub(crate) async fn get_team(&self, team_id: &str) -> AppResult<Option<TeamDetail>> {
         let tenant_id = self.tenant_id();
-        let pool = self.db.pool().clone();
-        let team_id = team_id.to_string();
-        self.runtime
-            .run_sync(async move { get_team_detail_sqlx(&pool, &tenant_id, &team_id).await })
+        let pool = self.db.pool();
+        get_team_detail_sqlx(pool, &tenant_id, team_id).await
     }
 
-    pub(crate) fn list_teams(&self) -> AppResult<Vec<TeamDetail>> {
+    pub(crate) async fn list_teams(&self) -> AppResult<Vec<TeamDetail>> {
         let tenant_id = self.tenant_id();
-        let pool = self.db.pool().clone();
-        self.runtime
-            .run_sync(async move { list_teams_sqlx(&pool, &tenant_id).await })
+        let pool = self.db.pool();
+        list_teams_sqlx(pool, &tenant_id).await
     }
 
-    pub(crate) fn update_team(&self, input: UpdateTeamInput) -> AppResult<TeamDetail> {
+    pub(crate) async fn update_team(&self, input: UpdateTeamInput) -> AppResult<TeamDetail> {
         validate_team_agent_bindings(&self.agent_runtime, &input.members)?;
         let tenant_id = self.tenant_id();
-        let pool = self.db.pool().clone();
-        self.runtime
-            .run_sync(async move { update_team_sqlx(&pool, &tenant_id, &input).await })
+        let pool = self.db.pool();
+        update_team_sqlx(pool, &tenant_id, &input).await
     }
 
-    pub(crate) fn delete_team(&self, team_id: &str) -> AppResult<()> {
+    pub(crate) async fn delete_team(&self, team_id: &str) -> AppResult<()> {
         let tenant_id = self.tenant_id();
-        let pool = self.db.pool().clone();
-        let team_id = team_id.to_string();
-        self.runtime
-            .run_sync(async move { delete_team_sqlx(&pool, &tenant_id, &team_id).await })
+        let pool = self.db.pool();
+        delete_team_sqlx(pool, &tenant_id, team_id).await
     }
 }
 

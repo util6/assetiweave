@@ -206,15 +206,18 @@ pub fn run() {
             }
         };
     {
-        let service = AppService::from_runtime(&runtime);
-        if let Err(error) = service.recover_team_runs() {
-            log_error(
-                "app.startup.team_recovery",
-                "failed to schedule durable Team runs",
-                &error,
-                &[],
-            );
-        }
+        let recovery_runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = AppService::from_runtime(&recovery_runtime);
+            if let Err(error) = service.recover_team_runs().await {
+                log_error(
+                    "app.startup.team_recovery",
+                    "failed to schedule durable Team runs",
+                    &error,
+                    &[],
+                );
+            }
+        });
         let refresh_runtime = runtime.clone();
         tauri::async_runtime::spawn(async move {
             let service = AppService::from_runtime(&refresh_runtime);
@@ -615,7 +618,7 @@ pub fn run_team_mcp_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_team_mcp_loop(&service, &credential, &member_id) {
+    if let Err(error) = run_team_mcp_loop(&runtime, &service, &credential, &member_id) {
         eprintln!("Team MCP bridge stopped: {error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -835,6 +838,7 @@ async fn memory_recall_mcp_call(
 }
 
 fn run_team_mcp_loop(
+    runtime: &backend::runtime::AppRuntime,
     service: &backend::application::AppService,
     credential: &str,
     member_id: &str,
@@ -860,12 +864,12 @@ fn run_team_mcp_loop(
         let result = match method {
             "initialize" => Ok(team_mcp_initialize_result()),
             "tools/list" => Ok(team_mcp_tools_result()),
-            "tools/call" => team_mcp_call(
+            "tools/call" => runtime.block_on(team_mcp_call(
                 service,
                 credential,
                 member_id,
                 request.get("params").unwrap_or(&serde_json::Value::Null),
-            ),
+            )),
             _ => Err("unsupported Team MCP method".to_string()),
         };
         let response = match (id, result) {
@@ -951,7 +955,7 @@ fn team_mcp_tools_result() -> serde_json::Value {
     })
 }
 
-fn team_mcp_call(
+async fn team_mcp_call(
     service: &backend::application::AppService,
     credential: &str,
     member_id: &str,
@@ -983,6 +987,7 @@ fn team_mcp_call(
                     backend::models::TeamToolTaskListInput { team_id, run_id },
                     member_id,
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -1004,6 +1009,7 @@ fn team_mcp_call(
                             error_code: string("error_code"),
                         },
                     )
+                    .await
                     .map_err(|error| error.view().message)?,
             )
             .map_err(|error| error.to_string())?
@@ -1023,6 +1029,7 @@ fn team_mcp_call(
                         idempotency_key: required_string("idempotency_key")?,
                     },
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -1040,6 +1047,7 @@ fn team_mcp_call(
                             .unwrap_or(false),
                     },
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,

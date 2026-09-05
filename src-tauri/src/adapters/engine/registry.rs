@@ -794,7 +794,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_teams(),
+        ServiceAsync => |service, _params| service.list_teams().await,
         &[],
         Some("assetiweave-cli team list")
     ),
@@ -806,7 +806,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamGetParams,
-        Service => |service, params| service.get_team(&params.team_id),
+        ServiceAsync => |service, params| service.get_team(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         Some("assetiweave-cli team get <team-id>")
     ),
@@ -818,7 +818,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::CreateTeamInput,
-        Service => |service, params| service.create_team(params),
+        ServiceAsync => |service, params| service.create_team(params).await,
         &[
             param!("id", "Optional team identifier"),
             param!("name", "Team name"),
@@ -835,7 +835,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::UpdateTeamInput,
-        Service => |service, params| service.update_team(params),
+        ServiceAsync => |service, params| service.update_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("name", "Team name"),
@@ -852,7 +852,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamDeleteParams,
-        Service => |service, params| service.delete_team(&params.team_id),
+        ServiceAsync => |service, params| service.delete_team(&params.team_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("yes", "Confirm deletion of team"),
@@ -867,7 +867,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamLeaderChatInput,
-        Service => |service, params| service.leader_chat(params),
+        ServiceAsync => |service, params| service.leader_chat(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("message", "Leader message"),
@@ -883,7 +883,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamDraftInput,
-        Service => |service, params| service.draft_team(params),
+        ServiceAsync => |service, params| service.draft_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("leader_message", "Leader request", ["leaderMessage"]),
@@ -898,7 +898,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.get_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.get_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         Some("assetiweave-cli team run get <run-id>")
     ),
@@ -910,7 +910,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.restore_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.restore_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         Some("assetiweave-cli team run restore <run-id>")
     ),
@@ -922,7 +922,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamReviewInput,
-        Service => |service, params| service.review_team_run(params),
+        ServiceAsync => |service, params| service.review_team_run(params).await,
         &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision"), param!("tasks", "Reviewed ordered task assignments")],
         Some("assetiweave-cli team run review <run-id> --tasks <json>")
     ),
@@ -934,7 +934,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamConfirmInput,
-        Service => |service, params| service.confirm_team_run(params),
+        ServiceAsync => |service, params| service.confirm_team_run(params).await,
         &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision")],
         Some("assetiweave-cli team run confirm <run-id> --revision <revision> --yes")
     ),
@@ -946,7 +946,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolTaskListParams,
-        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        ServiceAsync => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
         Some("assetiweave-cli team tool tasks --credential <credential>")
     ),
@@ -958,7 +958,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolTaskUpdateParams,
-        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        ServiceAsync => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }).await,
         &[param!("credential", "Scoped Team tool credential"), param!("task_id", "Task identifier", ["taskId"]), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
         Some("assetiweave-cli team task update <task-id> --credential <credential>")
     ),
@@ -970,7 +970,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolMailboxSendParams,
-        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_send_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
         Some("assetiweave-cli team mailbox send <run-id> --credential <credential>")
     ),
@@ -982,7 +982,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolMailboxReadParams,
-        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_read_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
         Some("assetiweave-cli team mailbox read <run-id> --credential <credential>")
     ),
@@ -994,7 +994,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolCredentialIssueParams,
-        Service => |service, params| service.issue_team_tool_credential(crate::backend::models::TeamToolCredentialInput { team_id: params.team_id, run_id: params.run_id, member_id: params.member_id, ttl_seconds: params.ttl_seconds }),
+        ServiceAsync => |service, params| service.issue_team_tool_credential(crate::backend::models::TeamToolCredentialInput { team_id: params.team_id, run_id: params.run_id, member_id: params.member_id, ttl_seconds: params.ttl_seconds }).await,
         &[param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Teammate identifier", ["memberId"]), param!("ttl_seconds", "Credential lifetime", ["ttlSeconds"])],
         None
     ),
@@ -1006,7 +1006,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolTaskListParams,
-        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        ServiceAsync => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
         None
     ),
@@ -1018,7 +1018,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolTaskUpdateParams,
-        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        ServiceAsync => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("task_id", "Task identifier", ["taskId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
         None
     ),
@@ -1030,7 +1030,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolMailboxSendParams,
-        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_send_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
         None
     ),
@@ -1042,7 +1042,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolMailboxReadParams,
-        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_read_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
         None
     ),
@@ -4307,7 +4307,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::CreateTeamInput,
-        Service => |service, params| service.create_team(params),
+        ServiceAsync => |service, params| service.create_team(params).await,
         &[
             param!("id", "Optional team identifier"),
             param!("name", "Team name"),
@@ -4324,7 +4324,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamGetParams,
-        Service => |service, params| service.get_team(&params.team_id),
+        ServiceAsync => |service, params| service.get_team(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         None
     ),
@@ -4336,7 +4336,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_teams(),
+        ServiceAsync => |service, _params| service.list_teams().await,
         &[],
         None
     ),
@@ -4348,7 +4348,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::UpdateTeamInput,
-        Service => |service, params| service.update_team(params),
+        ServiceAsync => |service, params| service.update_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("name", "Team name"),
@@ -4365,7 +4365,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamDeleteParams,
-        Service => |service, params| service.delete_team(&params.team_id),
+        ServiceAsync => |service, params| service.delete_team(&params.team_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("yes", "Confirm deletion of team"),
@@ -4380,7 +4380,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMemberTurnInput,
-        Service => |service, params| service.start_team_member_turn(params),
+        ServiceAsync => |service, params| service.start_team_member_turn(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4397,7 +4397,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberScopeParams,
-        Service => |service, params| service.start_member_replay(&params.team_id, &params.member_id),
+        ServiceAsync => |service, params| service.start_member_replay(&params.team_id, &params.member_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4412,11 +4412,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberStreamParams,
-        Service => |service, params| service.get_member_stream(
+        ServiceAsync => |service, params| service.get_member_stream(
             &params.team_id,
             &params.member_id,
             &params.execution_id,
-        ),
+        ).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4456,11 +4456,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberStreamParams,
-        Service => |service, params| service.cancel_member_turn(
+        ServiceAsync => |service, params| service.cancel_member_turn(
             &params.team_id,
             &params.member_id,
             &params.execution_id,
-        ),
+        ).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4476,7 +4476,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamLeaderChatInput,
-        Service => |service, params| service.leader_chat(params),
+        ServiceAsync => |service, params| service.leader_chat(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("message", "Leader message"),
@@ -4492,7 +4492,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamDraftInput,
-        Service => |service, params| service.draft_team(params),
+        ServiceAsync => |service, params| service.draft_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("leader_message", "Leader request", ["leaderMessage"]),
@@ -4507,7 +4507,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.get_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.get_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         None
     ),
@@ -4519,7 +4519,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamGetParams,
-        Service => |service, params| service.latest_team_run(&params.team_id),
+        ServiceAsync => |service, params| service.latest_team_run(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         None
     ),
@@ -4531,7 +4531,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.restore_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.restore_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         None
     ),
@@ -4555,7 +4555,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamReviewInput,
-        Service => |service, params| service.review_team_run(params),
+        ServiceAsync => |service, params| service.review_team_run(params).await,
         &[
             param!("run_id", "Run identifier", ["runId"]),
             param!("revision", "Run revision"),
@@ -4571,7 +4571,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamConfirmInput,
-        Service => |service, params| service.confirm_team_run(params),
+        ServiceAsync => |service, params| service.confirm_team_run(params).await,
         &[
             param!("run_id", "Run identifier", ["runId"]),
             param!("revision", "Run revision"),
@@ -4586,7 +4586,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamTaskUpdateInput,
-        Service => |service, params| service.update_team_task(params),
+        ServiceAsync => |service, params| service.update_team_task(params).await,
         &[
             param!("task_id", "Task identifier", ["taskId"]),
             param!("team_id", "Team identifier", ["teamId"]),
@@ -4606,7 +4606,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMailboxSendInput,
-        Service => |service, params| service.send_team_mailbox(params),
+        ServiceAsync => |service, params| service.send_team_mailbox(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("run_id", "Run identifier", ["runId"]),
@@ -4626,7 +4626,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMailboxReadInput,
-        Service => |service, params| service.read_team_mailbox(params),
+        ServiceAsync => |service, params| service.read_team_mailbox(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("run_id", "Run identifier", ["runId"]),

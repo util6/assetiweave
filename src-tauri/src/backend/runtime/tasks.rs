@@ -641,6 +641,58 @@ impl TaskRuntime {
         Ok(snapshot)
     }
 
+    pub(crate) fn start_external_with_async<F, Fut>(
+        &self,
+        task_id: &str,
+        detail: Value,
+        task: F,
+    ) -> AppResult<TaskSnapshot>
+    where
+        F: FnOnce(TaskContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = AppResult<Value>> + Send + 'static,
+    {
+        let (snapshot, cancellation, tracking, should_launch) = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            Self::prune_terminal_tasks_locked(&mut tasks);
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if entry.snapshot.state == TaskState::Pending {
+                entry.snapshot.state = TaskState::Running;
+                entry.snapshot.detail = sanitize_task_detail(detail);
+            }
+            let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
+            let tracking = if should_launch {
+                entry.started = true;
+                entry
+                    .tracking
+                    .take()
+                    .unwrap_or_else(|| self.tracker.token())
+            } else {
+                self.tracker.token()
+            };
+            (
+                entry.snapshot.clone(),
+                entry.cancellation.clone(),
+                tracking,
+                should_launch,
+            )
+        };
+        self.publish(&snapshot);
+        if should_launch {
+            self.launch_task_async(task_id.to_string(), cancellation, tracking, task)?;
+        } else if snapshot.state == TaskState::Cancelling {
+            return self.complete_external(
+                task_id,
+                Err(AppError::Canceled("后台任务在启动前已取消".to_string())),
+            );
+        }
+        Ok(snapshot)
+    }
+
     pub(crate) fn complete_external(
         &self,
         task_id: &str,

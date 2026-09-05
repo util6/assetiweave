@@ -5197,8 +5197,8 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn team_roster_rules_and_persistence_ts01() {
+#[tokio::test(flavor = "multi_thread")]
+async fn team_roster_rules_and_persistence_ts01() {
     use crate::backend::models::{CreateTeamInput, TeamMemberInput, TeamRole};
     use rusqlite::Connection;
 
@@ -5211,76 +5211,82 @@ fn team_roster_rules_and_persistence_ts01() {
         let service = AppService::open_with_db_path(db_path.clone()).expect("open service");
 
         // 1. Validation test: Team with two leaders must fail
-        let two_leaders_res = service.create_team(CreateTeamInput {
-            id: Some("team-invalid-1".to_string()),
-            name: "Two Leaders Team".to_string(),
-            description: None,
-            members: vec![
-                TeamMemberInput {
+        let two_leaders_res = service
+            .create_team(CreateTeamInput {
+                id: Some("team-invalid-1".to_string()),
+                name: "Two Leaders Team".to_string(),
+                description: None,
+                members: vec![
+                    TeamMemberInput {
+                        id: None,
+                        role: TeamRole::Leader,
+                        sort_order: Some(0),
+                        agent_id: "claude-code".to_string(),
+                        model: Some("claude-3-7-sonnet".to_string()),
+                    },
+                    TeamMemberInput {
+                        id: None,
+                        role: TeamRole::Leader,
+                        sort_order: Some(1),
+                        agent_id: "codex".to_string(),
+                        model: Some("gpt-4o".to_string()),
+                    },
+                ],
+            })
+            .await;
+        assert!(two_leaders_res.is_err(), "team with 2 leaders must fail");
+
+        // 2. Validation test: Team with zero teammates must fail
+        let zero_teammates_res = service
+            .create_team(CreateTeamInput {
+                id: Some("team-invalid-2".to_string()),
+                name: "Zero Teammates Team".to_string(),
+                description: None,
+                members: vec![TeamMemberInput {
                     id: None,
                     role: TeamRole::Leader,
                     sort_order: Some(0),
                     agent_id: "claude-code".to_string(),
                     model: Some("claude-3-7-sonnet".to_string()),
-                },
-                TeamMemberInput {
-                    id: None,
-                    role: TeamRole::Leader,
-                    sort_order: Some(1),
-                    agent_id: "codex".to_string(),
-                    model: Some("gpt-4o".to_string()),
-                },
-            ],
-        });
-        assert!(two_leaders_res.is_err(), "team with 2 leaders must fail");
-
-        // 2. Validation test: Team with zero teammates must fail
-        let zero_teammates_res = service.create_team(CreateTeamInput {
-            id: Some("team-invalid-2".to_string()),
-            name: "Zero Teammates Team".to_string(),
-            description: None,
-            members: vec![TeamMemberInput {
-                id: None,
-                role: TeamRole::Leader,
-                sort_order: Some(0),
-                agent_id: "claude-code".to_string(),
-                model: Some("claude-3-7-sonnet".to_string()),
-            }],
-        });
+                }],
+            })
+            .await;
         assert!(
             zero_teammates_res.is_err(),
             "team with 0 teammates must fail"
         );
 
         // 3. Valid team creation: 1 Leader + 2 Teammates with identical agent_id & model
-        let valid_res = service.create_team(CreateTeamInput {
-            id: Some("team-alpha".to_string()),
-            name: "Alpha Engineering Team".to_string(),
-            description: Some("Autonomous pair programming unit".to_string()),
-            members: vec![
-                TeamMemberInput {
-                    id: Some("mem-leader".to_string()),
-                    role: TeamRole::Leader,
-                    sort_order: Some(0),
-                    agent_id: "claude-code".to_string(),
-                    model: Some("claude-3-7-sonnet".to_string()),
-                },
-                TeamMemberInput {
-                    id: Some("mem-worker-1".to_string()),
-                    role: TeamRole::Teammate,
-                    sort_order: Some(1),
-                    agent_id: "codex".to_string(),
-                    model: Some("gpt-4o".to_string()),
-                },
-                TeamMemberInput {
-                    id: Some("mem-worker-2".to_string()),
-                    role: TeamRole::Teammate,
-                    sort_order: Some(2),
-                    agent_id: "codex".to_string(),
-                    model: Some("gpt-4o".to_string()),
-                },
-            ],
-        });
+        let valid_res = service
+            .create_team(CreateTeamInput {
+                id: Some("team-alpha".to_string()),
+                name: "Alpha Engineering Team".to_string(),
+                description: Some("Autonomous pair programming unit".to_string()),
+                members: vec![
+                    TeamMemberInput {
+                        id: Some("mem-leader".to_string()),
+                        role: TeamRole::Leader,
+                        sort_order: Some(0),
+                        agent_id: "claude-code".to_string(),
+                        model: Some("claude-3-7-sonnet".to_string()),
+                    },
+                    TeamMemberInput {
+                        id: Some("mem-worker-1".to_string()),
+                        role: TeamRole::Teammate,
+                        sort_order: Some(1),
+                        agent_id: "codex".to_string(),
+                        model: Some("gpt-4o".to_string()),
+                    },
+                    TeamMemberInput {
+                        id: Some("mem-worker-2".to_string()),
+                        role: TeamRole::Teammate,
+                        sort_order: Some(2),
+                        agent_id: "codex".to_string(),
+                        model: Some("gpt-4o".to_string()),
+                    },
+                ],
+            })
+            .await;
         assert!(
             valid_res.is_ok(),
             "valid team creation should succeed: {:?}",
@@ -5301,6 +5307,7 @@ fn team_roster_rules_and_persistence_ts01() {
         let service = AppService::open_with_db_path(db_path.clone()).expect("reopen service");
         let team = service
             .get_team("team-alpha")
+            .await
             .expect("get team")
             .expect("team exists");
 
@@ -5359,6 +5366,7 @@ fn team_roster_rules_and_persistence_ts01() {
                     },
                 ],
             })
+            .await
             .expect("update team");
 
         assert_eq!(updated.members[1].id, "mem-worker-2");
@@ -5417,8 +5425,8 @@ fn team_roster_rules_and_persistence_ts01() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[test]
-fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
+#[tokio::test(flavor = "multi_thread")]
+async fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
     use crate::backend::{
         models::{
             CreateTeamInput, TeamConfirmInput, TeamMemberInput, TeamReviewInput, TeamRole,
@@ -5452,14 +5460,14 @@ fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
                 },
             ],
         })
+        .await
         .expect("create Team");
 
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    let shell = service.runtime.run_sync(store::create_team_run_shell_sqlx(
-        &pool, &tenant_id, "team-run",
-    ));
-    let shell = shell.expect("create durable drafting shell");
+    let shell = store::create_team_run_shell_sqlx(&pool, &tenant_id, "team-run")
+        .await
+        .expect("create durable drafting shell");
     assert_eq!(
         shell.run.state,
         crate::backend::models::TeamRunState::Drafting
@@ -5469,135 +5477,132 @@ fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() {
 
     let run_id = shell.run.id.clone();
     let roster = shell.run.roster_snapshot.clone();
-    let update_while_active = service.update_team(crate::backend::models::UpdateTeamInput {
-        team_id: "team-run".to_string(),
-        name: "Changed".to_string(),
-        description: None,
-        members: vec![
-            TeamMemberInput {
-                id: Some("leader".to_string()),
-                role: TeamRole::Leader,
-                sort_order: Some(0),
-                agent_id: "claude-code".to_string(),
-                model: None,
-            },
-            TeamMemberInput {
-                id: Some("worker".to_string()),
-                role: TeamRole::Teammate,
-                sort_order: Some(1),
-                agent_id: "codex".to_string(),
-                model: None,
-            },
-        ],
-    });
+    let update_while_active = service
+        .update_team(crate::backend::models::UpdateTeamInput {
+            team_id: "team-run".to_string(),
+            name: "Changed".to_string(),
+            description: None,
+            members: vec![
+                TeamMemberInput {
+                    id: Some("leader".to_string()),
+                    role: TeamRole::Leader,
+                    sort_order: Some(0),
+                    agent_id: "claude-code".to_string(),
+                    model: None,
+                },
+                TeamMemberInput {
+                    id: Some("worker".to_string()),
+                    role: TeamRole::Teammate,
+                    sort_order: Some(1),
+                    agent_id: "codex".to_string(),
+                    model: None,
+                },
+            ],
+        })
+        .await;
     assert!(
         update_while_active.is_err(),
         "active run must freeze its roster"
     );
 
-    let reviewed = service
-        .runtime
-        .run_sync(store::complete_team_run_draft_sqlx(
-            &pool,
-            &tenant_id,
-            &run_id,
-            &[crate::backend::models::TeamTaskDraft {
-                id: Some("task-one".to_string()),
-                title: "Inspect fixture".to_string(),
-                description: "Inspect the local fixture and report findings.".to_string(),
-                recommended_member_id: "worker".to_string(),
-                sort_order: Some(77),
-            }],
-        ))
-        .expect("complete draft");
+    let reviewed = store::complete_team_run_draft_sqlx(
+        &pool,
+        &tenant_id,
+        &run_id,
+        &[crate::backend::models::TeamTaskDraft {
+            id: Some("task-one".to_string()),
+            title: "Inspect fixture".to_string(),
+            description: "Inspect the local fixture and report findings.".to_string(),
+            recommended_member_id: "worker".to_string(),
+            sort_order: Some(77),
+        }],
+    )
+    .await
+    .expect("complete draft");
     assert_eq!(
         reviewed.run.state,
         crate::backend::models::TeamRunState::AwaitingReview
     );
     assert_eq!(reviewed.tasks[0].sort_order, 0);
 
-    let reviewed = service
-        .runtime
-        .run_sync(store::review_team_run_sqlx(
-            &pool,
-            &tenant_id,
-            &TeamReviewInput {
-                run_id: run_id.clone(),
-                revision: reviewed.run.revision,
-                tasks: vec![crate::backend::models::TeamReviewTaskInput {
-                    task_id: "task-one".to_string(),
-                    title: None,
-                    description: None,
-                    owner_member_id: "worker".to_string(),
-                    sort_order: 123,
-                }],
-            },
-        ))
-        .expect("save human review");
+    let reviewed = store::review_team_run_sqlx(
+        &pool,
+        &tenant_id,
+        &TeamReviewInput {
+            run_id: run_id.clone(),
+            revision: reviewed.run.revision,
+            tasks: vec![crate::backend::models::TeamReviewTaskInput {
+                task_id: "task-one".to_string(),
+                title: None,
+                description: None,
+                owner_member_id: "worker".to_string(),
+                sort_order: 123,
+            }],
+        },
+    )
+    .await
+    .expect("save human review");
     assert_eq!(reviewed.tasks[0].owner_member_id.as_deref(), Some("worker"));
     assert_eq!(reviewed.tasks[0].sort_order, 0);
     assert_eq!(reviewed.run.roster_snapshot, roster);
 
-    let executing = service
-        .runtime
-        .run_sync(store::confirm_team_run_sqlx(
-            &pool,
-            &tenant_id,
-            &TeamConfirmInput {
-                run_id: run_id.clone(),
-                revision: reviewed.run.revision,
-            },
-        ))
-        .expect("confirm reviewed run");
+    let executing = store::confirm_team_run_sqlx(
+        &pool,
+        &tenant_id,
+        &TeamConfirmInput {
+            run_id: run_id.clone(),
+            revision: reviewed.run.revision,
+        },
+    )
+    .await
+    .expect("confirm reviewed run");
     assert_eq!(
         executing.run.state,
         crate::backend::models::TeamRunState::Executing
     );
     assert_eq!(executing.tasks[0].state, TeamTaskState::Queued);
-    let outbox_count: i64 = service
-        .runtime
-        .run_sync(
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM domain_event_outbox WHERE event_type = 'team_run_confirmed'",
-            )
-            .fetch_one(&pool),
-        )
-        .expect("count confirmation outbox");
+    let outbox_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM domain_event_outbox WHERE event_type = 'team_run_confirmed'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count confirmation outbox");
     assert_eq!(outbox_count, 1);
 
-    let claimed = service
-        .runtime
-        .run_sync(store::claim_team_task_sqlx(&pool, &tenant_id, "task-one"))
+    let claimed = store::claim_team_task_sqlx(&pool, &tenant_id, "task-one")
+        .await
         .expect("claim task")
         .expect("task is queued");
     assert_eq!(claimed.state, TeamTaskState::Running);
-    let finished = service
-        .runtime
-        .run_sync(store::finish_team_task_sqlx(
-            &pool,
-            &tenant_id,
-            "task-one",
-            TeamTaskState::Succeeded,
-            Some("done"),
-            None,
-        ))
-        .expect("finish task");
+    let finished = store::finish_team_task_sqlx(
+        &pool,
+        &tenant_id,
+        "task-one",
+        TeamTaskState::Succeeded,
+        Some("done"),
+        None,
+    )
+    .await
+    .expect("finish task");
     assert_eq!(finished.state, TeamTaskState::Succeeded);
-    let repeated = service
-        .runtime
-        .run_sync(store::finish_team_task_sqlx(
-            &pool,
-            &tenant_id,
-            "task-one",
-            TeamTaskState::Succeeded,
-            Some("different"),
-            None,
-        ))
-        .expect("repeat terminal callback");
+    let repeated = store::finish_team_task_sqlx(
+        &pool,
+        &tenant_id,
+        "task-one",
+        TeamTaskState::Succeeded,
+        Some("different"),
+        None,
+    )
+    .await
+    .expect("repeat terminal callback");
     assert_eq!(repeated.result.as_deref(), Some("done"));
-    let terminal_mail_count: i64 = service.runtime.run_sync(sqlx::query_scalar(
+    let terminal_mail_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM team_mailbox_messages WHERE run_id = ?1 AND message_type = 'task_terminal'",
-    ).bind(&run_id).fetch_one(&pool)).expect("count terminal mailbox");
+    )
+    .bind(&run_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count terminal mailbox");
     assert_eq!(terminal_mail_count, 1);
 
     let _ = fs::remove_dir_all(root);

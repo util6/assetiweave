@@ -1,8 +1,8 @@
 use crate::backend::{
     agents::types::AgentId,
     ai_execution::{
-        execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
-        AiExecutionPurpose, AiExecutionRequest, AiTeamTools,
+        AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionPurpose,
+        AiExecutionRequest, AiTeamTools,
     },
     application::AppService,
     models::{
@@ -85,11 +85,11 @@ impl AppService {
         }
     }
 
-    pub(crate) fn leader_chat(
+    pub(crate) async fn leader_chat(
         &self,
         input: TeamLeaderChatInput,
     ) -> AppResult<TeamLeaderChatResult> {
-        let team = self.team_detail(&input.team_id)?;
+        let team = self.team_detail(&input.team_id).await?;
         let leader = team
             .members
             .iter()
@@ -121,8 +121,11 @@ impl AppService {
             team_tools: None,
             recall_tools: None,
         };
-        let result =
-            execute_agent_blocking(self.agent_runtime.clone(), request).map_err(ai_error)?;
+        let result = self
+            .agent_runtime
+            .execute(request)
+            .await
+            .map_err(ai_error)?;
         Ok(TeamLeaderChatResult {
             team_id: input.team_id,
             member_id: leader.id.clone(),
@@ -132,17 +135,15 @@ impl AppService {
         })
     }
 
-    pub(crate) fn draft_team(&self, input: TeamDraftInput) -> AppResult<TeamRunSnapshot> {
+    pub(crate) async fn draft_team(&self, input: TeamDraftInput) -> AppResult<TeamRunSnapshot> {
         if input.leader_message.trim().is_empty() {
             return Err(AppError::Validation(
                 "Leader message is required".to_string(),
             ));
         }
-        let pool = self.db.pool().clone();
+        let pool = self.db.pool();
         let tenant_id = self.tenant_id().to_string();
-        let shell = self.runtime.run_sync(async {
-            create_team_run_shell_sqlx(&pool, &tenant_id, &input.team_id).await
-        })?;
+        let shell = create_team_run_shell_sqlx(pool, &tenant_id, &input.team_id).await?;
         let run_id = shell.run.id.clone();
         let task_id = format!("team-task-draft-{run_id}");
         let runtime = self.runtime.clone();
@@ -160,42 +161,42 @@ impl AppService {
             let worker_runtime = runtime.clone();
             let worker_input = input.clone();
             let worker_run_id = run_id.clone();
-            self.runtime.task_runtime().start_external_with(
+            self.runtime.task_runtime().start_external_with_async(
                 &task_id,
                 serde_json::json!({ "run_id": run_id, "phase": "drafting" }),
-                Box::new(move |context| {
+                move |context| async move {
                     let service = AppService::from_runtime(&worker_runtime);
                     if context.is_cancelled() {
-                        service.cancel_team_run(&worker_run_id, "cancelled")?;
+                        service.cancel_team_run(&worker_run_id, "cancelled").await?;
                         return Err(AppError::Canceled("Team draft was cancelled".to_string()));
                     }
                     let progress = context.progress();
                     progress.progress(0, None, Some("leader_draft"));
-                    let result = service.generate_team_drafts(
-                        worker_input,
-                        &worker_run_id,
-                        AiExecutionCancellation::from_token(context.cancellation()),
-                    );
+                    let result = service
+                        .generate_team_drafts(
+                            worker_input,
+                            &worker_run_id,
+                            AiExecutionCancellation::from_token(context.cancellation()),
+                        )
+                        .await;
                     match result {
                         Ok(drafts) => {
-                            let pool = service.db.pool().clone();
+                            let pool = service.db.pool();
                             let tenant_id = service.tenant_id().to_string();
                             let run_id_for_store = worker_run_id.clone();
-                            let snapshot = service.runtime.run_sync(async move {
-                                complete_team_run_draft_sqlx(
-                                    &pool,
-                                    &tenant_id,
-                                    &run_id_for_store,
-                                    &drafts,
-                                )
-                                .await
-                            })?;
+                            let snapshot = complete_team_run_draft_sqlx(
+                                pool,
+                                &tenant_id,
+                                &run_id_for_store,
+                                &drafts,
+                            )
+                            .await?;
                             progress.progress(1, Some(1), Some("review_ready"));
                             serde_json::to_value(team_runtime_projection(&snapshot))
                                 .map_err(AppError::external)
                         }
                         Err(error) => {
-                            let pool = service.db.pool().clone();
+                            let pool = service.db.pool();
                             let tenant_id = service.tenant_id().to_string();
                             let run_id_for_store = worker_run_id.clone();
                             let error_code = error
@@ -204,32 +205,26 @@ impl AppService {
                                 .next()
                                 .unwrap_or("team_draft_failed")
                                 .to_string();
-                            service.runtime.run_sync(async move {
-                                fail_team_run_sqlx(
-                                    &pool,
-                                    &tenant_id,
-                                    &run_id_for_store,
-                                    &error_code,
-                                )
-                                .await
-                            })?;
+                            fail_team_run_sqlx(pool, &tenant_id, &run_id_for_store, &error_code)
+                                .await?;
                             Err(error)
                         }
                     }
-                }),
+                },
             )?;
         }
         Ok(shell)
     }
 
-    fn generate_team_drafts(
+    async fn generate_team_drafts(
         &self,
         input: TeamDraftInput,
         run_id: &str,
         cancellation: AiExecutionCancellation,
     ) -> AppResult<Vec<TeamTaskDraft>> {
         let run = self
-            .get_team_run(run_id)?
+            .get_team_run(run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {run_id}")))?;
         if run.run.team_id != input.team_id
             || run.run.state != crate::backend::models::TeamRunState::Drafting
@@ -266,9 +261,9 @@ impl AppService {
             "Return only JSON matching {{\"tasks\":[{{\"title\":string,\"description\":string,\"recommended_member_id\":string}}]}}. Use only teammate member_id values from this frozen roster, preserving its Agent/model/order contract: {roster}. User request: {}",
             input.leader_message.trim()
         );
-        let result = execute_agent_blocking(
-            self.agent_runtime.clone(),
-            AiExecutionRequest {
+        let result = self
+            .agent_runtime
+            .execute(AiExecutionRequest {
                 execution_id: format!("team-draft-{}", Uuid::new_v4().simple()),
                 agent_id,
                 purpose: AiExecutionPurpose::TeamDraft,
@@ -285,38 +280,35 @@ impl AppService {
                 restore_only: false,
                 team_tools: None,
                 recall_tools: None,
-            },
-        )
-        .map_err(ai_error)?;
+            })
+            .await
+            .map_err(ai_error)?;
         parse_draft(&result.text)
     }
 
-    pub(crate) fn get_team_run(&self, run_id: &str) -> AppResult<Option<TeamRunSnapshot>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let run_id = run_id.to_string();
-        self.runtime
-            .run_sync(async move { get_team_run_snapshot_sqlx(&pool, &tenant_id, &run_id).await })
+    pub(crate) async fn get_team_run(&self, run_id: &str) -> AppResult<Option<TeamRunSnapshot>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        get_team_run_snapshot_sqlx(pool, tenant_id, run_id).await
     }
 
-    pub(crate) fn latest_team_run(&self, team_id: &str) -> AppResult<Option<TeamRunSnapshot>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let team_id = team_id.to_string();
-        self.runtime.run_sync(async move {
-            crate::backend::store::get_latest_team_run_snapshot_sqlx(&pool, &tenant_id, &team_id)
-                .await
-        })
+    pub(crate) async fn latest_team_run(
+        &self,
+        team_id: &str,
+    ) -> AppResult<Option<TeamRunSnapshot>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        crate::backend::store::get_latest_team_run_snapshot_sqlx(pool, tenant_id, team_id).await
     }
 
     /// Register restoration as a background Team task. Restoring provider
     /// sessions may touch the filesystem and invoke an external Agent, so the
     /// command returns the canonical TaskRuntime snapshot immediately.
-    pub(crate) fn restore_team_run(
+    pub(crate) async fn restore_team_run(
         &self,
         run_id: &str,
     ) -> AppResult<crate::backend::runtime::tasks::TaskSnapshot> {
-        if self.get_team_run(run_id)?.is_none() {
+        if self.get_team_run(run_id).await?.is_none() {
             return Err(AppError::NotFound(format!("Team run not found: {run_id}")));
         }
         let run_id = run_id.to_string();
@@ -335,17 +327,17 @@ impl AppService {
         {
             let runtime = self.runtime.clone();
             let worker_run_id = run_id.clone();
-            self.runtime.task_runtime().start_external_with(
+            self.runtime.task_runtime().start_external_with_async(
                 &task_id,
                 serde_json::json!({ "run_id": run_id, "phase": "restoring" }),
-                Box::new(move |context| {
+                move |context| async move {
                     if context.is_cancelled() {
                         return Err(AppError::Canceled(
                             "Team restoration was cancelled".to_string(),
                         ));
                     }
                     let service = AppService::from_runtime(&runtime);
-                    let snapshot = service.restore_team_run_sync(&worker_run_id)?;
+                    let snapshot = service.restore_team_run_detail(&worker_run_id).await?;
                     let Some(snapshot) = snapshot else {
                         return Err(AppError::NotFound(format!(
                             "Team run not found: {worker_run_id}"
@@ -357,7 +349,7 @@ impl AppService {
                         members: snapshot.members,
                     })
                     .map_err(AppError::external)
-                }),
+                },
             )?;
         }
         self.runtime
@@ -369,11 +361,11 @@ impl AppService {
     /// Restores the provider-backed projection in leader-first order.  Team
     /// facts remain the source of truth; a missing binding is reported per
     /// member and never repaired by silently creating a new session.
-    fn restore_team_run_sync(
+    async fn restore_team_run_detail(
         &self,
         run_id: &str,
     ) -> AppResult<Option<crate::backend::models::TeamRestoreSnapshot>> {
-        let Some(run) = self.get_team_run(run_id)? else {
+        let Some(run) = self.get_team_run(run_id).await? else {
             return Ok(None);
         };
         let leader_member = run
@@ -382,13 +374,14 @@ impl AppService {
             .iter()
             .find(|member| member.role == crate::backend::models::TeamRole::Leader)
             .ok_or_else(|| AppError::Validation("Team run has no frozen leader".to_string()))?;
-        let leader = AgentId::parse(leader_member.agent_id.clone())
+        let leader_res = match AgentId::parse(leader_member.agent_id.clone())
             .map_err(|error| AppError::Validation(error.to_string()))
-            .and_then(|agent_id| {
+        {
+            Ok(agent_id) => {
                 let execution_id = format!("team-exec-{}", Uuid::new_v4().simple());
-                execute_agent_blocking(
-                    self.agent_runtime.clone(),
-                    AiExecutionRequest {
+                match self
+                    .agent_runtime
+                    .execute(AiExecutionRequest {
                         execution_id: execution_id.clone(),
                         agent_id,
                         purpose: AiExecutionPurpose::TeamLeaderChat,
@@ -406,24 +399,29 @@ impl AppService {
                         restore_only: false,
                         team_tools: None,
                         recall_tools: None,
-                    },
-                )
-                .map_err(ai_error)
-                .map(|result| TeamLeaderChatResult {
-                    team_id: run.run.team_id.clone(),
-                    member_id: leader_member.member_id.clone(),
-                    execution_id,
-                    text: result.replay_text.unwrap_or(result.text),
-                    replay: true,
-                })
-            });
-        let (leader, leader_error_code) = match leader {
+                    })
+                    .await
+                    .map_err(ai_error)
+                {
+                    Ok(result) => Ok(TeamLeaderChatResult {
+                        team_id: run.run.team_id.clone(),
+                        member_id: leader_member.member_id.clone(),
+                        execution_id,
+                        text: result.replay_text.unwrap_or(result.text),
+                        replay: true,
+                    }),
+                    Err(err) => Err(err),
+                }
+            }
+            Err(err) => Err(err),
+        };
+        let (leader, leader_error_code) = match leader_res {
             Ok(result) => (Some(result), None),
             Err(error) => (None, Some(error.view().code)),
         };
         let binding_store =
             crate::backend::ai_execution::PersistentBindingStore::new(self.db.pool().clone());
-        let tenant_id = self.tenant_id().to_string();
+        let tenant_id = self.tenant_id();
         let mut members = Vec::with_capacity(run.run.roster_snapshot.len());
         for member in &run.run.roster_snapshot {
             if member.role == crate::backend::models::TeamRole::Leader {
@@ -439,9 +437,9 @@ impl AppService {
                 });
                 continue;
             }
-            let binding = self
-                .runtime
-                .run_sync(binding_store.load(&tenant_id, &member.execution_context_key))?;
+            let binding = binding_store
+                .load(tenant_id, &member.execution_context_key)
+                .await?;
             let Some(agent_id) = AgentId::parse(member.agent_id.clone()).ok() else {
                 members.push(unavailable_member_restore_status(member));
                 continue;
@@ -455,10 +453,9 @@ impl AppService {
                     && PathBuf::from(&binding.workspace_path).is_dir()
                     && capabilities_ready
             });
-            let ready = binding_ready
-                && execute_agent_blocking(
-                    self.agent_runtime.clone(),
-                    AiExecutionRequest {
+            let ready = if binding_ready {
+                self.agent_runtime
+                    .execute(AiExecutionRequest {
                         execution_id: format!("team-restore-{}", Uuid::new_v4().simple()),
                         agent_id,
                         purpose: AiExecutionPurpose::TeamTask,
@@ -475,9 +472,12 @@ impl AppService {
                         restore_only: true,
                         team_tools: None,
                         recall_tools: None,
-                    },
-                )
-                .is_ok();
+                    })
+                    .await
+                    .is_ok()
+            } else {
+                false
+            };
             members.push(crate::backend::models::TeamMemberRestoreStatus {
                 member_id: member.member_id.clone(),
                 role: member.role,
@@ -497,40 +497,42 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn review_team_run(&self, input: TeamReviewInput) -> AppResult<TeamRunSnapshot> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.runtime
-            .run_sync(async move { review_team_run_sqlx(&pool, &tenant_id, &input).await })
+    pub(crate) async fn review_team_run(
+        &self,
+        input: TeamReviewInput,
+    ) -> AppResult<TeamRunSnapshot> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        review_team_run_sqlx(pool, tenant_id, &input).await
     }
 
-    pub(crate) fn confirm_team_run(&self, input: TeamConfirmInput) -> AppResult<TeamRunSnapshot> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let snapshot = self
-            .runtime
-            .run_sync(async { confirm_team_run_sqlx(&pool, &tenant_id, &input).await })?;
+    pub(crate) async fn confirm_team_run(
+        &self,
+        input: TeamConfirmInput,
+    ) -> AppResult<TeamRunSnapshot> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let snapshot = confirm_team_run_sqlx(pool, tenant_id, &input).await?;
         let run_id = snapshot.run.id.clone();
-        self.schedule_team_run_execution(&run_id)?;
+        self.schedule_team_run_execution(&run_id).await?;
         self.runtime.notify_domain_events();
         Ok(snapshot)
     }
 
-    pub(crate) fn recover_team_runs(&self) -> AppResult<usize> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let run_ids = self.runtime.run_sync(async {
-            crate::backend::store::list_recoverable_team_run_ids_sqlx(&pool, &tenant_id).await
-        })?;
+    pub(crate) async fn recover_team_runs(&self) -> AppResult<usize> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let run_ids =
+            crate::backend::store::list_recoverable_team_run_ids_sqlx(pool, tenant_id).await?;
         let mut scheduled = 0;
         for run_id in run_ids {
-            self.schedule_team_run_execution(&run_id)?;
+            self.schedule_team_run_execution(&run_id).await?;
             scheduled += 1;
         }
         Ok(scheduled)
     }
 
-    fn schedule_team_run_execution(&self, run_id: &str) -> AppResult<()> {
+    async fn schedule_team_run_execution(&self, run_id: &str) -> AppResult<()> {
         let run_id = run_id.to_string();
         let task_id = format!("team-task-run-{run_id}");
         let runtime = self.runtime.clone();
@@ -548,43 +550,48 @@ impl AppService {
         {
             let worker_runtime = runtime.clone();
             let worker_run_id = run_id.clone();
-            self.runtime.task_runtime().start_external_with(
+            self.runtime.task_runtime().start_external_with_async(
                 &task_id,
                 serde_json::json!({ "run_id": run_id, "domain": "team" }),
-                Box::new(move |context| {
+                move |context| async move {
                     let service = AppService::from_runtime(&worker_runtime);
                     if context.is_cancelled() {
-                        service.cancel_team_run(&worker_run_id, "cancelled")?;
+                        service.cancel_team_run(&worker_run_id, "cancelled").await?;
                         return Err(AppError::Canceled(
                             "Team execution was cancelled".to_string(),
                         ));
                     }
-                    let result = service.execute_team_tasks(
-                        worker_run_id.clone(),
-                        AiExecutionCancellation::from_token(context.cancellation()),
-                        Some(context.progress()),
-                    );
+                    let result = service
+                        .execute_team_tasks(
+                            worker_run_id.clone(),
+                            AiExecutionCancellation::from_token(context.cancellation()),
+                            Some(context.progress()),
+                        )
+                        .await;
                     if let Err(error) = &result {
-                        let _ = service.cancel_team_run(&worker_run_id, &error.view().code);
+                        let _ = service
+                            .cancel_team_run(&worker_run_id, &error.view().code)
+                            .await;
                     }
                     result.map(|snapshot| {
                         serde_json::to_value(team_runtime_projection(&snapshot))
                             .map_err(AppError::external)
                     })?
-                }),
+                },
             )?;
         }
         Ok(())
     }
 
-    fn execute_team_tasks(
+    async fn execute_team_tasks(
         &self,
         run_id: String,
         cancellation: AiExecutionCancellation,
         progress: Option<ProgressHandle>,
     ) -> AppResult<TeamRunSnapshot> {
         let snapshot = self
-            .get_team_run(&run_id)?
+            .get_team_run(&run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {run_id}")))?;
         let runnable_tasks = snapshot
             .tasks
@@ -597,12 +604,12 @@ impl AppService {
                 progress.progress(index as u64, Some(total), Some("teammate_execution"));
             }
             if cancellation.is_cancelled() {
-                self.cancel_team_run(&run_id, "cancelled")?;
+                self.cancel_team_run(&run_id, "cancelled").await?;
                 return Err(AppError::Canceled(
                     "Team execution was cancelled".to_string(),
                 ));
             }
-            let Some(task) = self.claim_team_task(&queued.id)? else {
+            let Some(task) = self.claim_team_task(&queued.id).await? else {
                 continue;
             };
             let member = snapshot
@@ -627,12 +634,15 @@ impl AppService {
                 .map(|capabilities| capabilities.team_tools)
                 .unwrap_or(true);
             let tool_credential = if team_tools_enabled {
-                match self.issue_team_tool_credential(TeamToolCredentialInput {
-                    team_id: task.team_id.clone(),
-                    run_id: task.run_id.clone(),
-                    member_id: member.member_id.clone(),
-                    ttl_seconds: Some(900),
-                }) {
+                match self
+                    .issue_team_tool_credential(TeamToolCredentialInput {
+                        team_id: task.team_id.clone(),
+                        run_id: task.run_id.clone(),
+                        member_id: member.member_id.clone(),
+                        ttl_seconds: Some(900),
+                    })
+                    .await
+                {
                     Ok(value) => Some(value.credential),
                     Err(error) => {
                         let error_code = error.view().code;
@@ -641,7 +651,8 @@ impl AppService {
                             TeamTaskState::Failed,
                             None,
                             Some(&error_code),
-                        )?;
+                        )
+                        .await?;
                         continue;
                     }
                 }
@@ -673,14 +684,15 @@ impl AppService {
                     database_path: self.runtime.db_path().to_string_lossy().into_owned(),
                 }),
             };
-            match execute_agent_blocking(self.agent_runtime.clone(), request) {
+            match self.agent_runtime.execute(request).await {
                 Ok(result) => {
                     self.finish_team_task(
                         &task.id,
                         TeamTaskState::Succeeded,
                         Some(&result.text),
                         None,
-                    )?;
+                    )
+                    .await?;
                 }
                 Err(error) => {
                     let view = error.to_view();
@@ -698,9 +710,10 @@ impl AppService {
                         },
                         None,
                         Some(&view.code),
-                    )?;
+                    )
+                    .await?;
                     if canceled {
-                        self.cancel_team_run(&run_id, "cancelled")?;
+                        self.cancel_team_run(&run_id, "cancelled").await?;
                         return Err(AppError::Canceled(
                             "Team execution was cancelled".to_string(),
                         ));
@@ -711,12 +724,13 @@ impl AppService {
         if let Some(progress) = &progress {
             progress.progress(total, Some(total), Some("terminal"));
         }
-        self.finalize_team_run(&run_id)?;
-        self.get_team_run(&run_id)?
+        self.finalize_team_run(&run_id).await?;
+        self.get_team_run(&run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {run_id}")))
     }
 
-    fn consume_team_mailbox_and_summarize(
+    async fn consume_team_mailbox_and_summarize(
         &self,
         snapshot: &TeamRunSnapshot,
     ) -> AppResult<Option<TeamLeaderChatResult>> {
@@ -726,12 +740,14 @@ impl AppService {
             .iter()
             .find(|member| member.role == crate::backend::models::TeamRole::Leader)
             .ok_or_else(|| AppError::Validation("Team run has no frozen leader".to_string()))?;
-        let messages = self.read_team_mailbox(TeamMailboxReadInput {
-            team_id: snapshot.run.team_id.clone(),
-            run_id: snapshot.run.id.clone(),
-            recipient_member_id: leader.member_id.clone(),
-            ack: false,
-        })?;
+        let messages = self
+            .read_team_mailbox(TeamMailboxReadInput {
+                team_id: snapshot.run.team_id.clone(),
+                run_id: snapshot.run.id.clone(),
+                recipient_member_id: leader.member_id.clone(),
+                ack: false,
+            })
+            .await?;
         if messages.is_empty() {
             return Ok(None);
         }
@@ -739,19 +755,23 @@ impl AppService {
             .iter()
             .map(|message| message.body.as_str())
             .collect::<Vec<_>>()
-            .join("\n");
+            .join(
+                "
+",
+            );
         let agent_id = AgentId::parse(leader.agent_id.clone())
             .map_err(|error| AppError::Validation(error.to_string()))?;
         let execution_id = format!("team-summary-{}", Uuid::new_v4().simple());
-        let result = execute_agent_blocking(
-            self.agent_runtime.clone(),
-            AiExecutionRequest {
+        let result = self
+            .agent_runtime
+            .execute(AiExecutionRequest {
                 execution_id: execution_id.clone(),
                 agent_id,
                 purpose: AiExecutionPurpose::TeamSummary,
                 session_mode: AgentSessionMode::Persistent,
                 prompt: format!(
-                    "Summarize these completed Team task reports for the user. Do not create or mutate tasks; reply with the concise user-facing summary only. Reports:\n{body}"
+                    "Summarize these completed Team task reports for the user. Do not create or mutate tasks; reply with the concise user-facing summary only. Reports:
+{body}"
                 ),
                 model: leader.model.clone(),
                 limits: AiExecutionLimits::default(),
@@ -763,16 +783,17 @@ impl AppService {
                 replay: false,
                 restore_only: false,
                 team_tools: None,
-        recall_tools: None,
-            },
-        )
-        .map_err(ai_error)?;
+                recall_tools: None,
+            })
+            .await
+            .map_err(ai_error)?;
         self.read_team_mailbox(TeamMailboxReadInput {
             team_id: snapshot.run.team_id.clone(),
             run_id: snapshot.run.id.clone(),
             recipient_member_id: leader.member_id.clone(),
             ack: true,
-        })?;
+        })
+        .await?;
         Ok(Some(TeamLeaderChatResult {
             team_id: snapshot.run.team_id.clone(),
             member_id: leader.member_id.clone(),
@@ -782,46 +803,32 @@ impl AppService {
         }))
     }
 
-    fn claim_team_task(&self, task_id: &str) -> AppResult<Option<TeamTask>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let task_id = task_id.to_string();
-        self.runtime
-            .run_sync(async move { claim_team_task_sqlx(&pool, &tenant_id, &task_id).await })
+    async fn claim_team_task(&self, task_id: &str) -> AppResult<Option<TeamTask>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        claim_team_task_sqlx(pool, tenant_id, task_id).await
     }
 
-    fn finish_team_task(
+    async fn finish_team_task(
         &self,
         task_id: &str,
         state: TeamTaskState,
         result: Option<&str>,
         error_code: Option<&str>,
     ) -> AppResult<TeamTask> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let task_id = task_id.to_string();
-        let result = result.map(ToString::to_string);
-        let error_code = error_code.map(ToString::to_string);
-        let task = self.runtime.run_sync(async move {
-            finish_team_task_sqlx(
-                &pool,
-                &tenant_id,
-                &task_id,
-                state,
-                result.as_deref(),
-                error_code.as_deref(),
-            )
-            .await
-        })?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let task =
+            finish_team_task_sqlx(pool, tenant_id, task_id, state, result, error_code).await?;
         // A task may also be completed through the scoped Team tool rather
         // than the resident worker. Run the same summary/finalization path in
         // either case, while keeping a summary failure recoverable.
-        let _ = self.finalize_team_run(&task.run_id);
+        let _ = self.finalize_team_run(&task.run_id).await;
         Ok(task)
     }
 
-    fn finalize_team_run(&self, run_id: &str) -> AppResult<()> {
-        let Some(snapshot) = self.get_team_run(run_id)? else {
+    async fn finalize_team_run(&self, run_id: &str) -> AppResult<()> {
+        let Some(snapshot) = self.get_team_run(run_id).await? else {
             return Err(AppError::NotFound(format!("Team run not found: {run_id}")));
         };
         if matches!(
@@ -832,40 +839,34 @@ impl AppService {
             // Terminal task facts are committed to the mailbox before this
             // call. A failed summary leaves those facts unacknowledged and
             // the resident coordinator retries the same terminal run.
-            let _ = self.consume_team_mailbox_and_summarize(&snapshot);
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let run_id = run_id.to_string();
-            self.runtime.run_sync(async move {
-                mark_team_run_terminal_sqlx(&pool, &tenant_id, &run_id).await
-            })?;
+            let _ = self.consume_team_mailbox_and_summarize(&snapshot).await;
+            let pool = self.db.pool();
+            let tenant_id = self.tenant_id();
+            mark_team_run_terminal_sqlx(pool, tenant_id, run_id).await?;
         } else if matches!(
             snapshot.run.state,
             crate::backend::models::TeamRunState::Terminal
         ) {
             // Recovery of a terminal run can resume after a process exit that
             // happened between task commit and mailbox acknowledgement.
-            let _ = self.consume_team_mailbox_and_summarize(&snapshot);
+            let _ = self.consume_team_mailbox_and_summarize(&snapshot).await;
         }
         Ok(())
     }
 
-    fn cancel_team_run(&self, run_id: &str, error_code: &str) -> AppResult<()> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let run_id = run_id.to_string();
-        let error_code = error_code.to_string();
-        self.runtime.run_sync(async move {
-            cancel_team_run_sqlx(&pool, &tenant_id, &run_id, &error_code).await
-        })
+    async fn cancel_team_run(&self, run_id: &str, error_code: &str) -> AppResult<()> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        cancel_team_run_sqlx(pool, tenant_id, run_id, error_code).await
     }
 
-    pub(crate) fn send_team_mailbox(
+    pub(crate) async fn send_team_mailbox(
         &self,
         input: TeamMailboxSendInput,
     ) -> AppResult<TeamMailboxMessage> {
         let snapshot = self
-            .get_team_run(&input.run_id)?
+            .get_team_run(&input.run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {}", input.run_id)))?;
         if snapshot.run.team_id != input.team_id
             || !snapshot
@@ -883,18 +884,18 @@ impl AppService {
                 "Mailbox participants must belong to the frozen Team roster".to_string(),
             ));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.runtime
-            .run_sync(async move { send_team_mailbox_sqlx(&pool, &tenant_id, &input).await })
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        send_team_mailbox_sqlx(pool, tenant_id, &input).await
     }
 
-    pub(crate) fn read_team_mailbox(
+    pub(crate) async fn read_team_mailbox(
         &self,
         input: TeamMailboxReadInput,
     ) -> AppResult<Vec<TeamMailboxMessage>> {
         let snapshot = self
-            .get_team_run(&input.run_id)?
+            .get_team_run(&input.run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {}", input.run_id)))?;
         if snapshot.run.team_id != input.team_id
             || !snapshot
@@ -907,15 +908,15 @@ impl AppService {
                 "Mailbox recipient must belong to the frozen Team roster".to_string(),
             ));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.runtime
-            .run_sync(async move { read_team_mailbox_sqlx(&pool, &tenant_id, &input).await })
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        read_team_mailbox_sqlx(pool, tenant_id, &input).await
     }
 
-    pub(crate) fn update_team_task(&self, input: TeamTaskUpdateInput) -> AppResult<TeamTask> {
+    pub(crate) async fn update_team_task(&self, input: TeamTaskUpdateInput) -> AppResult<TeamTask> {
         let task = self
-            .get_team_task(&input.task_id)?
+            .get_team_task(&input.task_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team task not found: {}", input.task_id)))?;
         if task.team_id != input.team_id || task.run_id != input.run_id {
             return Err(AppError::NotFound(
@@ -928,13 +929,14 @@ impl AppService {
             ));
         }
         if input.state == TeamTaskState::Running {
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let task_id = input.task_id.clone();
-            return self.runtime.run_sync(async move {
-                crate::backend::store::mark_team_task_running_sqlx(&pool, &tenant_id, &task_id)
-                    .await
-            });
+            let pool = self.db.pool();
+            let tenant_id = self.tenant_id();
+            return crate::backend::store::mark_team_task_running_sqlx(
+                pool,
+                tenant_id,
+                &input.task_id,
+            )
+            .await;
         }
         self.finish_team_task(
             &input.task_id,
@@ -942,27 +944,28 @@ impl AppService {
             input.result.as_deref(),
             input.error_code.as_deref(),
         )
+        .await
     }
 
-    fn get_team_task(&self, task_id: &str) -> AppResult<Option<TeamTask>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let task_id = task_id.to_string();
-        self.runtime
-            .run_sync(async move { get_team_task_sqlx(&pool, &tenant_id, &task_id).await })
+    async fn get_team_task(&self, task_id: &str) -> AppResult<Option<TeamTask>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        get_team_task_sqlx(pool, tenant_id, task_id).await
     }
 
-    fn team_detail(&self, team_id: &str) -> AppResult<TeamDetail> {
-        self.get_team(team_id)?
+    async fn team_detail(&self, team_id: &str) -> AppResult<TeamDetail> {
+        self.get_team(team_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team not found: {team_id}")))
     }
 
-    pub(crate) fn issue_team_tool_credential(
+    pub(crate) async fn issue_team_tool_credential(
         &self,
         input: TeamToolCredentialInput,
     ) -> AppResult<TeamToolCredential> {
         let snapshot = self
-            .get_team_run(&input.run_id)?
+            .get_team_run(&input.run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {}", input.run_id)))?;
         let _member = snapshot
             .run
@@ -986,34 +989,33 @@ impl AppService {
         let credential = format!("team-tool-{}", Uuid::new_v4().simple());
         let credential_hash = hash_team_tool_credential(&credential);
         let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(ttl as i64)).to_rfc3339();
-        let expires_at_for_store = expires_at.clone();
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.runtime.run_sync(async move {
-            crate::backend::store::create_team_tool_credential_sqlx(
-                &pool,
-                &tenant_id,
-                &credential_hash,
-                &input,
-                &expires_at_for_store,
-            )
-            .await
-        })?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        crate::backend::store::create_team_tool_credential_sqlx(
+            pool,
+            tenant_id,
+            &credential_hash,
+            &input,
+            &expires_at,
+        )
+        .await?;
         Ok(TeamToolCredential {
             credential,
             expires_at,
         })
     }
 
-    pub(crate) fn team_tool_list_tasks(
+    pub(crate) async fn team_tool_list_tasks(
         &self,
         credential: &str,
         input: TeamToolTaskListInput,
         member_id: &str,
     ) -> AppResult<Vec<TeamTask>> {
-        self.authenticate_team_tool(credential, &input.team_id, &input.run_id, member_id)?;
+        self.authenticate_team_tool(credential, &input.team_id, &input.run_id, member_id)
+            .await?;
         let snapshot = self
-            .get_team_run(&input.run_id)?
+            .get_team_run(&input.run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {}", input.run_id)))?;
         let is_leader = snapshot.run.roster_snapshot.iter().any(|member| {
             member.member_id == member_id && member.role == crate::backend::models::TeamRole::Leader
@@ -1029,21 +1031,23 @@ impl AppService {
         })
     }
 
-    pub(crate) fn team_tool_update_task(
+    pub(crate) async fn team_tool_update_task(
         &self,
         credential: &str,
         input: TeamTaskUpdateInput,
     ) -> AppResult<TeamTask> {
-        self.authenticate_team_tool(credential, &input.team_id, &input.run_id, &input.member_id)?;
+        self.authenticate_team_tool(credential, &input.team_id, &input.run_id, &input.member_id)
+            .await?;
         let snapshot = self
-            .get_team_run(&input.run_id)?
+            .get_team_run(&input.run_id)
+            .await?
             .ok_or_else(|| AppError::NotFound(format!("Team run not found: {}", input.run_id)))?;
         let is_leader = snapshot.run.roster_snapshot.iter().any(|member| {
             member.member_id == input.member_id
                 && member.role == crate::backend::models::TeamRole::Leader
         });
         if is_leader {
-            let task = self.get_team_task(&input.task_id)?.ok_or_else(|| {
+            let task = self.get_team_task(&input.task_id).await?.ok_or_else(|| {
                 AppError::NotFound(format!("Team task not found: {}", input.task_id))
             })?;
             if task.team_id != input.team_id || task.run_id != input.run_id {
@@ -1052,13 +1056,10 @@ impl AppService {
                 ));
             }
             if input.state == TeamTaskState::Running {
-                let pool = self.db.pool().clone();
-                let tenant_id = self.tenant_id().to_string();
-                let task_id = input.task_id.clone();
-                self.runtime.run_sync(async move {
-                    crate::backend::store::mark_team_task_running_sqlx(&pool, &tenant_id, &task_id)
-                        .await
-                })
+                let pool = self.db.pool();
+                let tenant_id = self.tenant_id();
+                crate::backend::store::mark_team_task_running_sqlx(pool, tenant_id, &input.task_id)
+                    .await
             } else {
                 self.finish_team_task(
                     &input.task_id,
@@ -1066,13 +1067,14 @@ impl AppService {
                     input.result.as_deref(),
                     input.error_code.as_deref(),
                 )
+                .await
             }
         } else {
-            self.update_team_task(input)
+            self.update_team_task(input).await
         }
     }
 
-    pub(crate) fn team_tool_send_mailbox(
+    pub(crate) async fn team_tool_send_mailbox(
         &self,
         credential: &str,
         input: TeamMailboxSendInput,
@@ -1082,11 +1084,12 @@ impl AppService {
             &input.team_id,
             &input.run_id,
             &input.sender_member_id,
-        )?;
-        self.send_team_mailbox(input)
+        )
+        .await?;
+        self.send_team_mailbox(input).await
     }
 
-    pub(crate) fn team_tool_read_mailbox(
+    pub(crate) async fn team_tool_read_mailbox(
         &self,
         credential: &str,
         input: TeamMailboxReadInput,
@@ -1096,11 +1099,12 @@ impl AppService {
             &input.team_id,
             &input.run_id,
             &input.recipient_member_id,
-        )?;
-        self.read_team_mailbox(input)
+        )
+        .await?;
+        self.read_team_mailbox(input).await
     }
 
-    fn authenticate_team_tool(
+    async fn authenticate_team_tool(
         &self,
         credential: &str,
         team_id: &str,
@@ -1113,17 +1117,12 @@ impl AppService {
             ));
         }
         let hash = hash_team_tool_credential(credential);
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let team_id = team_id.to_string();
-        let run_id = run_id.to_string();
-        let member_id = member_id.to_string();
-        let valid = self.runtime.run_sync(async move {
-            crate::backend::store::authenticate_team_tool_sqlx(
-                &pool, &tenant_id, &hash, &team_id, &run_id, &member_id,
-            )
-            .await
-        })?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let valid = crate::backend::store::authenticate_team_tool_sqlx(
+            pool, tenant_id, &hash, team_id, run_id, member_id,
+        )
+        .await?;
         if valid {
             Ok(())
         } else {
@@ -1302,8 +1301,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn team_workflow_freezes_roster_requires_review_and_uses_confirmed_owners() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn team_workflow_freezes_roster_requires_review_and_uses_confirmed_owners() {
         let root = std::env::temp_dir().join(format!("assetiweave-team-flow-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let (runtime, observations) = FakeTeamRuntime::new();
@@ -1338,6 +1337,7 @@ mod tests {
                     },
                 ],
             })
+            .await
             .expect("create Team");
         assert_eq!(
             team.members
@@ -1353,6 +1353,7 @@ mod tests {
                 message: "hello".to_string(),
                 replay: false,
             })
+            .await
             .expect("leader chat");
         assert_eq!(live.text, "leader reply");
         let replay = service
@@ -1361,6 +1362,7 @@ mod tests {
                 message: String::new(),
                 replay: true,
             })
+            .await
             .expect("leader replay");
         assert_eq!(replay.text, "replayed leader history");
 
@@ -1369,18 +1371,20 @@ mod tests {
                 team_id: team.team.id.clone(),
                 leader_message: "split the work".to_string(),
             })
+            .await
             .expect("draft shell");
         assert_eq!(
             shell.run.state,
             crate::backend::models::TeamRunState::Drafting
         );
         let draft_task_id = format!("team-task-draft-{}", shell.run.id);
-        wait_for_task_terminal(&service, &draft_task_id);
+        wait_for_task_terminal(&service, &draft_task_id).await;
         let draft = wait_for_run_state(
             &service,
             &shell.run.id,
             crate::backend::models::TeamRunState::AwaitingReview,
-        );
+        )
+        .await;
         assert_eq!(draft.tasks.len(), 2);
         assert!(draft
             .tasks
@@ -1408,6 +1412,7 @@ mod tests {
                     },
                 ],
             })
+            .await
             .expect("review draft");
         assert_eq!(
             reviewed.tasks[0].owner_member_id.as_deref(),
@@ -1423,6 +1428,7 @@ mod tests {
                 run_id: reviewed.run.id.clone(),
                 revision: reviewed.run.revision,
             })
+            .await
             .expect("confirm run");
         assert_eq!(
             confirmed.run.state,
@@ -1432,7 +1438,8 @@ mod tests {
             &service,
             &confirmed.run.id,
             crate::backend::models::TeamRunState::Terminal,
-        );
+        )
+        .await;
         assert_eq!(terminal.tasks[0].state, TeamTaskState::Succeeded);
         assert_eq!(terminal.tasks[1].state, TeamTaskState::Succeeded);
         assert_eq!(
@@ -1464,7 +1471,7 @@ mod tests {
         std::fs::remove_dir_all(root).ok();
     }
 
-    fn wait_for_task_terminal(service: &AppService, task_id: &str) {
+    async fn wait_for_task_terminal(service: &AppService, task_id: &str) {
         for _ in 0..200 {
             if service
                 .team_run_task(task_id)
@@ -1473,23 +1480,23 @@ mod tests {
             {
                 return;
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("Team task did not become terminal: {task_id}");
     }
 
-    fn wait_for_run_state(
+    async fn wait_for_run_state(
         service: &AppService,
         run_id: &str,
         state: crate::backend::models::TeamRunState,
     ) -> TeamRunSnapshot {
         for _ in 0..200 {
-            if let Some(snapshot) = service.get_team_run(run_id).expect("read Team run") {
+            if let Some(snapshot) = service.get_team_run(run_id).await.expect("read Team run") {
                 if snapshot.run.state == state {
                     return snapshot;
                 }
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("Team run did not become {state:?}: {run_id}");
     }
