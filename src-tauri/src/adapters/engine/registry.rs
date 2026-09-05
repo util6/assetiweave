@@ -721,7 +721,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSearchParams,
-        Service => |service, params| service.search_memory_recall(params),
+        ServiceAsync => |service, params| service.search_memory_recall(params).await,
         &[
             param!("query", "Search query"),
             param!("scope", "Optional Memory scope"),
@@ -739,7 +739,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSessionCreateParams,
-        Service => |service, params| service.create_memory_recall_session(params),
+        ServiceAsync => |service, params| service.create_memory_recall_session(params).await,
         &[param!("scope", "Optional Memory scope")],
         Some("assetiweave-cli memory recall session create"),
         since: "0.6.1", deprecated: false
@@ -752,7 +752,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSessionGetParams,
-        Service => |service, params| service.get_memory_recall_session(params),
+        ServiceAsync => |service, params| service.get_memory_recall_session(params).await,
         &[param!("session_id", "Recall session identifier", ["sessionId"])],
         Some("assetiweave-cli memory recall session get <session-id>"),
         since: "0.6.1", deprecated: false
@@ -765,7 +765,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallTurnSendParams,
-        Service => |service, params| service.send_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.send_memory_recall_turn(params).await,
         &[
             param!("session_id", "Recall session identifier", ["sessionId"]),
             param!("query", "Recall question"),
@@ -781,7 +781,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallTurnCancelParams,
-        Service => |service, params| service.cancel_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.cancel_memory_recall_turn(params).await,
         &[param!("turn_id", "Recall turn identifier", ["turnId"])],
         Some("assetiweave-cli memory recall turn cancel <turn-id>"),
         since: "0.6.1", deprecated: false
@@ -2445,7 +2445,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSearchParams,
-        Service => |service, params| service.search_memory_recall(params),
+        ServiceAsync => |service, params| service.search_memory_recall(params).await,
         &[
             param!("query", "Search query"),
             param!("scope", "Optional Memory scope"),
@@ -2463,7 +2463,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSessionCreateParams,
-        Service => |service, params| service.create_memory_recall_session(params),
+        ServiceAsync => |service, params| service.create_memory_recall_session(params).await,
         &[param!("scope", "Optional Memory scope")],
         None,
         since: "0.6.1", deprecated: false
@@ -2476,7 +2476,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSessionGetParams,
-        Service => |service, params| service.get_memory_recall_session(params),
+        ServiceAsync => |service, params| service.get_memory_recall_session(params).await,
         &[param!("session_id", "Recall session identifier", ["sessionId"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2489,7 +2489,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallTurnSendParams,
-        Service => |service, params| service.send_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.send_memory_recall_turn(params).await,
         &[
             param!("session_id", "Recall session identifier", ["sessionId"]),
             param!("query", "Recall question"),
@@ -2505,7 +2505,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallTurnCancelParams,
-        Service => |service, params| service.cancel_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.cancel_memory_recall_turn(params).await,
         &[param!("turn_id", "Recall turn identifier", ["turnId"])],
         None,
         since: "0.6.1", deprecated: false

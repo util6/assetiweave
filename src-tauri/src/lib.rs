@@ -652,7 +652,7 @@ pub fn run_memory_recall_mcp_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_memory_recall_mcp_loop(&service, &session_id) {
+    if let Err(error) = run_memory_recall_mcp_loop(&runtime, &service, &session_id) {
         eprintln!("Memory Recall MCP bridge stopped: {error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -660,6 +660,7 @@ pub fn run_memory_recall_mcp_stdio() {
 }
 
 fn run_memory_recall_mcp_loop(
+    runtime: &backend::runtime::AppRuntime,
     service: &backend::application::AppService,
     session_id: &str,
 ) -> Result<(), String> {
@@ -684,11 +685,11 @@ fn run_memory_recall_mcp_loop(
         let result = match method {
             "initialize" => Ok(memory_recall_mcp_initialize_result()),
             "tools/list" => Ok(memory_recall_mcp_tools_result()),
-            "tools/call" => memory_recall_mcp_call(
+            "tools/call" => runtime.block_on(memory_recall_mcp_call(
                 service,
                 session_id,
                 request.get("params").unwrap_or(&serde_json::Value::Null),
-            ),
+            )),
             _ => Err("unsupported Memory Recall MCP method".to_string()),
         };
         let response = match (id, result) {
@@ -757,7 +758,7 @@ fn memory_recall_mcp_tools_result() -> serde_json::Value {
     })
 }
 
-fn memory_recall_mcp_call(
+async fn memory_recall_mcp_call(
     service: &backend::application::AppService,
     recall_session_id: &str,
     params: &serde_json::Value,
@@ -774,6 +775,7 @@ fn memory_recall_mcp_call(
         .get_memory_recall_session(backend::application::MemoryRecallSessionGetParams {
             session_id: recall_session_id.to_string(),
         })
+        .await
         .map_err(|error| error.view().message)?;
     let string = |key: &str| {
         arguments
@@ -798,6 +800,7 @@ fn memory_recall_mcp_call(
                         .map(|value| value as usize),
                     offset: Some(0),
                 })
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -810,68 +813,19 @@ fn memory_recall_mcp_call(
             let question_id =
                 string("question_id").ok_or_else(|| "missing question_id".to_string())?;
             let block_id = string("block_id").ok_or_else(|| "missing block_id".to_string())?;
-            let record_kind = match record_kind {
-                backend::models::MemoryRecordKind::Session => {
-                    backend::dto::ConversationRecordKind::Session
-                }
-                backend::models::MemoryRecordKind::Web => backend::dto::ConversationRecordKind::Web,
-            };
             let reference = backend::models::MemoryRecallContentReference {
-                record_kind: match record_kind {
-                    backend::dto::ConversationRecordKind::Session => {
-                        backend::models::MemoryRecordKind::Session
-                    }
-                    backend::dto::ConversationRecordKind::Web => {
-                        backend::models::MemoryRecordKind::Web
-                    }
-                },
+                record_kind,
                 session_id: string("session_id").unwrap_or_default(),
-                question_id: question_id.clone(),
+                question_id,
                 turn_id: string("turn_id"),
                 part_id: string("part_id"),
-                block_id: block_id.clone(),
+                block_id,
             };
-            if !service
-                .recall_content_reference_exists_for_scope(
-                    service.tenant_id(),
-                    &session.scope,
-                    &reference,
-                )
-                .map_err(|error| error.view().message)?
-            {
-                return Err("Recall locator is not readable in this session scope".to_string());
-            }
-            let locators = service
-                .memory_recall_run_sync(backend::store::list_conversation_block_locators_sqlx(
-                    service.memory_recall_pool(),
-                    service.tenant_id(),
-                    record_kind,
-                    &question_id,
-                ))
+            let block = service
+                .load_memory_recall_block(&session.scope, &reference)
+                .await
                 .map_err(|error| error.view().message)?;
-            let Some(locator) = locators.into_iter().find(|locator| {
-                locator.session_id == string("session_id").unwrap_or_default()
-                    && locator.block_id == block_id
-                    && string("turn_id")
-                        .as_deref()
-                        .is_none_or(|id| locator.turn_id == id)
-                    && string("part_id")
-                        .as_deref()
-                        .is_none_or(|id| locator.part_id.as_deref() == Some(id))
-            }) else {
-                return Err("Recall locator is not readable in this tenant".to_string());
-            };
-            serde_json::to_value(
-                service
-                    .memory_recall_run_sync(backend::store::load_conversation_block_detail_sqlx(
-                        service.memory_recall_pool(),
-                        service.tenant_id(),
-                        record_kind,
-                        &locator.block_id,
-                    ))
-                    .map_err(|error| error.view().message)?,
-            )
-            .map_err(|error| error.to_string())?
+            serde_json::to_value(block).map_err(|error| error.to_string())?
         }
         _ => return Err(format!("unsupported Memory Recall MCP tool: {name}")),
     };

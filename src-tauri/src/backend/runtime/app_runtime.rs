@@ -434,8 +434,9 @@ impl AppRuntime {
                                     &[("error", error.to_string())],
                                 );
                             }
-                            if let Err(error) =
-                                service.recover_memory_recall_turns_for_tenant(&tenant.id)
+                            if let Err(error) = service
+                                .recover_memory_recall_turns_for_tenant(&tenant.id)
+                                .await
                             {
                                 crate::backend::operation_log::log_warn(
                                     "memory_recall.coordinator.recovery",

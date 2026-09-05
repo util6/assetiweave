@@ -205,7 +205,8 @@ impl AppService {
                     .await?;
             }
             "memory_recall" => {
-                self.schedule_memory_recall_turn_for_tenant(&tenant_id, job_id)?;
+                self.schedule_memory_recall_turn_for_tenant(&tenant_id, job_id)
+                    .await?;
             }
             _ => {}
         }

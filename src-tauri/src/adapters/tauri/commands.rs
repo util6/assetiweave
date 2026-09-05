@@ -317,11 +317,14 @@ pub(crate) async fn get_memory_recent_event_target(
 }
 
 #[tauri::command]
-pub(crate) fn search_memory_recall(
+pub(crate) async fn search_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallSearchParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSearchResult> {
-    AppService::from_runtime(&state.runtime).search_memory_recall(params)
+    AppService::from_runtime(&state.runtime)
+        .search_memory_recall(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
@@ -393,35 +396,47 @@ pub(crate) async fn retry_memory_public_task(
 }
 
 #[tauri::command]
-pub(crate) fn create_memory_recall_session(
+pub(crate) async fn create_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionCreateParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).create_memory_recall_session(params)
+    AppService::from_runtime(&state.runtime)
+        .create_memory_recall_session(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_recall_session(
+pub(crate) async fn get_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionGetParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).get_memory_recall_session(params)
+    AppService::from_runtime(&state.runtime)
+        .get_memory_recall_session(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn send_memory_recall_turn(
+pub(crate) async fn send_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnSendParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).send_memory_recall_turn(params)
+    AppService::from_runtime(&state.runtime)
+        .send_memory_recall_turn(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn cancel_memory_recall_turn(
+pub(crate) async fn cancel_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnCancelParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).cancel_memory_recall_turn(params)
+    AppService::from_runtime(&state.runtime)
+        .cancel_memory_recall_turn(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
