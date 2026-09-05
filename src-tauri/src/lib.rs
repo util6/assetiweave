@@ -104,17 +104,14 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
         let report = runtime
             .shutdown_with_grace(std::time::Duration::from_secs(5))
             .await;
-        if !report.unfinished_task_ids.is_empty()
-            || !report.dispatcher_drained
-            || report.dispatcher_remaining_events > 0
-            || report.dispatcher_timed_out
-        {
+        if !report.is_clean() {
             return Err(format!(
-                "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}",
+                "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}, unfinished_stages={:?}",
                 report.unfinished_task_ids.len(),
                 report.dispatcher_drained,
                 report.dispatcher_remaining_events,
-                report.dispatcher_timed_out
+                report.dispatcher_timed_out,
+                report.unfinished_stages
             ));
         }
         Ok(())
@@ -308,11 +305,39 @@ pub fn run() {
                             if quit_anyway {
                                 tauri::async_runtime::spawn(async move {
                                     converge_ai_executions_before_close(background_tasks).await;
-                                    let _ = runtime
+                                    let report = runtime
                                         .shutdown_with_grace(
                                             std::time::Duration::from_secs(5),
                                         )
                                         .await;
+                                    if !report.is_clean() {
+                                        log_warn(
+                                            "app.close.window",
+                                            "AssetIWeave shut down with unfinished resources",
+                                            &[
+                                                (
+                                                    "unfinished_tasks",
+                                                    report.unfinished_task_ids.len().to_string(),
+                                                ),
+                                                (
+                                                    "dispatcher_drained",
+                                                    report.dispatcher_drained.to_string(),
+                                                ),
+                                                (
+                                                    "dispatcher_remaining_events",
+                                                    report.dispatcher_remaining_events.to_string(),
+                                                ),
+                                                (
+                                                    "dispatcher_timed_out",
+                                                    report.dispatcher_timed_out.to_string(),
+                                                ),
+                                                (
+                                                    "unfinished_stages",
+                                                    report.unfinished_stages.join(","),
+                                                ),
+                                            ],
+                                        );
+                                    }
                                     allow_close.store(true, Ordering::SeqCst);
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Err(error) = close_window.close() {
@@ -477,11 +502,39 @@ pub fn run() {
                         if quit_anyway {
                             tauri::async_runtime::spawn(async move {
                                 converge_ai_executions_before_close(background_tasks).await;
-                                let _ = runtime
+                                let report = runtime
                                     .shutdown_with_grace(
                                         std::time::Duration::from_secs(5),
                                     )
                                     .await;
+                                if !report.is_clean() {
+                                    log_warn(
+                                        "app.close.exit",
+                                        "AssetIWeave shut down with unfinished resources",
+                                        &[
+                                            (
+                                                "unfinished_tasks",
+                                                report.unfinished_task_ids.len().to_string(),
+                                            ),
+                                            (
+                                                "dispatcher_drained",
+                                                report.dispatcher_drained.to_string(),
+                                            ),
+                                            (
+                                                "dispatcher_remaining_events",
+                                                report.dispatcher_remaining_events.to_string(),
+                                            ),
+                                            (
+                                                "dispatcher_timed_out",
+                                                report.dispatcher_timed_out.to_string(),
+                                            ),
+                                            (
+                                                "unfinished_stages",
+                                                report.unfinished_stages.join(","),
+                                            ),
+                                        ],
+                                    );
+                                }
                                 allow_exit.store(true, Ordering::SeqCst);
                                 exit_app.exit(0);
                             });
@@ -602,7 +655,14 @@ pub fn run_engine_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = tokio_runtime.block_on(adapters::engine::run_stdio()) {
+    let engine_result = tokio_runtime.block_on(async {
+        let res = adapters::engine::run_stdio().await;
+        let _ = _app_runtime
+            .shutdown_with_grace(std::time::Duration::from_secs(3))
+            .await;
+        res
+    });
+    if let Err(error) = engine_result {
         eprintln!("{error}");
         drop(_logging_guard);
         std::process::exit(1);

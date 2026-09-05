@@ -202,7 +202,7 @@ impl AppService {
         params: SourceScanParams,
     ) -> AppResult<Vec<CatalogAsset>> {
         Ok(
-            SourceScanWorkflow::run(self, params, &TaskContext::detached(), false)
+            SourceScanWorkflow::run(self, params, &TaskContext::untracked(), false)
                 .await?
                 .assets,
         )
@@ -215,7 +215,7 @@ impl AppService {
                 kind: Some(AssetKind::Skill),
                 dry_run: false,
             },
-            &TaskContext::detached(),
+            &TaskContext::untracked(),
             true,
         )
         .await?

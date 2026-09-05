@@ -5,7 +5,7 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[test]
@@ -341,7 +341,7 @@ async fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     assert!(started.elapsed() < Duration::from_millis(100));
     assert_eq!(report.unfinished_task_ids, vec![task_id]);
 
-    // Let the detached test task converge before the registry is dropped.
+    // Let the untracked test task converge before the registry is dropped.
     std::thread::sleep(Duration::from_millis(180));
     assert!(tasks
         .list(tasks::TaskFilter::default())
@@ -486,14 +486,21 @@ async fn shutdown_is_idempotent_when_called_twice() {
         .expect("bootstrap ResidentHost");
 
     let first_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
+    assert!(first_report.is_clean());
     assert!(first_report.dispatcher_drained);
     assert!(first_report.unfinished_task_ids.is_empty());
+    assert!(first_report.unfinished_stages.is_empty());
 
-    // Second call to shutdown_with_grace must be idempotent and cleanly return default report
+    // Second call to shutdown_with_grace must be idempotent and cleanly return identical stable report
     let second_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
+    assert!(second_report.is_clean());
     assert!(second_report.dispatcher_drained);
     assert!(second_report.unfinished_task_ids.is_empty());
     assert_eq!(second_report.dispatcher_remaining_events, 0);
+    assert_eq!(
+        second_report.unfinished_stages,
+        first_report.unfinished_stages
+    );
 
     // Task runtime rejects new tasks once stopped
     let spawn_res = runtime.task_runtime().spawn(
@@ -502,5 +509,76 @@ async fn shutdown_is_idempotent_when_called_twice() {
     );
     assert!(spawn_res.is_err());
 
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[tokio::test]
+async fn shutdown_deadline_bounds_total_wall_time_across_all_stages() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-deadline-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
+        .expect("bootstrap ResidentHost");
+
+    // 1. Non-cooperative task: sleeps without observing cancellation
+    let _ = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("uncooperative-task"),
+        Box::new(|_| {
+            std::thread::sleep(Duration::from_millis(800));
+            Ok(serde_json::Value::Null)
+        }),
+    );
+
+    // 2. Slow coordinator: install a slow coordinator that sleeps for 800ms
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let join = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+    });
+    runtime.set_test_session_memory_coordinator(cancel, join);
+
+    // 3. Delayed pool close: hold a connection checkout so pool.close() would block
+    let _held_connection = runtime.pool().acquire().await.expect("acquire connection");
+
+    // Total grace = 150ms.
+    // If each of the 4 stages received a fresh 150ms (or blocked indefinitely),
+    // wall time would be >= 4 * 150ms = 600ms.
+    // With one absolute deadline, wall time is bounded by 150ms + CI tolerance (< 450ms).
+    let grace = Duration::from_millis(150);
+    let start = Instant::now();
+    let report = runtime.shutdown_with_grace(grace).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_millis(450),
+        "shutdown took {:?}, which exceeds one grace plus tolerance",
+        elapsed
+    );
+    assert!(!report.is_clean());
+    assert!(
+        report.unfinished_stages.contains(&"tasks".to_string())
+            || report
+                .unfinished_task_ids
+                .contains(&"uncooperative-task".to_string())
+    );
+    assert!(report
+        .unfinished_stages
+        .contains(&"session_memory_coordinator".to_string()));
+    assert!(report
+        .unfinished_stages
+        .contains(&"database_pool".to_string()));
+
+    // Idempotency: calling shutdown again immediately returns the same stable report
+    let second_report = runtime
+        .shutdown_with_grace(Duration::from_millis(100))
+        .await;
+    assert_eq!(second_report.unfinished_stages, report.unfinished_stages);
+    assert_eq!(
+        second_report.unfinished_task_ids,
+        report.unfinished_task_ids
+    );
+
+    drop(_held_connection);
     let _ = std::fs::remove_file(&temp_db);
 }

@@ -506,7 +506,7 @@ async fn cancellation_interrupts_retry_sleep() {
 }
 
 #[tokio::test]
-async fn stop_waits_for_tracked_worker_without_detach() {
+async fn stop_waits_for_tracked_worker_without_dropping_handle() {
     let path = std::env::temp_dir().join(format!(
         "assetiweave-dispatcher-stop-wait-{}.sqlite",
         Uuid::new_v4()

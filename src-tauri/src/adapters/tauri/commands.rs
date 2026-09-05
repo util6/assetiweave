@@ -220,9 +220,9 @@ pub(crate) async fn complete_app_close(
 
     crate::converge_ai_executions_before_close(background_tasks).await;
 
-    let unfinished_tasks = runtime
-        .stop_tasks_with_grace(std::time::Duration::from_secs(5))
-        .await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    let unfinished_tasks = runtime.stop_tasks_until(deadline).await;
     if !unfinished_tasks.is_empty() {
         log_warn(
             "app.close.tasks",
@@ -235,13 +235,8 @@ pub(crate) async fn complete_app_close(
         crate::sync_before_close_with_runtime(&runtime, &db_path, backup_database).await;
     }
 
-    let shutdown_report = runtime
-        .shutdown_with_grace(std::time::Duration::from_secs(5))
-        .await;
-    if !shutdown_report.dispatcher_drained
-        || !shutdown_report.unfinished_task_ids.is_empty()
-        || shutdown_report.dispatcher_timed_out
-    {
+    let shutdown_report = runtime.shutdown_until(deadline).await;
+    if !shutdown_report.is_clean() {
         log_warn(
             "app.close.runtime",
             "应用运行时在关闭期限内未完全收敛",
@@ -257,6 +252,10 @@ pub(crate) async fn complete_app_close(
                 (
                     "dispatcher_timed_out",
                     shutdown_report.dispatcher_timed_out.to_string(),
+                ),
+                (
+                    "unfinished_stages",
+                    shutdown_report.unfinished_stages.join(","),
                 ),
             ],
         );

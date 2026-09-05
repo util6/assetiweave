@@ -10,9 +10,10 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::sync::broadcast;
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::{task_tracker::TaskTrackerToken, TaskTracker};
 
@@ -139,7 +140,7 @@ pub(crate) struct TaskContext {
 }
 
 impl TaskContext {
-    pub(crate) fn detached() -> Self {
+    pub(crate) fn untracked() -> Self {
         Self {
             cancellation: CancellationToken::new(),
             progress: ProgressHandle {
@@ -1011,7 +1012,7 @@ impl TaskRuntime {
         self.tracker.close();
     }
 
-    pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
+    pub(crate) async fn shutdown_until(&self, deadline: Instant) -> ShutdownReport {
         self.stop_accepting();
         {
             let tasks = self
@@ -1026,7 +1027,8 @@ impl TaskRuntime {
             }
         }
         self.tracker.close();
-        let _ = tokio::time::timeout(grace, self.tracker.wait()).await;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let _ = tokio::time::timeout(remaining, self.tracker.wait()).await;
 
         let unfinished_task_ids = self
             .tasks
@@ -1042,6 +1044,10 @@ impl TaskRuntime {
         ShutdownReport {
             unfinished_task_ids,
         }
+    }
+
+    pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
+        self.shutdown_until(Instant::now() + grace).await
     }
 
     fn prune_terminal_tasks_locked(tasks: &mut HashMap<String, TaskEntry>) {

@@ -1009,7 +1009,7 @@ mod tests {
                 DateTime::parse_from_rfc3339(now)
                     .expect("parse global clock")
                     .with_timezone(&Utc),
-                TaskContext::detached(),
+                TaskContext::untracked(),
             )
             .await
             .expect("run global v1")
@@ -1076,7 +1076,7 @@ mod tests {
                 DateTime::parse_from_rfc3339("2026-08-31T01:01:00Z")
                     .expect("parse revised global clock")
                     .with_timezone(&Utc),
-                TaskContext::detached(),
+                TaskContext::untracked(),
             )
             .await
             .is_err());

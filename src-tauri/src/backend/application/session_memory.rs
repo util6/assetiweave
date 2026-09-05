@@ -185,7 +185,7 @@ impl AppService {
             &tenant_id,
             job_id,
             now,
-            TaskContext::detached(),
+            TaskContext::untracked(),
         )
         .await
     }

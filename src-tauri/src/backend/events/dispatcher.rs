@@ -8,8 +8,9 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 const IDLE_POLL_MIN: Duration = Duration::from_secs(2);
@@ -527,18 +528,36 @@ impl EventDispatcherHandle {
         self.notify.notify_one();
         if let Some(mut task) = self.task.take() {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            match tokio::time::timeout(remaining + Duration::from_millis(50), &mut task).await {
+            match tokio::time::timeout(remaining, &mut task).await {
                 Ok(Ok(report)) => report,
-                Ok(Err(_join_err)) => EventDispatcherShutdownReport {
-                    drained: false,
-                    remaining_events: self.pending_event_count().await.unwrap_or_default(),
-                    timed_out: false,
-                },
-                Err(_elapsed) => {
-                    task.abort();
+                Ok(Err(_join_err)) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    let count_timeout = remaining.max(Duration::from_millis(50));
+                    let remaining_events =
+                        tokio::time::timeout(count_timeout, self.pending_event_count())
+                            .await
+                            .ok()
+                            .and_then(|res| res.ok())
+                            .unwrap_or_default();
                     EventDispatcherShutdownReport {
                         drained: false,
-                        remaining_events: self.pending_event_count().await.unwrap_or_default(),
+                        remaining_events,
+                        timed_out: false,
+                    }
+                }
+                Err(_elapsed) => {
+                    task.abort();
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    let count_timeout = remaining.max(Duration::from_millis(50));
+                    let remaining_events =
+                        tokio::time::timeout(count_timeout, self.pending_event_count())
+                            .await
+                            .ok()
+                            .and_then(|res| res.ok())
+                            .unwrap_or_default();
+                    EventDispatcherShutdownReport {
+                        drained: false,
+                        remaining_events,
                         timed_out: true,
                     }
                 }
