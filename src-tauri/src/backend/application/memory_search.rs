@@ -536,8 +536,9 @@ mod tests {
             Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create test root");
-        let db_path = root.join("app.db");
-        let service = AppService::open_with_db_path(db_path).expect("open test service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open test service");
         (service, root)
     }
 

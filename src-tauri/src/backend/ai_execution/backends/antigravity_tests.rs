@@ -591,11 +591,9 @@ async fn executor_does_not_overwrite_store_after_failed_empty_id_turn() {
     fs::create_dir_all(&root).unwrap();
     let record = root.join("argv.ndjson");
     let database_path = root.join("bindings.sqlite");
-    let database =
-        tokio::task::spawn_blocking(move || crate::backend::store::Database::open(&database_path))
-            .await
-            .expect("database open task")
-            .expect("temporary provider store");
+    let database = crate::backend::store::Database::open_async(&database_path)
+        .await
+        .expect("temporary provider store");
     let store = Arc::new(crate::backend::ai_execution::PersistentBindingStore::new(
         database.pool().clone(),
     ));

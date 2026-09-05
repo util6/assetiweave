@@ -179,7 +179,9 @@ mod tests {
             .join("test-fixtures/fake-acp-agent.mjs");
         let args = vec![fixture.to_string_lossy().to_string()];
 
-        let db = Database::open_initialized(&db_path).expect("open database");
+        let db = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open database");
         let pool = db.pool().clone();
         let context = load_local_request_context_sqlx(&pool)
             .await
@@ -245,7 +247,8 @@ mod tests {
             context.clone(),
             manager.clone(),
             agent_runtime.clone(),
-        );
+        )
+        .await;
         let service = AppService {
             runtime: app_runtime.clone(),
             db,
@@ -381,7 +384,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).expect("create native fixture root");
         let db_path = root.join("app.db");
-        let db = Database::open_initialized(&db_path).expect("open database");
+        let db = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open database");
         let pool = db.pool().clone();
         let context = load_local_request_context_sqlx(&pool)
             .await
@@ -451,7 +456,8 @@ mod tests {
             context.clone(),
             manager.clone(),
             agent_runtime.clone(),
-        );
+        )
+        .await;
         let service = AppService {
             runtime: app_runtime.clone(),
             db,

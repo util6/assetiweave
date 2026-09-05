@@ -990,6 +990,7 @@ mod tests {
         let db_path = root.join("app.db");
         let fake = FakeRuntime::new();
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), fake.clone())
+            .await
             .expect("open app service with fake agent");
         let timestamp = "2026-08-30T23:00:00Z";
         let adapter = ConversationAdapter {

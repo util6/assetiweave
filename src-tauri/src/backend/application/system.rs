@@ -2,24 +2,18 @@ use super::prelude::*;
 use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
-    pub(crate) fn open_for_engine() -> AppResult<Self> {
+    pub(crate) async fn open_for_engine() -> AppResult<Self> {
         if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
             return Ok(Self::from_runtime(&runtime));
         }
 
-        // Engine unit tests use the same mandatory AppRuntime shape with a
-        // temporary database. Production has no database fallback here.
-        #[cfg(test)]
-        {
-            return Self::open_with_db_path(engine_db_path()?);
-        }
-
-        #[cfg(not(test))]
-        {
-            Err(AppError::Validation(
-                "Engine AppRuntime has not been bootstrapped".to_string(),
-            ))
-        }
+        let config = crate::backend::runtime::RuntimeConfig::from_environment()?;
+        let runtime = crate::backend::runtime::AppRuntime::bootstrap(
+            config.db_path,
+            crate::backend::runtime::RuntimeRole::OneShot,
+        )
+        .await?;
+        Ok(Self::from_runtime(&runtime))
     }
 
     /// Bind a request to the process-level runtime without I/O.
@@ -39,27 +33,29 @@ impl AppService {
     }
 
     #[cfg(test)]
-    pub(crate) fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
+    pub(crate) async fn open_with_db_path(db_path: PathBuf) -> AppResult<Self> {
         let runtime = crate::backend::runtime::AppRuntime::bootstrap(
             db_path,
             crate::backend::runtime::RuntimeRole::OneShot,
-        )?;
+        )
+        .await?;
         Ok(Self::from_runtime(&runtime))
     }
 
     #[cfg(test)]
-    pub(crate) fn open_with_db_path_and_runtime(
+    pub(crate) async fn open_with_db_path_and_runtime(
         db_path: PathBuf,
         agent_runtime: std::sync::Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime>,
     ) -> AppResult<Self> {
-        let service = Self::open_with_db_path(db_path)?;
+        let service = Self::open_with_db_path(db_path).await?;
         let runtime = crate::backend::runtime::AppRuntime::for_test(
             service.db_path.clone(),
             service.db.clone(),
             service.context.clone(),
             service.agent_runtime_manager.clone(),
             agent_runtime.clone(),
-        );
+        )
+        .await;
         Ok(Self {
             runtime: runtime.clone(),
             db: service.db,
@@ -108,12 +104,13 @@ impl AppService {
         Ok(self.runtime.target_catalog().descriptors().to_vec())
     }
 
-    pub(crate) fn refresh_target_profile_descriptors(
+    pub(crate) async fn refresh_target_profile_descriptors(
         &self,
     ) -> AppResult<Vec<crate::backend::models::TargetProfileDescriptor>> {
         Ok(self
             .runtime
-            .refresh_target_catalog_from_disk()?
+            .refresh_target_catalog_from_disk()
+            .await?
             .descriptors()
             .to_vec())
     }
@@ -289,11 +286,6 @@ impl AppService {
     }
 }
 
-#[cfg(test)]
-fn engine_db_path() -> AppResult<PathBuf> {
-    crate::backend::path_utils::app_db_path()
-}
-
 fn conversation_runtime_doctor_summary(
     runtime_statuses: &[crate::backend::conversations::ConversationAdapterRuntimeStatus],
 ) -> (&'static str, String) {
@@ -348,8 +340,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn app_service_accepts_an_injected_agent_runtime() {
+    #[tokio::test]
+    async fn app_service_accepts_an_injected_agent_runtime() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-runtime-injection-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -357,6 +349,7 @@ mod tests {
         let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FakeAgentRuntime);
 
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime.clone())
+            .await
             .expect("open service with fake runtime");
 
         assert!(Arc::ptr_eq(&service.agent_runtime, &runtime));
@@ -364,8 +357,8 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[test]
-    fn default_app_services_use_independent_runtime_snapshots() {
+    #[tokio::test]
+    async fn default_app_services_use_independent_runtime_snapshots() {
         let first_path = std::env::temp_dir().join(format!(
             "assetiweave-runtime-shared-first-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -375,8 +368,12 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
 
-        let first = AppService::open_with_db_path(first_path.clone()).expect("first service");
-        let second = AppService::open_with_db_path(second_path.clone()).expect("second service");
+        let first = AppService::open_with_db_path(first_path.clone())
+            .await
+            .expect("first service");
+        let second = AppService::open_with_db_path(second_path.clone())
+            .await
+            .expect("second service");
 
         let first_runtime = first.agent_runtime.clone();
         let second_runtime = second.agent_runtime.clone();

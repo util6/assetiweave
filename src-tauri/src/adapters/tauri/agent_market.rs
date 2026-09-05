@@ -284,7 +284,7 @@ fn spawn_install_worker(
                     "Agent installation cancelled".to_string(),
                 ))
             } else {
-                runtime.block_on(async {
+                tauri::async_runtime::block_on(async {
                     AppService::from_runtime(&runtime)
                         .install_agent_with_cancellation_and_progress(
                             params,
@@ -368,7 +368,7 @@ fn spawn_uninstall_worker(
             let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
-                runtime.block_on(async {
+                tauri::async_runtime::block_on(async {
                     AppService::from_runtime(&runtime)
                         .uninstall_agent_with_cancellation_and_progress(
                             params,

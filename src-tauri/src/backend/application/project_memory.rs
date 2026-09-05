@@ -603,6 +603,7 @@ mod tests {
         let db_path = root.join("app.db");
         let fake = FakeRuntime::new(r##"{"content_markdown":"# first project memory"}"##);
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), fake.clone())
+            .await
             .expect("open project memory service");
         let now = "2026-08-31T01:00:00Z";
         sqlx::query(

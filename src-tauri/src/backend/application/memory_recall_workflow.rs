@@ -965,6 +965,7 @@ mod tests {
         let db_path = root.join("app.db");
         let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FakeRecallRuntime);
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime.clone())
+            .await
             .expect("open Recall fixture service");
         let invalid = parse_and_validate_recall_output(
             &service,
@@ -1049,6 +1050,7 @@ mod tests {
 
         drop(service);
         let reopened = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime)
+            .await
             .expect("reopen Recall fixture service");
         let restored = reopened
             .get_memory_recall_session(MemoryRecallSessionGetParams {
@@ -1079,6 +1081,7 @@ mod tests {
         let db_path = root.join("app.db");
         let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FakeRecallRuntime);
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime)
+            .await
             .expect("open multi-turn service");
         let session = service
             .create_memory_recall_session(MemoryRecallSessionCreateParams::default())
@@ -1125,6 +1128,7 @@ mod tests {
         let db_path = root.join("app.db");
         let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(BlockingRecallRuntime);
         let service = AppService::open_with_db_path_and_runtime(db_path, runtime)
+            .await
             .expect("open cancellation service");
         let session = service
             .create_memory_recall_session(MemoryRecallSessionCreateParams::default())

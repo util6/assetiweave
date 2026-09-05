@@ -2937,7 +2937,9 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("assetiweave-package-preflight-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create preflight test root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let adapter = adapter("external-preflight", "1.0.0");
         let source = ConversationSource {
             id: "external-preflight-source".to_string(),
@@ -3019,7 +3021,9 @@ mod tests {
             Uuid::new_v4()
         ));
         fs::create_dir_all(&root).expect("create preflight test root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let current_tenant_id = service.tenant_id().to_string();
         let adapter = adapter("cross-tenant-preflight", "1.0.0");
         let source = ConversationSource {
@@ -3097,7 +3101,9 @@ mod tests {
             Uuid::new_v4()
         ));
         fs::create_dir_all(&root).expect("create test root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let mut builtin = adapter("builtin-preflight", "1.0.0");
         builtin.trust_state = crate::backend::models::ConversationAdapterTrustState::BuiltIn;
         let tenant_id = service.tenant_id().to_string();
@@ -3197,7 +3203,9 @@ mod tests {
             "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"complete\",\"item\":{\"revision\":1}}'\n",
         );
 
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let first = promote_conversation_adapter_workspace_package(
             &service,
             &package_dir,
@@ -3360,7 +3368,9 @@ mod tests {
                 .expect("validate external package")
                 .content_hash;
 
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         service
             .register_conversation_adapter_local(ConversationAdapterLocalRegisterParams {
                 package_dir: package_dir.to_string_lossy().to_string(),

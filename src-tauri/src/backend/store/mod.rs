@@ -59,7 +59,7 @@ pub(crate) use conversation_repo::{
     RecentConversationSessionRecord,
 };
 pub(crate) use database::{
-    build_runtime, count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
+    count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
     open_migrated_pool, seed_defaults_sqlx_with_catalog, seed_tenant_defaults_sqlx_with_catalog,
     Database,
 };

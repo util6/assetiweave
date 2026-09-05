@@ -366,13 +366,14 @@ fn shutdown_report_without_resident_services_is_clean() {
     assert!(report.unfinished_task_ids.is_empty());
 }
 
-#[test]
-fn runtime_config_db_path_matches_injected_path() {
+#[tokio::test]
+async fn runtime_config_db_path_matches_injected_path() {
     let temp_db = std::env::temp_dir().join(format!(
         "assetiweave-test-config-{}.db",
         uuid::Uuid::new_v4()
     ));
     let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot)
+        .await
         .expect("bootstrap test runtime");
     assert_eq!(runtime.config().db_path, temp_db);
     let _ = std::fs::remove_file(&temp_db);
@@ -415,14 +416,15 @@ async fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
     assert!(report.unfinished_task_ids.is_empty());
 }
 
-#[test]
-fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_services() {
+#[tokio::test]
+async fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_services() {
     let temp_db =
         std::env::temp_dir().join(format!("assetiweave-test-role-{}.db", uuid::Uuid::new_v4()));
 
     // 1. Bootstrap OneShot
-    let oneshot_runtime =
-        AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot).expect("bootstrap OneShot");
+    let oneshot_runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot)
+        .await
+        .expect("bootstrap OneShot");
     assert_eq!(oneshot_runtime.config().db_path, temp_db);
 
     // OneShot does not register background startup refresh tasks
@@ -439,11 +441,14 @@ fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_ser
     assert!(settings_oneshot.is_object());
 
     // Cleanly shutdown OneShot
-    let oneshot_report = oneshot_runtime.shutdown_with_grace(Duration::from_millis(200));
+    let oneshot_report = oneshot_runtime
+        .shutdown_with_grace(Duration::from_millis(200))
+        .await;
     assert!(oneshot_report.unfinished_task_ids.is_empty());
 
     // 2. Bootstrap ResidentHost on the exact same database file
     let resident_runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
         .expect("bootstrap ResidentHost");
     assert_eq!(resident_runtime.config().db_path, temp_db);
 
@@ -461,28 +466,31 @@ fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_ser
     assert_eq!(settings_oneshot, settings_resident);
 
     // Cleanly shutdown ResidentHost
-    let resident_report = resident_runtime.shutdown_with_grace(Duration::from_secs(1));
+    let resident_report = resident_runtime
+        .shutdown_with_grace(Duration::from_secs(1))
+        .await;
     assert!(resident_report.unfinished_task_ids.is_empty());
     assert!(resident_report.dispatcher_drained);
 
     let _ = std::fs::remove_file(&temp_db);
 }
 
-#[test]
-fn shutdown_is_idempotent_when_called_twice() {
+#[tokio::test]
+async fn shutdown_is_idempotent_when_called_twice() {
     let temp_db = std::env::temp_dir().join(format!(
         "assetiweave-test-shutdown-idempotent-{}.db",
         uuid::Uuid::new_v4()
     ));
     let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
         .expect("bootstrap ResidentHost");
 
-    let first_report = runtime.shutdown_with_grace(Duration::from_secs(1));
+    let first_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
     assert!(first_report.dispatcher_drained);
     assert!(first_report.unfinished_task_ids.is_empty());
 
     // Second call to shutdown_with_grace must be idempotent and cleanly return default report
-    let second_report = runtime.shutdown_with_grace(Duration::from_secs(1));
+    let second_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
     assert!(second_report.dispatcher_drained);
     assert!(second_report.unfinished_task_ids.is_empty());
     assert_eq!(second_report.dispatcher_remaining_events, 0);

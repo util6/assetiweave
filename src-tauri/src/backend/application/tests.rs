@@ -8,34 +8,27 @@ use crate::backend::models::{
 use sqlx::AssertSqlSafe;
 use std::fs;
 
-fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
-    let pool = service.db.pool().clone();
-    service.db.block_on(async move {
-        for statement in sql.split(';').map(str::trim).filter(|sql| !sql.is_empty()) {
-            sqlx::query(AssertSqlSafe(statement.to_string()))
-                .execute(&pool)
-                .await
-                .map_err(AppError::external)?;
-        }
-        Ok(())
-    })
+async fn execute_test_sql(service: &AppService, sql: &str) -> AppResult<()> {
+    let pool = service.db.pool();
+    for statement in sql.split(';').map(str::trim).filter(|sql| !sql.is_empty()) {
+        sqlx::query(AssertSqlSafe(statement.to_string()))
+            .execute(pool)
+            .await
+            .map_err(AppError::external)?;
+    }
+    Ok(())
 }
 
-fn clear_test_tables(service: &AppService, tables: &[&str]) {
-    let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            for table in tables {
-                let statement = format!("DELETE FROM {table}");
-                sqlx::query(AssertSqlSafe(statement))
-                    .execute(&pool)
-                    .await
-                    .map_err(AppError::external)?;
-            }
-            AppResult::Ok(())
-        })
-        .expect("clear test tables");
+async fn clear_test_tables(service: &AppService, tables: &[&str]) {
+    let pool = service.db.pool();
+    for table in tables {
+        let statement = format!("DELETE FROM {table}");
+        sqlx::query(AssertSqlSafe(statement))
+            .execute(pool)
+            .await
+            .map_err(AppError::external)
+            .expect("clear test tables");
+    }
 }
 
 #[cfg(unix)]
@@ -46,8 +39,9 @@ async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create command projector test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let now = Utc::now().to_rfc3339();
     let legacy_adapter = ConversationAdapter {
         id: "legacy-command-adapter".to_string(),
@@ -114,8 +108,9 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create command projector test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let now = Utc::now().to_rfc3339();
     let unavailable_adapter = ConversationAdapter {
         id: "unavailable-command-adapter".to_string(),
@@ -180,37 +175,27 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
     fs::remove_dir_all(root).ok();
 }
 
-fn upsert_test_source(service: &AppService, source: &Source) {
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, source).await
-        })
+async fn upsert_test_source(service: &AppService, source: &Source) {
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_source_sqlx(pool, tenant_id, source)
+        .await
         .expect("save source");
 }
 
-fn replace_test_source_assets(service: &AppService, source_id: &str, assets: &[Asset]) {
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::replace_source_assets_sqlx(&pool, &tenant_id, source_id, assets)
-                .await
-        })
+async fn replace_test_source_assets(service: &AppService, source_id: &str, assets: &[Asset]) {
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::replace_source_assets_sqlx(pool, tenant_id, source_id, assets)
+        .await
         .expect("save source assets");
 }
 
-fn load_test_assets(service: &AppService) -> Vec<Asset> {
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(
-            async move { crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await },
-        )
+async fn load_test_assets(service: &AppService) -> Vec<Asset> {
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::load_assets_sqlx(pool, tenant_id, None)
+        .await
         .expect("load assets")
 }
 
@@ -247,8 +232,9 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
     fs::create_dir_all(other_worktree.join(".git")).expect("create other worktree marker");
     symlink(&git_root, &git_alias).expect("create project symlink");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let now = chrono::DateTime::parse_from_rfc3339("2026-08-31T12:00:00Z")
         .expect("parse fixture clock")
         .with_timezone(&Utc);
@@ -325,7 +311,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &registered_source);
+    upsert_test_source(&service, &registered_source).await;
 
     let fixture_session = |external_id: &str,
                            title: &str,
@@ -452,52 +438,41 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
     ];
     let unix_seconds = (now - ChronoDuration::minutes(90)).timestamp();
     let unix_milliseconds = (now - ChronoDuration::minutes(100)).timestamp_millis();
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let adapter_for_default = adapter.clone();
-    let source_for_default = conversation_source.clone();
-    service
-        .runtime
-        .run_sync(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                &adapter_for_default,
-            )
-            .await?;
-            crate::backend::store::upsert_conversation_source_sqlx(
-                &pool,
-                &tenant_id,
-                &source_for_default,
-            )
-            .await?;
-            crate::backend::store::import_conversation_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                &source_for_default,
-                &sessions,
-                false,
-            )
-            .await?;
-            sqlx::query(
-                "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-seconds'",
-            )
-            .bind(unix_seconds)
-            .bind(&tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::Db)?;
-            sqlx::query(
-                "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-milliseconds'",
-            )
-            .bind(unix_milliseconds)
-            .bind(&tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::Db)?;
-            Ok::<_, AppError>(())
-        })
-        .expect("import recent conversation fixtures");
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &conversation_source)
+        .await
+        .expect("upsert source");
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        tenant_id,
+        &conversation_source,
+        &sessions,
+        false,
+    )
+    .await
+    .expect("import sessions");
+    sqlx::query(
+        "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-seconds'",
+    )
+    .bind(unix_seconds)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .map_err(AppError::Db)
+    .expect("update unix-seconds");
+    sqlx::query(
+        "UPDATE conversation_sessions SET updated_at = ?1 WHERE tenant_id = ?2 AND external_id = 'unix-milliseconds'",
+    )
+    .bind(unix_milliseconds)
+    .bind(tenant_id)
+    .execute(pool)
+    .await
+    .map_err(AppError::Db)
+    .expect("update unix-milliseconds");
 
     let other_tenant_session = fixture_session(
         "other-tenant-session",
@@ -506,29 +481,21 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
         now - ChronoDuration::minutes(15),
         Some(&other_worktree.join("src")),
     );
-    let pool = service.db.pool().clone();
-    service
-        .runtime
-        .run_sync(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, "tenant-a", &adapter)
-                .await?;
-            crate::backend::store::upsert_conversation_source_sqlx(
-                &pool,
-                "tenant-a",
-                &conversation_source,
-            )
-            .await?;
-            crate::backend::store::import_conversation_sessions_sqlx(
-                &pool,
-                "tenant-a",
-                &conversation_source,
-                &[other_tenant_session],
-                false,
-            )
-            .await
-            .map(|_| ())
-        })
-        .expect("import other tenant conversation fixture");
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, "tenant-a", &adapter)
+        .await
+        .expect("upsert tenant-a adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(pool, "tenant-a", &conversation_source)
+        .await
+        .expect("upsert tenant-a source");
+    crate::backend::store::import_conversation_sessions_sqlx(
+        pool,
+        "tenant-a",
+        &conversation_source,
+        &[other_tenant_session],
+        false,
+    )
+    .await
+    .expect("import other tenant conversation fixture");
 
     let project_view = service
         .list_recent_conversation_sessions_at(
@@ -630,8 +597,9 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
     assert_eq!(time_order.first().copied(), Some("other-worktree"));
 
     drop(service);
-    let reopened =
-        AppService::open_with_db_path(root.join("app.db")).expect("reopen application service");
+    let reopened = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("reopen application service");
     let reopened_view = reopened
         .list_recent_conversation_sessions_at(
             RecentConversationSessionListParams {
@@ -671,51 +639,56 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create maintenance test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
 
     let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            let mut connection = pool.acquire().await.map_err(AppError::external)?;
-            sqlx::query("PRAGMA foreign_keys = OFF")
-                .execute(&mut *connection)
-                .await
-                .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, metadata_json, content_card_json,
-                    translated_text, source_execution_id, command_label
-                ) VALUES ('default', 'maintenance-orphan-part', 'maintenance-missing-turn', 0,
-                    'assistant', 'text', 'orphan', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                    NULL, NULL, NULL)
-                "#,
-            )
+    {
+        let mut connection = pool
+            .acquire()
+            .await
+            .map_err(AppError::external)
+            .expect("acquire conn");
+        sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *connection)
             .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_question_turns (
-                    tenant_id, question_id, turn_id, turn_order, assignment_origin,
-                    assigned_at, updated_at
-                ) VALUES ('default', 'maintenance-missing-question', 'maintenance-missing-turn', 0,
-                    'imported', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
-                "#,
-            )
+            .map_err(AppError::external)
+            .expect("pragma off");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text, language,
+                command, cwd, status, exit_code, metadata_json, content_card_json,
+                translated_text, source_execution_id, command_label
+            ) VALUES ('default', 'maintenance-orphan-part', 'maintenance-missing-turn', 0,
+                'assistant', 'text', 'orphan', NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL)
+            "#,
+        )
+        .execute(&mut *connection)
+        .await
+        .map_err(AppError::external)
+        .expect("insert orphan part");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_question_turns (
+                tenant_id, question_id, turn_id, turn_order, assignment_origin,
+                assigned_at, updated_at
+            ) VALUES ('default', 'maintenance-missing-question', 'maintenance-missing-turn', 0,
+                'imported', '2026-08-25T00:00:00Z', '2026-08-25T00:00:00Z')
+            "#,
+        )
+        .execute(&mut *connection)
+        .await
+        .map_err(AppError::external)
+        .expect("insert orphan question turn");
+        sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&mut *connection)
             .await
-            .map_err(AppError::external)?;
-            sqlx::query("PRAGMA foreign_keys = ON")
-                .execute(&mut *connection)
-                .await
-                .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("seed orphan conversation rows");
+            .map_err(AppError::external)
+            .expect("pragma on");
+    }
 
     let audit = service
         .audit_conversation_data(ConversationDataAuditParams {
@@ -748,17 +721,13 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .await
         .expect("dry-run conversation repair");
     assert_eq!(dry_run["dry_run"], true);
-    let orphan_count: i64 = service
-        .db
-        .block_on(async {
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
-            )
-            .fetch_one(service.db.pool())
-            .await
-            .map_err(AppError::external)
-        })
-        .expect("count orphan after dry-run");
+    let orphan_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+    )
+    .fetch_one(service.db.pool())
+    .await
+    .map_err(AppError::external)
+    .expect("count orphan after dry-run");
     assert_eq!(orphan_count, 1);
 
     let resync_error = service
@@ -771,17 +740,13 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         })
         .await;
     assert!(resync_error.is_err());
-    let orphan_count_after_failed_resync: i64 = service
-        .db
-        .block_on(async {
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
-            )
-            .fetch_one(service.db.pool())
-            .await
-            .map_err(AppError::external)
-        })
-        .expect("count orphan after failed resync");
+    let orphan_count_after_failed_resync: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_parts WHERE id = 'maintenance-orphan-part'",
+    )
+    .fetch_one(service.db.pool())
+    .await
+    .map_err(AppError::external)
+    .expect("count orphan after failed resync");
     assert_eq!(orphan_count_after_failed_resync, 1);
 
     let scoped_repair = service
@@ -804,17 +769,13 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
             issue["category"].as_str(),
             Some("orphan_parts" | "orphan_memberships")
         )));
-    let open_scoped_safe_issue_count: i64 = service
-        .db
-        .block_on(async {
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'open' AND auto_repairable = 1 AND fingerprint LIKE '%:source:unrelated-source'",
-            )
-            .fetch_one(service.db.pool())
-            .await
-            .map_err(AppError::external)
-        })
-        .expect("count open source-scoped safe audit issues");
+    let open_scoped_safe_issue_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'open' AND auto_repairable = 1 AND fingerprint LIKE '%:source:unrelated-source'",
+    )
+    .fetch_one(service.db.pool())
+    .await
+    .map_err(AppError::external)
+    .expect("count open source-scoped safe audit issues");
     assert_eq!(open_scoped_safe_issue_count, 0);
 
     let repaired = service
@@ -834,17 +795,13 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
         .expect("repair rollback backup path");
     assert!(Path::new(backup_path).is_file());
     assert!(Path::new(backup_path).starts_with(root.join("conversation-repair-backups")));
-    let resolved_issue_count: i64 = service
-        .db
-        .block_on(async {
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_memberships')",
-            )
-            .fetch_one(service.db.pool())
-            .await
-            .map_err(AppError::external)
-        })
-        .expect("count resolved audit issues");
+    let resolved_issue_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE tenant_id = 'default' AND status = 'resolved' AND category IN ('orphan_parts', 'orphan_memberships')",
+    )
+    .fetch_one(service.db.pool())
+    .await
+    .map_err(AppError::external)
+    .expect("count resolved audit issues");
     assert_eq!(resolved_issue_count, 2);
     let second = service
         .repair_conversation_data(ConversationDataRepairParams {
@@ -859,35 +816,38 @@ async fn conversation_data_maintenance_audits_dry_runs_and_repairs_orphans_idemp
     assert_eq!(second["applied"]["deleted_memberships"], 0);
 
     let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            let mut connection = pool.acquire().await.map_err(AppError::external)?;
-            sqlx::query("PRAGMA foreign_keys = OFF")
-                .execute(&mut *connection)
-                .await
-                .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, metadata_json, content_card_json,
-                    translated_text, source_execution_id, command_label
-                ) VALUES ('default', 'maintenance-recurrent-orphan-part',
-                    'maintenance-recurrent-missing-turn', 0, 'assistant', 'text', 'orphan',
-                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-                "#,
-            )
+    {
+        let mut connection = pool
+            .acquire()
+            .await
+            .map_err(AppError::external)
+            .expect("acquire conn");
+        sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *connection)
             .await
-            .map_err(AppError::external)?;
-            sqlx::query("PRAGMA foreign_keys = ON")
-                .execute(&mut *connection)
-                .await
-                .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("seed recurrent orphan conversation row");
+            .map_err(AppError::external)
+            .expect("pragma off");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_parts (
+                tenant_id, id, turn_id, part_index, role, kind, text, language,
+                command, cwd, status, exit_code, metadata_json, content_card_json,
+                translated_text, source_execution_id, command_label
+            ) VALUES ('default', 'maintenance-recurrent-orphan-part',
+                'maintenance-recurrent-missing-turn', 0, 'assistant', 'text', 'orphan',
+                NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+            "#,
+        )
+        .execute(&mut *connection)
+        .await
+        .map_err(AppError::external)
+        .expect("insert recurrent orphan part");
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *connection)
+            .await
+            .map_err(AppError::external)
+            .expect("pragma on");
+    }
     let recurrent = service
         .audit_conversation_data(ConversationDataAuditParams {
             record_kind: Some("session".to_string()),
@@ -921,8 +881,9 @@ async fn conversation_data_maintenance_stops_before_work_when_cancelled() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create cancelled maintenance test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open maintenance service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open maintenance service");
     let cancellation = tokio_util::sync::CancellationToken::new();
     cancellation.cancel();
 
@@ -958,8 +919,9 @@ async fn conversation_data_audit_reports_affected_snapshot_rows() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create snapshot audit test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
 
     execute_test_sql(
         &service,
@@ -974,6 +936,7 @@ async fn conversation_data_audit_reports_affected_snapshot_rows() {
         )
         "#,
     )
+    .await
     .expect("seed snapshot audit fixture");
 
     let audit = service
@@ -999,13 +962,12 @@ async fn conversation_data_rollback_previews_requires_confirmation_and_restores_
     fs::create_dir_all(&root).expect("create rollback test root");
     let db_path = root.join("app.db");
     let backup_path = root.join("maintenance-backup.db");
-    let service = AppService::open_with_db_path(db_path.clone()).expect("open rollback service");
+    let service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("open rollback service");
 
-    service
-        .db
-        .block_on(async {
-            crate::backend::store::checkpoint_database_wal_sqlx(service.db.pool()).await
-        })
+    crate::backend::store::checkpoint_database_wal_sqlx(service.db.pool())
+        .await
         .expect("checkpoint database before backup");
     fs::copy(&db_path, &backup_path).expect("copy rollback fixture backup");
 
@@ -1022,6 +984,7 @@ async fn conversation_data_rollback_previews_requires_confirmation_and_restores_
         )
         "#,
     )
+    .await
     .expect("write post-backup marker");
 
     let preview = service
@@ -1056,18 +1019,16 @@ async fn conversation_data_rollback_previews_requires_confirmation_and_restores_
     assert_eq!(restored["restored"], true);
     drop(service);
 
-    let reopened = AppService::open_with_db_path(db_path).expect("reopen restored database");
-    let marker_count: i64 = reopened
-        .db
-        .block_on(async {
-            sqlx::query_scalar(
-                "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE id = 'rollback-marker'",
-            )
-            .fetch_one(reopened.db.pool())
-            .await
-            .map_err(AppError::external)
-        })
-        .expect("query restored database");
+    let reopened = AppService::open_with_db_path(db_path)
+        .await
+        .expect("reopen restored database");
+    let marker_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_data_audit_issues WHERE id = 'rollback-marker'",
+    )
+    .fetch_one(reopened.db.pool())
+    .await
+    .map_err(AppError::external)
+    .expect("query restored database");
     assert_eq!(marker_count, 0);
 
     drop(reopened);
@@ -1080,7 +1041,9 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     fs::create_dir_all(&root).expect("create temp dir");
     let db_path = root.join("app.db");
 
-    let service = AppService::open_with_db_path(db_path.clone()).expect("open application service");
+    let service = AppService::open_with_db_path(db_path.clone())
+        .await
+        .expect("open application service");
     let tenant = service
         .create_tenant(TenantCreateParams {
             name: "Client A".to_string(),
@@ -1097,8 +1060,9 @@ async fn creating_tenant_seeds_isolated_skill_backup_library_root() {
     );
     drop(service);
 
-    let tenant_service =
-        AppService::open_with_db_path(db_path).expect("open service for active tenant");
+    let tenant_service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open service for active tenant");
     assert_eq!(tenant_service.tenant_id(), "client-a");
 
     let settings = tenant_service
@@ -1162,7 +1126,9 @@ async fn switching_tenant_rebinds_the_next_app_service_request() {
     let source_root = root.join("tenant-b-source");
     fs::create_dir_all(&source_root).expect("create tenant B source root");
 
-    let service = AppService::open_with_db_path(db_path).expect("open application service");
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open application service");
     let tenant_b = service
         .create_tenant(TenantCreateParams {
             name: "Tenant B".to_string(),
@@ -1210,17 +1176,13 @@ async fn switching_tenant_rebinds_the_next_app_service_request() {
         .await
         .expect("create source in tenant B");
 
-    let pool = service.db.pool().clone();
-    let (default_sources, tenant_b_sources) = service
-        .db
-        .block_on(async move {
-            let default_sources =
-                crate::backend::store::load_sources_sqlx(&pool, "default").await?;
-            let tenant_b_sources =
-                crate::backend::store::load_sources_sqlx(&pool, "tenant-b").await?;
-            AppResult::Ok((default_sources, tenant_b_sources))
-        })
-        .expect("load sources by tenant");
+    let pool = service.db.pool();
+    let default_sources = crate::backend::store::load_sources_sqlx(pool, "default")
+        .await
+        .expect("load default sources");
+    let tenant_b_sources = crate::backend::store::load_sources_sqlx(pool, "tenant-b")
+        .await
+        .expect("load tenant-b sources");
     assert!(!default_sources
         .iter()
         .any(|source| source.id == "tenant-b-source"));
@@ -1239,8 +1201,9 @@ async fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create temp dir");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let tenant_b = service
         .create_tenant(TenantCreateParams {
             name: "Tenant B".to_string(),
@@ -1255,8 +1218,7 @@ async fn switching_tenant_rebinds_tenant_scoped_runtime_catalogs() {
             "INSERT INTO conversation_adapters (tenant_id, id, name, kind, version, enabled, manifest_path, executable_path, content_hash, trusted_hash, trust_state, protocol_version, capabilities, input_kinds, card_contract_version, card_kinds_json, created_at, updated_at) VALUES ('{}', 'tenant-b-only-adapter', 'Tenant B only adapter', 'external', '1.0.0', 1, NULL, NULL, NULL, NULL, 'trusted', 1, '[\"list\"]', '[\"directory\"]', NULL, '[]', '2026-08-23T00:00:00Z', '2026-08-23T00:00:00Z')",
             tenant_b.id
         ),
-    )
-    .expect("save tenant B adapter");
+    ).await.expect("save tenant B adapter");
 
     service
         .switch_tenant(tenant_b.id)
@@ -1281,8 +1243,9 @@ async fn system_skill_source_cannot_be_edited_or_removed() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let mut source =
         crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
     source.name = "Changed name".to_string();
@@ -1310,8 +1273,9 @@ async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let source =
         crate::backend::builtin_skills::system_skill_source().expect("build system Skill source");
     let now = Utc::now().to_rfc3339();
@@ -1331,8 +1295,8 @@ async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
         discovered_at: now.clone(),
         updated_at: now,
     };
-    upsert_test_source(&service, &source);
-    replace_test_source_assets(&service, &source.id, &[asset.clone()]);
+    upsert_test_source(&service, &source).await;
+    replace_test_source_assets(&service, &source.id, &[asset.clone()]).await;
 
     let error = service
         .backup_skill(asset.id)
@@ -1349,8 +1313,9 @@ async fn system_skill_cannot_be_copied_into_the_user_backup_library() {
 async fn doctor_reports_conversation_adapter_runtime_statuses() {
     let root = std::env::temp_dir().join(format!("assetiweave-doctor-runtime-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp dir");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
 
     let report = service.run_doctor().await.expect("run doctor");
     let checks = report["checks"].as_array().expect("doctor checks");
@@ -1401,8 +1366,9 @@ async fn runtime_status_includes_harvester_runtime_requirements() {
         r#"{"schema_version":1,"id":"fixture-harvester","runtime":{"type":"python","entry":"scripts/harvest.py","version":">=3.12"}}"#,
     )
     .expect("write harvester manifest");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let source = ConversationSource {
         id: "fixture-harvester-source".to_string(),
         adapter_id: "codex".to_string(),
@@ -1438,39 +1404,29 @@ async fn runtime_status_includes_harvester_runtime_requirements() {
     fs::remove_dir_all(root).ok();
 }
 
-fn set_test_asset_mount(
+async fn set_test_asset_mount(
     service: &AppService,
     asset_id: &str,
     profile_id: &str,
     enabled: bool,
     strategy: DeploymentStrategy,
 ) {
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::set_asset_mount_sqlx(
-                &pool, &tenant_id, asset_id, profile_id, enabled, strategy,
-            )
-            .await
-        })
-        .expect("persist mount preference");
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::set_asset_mount_sqlx(
+        pool, tenant_id, asset_id, profile_id, enabled, strategy,
+    )
+    .await
+    .expect("persist mount preference");
 }
 
-fn count_asset_rows(service: &AppService, table: &str, asset_id: &str) -> i64 {
-    let pool = service.db.pool().clone();
+async fn count_asset_rows(service: &AppService, table: &str, asset_id: &str) -> i64 {
     let statement = format!("SELECT COUNT(*) FROM {table} WHERE asset_id = ?");
-    let asset_id = asset_id.to_string();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query_scalar::<_, i64>(AssertSqlSafe(statement))
-                .bind(asset_id)
-                .fetch_one(&pool)
-                .await
-                .map_err(|error| error.to_string())
-        })
+    sqlx::query_scalar::<_, i64>(AssertSqlSafe(statement))
+        .bind(asset_id)
+        .fetch_one(service.db.pool())
+        .await
+        .map_err(|error| error.to_string())
         .expect("count asset rows")
 }
 
@@ -1498,7 +1454,7 @@ fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
 }
 
 #[cfg(unix)]
-fn upsert_conversation_export_fixture(
+async fn upsert_conversation_export_fixture(
     service: &AppService,
     root: &Path,
     adapter_capabilities: Vec<String>,
@@ -1593,90 +1549,88 @@ fn upsert_conversation_export_fixture(
             }],
         }],
     };
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let session_id = service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await
-                .map_err(AppError::external)?;
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await
-                .map_err(AppError::external)?;
-            let sessions = if web_record {
-                crate::backend::store::import_web_record_sessions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source,
-                    &[session],
-                    false,
-                )
-                .await
-                .map_err(AppError::external)?;
-                crate::backend::store::list_web_record_sessions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    Some(&source.adapter_id),
-                    Some(&source.id),
-                    None,
-                    1,
-                    0,
-                )
-                .await?
-            } else {
-                crate::backend::store::import_conversation_sessions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &source,
-                    &[session],
-                    false,
-                )
-                .await
-                .map_err(AppError::external)?;
-                crate::backend::store::list_conversation_sessions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    Some(&source.adapter_id),
-                    Some(&source.id),
-                    None,
-                    1,
-                    0,
-                )
-                .await
-                .map_err(AppError::external)?
-            };
-            AppResult::Ok(sessions[0].session.id.clone())
-        })
-        .expect("upsert conversation export fixture");
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .map_err(AppError::external)
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .map_err(AppError::external)
+        .expect("upsert source");
+    let sessions = if web_record {
+        crate::backend::store::import_web_record_sessions_sqlx(
+            pool,
+            tenant_id,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .map_err(AppError::external)
+        .expect("import web record sessions");
+        crate::backend::store::list_web_record_sessions_sqlx(
+            pool,
+            tenant_id,
+            Some(&source.adapter_id),
+            Some(&source.id),
+            None,
+            1,
+            0,
+        )
+        .await
+        .expect("list web record sessions")
+    } else {
+        crate::backend::store::import_conversation_sessions_sqlx(
+            pool,
+            tenant_id,
+            &source,
+            &[session],
+            false,
+        )
+        .await
+        .map_err(AppError::external)
+        .expect("import conversation sessions");
+        crate::backend::store::list_conversation_sessions_sqlx(
+            pool,
+            tenant_id,
+            Some(&source.adapter_id),
+            Some(&source.id),
+            None,
+            1,
+            0,
+        )
+        .await
+        .map_err(AppError::external)
+        .expect("list conversation sessions")
+    };
+    let session_id = sessions[0].session.id.clone();
     session_id
 }
 
 #[cfg(unix)]
-fn load_export_fixture_adapter(service: &AppService, session_id: &str) -> ConversationAdapter {
-    let pool = service.db.pool().clone();
-    let tenant_id = service.tenant_id().to_string();
-    let session_id = session_id.to_string();
-    service
-        .db
-        .block_on(async move {
-            let detail = crate::backend::store::load_conversation_session_detail_sqlx(
-                &pool,
-                &tenant_id,
-                &session_id,
-            )
+async fn load_export_fixture_adapter(
+    service: &AppService,
+    session_id: &str,
+) -> ConversationAdapter {
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    let detail =
+        crate::backend::store::load_conversation_session_detail_sqlx(pool, tenant_id, session_id)
             .await
-            .map_err(|error| error.to_string())?;
-            crate::backend::store::load_conversation_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                &detail.session.adapter_id,
-            )
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| "fixture adapter not found".to_string())
-        })
-        .expect("load export fixture adapter")
+            .map_err(|error| error.to_string())
+            .expect("load detail");
+    crate::backend::store::load_conversation_adapter_sqlx(
+        pool,
+        tenant_id,
+        &detail.session.adapter_id,
+    )
+    .await
+    .map_err(|error| error.to_string())
+    .expect("load export fixture adapter")
+    .ok_or_else(|| "fixture adapter not found".to_string())
+    .expect("export fixture adapter")
 }
 
 #[cfg(unix)]
@@ -1688,9 +1642,11 @@ async fn conversation_blocks_list_locators_and_get_selected_content_for_each_rec
             Uuid::new_v4()
         ));
         fs::create_dir_all(&root).expect("create conversation block fixture root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let session_id =
-            upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record);
+            upsert_conversation_export_fixture(&service, &root, Vec::new(), None, web_record).await;
         let search = service
             .search_conversation_records(ConversationSearchParams {
                 record_kind: Some(record_kind.to_string()),
@@ -1766,8 +1722,9 @@ async fn conversation_session_export_uses_adapter_markdown_formatter() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -1783,7 +1740,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
+    )
+    .await;
     let output_root = root.join("exports");
 
     let result = service
@@ -1814,7 +1772,9 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 async fn conversation_sync_reports_read_and_import_progress_in_full_and_incremental_modes() {
     let root = std::env::temp_dir().join(format!("assetiweave-sync-progress-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();
-    let service = AppService::open_with_db_path(root.join("app.db")).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .unwrap();
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -1838,7 +1798,8 @@ esac
         vec!["list_sessions".to_string(), "read_session".to_string()],
         Some(&script),
         false,
-    );
+    )
+    .await;
     let source_id: String = sqlx::query_scalar(
         "SELECT source_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
     )
@@ -1887,8 +1848,9 @@ async fn conversation_session_export_dry_run_calls_adapter_without_writing_file(
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -1906,7 +1868,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
+    )
+    .await;
     let output_root = root.join("exports");
 
     let result = service
@@ -1939,8 +1902,9 @@ async fn web_record_export_uses_adapter_markdown_formatter() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -1956,7 +1920,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         true,
-    );
+    )
+    .await;
     let output_root = root.join("exports");
 
     let result = service
@@ -1989,15 +1954,17 @@ async fn conversation_session_export_falls_back_to_core_without_adapter_markdown
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let session_id = upsert_conversation_export_fixture(
         &service,
         &root,
         vec!["read_session".to_string()],
         None,
         false,
-    );
+    )
+    .await;
 
     let result = service
         .export_conversation_session(ConversationSessionExportParams {
@@ -2025,14 +1992,17 @@ async fn conversation_raw_export_preserves_source_facts_and_excludes_question_sn
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     let session_id = upsert_conversation_export_fixture(
         &service,
         &root,
         vec!["read_session".to_string()],
         None,
         false,
-    );
+    )
+    .await;
     let session_result = service
         .export_conversation_session(ConversationSessionExportParams {
             session_id,
@@ -2064,7 +2034,8 @@ async fn conversation_raw_export_preserves_source_facts_and_excludes_question_sn
         vec!["read_session".to_string()],
         None,
         true,
-    );
+    )
+    .await;
     let web_result = service
         .export_web_record_session(ConversationSessionExportParams {
             session_id: web_session_id,
@@ -2099,8 +2070,9 @@ async fn card_contract_v1_export_uses_core_and_preserves_reasoning() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2118,45 +2090,44 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
-    let adapter = load_export_fixture_adapter(&service, &session_id);
+    )
+    .await;
+    let adapter = load_export_fixture_adapter(&service, &session_id).await;
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query(
-                "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE id = ?2",
-            )
-            .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"],"icon_hint":"brain"},{"id":"fixture-export.trace","semantic_role":"tool","label":"Trace","default_renderer":"json","allowed_renderers":["json"],"icon_hint":"braces"}]"#)
-            .bind(&adapter.id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
-            )
-            .bind(&tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
-            )
-            .bind(&tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
-            )
-            .bind(tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("promote fixture to Card Contract v1");
+    sqlx::query(
+        "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE id = ?2",
+    )
+    .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"],"icon_hint":"brain"},{"id":"fixture-export.trace","semantic_role":"tool","label":"Trace","default_renderer":"json","allowed_renderers":["json"],"icon_hint":"braces"}]"#)
+    .bind(&adapter.id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("update adapter card contract");
+    sqlx::query(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-json-part', turn_id, 1, role, 'text', '{\"step\":\"inspect\"}', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"fixture-export.trace\",\"renderer\":\"json\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+    )
+    .bind(&tenant_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert fixture json part");
+    sqlx::query(
+        "INSERT INTO conversation_parts (tenant_id, id, turn_id, part_index, role, kind, text, language, command, cwd, status, exit_code, metadata_json, translated_text, content_card_json) SELECT tenant_id, 'fixture-history-part', turn_id, 2, role, 'text', 'Future history remains visible', NULL, NULL, NULL, NULL, NULL, NULL, NULL, '{\"schema_version\":1,\"kind\":\"future.history-note\",\"renderer\":\"plain\"}' FROM conversation_parts WHERE tenant_id = ?1 LIMIT 1",
+    )
+    .bind(&tenant_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert fixture history part");
+    sqlx::query(
+        "UPDATE conversation_parts SET text = 'Compare both paths', metadata_json = '{\"source_type\":\"thinking\"}', content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1 AND id NOT IN ('fixture-json-part', 'fixture-history-part')",
+    )
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("update conversation parts for card contract");
     let output_root = root.join("exports");
 
     let result = service
@@ -2197,7 +2168,9 @@ async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2210,38 +2183,36 @@ async fn card_contract_v1_web_and_dry_run_exports_share_the_core_path() {
         vec!["export_markdown".to_string()],
         Some(&script),
         true,
-    );
+    )
+    .await;
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
     let lookup_session_id = session_id.clone();
-    service
-        .db
-        .block_on(async move {
-            let detail = crate::backend::store::load_web_record_session_detail_sqlx(
-                &pool,
-                &tenant_id,
-                &lookup_session_id,
-            )
-            .await?;
-            sqlx::query(
-                "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE tenant_id = ?2 AND id = ?3",
-            )
-            .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"]}]"#)
-            .bind(&tenant_id)
-            .bind(&detail.session.adapter_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
-            )
-            .bind(tenant_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("promote web fixture to v1");
+    let detail = crate::backend::store::load_web_record_session_detail_sqlx(
+        &pool,
+        &tenant_id,
+        &lookup_session_id,
+    )
+    .await
+    .expect("load web record session detail");
+    sqlx::query(
+        "UPDATE conversation_adapters SET card_contract_version = 1, card_kinds_json = ?1 WHERE tenant_id = ?2 AND id = ?3",
+    )
+    .bind(r#"[{"id":"fixture-export.reasoning","semantic_role":"reasoning","label":"Reasoning","default_renderer":"markdown","allowed_renderers":["markdown"]}]"#)
+    .bind(&tenant_id)
+    .bind(&detail.session.adapter_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("update conversation adapters card contract");
+    sqlx::query(
+        "UPDATE web_record_parts SET text = 'Web reasoning survives', metadata_json = NULL, content_card_json = '{\"schema_version\":1,\"kind\":\"fixture-export.reasoning\",\"renderer\":\"markdown\"}' WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("update web record parts");
     let output_root = root.join("exports");
 
     let dry_run = service
@@ -2284,8 +2255,9 @@ async fn conversation_session_export_rejects_unsafe_adapter_relative_path() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2301,7 +2273,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
+    )
+    .await;
 
     let error = service
         .export_conversation_session(ConversationSessionExportParams {
@@ -2329,8 +2302,9 @@ async fn conversation_session_export_requires_manifest_markdown_capability() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2346,8 +2320,9 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
-    let adapter = load_export_fixture_adapter(&service, &session_id);
+    )
+    .await;
+    let adapter = load_export_fixture_adapter(&service, &session_id).await;
     let manifest_path = adapter.manifest_path.expect("manifest path");
     fs::write(
         &manifest_path,
@@ -2390,8 +2365,9 @@ async fn conversation_session_export_rejects_trusted_hash_mismatch() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2407,20 +2383,16 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
-    let adapter = load_export_fixture_adapter(&service, &session_id);
+    )
+    .await;
+    let adapter = load_export_fixture_adapter(&service, &session_id).await;
     let pool = service.db.pool().clone();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query("UPDATE conversation_adapters SET trusted_hash = ? WHERE id = ?")
-                .bind("definitely-not-the-current-hash")
-                .bind(&adapter.id)
-                .execute(&pool)
-                .await
-                .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
+    sqlx::query("UPDATE conversation_adapters SET trusted_hash = ? WHERE id = ?")
+        .bind("definitely-not-the-current-hash")
+        .bind(&adapter.id)
+        .execute(&pool)
+        .await
+        .map_err(AppError::external)
         .expect("force hash mismatch");
 
     let error = service
@@ -2448,8 +2420,9 @@ async fn conversation_session_export_rejects_manifest_tampering_after_trust() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2465,8 +2438,9 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
-    let adapter = load_export_fixture_adapter(&service, &session_id);
+    )
+    .await;
+    let adapter = load_export_fixture_adapter(&service, &session_id).await;
     let manifest_path = adapter.manifest_path.clone().expect("manifest path");
     let validation = crate::backend::conversations::validate_external_adapter(
         crate::backend::conversations::ExternalAdapterValidateParams {
@@ -2477,20 +2451,13 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
     let pool = service.db.pool().clone();
     let trusted_hash = validation.content_hash.clone();
     let adapter_id = adapter.id.clone();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query(
-                "UPDATE conversation_adapters SET content_hash = ?, trusted_hash = ? WHERE id = ?",
-            )
-            .bind(&trusted_hash)
-            .bind(&trusted_hash)
-            .bind(&adapter_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
+    sqlx::query("UPDATE conversation_adapters SET content_hash = ?, trusted_hash = ? WHERE id = ?")
+        .bind(&trusted_hash)
+        .bind(&trusted_hash)
+        .bind(&adapter_id)
+        .execute(&pool)
+        .await
+        .map_err(AppError::external)
         .expect("store trusted hash");
 
     fs::write(
@@ -2527,8 +2494,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn app_initialization_migrates_legacy_adapter_trusted_hashes() {
+#[tokio::test(flavor = "multi_thread")]
+async fn app_initialization_migrates_legacy_adapter_trusted_hashes() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-adapter-hash-migration-{}",
         Uuid::new_v4()
@@ -2567,7 +2534,9 @@ printf '%s\n' '{"type":"complete","item":{}}'
     .expect("validate adapter");
     let legacy_hash = validation.executable_hash.clone().expect("executable hash");
     {
-        let database = crate::backend::store::Database::open(&db_path).expect("open raw database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open raw database");
         let adapter = ConversationAdapter {
             id: "legacy-hash-adapter".to_string(),
             name: "Legacy Hash Adapter".to_string(),
@@ -2589,29 +2558,24 @@ printf '%s\n' '{"type":"complete","item":{}}'
         };
         let pool = database.pool().clone();
         let tenant_id = "default".to_string();
-        database
-            .block_on(async move {
-                crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                    .await
-            })
+        crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+            .await
             .expect("insert legacy adapter");
     }
 
-    let service = AppService::open_with_db_path(db_path).expect("open initialized service");
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open initialized service");
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    let migrated = service
-        .db
-        .block_on(async move {
-            crate::backend::store::load_conversation_adapter_sqlx(
-                &pool,
-                &tenant_id,
-                "legacy-hash-adapter",
-            )
-            .await
-        })
-        .expect("load migrated adapter")
-        .expect("migrated adapter");
+    let migrated = crate::backend::store::load_conversation_adapter_sqlx(
+        &pool,
+        &tenant_id,
+        "legacy-hash-adapter",
+    )
+    .await
+    .expect("load migrated adapter")
+    .expect("migrated adapter");
 
     assert_eq!(
         migrated.content_hash.as_deref(),
@@ -2635,8 +2599,9 @@ async fn conversation_session_export_rejects_symlink_escape_under_output_root() 
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let script = write_executable_script(
         &root,
         "adapter.sh",
@@ -2652,7 +2617,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         vec!["export_markdown".to_string()],
         Some(&script),
         false,
-    );
+    )
+    .await;
     let output_root = root.join("exports");
     let outside_root = root.join("outside");
     fs::create_dir_all(&output_root).expect("create output root");
@@ -2681,8 +2647,9 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 async fn navigation_model_updates_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-navigation-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let mut model = service
         .navigation_model()
         .await
@@ -2705,8 +2672,9 @@ async fn navigation_model_updates_through_sqlx_path() {
 async fn app_shortcuts_update_through_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-shortcuts-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let mut settings = service
         .list_app_shortcut_settings()
         .await
@@ -2740,8 +2708,9 @@ async fn profile_delete_guard_blocks_sqlx_deployment_state() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let profile = service
         .create_profile(TargetProfileInput {
             id: Some("team-app".to_string()),
@@ -2796,9 +2765,10 @@ async fn scan_skill_sources_reads_sqlx_sources() {
         "---\nname: skill-a\n---\n\n# Skill A\n",
     )
     .expect("write skill file");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     service
         .add_source(SourceInput {
             id: Some("sqlx-skill-source".to_string()),
@@ -2836,12 +2806,14 @@ async fn scan_skill_sources_reads_sqlx_sources() {
 async fn skill_group_crud_and_members_use_sqlx_path() {
     let root = std::env::temp_dir().join(format!("assetiweave-sqlx-groups-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     clear_test_tables(
         &service,
         &["asset_group_members", "asset_groups", "assets", "sources"],
-    );
+    )
+    .await;
 
     let source = Source {
         id: "source-a".to_string(),
@@ -2990,8 +2962,9 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     execute_test_sql(
         &service,
         r#"
@@ -3028,6 +3001,7 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
                 VALUES ('orphan-group', 'orphan-asset', '2026-01-01T00:00:00Z');
                 "#,
     )
+    .await
     .expect("seed orphan records");
 
     capabilities::cleanup_orphan_asset_records(service.db.pool(), service.tenant_id())
@@ -3040,7 +3014,7 @@ async fn cleanup_orphan_asset_records_uses_sqlx_for_migrated_tables() {
         "skill_remote_sources",
         "asset_group_members",
     ] {
-        let count = count_asset_rows(&service, table, "orphan-asset");
+        let count = count_asset_rows(&service, table, "orphan-asset").await;
         assert_eq!(count, 0, "orphan row remained in {table}");
     }
 
@@ -3055,8 +3029,9 @@ async fn list_skill_remote_sources_prunes_orphans_through_sqlx_path() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create test root");
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     let orphan = SkillRemoteSource {
         asset_id: "missing-asset".to_string(),
         provider: "github".to_string(),
@@ -3105,12 +3080,14 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
     )
     .expect("write skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     clear_test_tables(
         &service,
         &["asset_mounts", "deployment_state", "assets", "sources"],
-    );
+    )
+    .await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -3130,7 +3107,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
 
     let now = Utc::now().to_rfc3339();
     let asset = Asset {
@@ -3149,7 +3126,7 @@ async fn disabled_mount_preference_persists_through_sqlx_path() {
         discovered_at: now.clone(),
         updated_at: now,
     };
-    replace_test_source_assets(&service, &source.id, &[asset.clone()]);
+    replace_test_source_assets(&service, &source.id, &[asset.clone()]).await;
 
     let profile = service
         .create_profile(TargetProfileInput {
@@ -3205,12 +3182,14 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
     )
     .expect("write skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
     clear_test_tables(
         &service,
         &["asset_mounts", "deployment_state", "assets", "sources"],
-    );
+    )
+    .await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -3230,7 +3209,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
 
     let now = Utc::now().to_rfc3339();
     let asset = Asset {
@@ -3249,7 +3228,7 @@ async fn mount_skill_dry_run_reads_profile_through_sqlx_path() {
         discovered_at: now.clone(),
         updated_at: now,
     };
-    replace_test_source_assets(&service, &source.id, &[asset.clone()]);
+    replace_test_source_assets(&service, &source.id, &[asset.clone()]).await;
 
     let profile = service
         .create_profile(TargetProfileInput {
@@ -3315,9 +3294,10 @@ async fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
     )
     .expect("write second skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -3337,7 +3317,7 @@ async fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
     service
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
             root_path: backup_root.to_string_lossy().to_string(),
@@ -3347,6 +3327,7 @@ async fn batch_skill_backup_deduplicates_assets_and_reports_copy_progress() {
         .expect("configure backup root");
 
     let mut source_assets = load_test_assets(&service)
+        .await
         .into_iter()
         .filter(|asset| asset.source_id == "source-a")
         .collect::<Vec<_>>();
@@ -3403,9 +3384,10 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
     )
     .expect("write skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -3425,7 +3407,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
     let profile = service
         .create_profile(TargetProfileInput {
             id: Some("test-target".to_string()),
@@ -3451,6 +3433,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         .expect("configure backup root");
 
     let source_asset = load_test_assets(&service)
+        .await
         .into_iter()
         .find(|asset| asset.source_id == "source-a")
         .expect("source asset");
@@ -3460,6 +3443,7 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
         .expect("backup skill");
 
     let raw_skill_assets = load_test_assets(&service)
+        .await
         .into_iter()
         .filter(|asset| asset.kind == AssetKind::Skill)
         .collect::<Vec<_>>();
@@ -3471,7 +3455,8 @@ async fn backed_up_duplicate_skill_is_hidden_from_plan_and_mount_statuses() {
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
     }
 
     let catalog = service.list_skills().await.expect("list catalog");
@@ -3526,9 +3511,10 @@ async fn deleted_backup_library_copy_clears_source_backup_status() {
     )
     .expect("write skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Source A".to_string(),
@@ -3548,7 +3534,7 @@ async fn deleted_backup_library_copy_clears_source_backup_status() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
     service
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
             root_path: backup_root.to_string_lossy().to_string(),
@@ -3558,6 +3544,7 @@ async fn deleted_backup_library_copy_clears_source_backup_status() {
         .expect("configure backup root");
 
     let source_asset = load_test_assets(&service)
+        .await
         .into_iter()
         .find(|asset| asset.source_id == "source-a")
         .expect("source asset");
@@ -3612,9 +3599,10 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
     )
     .expect("write stale backup skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     let source = Source {
         id: "source-a".to_string(),
         name: "Git Source".to_string(),
@@ -3637,8 +3625,8 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
     let backup_source = capabilities::assetiweave_library_source_with_root(
         current_backup_root.to_string_lossy().to_string(),
     );
-    upsert_test_source(&service, &source);
-    upsert_test_source(&service, &backup_source);
+    upsert_test_source(&service, &source).await;
+    upsert_test_source(&service, &backup_source).await;
 
     let source_asset = Asset {
         id: "source-a-canvas-design".to_string(),
@@ -3672,12 +3660,13 @@ async fn stale_backup_record_outside_current_root_does_not_mark_git_skill_backed
         discovered_at: "2026-01-01T00:00:00Z".to_string(),
         updated_at: "2026-01-01T00:00:00Z".to_string(),
     };
-    replace_test_source_assets(&service, &source.id, std::slice::from_ref(&source_asset));
+    replace_test_source_assets(&service, &source.id, std::slice::from_ref(&source_asset)).await;
     replace_test_source_assets(
         &service,
         &backup_source.id,
         std::slice::from_ref(&stale_backup_asset),
-    );
+    )
+    .await;
 
     let catalog = service.list_skills().await.expect("list catalog");
     assert_eq!(catalog.len(), 1);
@@ -3704,9 +3693,10 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
     )
     .expect("write skill");
 
-    let service =
-        AppService::open_with_db_path(root.join("app.db")).expect("open application service");
-    clear_test_tables(&service, &["assets", "sources"]);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open application service");
+    clear_test_tables(&service, &["assets", "sources"]).await;
     let source = Source {
         id: "codex-source".to_string(),
         name: "Codex Source".to_string(),
@@ -3726,7 +3716,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
     let profile = service
         .create_profile(TargetProfileInput {
             id: Some("codex-test".to_string()),
@@ -3752,6 +3742,7 @@ async fn app_target_backup_copy_does_not_report_identical_target_as_conflict() {
         .expect("configure backup root");
 
     let app_asset = load_test_assets(&service)
+        .await
         .into_iter()
         .find(|asset| asset.source_id == "codex-source")
         .expect("app target asset");
@@ -3812,7 +3803,9 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     let skill_target = root.join("codex-skills");
     let prompt_target = root.join("codex-prompts");
     fs::create_dir_all(&root).expect("create target reconciliation root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
 
     service
         .runtime
@@ -3834,6 +3827,7 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
             icon: None,
         }])
+        .await
         .expect("refresh target catalog");
 
     let profile = service
@@ -3865,7 +3859,9 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     let source_file = source_root.join("SKILL.md");
     fs::write(&source_file, "---\ndescription: fixture\n---\n").expect("write fixture asset");
 
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     let descriptor = crate::backend::models::TargetProfileDescriptor {
         id: "fixture-provider".to_string(),
         name: "Fixture Provider".to_string(),
@@ -3881,6 +3877,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     service
         .runtime
         .refresh_target_catalog(vec![descriptor])
+        .await
         .expect("publish fixture target catalog");
 
     service
@@ -3943,7 +3940,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
         last_scanned_at: None,
         last_scan_status: None,
     };
-    upsert_test_source(&service, &source);
+    upsert_test_source(&service, &source).await;
     replace_test_source_assets(
         &service,
         &source.id,
@@ -3963,7 +3960,8 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             discovered_at: Utc::now().to_rfc3339(),
             updated_at: Utc::now().to_rfc3339(),
         }],
-    );
+    )
+    .await;
 
     let profile = service
         .list_profiles()
@@ -3979,8 +3977,7 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             service.tenant_id(),
             profile.id,
         ),
-    )
-    .expect("record fixture mount intent");
+    ).await.expect("record fixture mount intent");
     let plan = service
         .create_plan(Some(&profile.id))
         .await
@@ -3993,8 +3990,9 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     assert_eq!(execution.executed_count, 1);
     assert!(target_root.join("Fixture Skill.md").is_symlink());
 
-    let invalid = service.runtime.refresh_target_catalog(vec![
-        crate::backend::models::TargetProfileDescriptor {
+    let invalid = service
+        .runtime
+        .refresh_target_catalog(vec![crate::backend::models::TargetProfileDescriptor {
             id: "fixture-provider".to_string(),
             name: "Fixture Provider".to_string(),
             app_kind_compat: None,
@@ -4005,8 +4003,8 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
             icon: None,
-        },
-    ]);
+        }])
+        .await;
     assert!(invalid.is_err());
     assert!(service
         .runtime
@@ -4018,14 +4016,16 @@ async fn injected_target_catalog_drives_seed_detect_plan_and_mount() {
     fs::remove_dir_all(root).ok();
 }
 
-#[test]
-fn invalid_disk_target_catalog_refresh_preserves_the_published_snapshot() {
+#[tokio::test]
+async fn invalid_disk_target_catalog_refresh_preserves_the_published_snapshot() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-target-disk-refresh-{}",
         Uuid::new_v4()
     ));
     fs::create_dir_all(root.join("target-providers")).expect("create provider directory");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     assert!(service
         .list_target_profile_descriptors()
         .expect("list initial descriptors")
@@ -4046,7 +4046,7 @@ fn invalid_disk_target_catalog_refresh_preserves_the_published_snapshot() {
     )
     .expect("write invalid descriptor");
 
-    assert!(service.refresh_target_profile_descriptors().is_err());
+    assert!(service.refresh_target_profile_descriptors().await.is_err());
     assert!(service
         .list_target_profile_descriptors()
         .expect("list preserved descriptors")
@@ -4268,7 +4268,9 @@ async fn conversation_search_index_status_reports_missing_lexical_index() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create temp search index status directory");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
 
     let status = service
         .get_conversation_search_index_status()
@@ -4292,7 +4294,9 @@ async fn conversation_search_index_rebuild_publishes_a_ready_generation() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create temp search index rebuild directory");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
 
     let report = service
         .rebuild_conversation_search_index()
@@ -4322,7 +4326,9 @@ async fn conversation_search_index_rebuild_failure_releases_writer_lease() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create temp search index failure directory");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     fs::write(root.join("conversation-search-index"), "not a directory")
         .expect("block search index directory");
 
@@ -4344,8 +4350,10 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     let root =
         std::env::temp_dir().join(format!("assetiweave-search-index-query-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create temp search index query directory");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
-    upsert_conversation_export_fixture(&service, &root, vec![], None, false);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    upsert_conversation_export_fixture(&service, &root, vec![], None, false).await;
     let stale_legacy = service
         .search_conversation_records(ConversationSearchParams {
             record_kind: Some("session".to_string()),
@@ -4495,62 +4503,59 @@ async fn conversation_search_uses_ready_tantivy_index_and_hydrates_sqlite_record
     let question_id = detail.question.id.clone();
     let second_turn_id_for_db = second_turn_id.clone();
     let second_question_id_for_db = second_question_id.clone();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_turns (
-                    tenant_id, id, session_id, external_id, turn_index, user_text, title,
-                    started_at, ended_at, fingerprint, missing, imported_at
-                )
-                VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7)
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&second_turn_id_for_db)
-            .bind(&session_id)
-            .bind("app-membership-turn-2")
-            .bind("Second prompt")
-            .bind("app-membership-fingerprint")
-            .bind(now)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_questions (
-                    tenant_id, id, session_id, title, created_at, updated_at
-                )
-                VALUES (?1, ?2, ?3, NULL, ?4, ?4)
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&second_question_id_for_db)
-            .bind(&session_id)
-            .bind(now)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_question_turns (
-                    tenant_id, question_id, turn_id, turn_order,
-                    assignment_origin, assigned_at, updated_at
-                )
-                VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&second_question_id_for_db)
-            .bind(&second_turn_id_for_db)
-            .bind(now)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            Ok::<_, AppError>(())
-        })
-        .expect("seed a second question for AppService mutation");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_turns (
+            tenant_id, id, session_id, external_id, turn_index, user_text, title,
+            started_at, ended_at, fingerprint, missing, imported_at
+        )
+        VALUES (?1, ?2, ?3, ?4, 1, ?5, NULL, NULL, NULL, ?6, 0, ?7)
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&second_turn_id_for_db)
+    .bind(&session_id)
+    .bind("app-membership-turn-2")
+    .bind("Second prompt")
+    .bind("app-membership-fingerprint")
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert second turn");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_questions (
+            tenant_id, id, session_id, title, created_at, updated_at
+        )
+        VALUES (?1, ?2, ?3, NULL, ?4, ?4)
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&second_question_id_for_db)
+    .bind(&session_id)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert second question");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_question_turns (
+            tenant_id, question_id, turn_id, turn_order,
+            assignment_origin, assigned_at, updated_at
+        )
+        VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&second_question_id_for_db)
+    .bind(&second_turn_id_for_db)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert question turn");
 
     let merged = service
         .merge_conversation_questions(ConversationQuestionMergeParams {
@@ -4652,8 +4657,11 @@ async fn conversation_question_detail_projects_canonical_nodes_through_app_servi
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create content node app service root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
-    let session_id = upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    let session_id =
+        upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false).await;
     let initial = service
         .list_conversation_questions(ConversationQuestionListParams {
             session_id,
@@ -4678,46 +4686,42 @@ async fn conversation_question_detail_projects_canonical_nodes_through_app_servi
     let turn_id = initial[0].turns[0].id.clone();
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, metadata_json, translated_text,
-                    content_card_json, source_execution_id, command_label
-                )
-                VALUES (?1, 'app-service-second-part', ?2, 1, 'assistant', 'text',
-                    'Second projected Part', NULL, NULL, NULL, NULL, NULL, ?3, NULL,
-                    NULL, 'execution-second', 'second')
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&turn_id)
-            .bind(r#"{"content_card":{"type":"answer","format":"markdown"}}"#)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, metadata_json, translated_text,
-                    content_card_json, source_execution_id, command_label
-                )
-                VALUES (?1, 'app-service-empty-part', ?2, 2, 'assistant', 'text',
-                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&turn_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("seed multi-part and empty projection fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_parts (
+            tenant_id, id, turn_id, part_index, role, kind, text, language,
+            command, cwd, status, exit_code, metadata_json, translated_text,
+            content_card_json, source_execution_id, command_label
+        )
+        VALUES (?1, 'app-service-second-part', ?2, 1, 'assistant', 'text',
+            'Second projected Part', NULL, NULL, NULL, NULL, NULL, ?3, NULL,
+            NULL, 'execution-second', 'second')
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&turn_id)
+    .bind(r#"{"content_card":{"type":"answer","format":"markdown"}}"#)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert second part");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_parts (
+            tenant_id, id, turn_id, part_index, role, kind, text, language,
+            command, cwd, status, exit_code, metadata_json, translated_text,
+            content_card_json, source_execution_id, command_label
+        )
+        VALUES (?1, 'app-service-empty-part', ?2, 2, 'assistant', 'text',
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&turn_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert empty part");
 
     let expanded = service
         .get_conversation_question(ConversationQuestionGetParams { question_id })
@@ -4752,8 +4756,11 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create Codex shell projection root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
-    let session_id = upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false);
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
+    let session_id =
+        upsert_conversation_export_fixture(&service, &root, Vec::new(), None, false).await;
     let initial = service
         .list_conversation_questions(ConversationQuestionListParams {
             session_id,
@@ -4778,50 +4785,46 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
         }
     })
     .to_string();
-    service
-        .db
-        .block_on(async move {
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, command_label, metadata_json,
-                    content_card_json, source_execution_id
-                )
-                VALUES (?1, 'conversation-part-codex-shell-command', ?2, 1, 'tool', 'command', NULL, NULL,
-                    ?3, '/tmp/project', 'failed', 1, 'exec', ?4,
-                    '{"schema_version":1,"kind":"codex.command","renderer":"command"}',
-                    'codex-shell-execution')
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&turn_id)
-            .bind(raw_command)
-            .bind(projection_metadata)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_parts (
-                    tenant_id, id, turn_id, part_index, role, kind, text, language,
-                    command, cwd, status, exit_code, command_label, metadata_json,
-                    content_card_json, source_execution_id
-                )
-                VALUES (?1, 'conversation-part-codex-shell-result', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
-                    NULL, '/tmp/project', 'failed', 1, NULL, NULL,
-                    '{"schema_version":1,"kind":"codex.result","renderer":"terminal_output"}',
-                    'codex-shell-execution')
-                "#,
-            )
-            .bind(&tenant_id)
-            .bind(&turn_id)
-            .execute(&pool)
-            .await
-            .map_err(AppError::external)?;
-            AppResult::Ok(())
-        })
-        .expect("insert raw Codex shell execution fixture");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_parts (
+            tenant_id, id, turn_id, part_index, role, kind, text, language,
+            command, cwd, status, exit_code, command_label, metadata_json,
+            content_card_json, source_execution_id
+        )
+        VALUES (?1, 'conversation-part-codex-shell-command', ?2, 1, 'tool', 'command', NULL, NULL,
+            ?3, '/tmp/project', 'failed', 1, 'exec', ?4,
+            '{"schema_version":1,"kind":"codex.command","renderer":"command"}',
+            'codex-shell-execution')
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&turn_id)
+    .bind(raw_command)
+    .bind(projection_metadata)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert codex shell command part");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_parts (
+            tenant_id, id, turn_id, part_index, role, kind, text, language,
+            command, cwd, status, exit_code, command_label, metadata_json,
+            content_card_json, source_execution_id
+        )
+        VALUES (?1, 'conversation-part-codex-shell-result', ?2, 2, 'tool', 'tool', 'Error: failed', NULL,
+            NULL, '/tmp/project', 'failed', 1, NULL, NULL,
+            '{"schema_version":1,"kind":"codex.result","renderer":"terminal_output"}',
+            'codex-shell-execution')
+        "#,
+    )
+    .bind(&tenant_id)
+    .bind(&turn_id)
+    .execute(&pool)
+    .await
+    .map_err(AppError::external)
+    .expect("insert codex shell result part");
 
     let detail = service
         .get_conversation_question(ConversationQuestionGetParams { question_id })
@@ -4904,6 +4907,7 @@ async fn conversation_question_detail_keeps_one_raw_codex_shell_part_node() {
             detail.turns[0].id
         ),
     )
+    .await
     .expect("seed historical split command parts");
     let historical_split_search = service
         .search_conversation_records(ConversationSearchParams {
@@ -5044,7 +5048,9 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
         Uuid::new_v4()
     ));
     fs::create_dir_all(&root).expect("create recent incremental search root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     let adapter = ConversationAdapter {
         id: "recent-incremental-adapter".to_string(),
         name: "Recent incremental adapter".to_string(),
@@ -5128,34 +5134,33 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
     );
     let pool = service.db.pool().clone();
     let tenant_id = service.tenant_id().to_string();
-    service
-        .db
-        .block_on(async move {
-            crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
-                .await
-                .map_err(AppError::external)?;
-            crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
-                .await
-                .map_err(AppError::external)?;
-            crate::backend::store::import_conversation_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                &source,
-                &[old_changed, unchanged.clone()],
-                false,
-            )
-            .await
-            .map_err(AppError::external)?;
-            crate::backend::store::import_conversation_sessions_sqlx(
-                &pool,
-                &tenant_id,
-                &source,
-                &[updated_old, unchanged],
-                false,
-            )
-            .await
-        })
-        .expect("persist initial and incremental conversation syncs");
+    crate::backend::store::upsert_conversation_adapter_sqlx(&pool, &tenant_id, &adapter)
+        .await
+        .map_err(AppError::external)
+        .expect("upsert adapter");
+    crate::backend::store::upsert_conversation_source_sqlx(&pool, &tenant_id, &source)
+        .await
+        .map_err(AppError::external)
+        .expect("upsert source");
+    crate::backend::store::import_conversation_sessions_sqlx(
+        &pool,
+        &tenant_id,
+        &source,
+        &[old_changed, unchanged.clone()],
+        false,
+    )
+    .await
+    .map_err(AppError::external)
+    .expect("import old sessions");
+    crate::backend::store::import_conversation_sessions_sqlx(
+        &pool,
+        &tenant_id,
+        &source,
+        &[updated_old, unchanged],
+        false,
+    )
+    .await
+    .expect("import updated sessions");
 
     let result = service
         .search_recent_incremental_conversation_records(ConversationIncrementalSearchParams {
@@ -5208,7 +5213,9 @@ async fn team_roster_rules_and_persistence_ts01() {
 
     // Scope 1: Create teams and verify validation & persistence
     {
-        let service = AppService::open_with_db_path(db_path.clone()).expect("open service");
+        let service = AppService::open_with_db_path(db_path.clone())
+            .await
+            .expect("open service");
 
         // 1. Validation test: Team with two leaders must fail
         let two_leaders_res = service
@@ -5304,7 +5311,9 @@ async fn team_roster_rules_and_persistence_ts01() {
 
     // Scope 2: Reopen database and verify roster order, agent/model, and context keys remain stable
     {
-        let service = AppService::open_with_db_path(db_path.clone()).expect("reopen service");
+        let service = AppService::open_with_db_path(db_path.clone())
+            .await
+            .expect("reopen service");
         let team = service
             .get_team("team-alpha")
             .await
@@ -5437,7 +5446,9 @@ async fn team_run_freezes_review_confirmation_and_idempotent_terminal_mailbox() 
 
     let root = std::env::temp_dir().join(format!("assetiweave-team-run-test-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).expect("create Team run test root");
-    let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .expect("open service");
     service
         .create_team(CreateTeamInput {
             id: Some("team-run".to_string()),

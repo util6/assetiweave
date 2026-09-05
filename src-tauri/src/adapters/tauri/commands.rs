@@ -220,12 +220,9 @@ pub(crate) async fn complete_app_close(
 
     crate::converge_ai_executions_before_close(background_tasks).await;
 
-    let task_runtime = runtime.clone();
-    let unfinished_tasks = tauri::async_runtime::spawn_blocking(move || {
-        task_runtime.stop_tasks_with_grace(std::time::Duration::from_secs(5))
-    })
-    .await
-    .map_err(AppError::external)?;
+    let unfinished_tasks = runtime
+        .stop_tasks_with_grace(std::time::Duration::from_secs(5))
+        .await;
     if !unfinished_tasks.is_empty() {
         log_warn(
             "app.close.tasks",
@@ -238,11 +235,9 @@ pub(crate) async fn complete_app_close(
         crate::sync_before_close_with_runtime(&runtime, &db_path, backup_database).await;
     }
 
-    let shutdown_report = tauri::async_runtime::spawn_blocking(move || {
-        runtime.shutdown_with_grace(std::time::Duration::from_secs(5))
-    })
-    .await
-    .map_err(AppError::external)?;
+    let shutdown_report = runtime
+        .shutdown_with_grace(std::time::Duration::from_secs(5))
+        .await;
     if !shutdown_report.dispatcher_drained
         || !shutdown_report.unfinished_task_ids.is_empty()
         || shutdown_report.dispatcher_timed_out
@@ -1003,10 +998,12 @@ pub(crate) fn list_target_profile_descriptors(
 }
 
 #[tauri::command]
-pub(crate) fn refresh_target_profile_descriptors(
+pub(crate) async fn refresh_target_profile_descriptors(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<TargetProfileDescriptor>> {
-    AppService::from_runtime(&state.runtime).refresh_target_profile_descriptors()
+    AppService::from_runtime(&state.runtime)
+        .refresh_target_profile_descriptors()
+        .await
 }
 
 #[tauri::command]
@@ -1672,34 +1669,32 @@ pub(crate) fn start_batch_mount(
                         "batch mount cancelled before execution".to_string(),
                     ));
                 }
-                runtime
-                    .db()
-                    .block_on(async {
-                        service
-                            .run_batch_mount_workflow_with_progress(
-                                worker_input,
-                                |completed, total, current_id| {
-                                    if task_context.is_cancelled() {
-                                        return Err(AppError::Cancelled(
-                                            "batch mount cancelled".to_string(),
-                                        ));
-                                    }
-                                    tasks
-                                        .update_batch_mount_progress(
-                                            &worker_task_id,
-                                            completed as u64,
-                                            Some(total as u64),
-                                            Some(current_id),
-                                        )
-                                        .map(|_| ())
-                                },
-                            )
-                            .await
-                    })
-                    .and_then(|value| {
-                        serde_json::to_value(value)
-                            .map_err(|error| AppError::External(error.to_string()))
-                    })
+                tauri::async_runtime::block_on(async {
+                    service
+                        .run_batch_mount_workflow_with_progress(
+                            worker_input,
+                            |completed, total, current_id| {
+                                if task_context.is_cancelled() {
+                                    return Err(AppError::Cancelled(
+                                        "batch mount cancelled".to_string(),
+                                    ));
+                                }
+                                tasks
+                                    .update_batch_mount_progress(
+                                        &worker_task_id,
+                                        completed as u64,
+                                        Some(total as u64),
+                                        Some(current_id),
+                                    )
+                                    .map(|_| ())
+                            },
+                        )
+                        .await
+                })
+                .and_then(|value| {
+                    serde_json::to_value(value)
+                        .map_err(|error| AppError::External(error.to_string()))
+                })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::External(
@@ -2369,7 +2364,7 @@ pub(crate) fn install_conversation_adapter_package(
         task_id,
         "conversation.adapter_package.install",
         move || {
-            runtime.db().block_on(async {
+            tauri::async_runtime::block_on(async {
                 AppService::from_runtime(&runtime)
                     .install_conversation_adapter_package(params)
                     .await
@@ -2401,7 +2396,7 @@ pub(crate) fn update_conversation_adapter_package(
         task_id,
         "conversation.adapter_package.update",
         move || {
-            runtime.db().block_on(async {
+            tauri::async_runtime::block_on(async {
                 AppService::from_runtime(&runtime)
                     .update_conversation_adapter_package(params)
                     .await
@@ -2432,7 +2427,7 @@ pub(crate) fn uninstall_conversation_adapter_package(
         task_id,
         "conversation.adapter_package.uninstall",
         move || {
-            runtime.db().block_on(async {
+            tauri::async_runtime::block_on(async {
                 AppService::from_runtime(&runtime)
                     .uninstall_conversation_adapter_package(params)
                     .await
@@ -2472,7 +2467,7 @@ pub(crate) fn install_conversation_script(
         task_id,
         "conversation.script.install",
         move || {
-            runtime.db().block_on(async {
+            tauri::async_runtime::block_on(async {
                 AppService::from_runtime(&runtime)
                     .install_conversation_script(params)
                     .await
@@ -2576,7 +2571,7 @@ pub(crate) fn start_conversation_sync_background(
                         "conversation sync cancelled".to_string(),
                     ));
                 }
-                runtime.db().block_on(async {
+                tauri::async_runtime::block_on(async {
                     AppService::from_runtime(&runtime)
                         .sync_conversations_with_progress_and_cancellation(
                             params,
@@ -2771,7 +2766,7 @@ fn start_conversation_data_maintenance_background(
                         "conversation data maintenance cancelled".to_string(),
                     ));
                 }
-                runtime.db().block_on(async {
+                tauri::async_runtime::block_on(async {
                     if let Some(params) = repair_params {
                         service
                             .repair_conversation_data_with_progress_and_cancellation(
@@ -2965,7 +2960,7 @@ pub(crate) fn start_conversation_search_index_rebuild(
         task_detail,
         Box::new(move |_context| {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                runtime.db().block_on(async {
+                tauri::async_runtime::block_on(async {
                     AppService::from_runtime(&runtime)
                         .rebuild_conversation_search_index()
                         .await

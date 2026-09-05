@@ -294,13 +294,15 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    #[test]
-    fn sqlx_navigation_model_round_trips_updates_and_localized_labels() {
+    #[tokio::test]
+    async fn sqlx_navigation_model_round_trips_updates_and_localized_labels() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-navigation-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let mut model = crate::backend::defaults::default_navigation_model();
         model.active_rail_id = "settings".to_string();
         model.rail_items[0].labels = Some(LocalizedNavigationLabels {
@@ -308,15 +310,19 @@ mod tests {
             en: Some("Assets".to_string()),
         });
 
-        let loaded = database
-            .block_on(async {
-                save_navigation_model_sqlx(database.pool(), "default", &model).await?;
-                let mut loaded = load_navigation_model_sqlx(database.pool(), "default").await?;
-                loaded.active_sub_nav_id = "updated-sub-nav".to_string();
-                save_navigation_model_sqlx(database.pool(), "default", &loaded).await?;
-                load_navigation_model_sqlx(database.pool(), "default").await
-            })
-            .expect("round trip navigation model");
+        save_navigation_model_sqlx(database.pool(), "default", &model)
+            .await
+            .expect("save model");
+        let mut loaded = load_navigation_model_sqlx(database.pool(), "default")
+            .await
+            .expect("load model");
+        loaded.active_sub_nav_id = "updated-sub-nav".to_string();
+        save_navigation_model_sqlx(database.pool(), "default", &loaded)
+            .await
+            .expect("save updated model");
+        let loaded = load_navigation_model_sqlx(database.pool(), "default")
+            .await
+            .expect("load updated model");
 
         assert_eq!(loaded.active_rail_id, "settings");
         assert_eq!(loaded.active_sub_nav_id, "updated-sub-nav");
@@ -336,13 +342,15 @@ mod tests {
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
-    #[test]
-    fn existing_navigation_gains_memory_without_overwriting_custom_labels() {
+    #[tokio::test]
+    async fn existing_navigation_gains_memory_without_overwriting_custom_labels() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-navigation-memory-upgrade-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let defaults = crate::backend::defaults::default_navigation_model();
         let mut legacy = defaults.clone();
         legacy.header_tabs.retain(|tab| tab.id != "memory");
@@ -353,13 +361,15 @@ mod tests {
             en: Some("My Skills".to_string()),
         });
 
-        let loaded = database
-            .block_on(async {
-                save_navigation_model_sqlx(database.pool(), "default", &legacy).await?;
-                ensure_navigation_model_items_sqlx(database.pool(), "default", &defaults).await?;
-                load_navigation_model_sqlx(database.pool(), "default").await
-            })
-            .expect("upgrade navigation model");
+        save_navigation_model_sqlx(database.pool(), "default", &legacy)
+            .await
+            .expect("save legacy navigation");
+        ensure_navigation_model_items_sqlx(database.pool(), "default", &defaults)
+            .await
+            .expect("ensure navigation model items");
+        let loaded = load_navigation_model_sqlx(database.pool(), "default")
+            .await
+            .expect("load upgraded navigation");
 
         let skills = loaded
             .header_tabs
@@ -385,13 +395,15 @@ mod tests {
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
-    #[test]
-    fn existing_memory_navigation_is_replaced_by_the_two_public_workspaces() {
+    #[tokio::test]
+    async fn existing_memory_navigation_is_replaced_by_the_two_public_workspaces() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-navigation-memory-cutover-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let defaults = crate::backend::defaults::default_navigation_model();
         let mut legacy = defaults.clone();
         legacy.active_header_tab_id = "memory".to_string();
@@ -414,13 +426,15 @@ mod tests {
         library.route_key = "memory.library".to_string();
         *memory_items = vec![overview, dreams, memory_items[1].clone(), library];
 
-        let loaded = database
-            .block_on(async {
-                save_navigation_model_sqlx(database.pool(), "default", &legacy).await?;
-                ensure_navigation_model_items_sqlx(database.pool(), "default", &defaults).await?;
-                load_navigation_model_sqlx(database.pool(), "default").await
-            })
-            .expect("cut over legacy memory navigation");
+        save_navigation_model_sqlx(database.pool(), "default", &legacy)
+            .await
+            .expect("save legacy navigation");
+        ensure_navigation_model_items_sqlx(database.pool(), "default", &defaults)
+            .await
+            .expect("ensure defaults");
+        let loaded = load_navigation_model_sqlx(database.pool(), "default")
+            .await
+            .expect("load cutover navigation");
 
         assert_eq!(
             loaded.sub_nav_items["memory"]

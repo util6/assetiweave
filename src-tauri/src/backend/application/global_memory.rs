@@ -959,6 +959,7 @@ mod tests {
             r###"{"summary_markdown":"# global v1","memory_markdown":"## projects\n- alpha"}"###,
         );
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), fake.clone())
+            .await
             .expect("open global memory service");
         let now = "2026-08-31T01:00:00Z";
         let project_id = crate::backend::store::project_memory_id("default", "/alpha");

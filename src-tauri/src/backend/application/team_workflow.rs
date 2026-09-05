@@ -1307,6 +1307,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let (runtime, observations) = FakeTeamRuntime::new();
         let service = AppService::open_with_db_path_and_runtime(root.join("app.db"), runtime)
+            .await
             .expect("open fixture service");
         let team = service
             .create_team(CreateTeamInput {

@@ -235,17 +235,11 @@ mod tests {
             "assetiweave-agent-market-workspace-{}",
             uuid::Uuid::new_v4()
         ));
-        let pool = std::thread::spawn({
-            let database_path = database_path.clone();
-            move || {
-                Database::open_initialized(&database_path)
-                    .expect("database")
-                    .pool()
-                    .clone()
-            }
-        })
-        .join()
-        .expect("database thread");
+        let pool = Database::open_initialized_async(&database_path)
+            .await
+            .expect("database")
+            .pool()
+            .clone();
         let fixture_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-acp-agent.mjs");
 

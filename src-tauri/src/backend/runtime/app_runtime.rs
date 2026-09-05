@@ -100,35 +100,23 @@ pub(crate) struct AppRuntime {
 
 struct SessionMemoryCoordinatorHandle {
     cancellation: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
+    join: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SessionMemoryCoordinatorHandle {
-    fn stop(mut self) {
+    async fn stop(mut self) {
         self.cancellation.cancel();
         if let Some(join) = self.join.take() {
-            let _ = join.join();
+            let _ = join.await;
         }
     }
 }
 
 static PROCESS_RUNTIME: OnceLock<Arc<AppRuntime>> = OnceLock::new();
 
-fn await_bootstrap_future<F: std::future::Future>(
-    runtime: &tokio::runtime::Runtime,
-    future: F,
-) -> F::Output {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        runtime.block_on(future)
-    }
-}
-
 impl AppRuntime {
-    pub(crate) fn bootstrap(db_path: PathBuf, role: RuntimeRole) -> AppResult<Arc<Self>> {
-        let runtime = crate::backend::store::build_runtime()?;
-        let pool = await_bootstrap_future(&runtime, store::open_migrated_pool(&db_path))?;
+    pub(crate) async fn bootstrap(db_path: PathBuf, role: RuntimeRole) -> AppResult<Arc<Self>> {
+        let pool = store::open_migrated_pool(&db_path).await?;
         ensure_app_library_dirs()?;
         if let Err(error) = super::archive_legacy_memory_once(&db_path) {
             crate::backend::operation_log::log_warn(
@@ -145,21 +133,14 @@ impl AppRuntime {
 
         // Bootstrap is the only production path that opens the migrated pool. The
         // old Database::open_initialized remains a test/migration compatibility API.
-        await_bootstrap_future(
-            &runtime,
-            store::seed_defaults_sqlx_with_catalog(&pool, &target_catalog),
-        )?;
-        let context =
-            await_bootstrap_future(&runtime, store::load_local_request_context_sqlx(&pool))?;
+        store::seed_defaults_sqlx_with_catalog(&pool, &target_catalog).await?;
+        let context = store::load_local_request_context_sqlx(&pool).await?;
         let tenant_id = context.tenant.id.clone();
-        let builtin_conversation_adapters = await_bootstrap_future(
-            &runtime,
-            crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id),
-        )?;
-        let conversation_adapters = await_bootstrap_future(
-            &runtime,
-            crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id),
-        )?;
+        let builtin_conversation_adapters =
+            crate::backend::bootstrap::materialize_and_seed_builtin_adapters(&pool, &tenant_id)
+                .await?;
+        let conversation_adapters =
+            crate::backend::store::list_conversation_adapters_sqlx(&pool, &tenant_id).await?;
         let workspace_root = db_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -168,33 +149,30 @@ impl AppRuntime {
             Arc::new(AgentRuntimeManager::new(pool.clone(), workspace_root));
         let runtime_root = crate::backend::agent_market::default_runtime_root()
             .map_err(|error| AppError::External(error.to_string()))?;
-        await_bootstrap_future(
-            &runtime,
-            agent_runtime_manager.recover_startup(&runtime_root),
-        )
-        .map_err(AppError::External)?;
+        agent_runtime_manager
+            .recover_startup(&runtime_root)
+            .await
+            .map_err(AppError::External)?;
         let migration_scope = db_path.to_string_lossy().to_string();
-        if let Err(error) = await_bootstrap_future(
-            &runtime,
-            crate::backend::agent_market::migrate_legacy_assignments(
-                pool.clone(),
-                agent_runtime_manager.clone(),
-                &migration_scope,
-            ),
-        ) {
+        if let Err(error) = crate::backend::agent_market::migrate_legacy_assignments(
+            pool.clone(),
+            agent_runtime_manager.clone(),
+            &migration_scope,
+        )
+        .await
+        {
             crate::backend::operation_log::log_warn(
                 "app.startup.agent_market_migration",
                 "agent market legacy migration deferred",
                 &[("error", error.to_string())],
             );
         }
-        await_bootstrap_future(&runtime, agent_runtime_manager.reload())
+        agent_runtime_manager
+            .reload()
+            .await
             .map_err(AppError::External)?;
         if role == RuntimeRole::ResidentHost {
-            if let Err(error) = await_bootstrap_future(
-                &runtime,
-                agent_runtime_manager.prepare_startup_health_refresh(),
-            ) {
+            if let Err(error) = agent_runtime_manager.prepare_startup_health_refresh().await {
                 crate::backend::operation_log::log_warn(
                     "app.startup.agent_health_prepare",
                     "Agent startup health refresh could not be prepared",
@@ -203,13 +181,12 @@ impl AppRuntime {
             }
         }
 
-        let initial_settings = await_bootstrap_future(
-            &runtime,
-            crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool),
-        )
-        .unwrap_or_else(|_| serde_json::json!({}));
-        let task_runtime = TaskRuntime::with_runtime_handle(runtime.handle().clone());
-        let db = Database::from_parts(pool, runtime);
+        let initial_settings =
+            crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool)
+                .await
+                .unwrap_or_else(|_| serde_json::json!({}));
+        let task_runtime = TaskRuntime::with_runtime_handle(tokio::runtime::Handle::current());
+        let db = Database::from_pool(pool);
         let snapshot = RequestContextSnapshot {
             tenant: context.tenant.clone(),
             request_context: context,
@@ -243,7 +220,7 @@ impl AppRuntime {
         // The ResidentHost owns long-lived dispatchers. OneShot deliberately only
         // gets the in-process task runtime and never starts a dispatcher.
         if role == RuntimeRole::ResidentHost {
-            app_runtime.start_resident_services();
+            app_runtime.start_resident_services().await;
         }
         Ok(app_runtime)
     }
@@ -251,8 +228,9 @@ impl AppRuntime {
     /// Test-only runtime builder. Tests still construct the same resident
     /// runtime boundary as production, but inject their temporary database and
     /// agent backend instead of reopening a second application service path.
+
     #[cfg(test)]
-    pub(crate) fn for_test(
+    pub(crate) async fn for_test(
         db_path: PathBuf,
         db: Database,
         context: RequestContext,
@@ -267,10 +245,11 @@ impl AppRuntime {
             agent_runtime,
             TargetCatalog::builtin().expect("test target catalog must be valid"),
         )
+        .await
     }
 
     #[cfg(test)]
-    pub(crate) fn for_test_with_target_catalog(
+    pub(crate) async fn for_test_with_target_catalog(
         db_path: PathBuf,
         db: Database,
         context: RequestContext,
@@ -282,12 +261,10 @@ impl AppRuntime {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("target-providers");
-        let adapters = db
-            .block_on(crate::backend::store::list_conversation_adapters_sqlx(
-                db.pool(),
-                &context.tenant.id,
-            ))
-            .unwrap_or_default();
+        let adapters =
+            crate::backend::store::list_conversation_adapters_sqlx(db.pool(), &context.tenant.id)
+                .await
+                .unwrap_or_default();
         let builtin_conversation_adapters = adapters
             .iter()
             .filter(|adapter| adapter.trust_state == ConversationAdapterTrustState::BuiltIn)
@@ -336,12 +313,12 @@ impl AppRuntime {
         Arc::clone(&self.config)
     }
 
-    fn start_resident_services(self: &Arc<Self>) {
+    async fn start_resident_services(self: &Arc<Self>) {
         self.start_agent_health_refresh();
         self.start_team_coordinator();
         self.start_session_memory_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
-        if let Err(error) = self.run_sync(dispatcher.initialize_all_tenants()) {
+        if let Err(error) = dispatcher.initialize_all_tenants().await {
             crate::backend::operation_log::log_warn(
                 "app.startup.event_dispatcher",
                 "domain event dispatcher initialization deferred",
@@ -362,87 +339,85 @@ impl AppRuntime {
     /// and terminal state, so an interrupted process can be rebuilt safely.
     fn start_session_memory_coordinator(self: &Arc<Self>) {
         let cancellation = CancellationToken::new();
-        let thread_cancellation = cancellation.clone();
+        let task_cancellation = cancellation.clone();
         let runtime = self.clone();
-        let join = thread::Builder::new()
-            .name("aiw-session-memory-coordinator".to_string())
-            .spawn(move || {
-                while !thread_cancellation.is_cancelled() {
-                    let service = AppService::from_runtime(&runtime);
-                    let principal_id = runtime.context().request_context.principal.id.clone();
-                    let result = runtime.run_sync(async {
-                        let tenants =
-                            store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id)
-                                .await?;
-                        for tenant in tenants {
-                            if let Err(error) = service
-                                .reconcile_session_memory_jobs_for_tenant_at(
-                                    &tenant.id,
-                                    chrono::Utc::now(),
-                                )
-                                .await
-                            {
-                                crate::backend::operation_log::log_warn(
-                                    "session_memory.coordinator.recovery",
-                                    "Session Memory durable coordinator reconciliation failed",
-                                    &[("error", error.to_string())],
-                                );
-                            }
-                            if let Err(error) = service
-                                .reconcile_project_memory_jobs_for_tenant_at(
-                                    &tenant.id,
-                                    chrono::Utc::now(),
-                                )
-                                .await
-                            {
-                                crate::backend::operation_log::log_warn(
-                                    "project_memory.coordinator.recovery",
-                                    "Project Memory durable coordinator reconciliation failed",
-                                    &[("error", error.to_string())],
-                                );
-                            }
-                            if let Err(error) = service
-                                .reconcile_global_memory_jobs_for_tenant_at(
-                                    &tenant.id,
-                                    chrono::Utc::now(),
-                                )
-                                .await
-                            {
-                                crate::backend::operation_log::log_warn(
-                                    "global_memory.coordinator.recovery",
-                                    "Global Memory durable coordinator reconciliation failed",
-                                    &[("error", error.to_string())],
-                                );
-                            }
-                            if let Err(error) = service
-                                .recover_memory_recall_turns_for_tenant(&tenant.id)
-                                .await
-                            {
-                                crate::backend::operation_log::log_warn(
-                                    "memory_recall.coordinator.recovery",
-                                    "Recall durable workflow reconciliation failed",
-                                    &[("error", error.to_string())],
-                                );
-                            }
+        let join = tokio::spawn(async move {
+            while !task_cancellation.is_cancelled() {
+                let service = AppService::from_runtime(&runtime);
+                let principal_id = runtime.context().request_context.principal.id.clone();
+                let result: AppResult<()> = async {
+                    let tenants =
+                        store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id)
+                            .await?;
+                    for tenant in tenants {
+                        if let Err(error) = service
+                            .reconcile_session_memory_jobs_for_tenant_at(
+                                &tenant.id,
+                                chrono::Utc::now(),
+                            )
+                            .await
+                        {
+                            crate::backend::operation_log::log_warn(
+                                "session_memory.coordinator.recovery",
+                                "Session Memory durable coordinator reconciliation failed",
+                                &[("error", error.to_string())],
+                            );
                         }
-                        Ok::<_, AppError>(())
-                    });
-                    if let Err(error) = result {
-                        crate::backend::operation_log::log_warn(
-                            "session_memory.coordinator.tenants",
-                            "Session Memory tenant enumeration failed",
-                            &[("error", error.to_string())],
-                        );
-                    }
-                    for _ in 0..10 {
-                        if thread_cancellation.is_cancelled() {
-                            return;
+                        if let Err(error) = service
+                            .reconcile_project_memory_jobs_for_tenant_at(
+                                &tenant.id,
+                                chrono::Utc::now(),
+                            )
+                            .await
+                        {
+                            crate::backend::operation_log::log_warn(
+                                "project_memory.coordinator.recovery",
+                                "Project Memory durable coordinator reconciliation failed",
+                                &[("error", error.to_string())],
+                            );
                         }
-                        thread::sleep(Duration::from_millis(100));
+                        if let Err(error) = service
+                            .reconcile_global_memory_jobs_for_tenant_at(
+                                &tenant.id,
+                                chrono::Utc::now(),
+                            )
+                            .await
+                        {
+                            crate::backend::operation_log::log_warn(
+                                "global_memory.coordinator.recovery",
+                                "Global Memory durable coordinator reconciliation failed",
+                                &[("error", error.to_string())],
+                            );
+                        }
+                        if let Err(error) = service
+                            .recover_memory_recall_turns_for_tenant(&tenant.id)
+                            .await
+                        {
+                            crate::backend::operation_log::log_warn(
+                                "memory_recall.coordinator.recovery",
+                                "Recall durable workflow reconciliation failed",
+                                &[("error", error.to_string())],
+                            );
+                        }
                     }
+                    Ok(())
                 }
-            })
-            .expect("Session Memory coordinator thread must start");
+                .await;
+                if let Err(error) = result {
+                    crate::backend::operation_log::log_warn(
+                        "session_memory.coordinator.tenants",
+                        "Session Memory tenant enumeration failed",
+                        &[("error", error.to_string())],
+                    );
+                }
+                for _ in 0..10 {
+                    if task_cancellation.is_cancelled() {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        });
         if let Ok(mut slot) = self.session_memory_coordinator.lock() {
             *slot = Some(SessionMemoryCoordinatorHandle {
                 cancellation,
@@ -532,15 +507,6 @@ impl AppRuntime {
     pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
         self.db.pool()
     }
-    pub(crate) fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.db.block_on(future)
-    }
-    /// Named synchronous boundary for short application projections.
-    /// Application modules should use this seam instead of embedding their
-    /// own database/runtime synchronization calls.
-    pub(crate) fn run_sync<F: std::future::Future>(&self, future: F) -> F::Output {
-        self.db.block_on(future)
-    }
     pub(crate) fn db_path(&self) -> &Path {
         &self.db_path
     }
@@ -596,10 +562,6 @@ impl AppRuntime {
         Ok(tenant)
     }
 
-    pub(crate) fn activate_tenant_sync(&self, tenant_id: &str) -> AppResult<Tenant> {
-        self.block_on(self.activate_tenant(tenant_id))
-    }
-
     pub(crate) fn app_settings_value(&self) -> serde_json::Value {
         (**self.settings.load()).clone()
     }
@@ -642,18 +604,23 @@ impl AppRuntime {
     /// Stop accepting work and wait for resident tasks before close-time
     /// persistence runs. The final dispatcher/database shutdown remains in
     /// `shutdown_with_grace` so callers can persist through this same runtime.
-    pub(crate) fn stop_tasks_with_grace(&self, grace: Duration) -> Vec<String> {
-        self.stop_session_memory_coordinator();
+    pub(crate) async fn stop_tasks_with_grace(&self, grace: Duration) -> Vec<String> {
+        self.stop_session_memory_coordinator().await;
         self.task_runtime.stop_accepting();
-        self.run_sync(self.task_runtime.shutdown_with_grace(grace))
+        self.task_runtime
+            .shutdown_with_grace(grace)
+            .await
             .unfinished_task_ids
     }
 
-    fn stop_session_memory_coordinator(&self) {
-        if let Ok(mut slot) = self.session_memory_coordinator.lock() {
-            if let Some(handle) = slot.take() {
-                handle.stop();
-            }
+    async fn stop_session_memory_coordinator(&self) {
+        let handle = self
+            .session_memory_coordinator
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(handle) = handle {
+            handle.stop().await;
         }
     }
     pub(crate) fn target_catalog(&self) -> Arc<TargetCatalog> {
@@ -664,41 +631,37 @@ impl AppRuntime {
     /// one replacement. Readers keep using the previous immutable catalog when
     /// validation fails.
     #[cfg(test)]
-    pub(crate) fn refresh_target_catalog(
+    pub(crate) async fn refresh_target_catalog(
         &self,
         descriptors: Vec<TargetProfileDescriptor>,
     ) -> AppResult<Arc<TargetCatalog>> {
         let catalog = TargetCatalog::from_descriptors(descriptors)?;
-        self.reconcile_tenants_with_target_catalog(&catalog)?;
+        self.reconcile_tenants_with_target_catalog(&catalog).await?;
         self.target_catalog.replace(catalog);
         Ok(self.target_catalog.load())
     }
 
-    pub(crate) fn refresh_target_catalog_from_disk(&self) -> AppResult<Arc<TargetCatalog>> {
+    pub(crate) async fn refresh_target_catalog_from_disk(&self) -> AppResult<Arc<TargetCatalog>> {
         let catalog = TargetCatalog::load_with_overrides(&self.target_catalog_dir)?;
-        self.reconcile_tenants_with_target_catalog(&catalog)?;
+        self.reconcile_tenants_with_target_catalog(&catalog).await?;
         self.target_catalog.replace(catalog);
         Ok(self.target_catalog.load())
     }
 
-    fn reconcile_tenants_with_target_catalog(&self, catalog: &TargetCatalog) -> AppResult<()> {
-        let pool = self.db.pool().clone();
+    async fn reconcile_tenants_with_target_catalog(
+        &self,
+        catalog: &TargetCatalog,
+    ) -> AppResult<()> {
+        let pool = self.db.pool();
         let principal_id = self.context().request_context.principal.id.clone();
-        let catalog_for_seed = catalog.clone();
-        self.run_sync(async move {
-            let tenants =
-                crate::backend::store::list_tenants_for_principal_sqlx(&pool, &principal_id)
-                    .await?;
-            for tenant in tenants {
-                crate::backend::store::seed_tenant_defaults_sqlx_with_catalog(
-                    &pool,
-                    &tenant.id,
-                    &catalog_for_seed,
-                )
-                .await?;
-            }
-            Ok::<(), AppError>(())
-        })?;
+        let tenants =
+            crate::backend::store::list_tenants_for_principal_sqlx(pool, &principal_id).await?;
+        for tenant in tenants {
+            crate::backend::store::seed_tenant_defaults_sqlx_with_catalog(
+                pool, &tenant.id, catalog,
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -731,7 +694,7 @@ impl AppRuntime {
         }
     }
 
-    pub(crate) fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
+    pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
         if !self.shutdown.begin() {
             return ShutdownReport::default();
         }
@@ -740,20 +703,17 @@ impl AppRuntime {
         // Workers must converge and publish their final state while the
         // resident dispatcher is still alive; only then can the dispatcher
         // drain and the database close.
-        self.stop_session_memory_coordinator();
+        self.stop_session_memory_coordinator().await;
         self.task_runtime.stop_accepting();
         let mut dispatcher_handle = self.dispatcher.lock().ok().and_then(|mut slot| slot.take());
-        let (task_report, dispatcher_report) = self.run_sync(async {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let task_report = self.task_runtime.shutdown_with_grace(remaining).await;
-            let dispatcher_report = match dispatcher_handle.as_mut() {
-                Some(handle) => handle.stop_until(deadline).await,
-                None => EventDispatcherShutdownReport::default(),
-            };
-            self.session_streams.clear();
-            let _ = self.db.pool().close().await;
-            (task_report, dispatcher_report)
-        });
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let task_report = self.task_runtime.shutdown_with_grace(remaining).await;
+        let dispatcher_report = match dispatcher_handle.as_mut() {
+            Some(handle) => handle.stop_until(deadline).await,
+            None => EventDispatcherShutdownReport::default(),
+        };
+        self.session_streams.clear();
+        let _ = self.db.pool().close().await;
         ShutdownReport {
             unfinished_task_ids: task_report.unfinished_task_ids,
             dispatcher_drained: dispatcher_report.drained,

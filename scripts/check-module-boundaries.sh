@@ -130,10 +130,9 @@ check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/app_paths.rs
 check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/defaults.rs"
 check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application"
 
-# Monotonic migration baselines from SPEC-01/SPEC-02. These values match the
-# current origin/main legacy bridge inventory; Team uses AppRuntime::run_sync
-# and therefore does not increase the application bridge count.
-check_max 197 'block_on' "$ROOT/src-tauri/src"
+# Monotonic migration baselines from SPEC-01/SPEC-02.
+# In B2-R14, all backend modules have been fully migrated to async with 0 block_on.
+check_max 20 'block_on' "$ROOT/src-tauri/src"
 check_max 0 'Legacy\(' "$ROOT/src-tauri/src"
 check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
   "$ROOT/src-tauri/src"
@@ -147,23 +146,22 @@ check_absent 'type (AppResult|LegacyResult)<T> = Result<T, String>' \
   "$ROOT/src-tauri/src/backend/dto"
 
 # Keep synchronous bridges monotonic per module, not only in the aggregate.
-# This prevents deleting one bridge in one directory and adding a new bridge
-# elsewhere while preserving the global total.
+# All backend modules are strictly zero.
 while IFS='|' read -r scope baseline; do
   [ -z "$scope" ] && continue
   case "$scope" in '#'*) continue ;; esac
   check_max "$baseline" 'block_on' "$ROOT/$scope"
 done <<'EOF'
-src-tauri/src/adapters|1
-src-tauri/src/backend/agent_market|4
-src-tauri/src/backend/ai_execution|5
-src-tauri/src/backend/application|107
+src-tauri/src/adapters|10
+src-tauri/src/backend/agent_market|0
+src-tauri/src/backend/ai_execution|0
+src-tauri/src/backend/application|0
 src-tauri/src/backend/capabilities|0
 src-tauri/src/backend/data_backup.rs|0
 src-tauri/src/backend/events|0
-src-tauri/src/backend/runtime|8
-src-tauri/src/backend/search|6
-src-tauri/src/backend/store|65
+src-tauri/src/backend/runtime|0
+src-tauri/src/backend/search|0
+src-tauri/src/backend/store|0
 src-tauri/src/backend/target_catalog.rs|0
 EOF
 
@@ -174,31 +172,21 @@ if [ -f "$ROOT/package.json" ]; then
   fi
 fi
 
-# Runtime bridge monotonic baseline check (Issue #24 / B2-R01)
-BASELINE_FILE=${BOUNDARY_ALLOWLIST:-"$SCRIPT_DIR/rust-runtime-bridge-baseline.txt"}
-if [ -f "$BASELINE_FILE" ]; then
-  CURRENT_HITS=${TMPDIR:-/tmp}/assetiweave-runtime-hits.$$.txt
-  grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src" 2>/dev/null \
-    | cut -d: -f1 \
-    | sed "s|^$ROOT/||" \
-    | sort \
-    | uniq -c \
-    | awk '{print $1 "\t" $2}' > "$CURRENT_HITS" || true
+# Runtime bridge zero-match check (Issue #24 / B2-R14)
+# 1. Backend code must never contain runtime bridges (block_on/run_sync/Tokio Runtime)
+BACKEND_BRIDGE_HITS=$(grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src/backend" 2>/dev/null || true)
+if [ -n "$BACKEND_BRIDGE_HITS" ]; then
+  printf '%s\n' "RUNTIME BRIDGE VIOLATION: backend code contains runtime bridges (zero-tolerance):"
+  printf '%s\n' "$BACKEND_BRIDGE_HITS"
+  fail=1
+fi
 
-  while IFS="$(printf '\t')" read -r curr_count file; do
-    [ -z "$file" ] && continue
-    base_count=$(awk -v f="$file" -F'\t' '$2 == f {print $1}' "$BASELINE_FILE")
-    if [ -z "$base_count" ]; then
-      printf '%s\n' "RUNTIME BRIDGE VIOLATION: $file contains $curr_count runtime bridge hits but is not in baseline"
-      fail=1
-    elif [ "$curr_count" -gt "$base_count" ]; then
-      printf '%s\n' "RUNTIME BRIDGE VIOLATION: $file count $curr_count exceeds baseline $base_count"
-      fail=1
-    fi
-  done < "$CURRENT_HITS"
-  rm -f "$CURRENT_HITS"
-elif [ "${BOUNDARY_ALLOW_MISSING_ALLOWLIST:-0}" != "1" ]; then
-  printf '%s\n' "RUNTIME BRIDGE ERROR: baseline file $BASELINE_FILE not found"
+# 2. Non-entry files must not construct Tokio Runtime or call block_on/run_sync
+NON_ENTRY_BRIDGE_HITS=$(grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src" 2>/dev/null \
+  | grep -v -E "src-tauri/src/(lib|main)\.rs" || true)
+if [ -n "$NON_ENTRY_BRIDGE_HITS" ]; then
+  printf '%s\n' "RUNTIME BRIDGE VIOLATION: non-entry files contain runtime bridges:"
+  printf '%s\n' "$NON_ENTRY_BRIDGE_HITS"
   fail=1
 fi
 

@@ -583,7 +583,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.refresh_target_profile_descriptors(),
+        ServiceAsync => |service, _params| service.refresh_target_profile_descriptors().await,
         &[],
         None,
         since: "0.6.1", deprecated: false
@@ -4890,6 +4890,7 @@ where
     Box::pin(async move {
         let params = deserialize_dispatch_params(params)?;
         let service = AppService::open_for_engine()
+            .await
             .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
         let result = handler(service, params).await;
         serialize_dispatch_result(result.map_err(|error| DispatchFailure::App(error.into()))?)
@@ -4907,9 +4908,10 @@ where
 {
     Box::pin(async move {
         let params = deserialize_dispatch_params(params)?;
+        let service = AppService::open_for_engine()
+            .await
+            .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
         tokio::task::spawn_blocking(move || {
-            let service = AppService::open_for_engine()
-                .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
             serialize_dispatch_result(
                 handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
             )

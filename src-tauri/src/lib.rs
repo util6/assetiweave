@@ -93,23 +93,32 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
     backend::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
     let db_path = app_db_path().map_err(|error| format!("数据库路径初始化失败: {error}"))?;
-    let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
-        .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
-    let report = runtime.shutdown_with_grace(std::time::Duration::from_secs(5));
-    if !report.unfinished_task_ids.is_empty()
-        || !report.dispatcher_drained
-        || report.dispatcher_remaining_events > 0
-        || report.dispatcher_timed_out
-    {
-        return Err(format!(
-            "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}",
-            report.unfinished_task_ids.len(),
-            report.dispatcher_drained,
-            report.dispatcher_remaining_events,
-            report.dispatcher_timed_out
-        ));
-    }
-    Ok(())
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("初始化 Tokio 运行时失败: {error}"))?;
+    rt.block_on(async {
+        let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
+            .await
+            .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
+        let report = runtime
+            .shutdown_with_grace(std::time::Duration::from_secs(5))
+            .await;
+        if !report.unfinished_task_ids.is_empty()
+            || !report.dispatcher_drained
+            || report.dispatcher_remaining_events > 0
+            || report.dispatcher_timed_out
+        {
+            return Err(format!(
+                "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}",
+                report.unfinished_task_ids.len(),
+                report.dispatcher_drained,
+                report.dispatcher_remaining_events,
+                report.dispatcher_timed_out
+            ));
+        }
+        Ok(())
+    })
 }
 
 fn init_app_logging() -> Option<backend::logging::LoggingGuard> {
@@ -168,7 +177,10 @@ pub fn run() {
             panic!("failed to resolve AssetIWeave database path: {error}");
         }
     };
-    let runtime = match AppRuntime::bootstrap(db_path.clone(), RuntimeRole::ResidentHost) {
+    let runtime = match tauri::async_runtime::block_on(AppRuntime::bootstrap(
+        db_path.clone(),
+        RuntimeRole::ResidentHost,
+    )) {
         Ok(runtime) => runtime,
         Err(error) => {
             log_error(
@@ -296,12 +308,11 @@ pub fn run() {
                             if quit_anyway {
                                 tauri::async_runtime::spawn(async move {
                                     converge_ai_executions_before_close(background_tasks).await;
-                                    let _ = tauri::async_runtime::spawn_blocking(move || {
-                                        runtime.shutdown_with_grace(
+                                    let _ = runtime
+                                        .shutdown_with_grace(
                                             std::time::Duration::from_secs(5),
                                         )
-                                    })
-                                    .await;
+                                        .await;
                                     allow_close.store(true, Ordering::SeqCst);
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Err(error) = close_window.close() {
@@ -466,12 +477,11 @@ pub fn run() {
                         if quit_anyway {
                             tauri::async_runtime::spawn(async move {
                                 converge_ai_executions_before_close(background_tasks).await;
-                                let _ = tauri::async_runtime::spawn_blocking(move || {
-                                    runtime.shutdown_with_grace(
+                                let _ = runtime
+                                    .shutdown_with_grace(
                                         std::time::Duration::from_secs(5),
                                     )
-                                })
-                                .await;
+                                    .await;
                                 allow_exit.store(true, Ordering::SeqCst);
                                 exit_app.exit(0);
                             });
@@ -552,9 +562,21 @@ pub fn run_engine_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            eprintln!("failed to initialize Engine async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
     let engine_db_path = backend::path_utils::app_db_path();
-    let (app_runtime, runtime) = match engine_db_path {
-        Ok(path) => match AppRuntime::bootstrap(path, RuntimeRole::OneShot) {
+    let (_app_runtime, runtime) = match engine_db_path {
+        Ok(path) => match tokio_runtime.block_on(AppRuntime::bootstrap(path, RuntimeRole::OneShot))
+        {
             Ok(runtime) => {
                 if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
                     eprintln!("failed to install Engine AppRuntime: {error}");
@@ -580,7 +602,7 @@ pub fn run_engine_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = app_runtime.run_sync(adapters::engine::run_stdio()) {
+    if let Err(error) = tokio_runtime.block_on(adapters::engine::run_stdio()) {
         eprintln!("{error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -592,19 +614,38 @@ pub fn run_engine_stdio() {
 /// credential in its environment; every operation still crosses AppService.
 pub fn run_team_mcp_stdio() {
     let _logging_guard = init_app_logging();
-    let db_path = backend::path_utils::app_db_path();
-    let runtime = match db_path.and_then(|path| {
-        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
-    }) {
-        Ok(runtime) => runtime,
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
         Err(error) => {
-            eprintln!("failed to initialize Team MCP runtime: {error}");
+            eprintln!("failed to initialize Team MCP async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let db_path = backend::path_utils::app_db_path();
+    let runtime = match db_path {
+        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
+            path,
+            backend::runtime::RuntimeRole::OneShot,
+        )) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to initialize Team MCP runtime: {error}");
+                drop(_logging_guard);
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to resolve Team MCP db path: {error}");
             drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_TEAM_TOOL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant_sync(&tenant_id) {
+        if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
             eprintln!("failed to activate Team MCP tenant: {error}");
             drop(_logging_guard);
             std::process::exit(1);
@@ -618,7 +659,7 @@ pub fn run_team_mcp_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_team_mcp_loop(&runtime, &service, &credential, &member_id) {
+    if let Err(error) = run_team_mcp_loop(&tokio_runtime, &service, &credential, &member_id) {
         eprintln!("Team MCP bridge stopped: {error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -630,19 +671,38 @@ pub fn run_team_mcp_stdio() {
 /// commands are not part of this protocol surface.
 pub fn run_memory_recall_mcp_stdio() {
     let _logging_guard = init_app_logging();
-    let db_path = backend::path_utils::app_db_path();
-    let runtime = match db_path.and_then(|path| {
-        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
-    }) {
-        Ok(runtime) => runtime,
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
         Err(error) => {
-            eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+            eprintln!("failed to initialize Memory Recall MCP async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let db_path = backend::path_utils::app_db_path();
+    let runtime = match db_path {
+        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
+            path,
+            backend::runtime::RuntimeRole::OneShot,
+        )) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+                drop(_logging_guard);
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to resolve Memory Recall MCP db path: {error}");
             drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant_sync(&tenant_id) {
+        if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
             eprintln!("failed to activate Memory Recall MCP tenant: {error}");
             drop(_logging_guard);
             std::process::exit(1);
@@ -655,7 +715,7 @@ pub fn run_memory_recall_mcp_stdio() {
         drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_memory_recall_mcp_loop(&runtime, &service, &session_id) {
+    if let Err(error) = run_memory_recall_mcp_loop(&tokio_runtime, &service, &session_id) {
         eprintln!("Memory Recall MCP bridge stopped: {error}");
         drop(_logging_guard);
         std::process::exit(1);
@@ -663,7 +723,7 @@ pub fn run_memory_recall_mcp_stdio() {
 }
 
 fn run_memory_recall_mcp_loop(
-    runtime: &backend::runtime::AppRuntime,
+    tokio_runtime: &tokio::runtime::Runtime,
     service: &backend::application::AppService,
     session_id: &str,
 ) -> Result<(), String> {
@@ -688,7 +748,7 @@ fn run_memory_recall_mcp_loop(
         let result = match method {
             "initialize" => Ok(memory_recall_mcp_initialize_result()),
             "tools/list" => Ok(memory_recall_mcp_tools_result()),
-            "tools/call" => runtime.block_on(memory_recall_mcp_call(
+            "tools/call" => tokio_runtime.block_on(memory_recall_mcp_call(
                 service,
                 session_id,
                 request.get("params").unwrap_or(&serde_json::Value::Null),
@@ -838,7 +898,7 @@ async fn memory_recall_mcp_call(
 }
 
 fn run_team_mcp_loop(
-    runtime: &backend::runtime::AppRuntime,
+    tokio_runtime: &tokio::runtime::Runtime,
     service: &backend::application::AppService,
     credential: &str,
     member_id: &str,
@@ -864,7 +924,7 @@ fn run_team_mcp_loop(
         let result = match method {
             "initialize" => Ok(team_mcp_initialize_result()),
             "tools/list" => Ok(team_mcp_tools_result()),
-            "tools/call" => runtime.block_on(team_mcp_call(
+            "tools/call" => tokio_runtime.block_on(team_mcp_call(
                 service,
                 credential,
                 member_id,

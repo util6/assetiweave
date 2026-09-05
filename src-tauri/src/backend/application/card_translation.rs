@@ -144,6 +144,7 @@ mod tests {
         });
         let service =
             AppService::open_with_db_path_and_runtime(root.join("app.db"), runtime.clone())
+                .await
                 .unwrap();
 
         let result = service

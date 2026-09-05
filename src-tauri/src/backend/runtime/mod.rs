@@ -17,6 +17,7 @@ pub(crate) use app_runtime::{
     current_process_runtime, install_process_runtime, AppRuntime, RequestContextSnapshot,
     RuntimeRole, ShutdownReport, ShutdownState,
 };
+pub(crate) use config::RuntimeConfig;
 pub(crate) use error::{
     sanitize_details, sanitize_public_message, validation_error, AppError, AppErrorView, AppResult,
     WireError,

@@ -810,7 +810,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn member_turn_start_returns_before_provider_finishes_and_exposes_events() {
         let fixture = FixtureRuntime::new();
-        let service = fixture.open_service("member-turn");
+        let service = fixture.open_service("member-turn").await;
         let team = fixture.create_team(&service, "team-member-turn").await;
         let member = &team.members[1];
 
@@ -866,7 +866,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn member_turn_continues_without_a_consumer_and_cancel_is_scoped_to_one_member() {
         let fixture = FixtureRuntime::new();
-        let service = fixture.open_service("member-turn-cancel");
+        let service = fixture.open_service("member-turn-cancel").await;
         let team = fixture
             .create_team(&service, "team-member-turn-cancel")
             .await;
@@ -930,7 +930,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn member_replay_uses_the_same_workflow_and_marks_provider_events_as_replay() {
         let fixture = FixtureRuntime::new();
-        let service = fixture.open_service("member-replay");
+        let service = fixture.open_service("member-replay").await;
         let team = fixture.create_team(&service, "team-member-replay").await;
         let member = &team.members[1];
         fixture.seed_binding(&service, member).await;
@@ -978,7 +978,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn member_turn_rejects_cross_team_member_missing_capability_and_missing_anchor() {
         let fixture = FixtureRuntime::new();
-        let service = fixture.open_service("member-turn-validation");
+        let service = fixture.open_service("member-turn-validation").await;
         let team = fixture.create_team(&service, "team-validation").await;
         let other_team = fixture.create_team(&service, "other-team").await;
 
@@ -1077,7 +1077,7 @@ mod tests {
             }
         }
 
-        fn open_service(&self, name: &str) -> AppService {
+        async fn open_service(&self, name: &str) -> AppService {
             let root = std::env::temp_dir().join(format!(
                 "assetiweave-t06-{name}-{}",
                 uuid::Uuid::new_v4().simple()
@@ -1086,6 +1086,7 @@ mod tests {
             let runtime: Arc<dyn crate::backend::ai_execution::AgentExecutionRuntime> =
                 Arc::new(self.clone_for_runtime());
             AppService::open_with_db_path_and_runtime(root.join("app.db"), runtime)
+                .await
                 .expect("open fixture service")
         }
 

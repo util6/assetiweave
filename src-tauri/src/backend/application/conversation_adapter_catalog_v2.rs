@@ -738,7 +738,9 @@ mod tests {
     async fn local_catalog_v2_refresh_caches_history_and_changelog() {
         let root = std::env::temp_dir().join(format!("assetiweave-catalog-v2-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create Catalog v2 test root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
@@ -787,7 +789,9 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("assetiweave-release-select-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create release selection root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")

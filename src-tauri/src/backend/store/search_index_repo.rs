@@ -586,92 +586,92 @@ mod tests {
 
     const TENANT_ID: &str = "default";
 
-    #[test]
-    fn conversation_search_state_tracks_revision_and_writer_lease() {
+    #[tokio::test]
+    async fn conversation_search_state_tracks_revision_and_writer_lease() {
         let db_path = temporary_database_path();
-        let database = Database::open(&db_path).expect("open search state database");
+        let database = Database::open_async(&db_path)
+            .await
+            .expect("open search state database");
 
-        database
-            .block_on(async {
-                let initial =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(initial.health, ConversationSearchIndexHealth::Missing);
-                assert_eq!(initial.source_revision, 0);
-                assert_eq!(initial.indexed_revision, None);
-                assert!(initial.is_compatible());
-                let mut previous_schema = initial.clone();
-                previous_schema.schema_version = CONVERSATION_SEARCH_SCHEMA_VERSION - 1;
-                assert!(!previous_schema.is_compatible());
-
-                let revision =
-                    bump_conversation_search_source_revision_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(revision, 1);
-
-                assert!(
-                    try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "desktop",
-                        "2026-07-22T10:00:00Z",
-                        "2026-07-22T10:05:00Z",
-                    )
-                    .await?
-                );
-                assert!(
-                    !try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "cli",
-                        "2026-07-22T10:01:00Z",
-                        "2026-07-22T10:06:00Z",
-                    )
-                    .await?
-                );
-                assert!(
-                    try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "cli",
-                        "2026-07-22T10:06:00Z",
-                        "2026-07-22T10:11:00Z",
-                    )
-                    .await?
-                );
-
-                let state =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(state.source_revision, 1);
-                assert_eq!(state.lease_owner.as_deref(), Some("cli"));
-
-                sqlx::query(
-                    "UPDATE conversation_search_index_state SET schema_version = ?1 WHERE tenant_id = ?2",
-                )
-                .bind(CONVERSATION_SEARCH_SCHEMA_VERSION - 1)
-                .bind(TENANT_ID)
-                .execute(database.pool())
+        let initial =
+            load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
                 .await
-                ?;
-                assert!(complete_conversation_search_index_rebuild_sqlx(
-                    database.pool(),
-                    TENANT_ID,
-                    revision,
-                    "generation-upgraded",
-                    12,
-                    4096,
-                )
-                .await?);
-                let rebuilt =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert!(rebuilt.is_compatible());
-                assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
-                assert_eq!(rebuilt.active_generation.as_deref(), Some("generation-upgraded"));
-                AppResult::Ok(())
-            })
-            .expect("track search state");
+                .expect("load initial state");
+        assert_eq!(initial.health, ConversationSearchIndexHealth::Missing);
+        assert_eq!(initial.source_revision, 0);
+        assert_eq!(initial.indexed_revision, None);
+        assert!(initial.is_compatible());
+        let mut previous_schema = initial.clone();
+        previous_schema.schema_version = CONVERSATION_SEARCH_SCHEMA_VERSION - 1;
+        assert!(!previous_schema.is_compatible());
+
+        let revision = bump_conversation_search_source_revision_sqlx(database.pool(), TENANT_ID)
+            .await
+            .expect("bump revision");
+        assert_eq!(revision, 1);
+
+        assert!(try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "desktop",
+            "2026-07-22T10:00:00Z",
+            "2026-07-22T10:05:00Z",
+        )
+        .await
+        .expect("acquire lease"));
+        assert!(!try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "cli",
+            "2026-07-22T10:01:00Z",
+            "2026-07-22T10:06:00Z",
+        )
+        .await
+        .expect("fail overlapping lease"));
+        assert!(try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "cli",
+            "2026-07-22T10:06:00Z",
+            "2026-07-22T10:11:00Z",
+        )
+        .await
+        .expect("acquire subsequent lease"));
+
+        let state = load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
+            .await
+            .expect("load state");
+        assert_eq!(state.source_revision, 1);
+        assert_eq!(state.lease_owner.as_deref(), Some("cli"));
+
+        sqlx::query(
+            "UPDATE conversation_search_index_state SET schema_version = ?1 WHERE tenant_id = ?2",
+        )
+        .bind(CONVERSATION_SEARCH_SCHEMA_VERSION - 1)
+        .bind(TENANT_ID)
+        .execute(database.pool())
+        .await
+        .expect("update schema version");
+        assert!(complete_conversation_search_index_rebuild_sqlx(
+            database.pool(),
+            TENANT_ID,
+            revision,
+            "generation-upgraded",
+            12,
+            4096,
+        )
+        .await
+        .expect("complete rebuild"));
+        let rebuilt =
+            load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
+                .await
+                .expect("load rebuilt state");
+        assert!(rebuilt.is_compatible());
+        assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
+        assert_eq!(
+            rebuilt.active_generation.as_deref(),
+            Some("generation-upgraded")
+        );
 
         drop(database);
         let _ = std::fs::remove_file(db_path);

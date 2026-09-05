@@ -54,43 +54,34 @@ run_rejected_fixture application-target-catalog-bypass \
   src-tauri/src/backend/application/service.rs \
   'let _catalog = TargetCatalog::builtin();'
 
-# Test runtime bridge monotonic baseline checks
-TEST_BASELINE="$ROOT/test-bridge-baseline.txt"
-printf '%s\t%s\n' "2" "src-tauri/src/existing.rs" > "$TEST_BASELINE"
-
-# 1. New file with runtime bridge hit is rejected
+# Test runtime bridge zero-match checks (Issue #24 / B2-R14)
+# 1. Backend file with runtime bridge is rejected
 rm -rf "$ROOT/src-tauri"
-mkdir -p "$ROOT/src-tauri/src"
-printf '%s\n' 'let _ = rt.block_on(async {});' > "$ROOT/src-tauri/src/untracked_file.rs"
-if BOUNDARY_ALLOWLIST="$TEST_BASELINE" BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/new-bridge-file.out" 2>&1; then
-  cat "$ROOT/new-bridge-file.out"
-  printf '%s\n' "self-test failed: untracked runtime bridge file was accepted"
+mkdir -p "$ROOT/src-tauri/src/backend"
+printf '%s\n' 'let _ = rt.block_on(async {});' > "$ROOT/src-tauri/src/backend/store.rs"
+if BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/backend-bridge.out" 2>&1; then
+  cat "$ROOT/backend-bridge.out"
+  printf '%s\n' "self-test failed: backend runtime bridge was accepted"
   exit 1
 fi
 
-# 2. Existing file with increased count (3 > 2) is rejected
+# 2. Non-entry file with runtime bridge is rejected
 rm -rf "$ROOT/src-tauri"
 mkdir -p "$ROOT/src-tauri/src"
-cat << 'EOF' > "$ROOT/src-tauri/src/existing.rs"
-let _ = rt.block_on(async {});
-let _ = rt.block_on(async {});
-let _ = rt.block_on(async {});
-EOF
-if BOUNDARY_ALLOWLIST="$TEST_BASELINE" BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/increased-bridge-count.out" 2>&1; then
-  cat "$ROOT/increased-bridge-count.out"
-  printf '%s\n' "self-test failed: increased runtime bridge count was accepted"
+printf '%s\n' 'let _ = rt.block_on(async {});' > "$ROOT/src-tauri/src/untracked.rs"
+if BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/non-entry-bridge.out" 2>&1; then
+  cat "$ROOT/non-entry-bridge.out"
+  printf '%s\n' "self-test failed: non-entry runtime bridge was accepted"
   exit 1
 fi
 
-# 3. Existing file with decreased count (1 <= 2) is accepted
+# 3. Entry file (src-tauri/src/lib.rs) with runtime bridge is accepted
 rm -rf "$ROOT/src-tauri"
 mkdir -p "$ROOT/src-tauri/src"
-cat << 'EOF' > "$ROOT/src-tauri/src/existing.rs"
-let _ = rt.block_on(async {});
-EOF
-if ! BOUNDARY_ALLOWLIST="$TEST_BASELINE" BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/decreased-bridge-count.out" 2>&1; then
-  cat "$ROOT/decreased-bridge-count.out"
-  printf '%s\n' "self-test failed: decreased runtime bridge count was rejected"
+printf '%s\n' 'let _ = rt.block_on(async {});' > "$ROOT/src-tauri/src/lib.rs"
+if ! BOUNDARY_ROOT="$ROOT" sh scripts/check-module-boundaries.sh >"$ROOT/entry-bridge.out" 2>&1; then
+  cat "$ROOT/entry-bridge.out"
+  printf '%s\n' "self-test failed: entry runtime bridge was rejected"
   exit 1
 fi
 
