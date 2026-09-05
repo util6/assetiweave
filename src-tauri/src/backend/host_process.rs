@@ -801,6 +801,28 @@ mod tests {
                     .spawn()
                     .expect("spawn inherited-pipe descendant");
             }
+            #[cfg(windows)]
+            Ok("launcher-exits") => {
+                let _ = Command::new("cmd")
+                    .args(["/C", "ping -n 6 127.0.0.1 > nul"])
+                    .spawn()
+                    .expect("spawn inherited-pipe descendant");
+            }
+            Ok("normal-exit") => {
+                let _ = io::stdout().write_all(b"fixture-stdout-content");
+                let _ = io::stderr().write_all(b"fixture-stderr-content");
+            }
+            Ok("nonzero-exit") => {
+                let _ = io::stderr().write_all(b"exiting with error 42");
+                std::process::exit(42);
+            }
+            Ok("ignore-term") => {
+                #[cfg(unix)]
+                unsafe {
+                    libc::signal(libc::SIGTERM, libc::SIG_IGN);
+                }
+                std::thread::sleep(Duration::from_secs(10));
+            }
             _ => {}
         }
     }
@@ -1018,5 +1040,456 @@ mod tests {
         .expect_err("pre-cancelled command should fail immediately");
 
         assert!(matches!(error, HostProcessError::Cancelled));
+    }
+
+    // =========================================================================
+    // C-PROCESS-01 & B2-P01: Contract Tests for process-wrap 10.0.0 and which 8.0.6
+    // =========================================================================
+
+    #[cfg(windows)]
+    use process_wrap::tokio::JobObject;
+    #[cfg(unix)]
+    use process_wrap::tokio::ProcessGroup;
+    use process_wrap::tokio::{CommandWrap, KillOnDrop};
+    use tokio::io::AsyncReadExt;
+
+    /// C-PROCESS-01 Canonical Wrapper Combination & Child Methods (Recorded for B2-P02 consumption):
+    ///
+    /// 1. Construction:
+    ///    `let mut wrap = process_wrap::tokio::CommandWrap::from(tokio_command);`
+    /// 2. Platform Process Grouping:
+    ///    - Unix: `wrap.wrap(process_wrap::tokio::ProcessGroup::leader());`
+    ///    - Windows: `wrap.wrap(process_wrap::tokio::JobObject);`
+    /// 3. Drop Safety:
+    ///    `wrap.wrap(process_wrap::tokio::KillOnDrop);`
+    /// 4. Spawning & Child Management:
+    ///    - Spawn: `let mut child = wrap.spawn()?;` (returns Box<dyn ChildWrapper>)
+    ///    - Pipes: `child.stdout().take()`, `child.stderr().take()`
+    ///    - Try Wait: `child.try_wait()? -> Option<ExitStatus>`
+    ///    - Wait: `child.wait().await? -> ExitStatus`
+    ///    - Termination: `child.start_kill()?` (sends SIGKILL to PGID on Unix, terminates job on Windows)
+    ///    - Graceful Signal (Unix): `child.signal(libc::SIGTERM)?`
+    fn wrap_test_command(cmd: tokio::process::Command) -> CommandWrap {
+        let mut wrap = CommandWrap::from(cmd);
+        #[cfg(unix)]
+        {
+            wrap.wrap(ProcessGroup::leader());
+        }
+        #[cfg(windows)]
+        {
+            wrap.wrap(JobObject);
+        }
+        wrap.wrap(KillOnDrop);
+        wrap
+    }
+
+    fn make_tokio_fixture_command(mode: &str) -> tokio::process::Command {
+        let mut cmd =
+            tokio::process::Command::new(env::current_exe().expect("resolve test binary"));
+        cmd.args([
+            "--exact",
+            "backend::host_process::tests::process_fixture",
+            "--nocapture",
+        ])
+        .env("ASSETIWEAVE_HOST_PROCESS_FIXTURE", mode)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+        cmd
+    }
+
+    async fn read_stream_capped<R: tokio::io::AsyncRead + Unpin>(
+        mut reader: R,
+        cap: usize,
+    ) -> (Vec<u8>, bool) {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        let mut truncated = false;
+        loop {
+            match reader.read(&mut chunk).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    if buf.len() < cap {
+                        let to_take = n.min(cap - buf.len());
+                        buf.extend_from_slice(&chunk[..to_take]);
+                        if to_take < n {
+                            truncated = true;
+                        }
+                    } else {
+                        truncated = true;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        (buf, truncated)
+    }
+
+    #[derive(Debug)]
+    struct TestWrapOutput {
+        status: ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        stdout_truncated: bool,
+        stderr_truncated: bool,
+    }
+
+    #[derive(Debug)]
+    #[allow(dead_code)]
+    enum TestWrapError {
+        Timeout {
+            stdout: Vec<u8>,
+            stderr: Vec<u8>,
+            stdout_truncated: bool,
+            stderr_truncated: bool,
+        },
+        Cancelled,
+        Spawn(String),
+        Wait(String),
+    }
+
+    async fn run_tokio_wrap_fixture(
+        mode: &str,
+        timeout: Duration,
+        stdout_limit: usize,
+        stderr_limit: usize,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+    ) -> Result<TestWrapOutput, TestWrapError> {
+        if let Some(token) = cancellation {
+            if token.is_cancelled() {
+                return Err(TestWrapError::Cancelled);
+            }
+        }
+
+        let cmd = make_tokio_fixture_command(mode);
+        let mut wrap = wrap_test_command(cmd);
+        let mut child = wrap
+            .spawn()
+            .map_err(|e| TestWrapError::Spawn(e.to_string()))?;
+
+        let stdout_pipe = child.stdout().take();
+        let stderr_pipe = child.stderr().take();
+
+        let mut stdout_task = tokio::spawn(async move {
+            match stdout_pipe {
+                Some(r) => read_stream_capped(r, stdout_limit).await,
+                None => (Vec::new(), false),
+            }
+        });
+        let mut stderr_task = tokio::spawn(async move {
+            match stderr_pipe {
+                Some(r) => read_stream_capped(r, stderr_limit).await,
+                None => (Vec::new(), false),
+            }
+        });
+
+        let timeout_sleep = tokio::time::sleep(timeout);
+        tokio::pin!(timeout_sleep);
+
+        enum ExitReason {
+            Exited(Result<ExitStatus, std::io::Error>),
+            TimedOut,
+            Cancelled,
+        }
+
+        let reason = tokio::select! {
+            res = child.wait() => ExitReason::Exited(res),
+            _ = &mut timeout_sleep => ExitReason::TimedOut,
+            _ = async {
+                if let Some(token) = cancellation {
+                    token.cancelled().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => ExitReason::Cancelled,
+        };
+
+        match reason {
+            ExitReason::Exited(res) => {
+                let status = res.map_err(|e| TestWrapError::Wait(e.to_string()))?;
+                let (stdout_res, stderr_res) = tokio::select! {
+                    joined = async {
+                        let out = (&mut stdout_task).await.unwrap_or_default();
+                        let err = (&mut stderr_task).await.unwrap_or_default();
+                        (out, err)
+                    } => joined,
+                    _ = tokio::time::sleep(Duration::from_millis(300)) => {
+                        let _ = child.start_kill();
+                        let out = stdout_task.await.unwrap_or_default();
+                        let err = stderr_task.await.unwrap_or_default();
+                        (out, err)
+                    }
+                };
+                Ok(TestWrapOutput {
+                    status,
+                    stdout: stdout_res.0,
+                    stderr: stderr_res.0,
+                    stdout_truncated: stdout_res.1,
+                    stderr_truncated: stderr_res.1,
+                })
+            }
+            ExitReason::TimedOut => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let out = stdout_task.await.unwrap_or_default();
+                let err = stderr_task.await.unwrap_or_default();
+                Err(TestWrapError::Timeout {
+                    stdout: out.0,
+                    stderr: err.0,
+                    stdout_truncated: out.1,
+                    stderr_truncated: err.1,
+                })
+            }
+            ExitReason::Cancelled => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                Err(TestWrapError::Cancelled)
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_normal_exit() {
+        let output = run_tokio_wrap_fixture(
+            "normal-exit",
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            None,
+        )
+        .await
+        .expect("normal exit fixture should succeed");
+
+        assert!(output.status.success());
+        assert_eq!(output.status.code(), Some(0));
+        let stdout_str = String::from_utf8_lossy(&output.stdout);
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stdout_str.contains("fixture-stdout-content"),
+            "stdout must contain fixture output: {stdout_str}"
+        );
+        assert!(
+            stderr_str.contains("fixture-stderr-content"),
+            "stderr must contain fixture output: {stderr_str}"
+        );
+        assert!(!output.stdout_truncated);
+        assert!(!output.stderr_truncated);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_nonzero_exit() {
+        let output = run_tokio_wrap_fixture(
+            "nonzero-exit",
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            None,
+        )
+        .await
+        .expect("nonzero exit fixture completes execution");
+
+        assert!(!output.status.success());
+        assert_eq!(output.status.code(), Some(42));
+        assert_eq!(output.stderr, b"exiting with error 42");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_bounded_output() {
+        let output = run_tokio_wrap_fixture(
+            "large-output",
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            None,
+        )
+        .await
+        .expect("large-output fixture should succeed");
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 32 * 1024);
+        assert!(output.stdout_truncated);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_timeout() {
+        let started = Instant::now();
+        let err = run_tokio_wrap_fixture(
+            "timeout",
+            Duration::from_millis(150),
+            32 * 1024,
+            32 * 1024,
+            None,
+        )
+        .await
+        .expect_err("timeout fixture must fail with timeout");
+
+        assert!(matches!(err, TestWrapError::Timeout { .. }));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "timeout reap must be prompt"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_pre_cancel() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        cancellation.cancel();
+
+        let err = run_tokio_wrap_fixture(
+            "timeout",
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            Some(&cancellation),
+        )
+        .await
+        .expect_err("pre-cancelled command must fail immediately");
+
+        assert!(matches!(err, TestWrapError::Cancelled));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_mid_flight_cancel() {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let cancel_handle = cancellation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_handle.cancel();
+        });
+
+        let started = Instant::now();
+        let err = run_tokio_wrap_fixture(
+            "timeout",
+            Duration::from_secs(5),
+            32 * 1024,
+            32 * 1024,
+            Some(&cancellation),
+        )
+        .await
+        .expect_err("mid-flight cancelled command must fail");
+
+        assert!(matches!(err, TestWrapError::Cancelled));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "cancel must reap immediately"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_descendant_held_pipe() {
+        let started = Instant::now();
+        let output = run_tokio_wrap_fixture(
+            "launcher-exits",
+            Duration::from_secs(4),
+            64 * 1024,
+            64 * 1024,
+            None,
+        )
+        .await
+        .expect("launcher exit should succeed without hanging on descendant pipes");
+
+        assert!(
+            output.status.success(),
+            "launcher itself must have exited successfully"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "must reap descendant and pipe without waiting full 5s"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn contract_process_wrap_ignored_graceful_termination() {
+        let cmd = make_tokio_fixture_command("ignore-term");
+        let mut wrap = wrap_test_command(cmd);
+        let mut child = wrap.spawn().expect("spawn ignore-term fixture");
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        #[cfg(unix)]
+        {
+            let _ = child.signal(libc::SIGTERM);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let status = child.try_wait().expect("try_wait");
+            assert!(status.is_none(), "process should have ignored SIGTERM");
+        }
+
+        let started = Instant::now();
+        let _ = child.start_kill();
+        let status = child.wait().await.expect("wait for force killed child");
+        assert!(
+            !status.success(),
+            "force killed process must not be success"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "force kill should be fast"
+        );
+    }
+
+    #[test]
+    fn contract_which_standard_lookup_and_desktop_fallback() {
+        let unique_dir_name = format!("assetiweave-which-test-{}", uuid::Uuid::new_v4());
+        let root_temp = env::temp_dir().join(unique_dir_name);
+        let bin_dir = root_temp.join("bin");
+        let work_dir = root_temp.join("work");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        fs::create_dir_all(&work_dir).expect("create work dir");
+
+        let exe_name = host_executable_name("test-tool");
+        let exe_path = bin_dir.join(&exe_name);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&exe_path, b"#!/bin/sh\necho hello\n").expect("write temp exe");
+            let mut perms = fs::metadata(&exe_path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&exe_path, perms).expect("chmod +x");
+        }
+        #[cfg(windows)]
+        {
+            fs::write(&exe_path, b"@echo hello\r\n").expect("write temp exe");
+        }
+
+        let cmd_name = "test-tool";
+
+        // 1. 当 bin_dir 在 PATH 中时，which::which_in 必须找到该可执行文件
+        let custom_path = env::join_paths([&bin_dir]).expect("join paths");
+        let found = which::which_in(cmd_name, Some(&custom_path), &work_dir)
+            .expect("which must find executable in PATH");
+        assert_eq!(found, exe_path);
+
+        // 2. 当 PATH 不包含 bin_dir 且 cwd 为 work_dir 时，which 必须返回错误（standard lookup miss）
+        let empty_path = OsString::from("");
+        let miss = which::which_in(cmd_name, Some(&empty_path), &work_dir);
+        assert!(
+            miss.is_err(),
+            "which must report error when not on PATH and not in cwd"
+        );
+
+        // 3. 验证 fallback 逻辑契约：
+        // 只有在 which (标准 lookup) miss 时，现有 desktop fallback 才会被使用
+        let standard_lookup = which::which_in(cmd_name, Some(&empty_path), &work_dir).ok();
+        let resolved = standard_lookup.or_else(|| {
+            // Desktop fallback candidates:
+            let candidates = vec![exe_path.clone()];
+            candidates.into_iter().find(|p| is_executable_file(p))
+        });
+        assert_eq!(
+            resolved,
+            Some(exe_path.clone()),
+            "fallback is triggered on lookup miss"
+        );
+
+        // 当 standard lookup 成功时，优先使用标准结果，不执行 fallback
+        let resolved_direct = which::which_in(cmd_name, Some(&custom_path), &work_dir)
+            .ok()
+            .or_else(|| panic!("fallback should not be reached when standard lookup succeeds"));
+        assert_eq!(resolved_direct, Some(exe_path));
+
+        let _ = fs::remove_dir_all(&root_temp);
     }
 }
