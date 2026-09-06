@@ -12,15 +12,15 @@
 
 ## Steps
 
-- [ ] 逐条读取 `01-contract.md`，为每个 Contract 引用一条行为测试和一条删除/保留证据。
-- [ ] 运行 Runtime、Event、HostProcess、Settings、Log、Path 和 Store 目标测试。
-- [ ] 运行全局删除查询，确认 backend runtime bridge、dispatcher thread/Condvar/detach、手工进程树和旧日志 façade 符合零命中要求。
-- [ ] 运行 G-FULL；记录每个命令、test count、warning count 和 exit code。
-- [ ] 使用临时路径运行桌面 startup self-check；运行 CLI-to-Engine e2e，确认协议 stdout 没有日志污染。
-- [ ] 检查最近一次 Windows CI：完整 workspace tests 包含 process-wrap Job Object fixture 且通过。
-- [ ] 运行 cargo audit、重复依赖和 feature 检查；确认新增依赖均有生产 owner 和删除收益。
-- [ ] 核对 #1、#2、#22：本 Issue 不反向修改其历史，相关残余项以 #24 当前证据为准。
-- [ ] 在 Issue #24 发布最终验收矩阵；任一 Contract 为 incomplete/contradicted/missing evidence 时保持 OPEN。
+- [x] 逐条读取 `01-contract.md`，为每个 Contract 引用一条行为测试和一条删除/保留证据。
+- [x] 运行 Runtime、Event、HostProcess、Settings、Log、Path 和 Store 目标测试。
+- [x] 运行全局删除查询，确认 backend runtime bridge、dispatcher thread/Condvar/detach、手工进程树和旧日志 façade 符合零命中要求。
+- [x] 运行 G-FULL；记录每个命令、test count、warning count 和 exit code。
+- [x] 使用临时路径运行桌面 startup self-check；运行 CLI-to-Engine e2e，确认协议 stdout 没有日志污染。
+- [x] 检查最近一次 Windows CI：完整 workspace tests 包含 process-wrap Job Object fixture 且通过。
+- [x] 运行 cargo audit、重复依赖和 feature 检查；确认新增依赖均有生产 owner 和删除收益。
+- [x] 核对 #1、#2、#22：本 Issue 不反向修改其历史，相关残余项以 #24 当前证据为准。
+- [x] 在 Issue #24 发布最终验收矩阵；任一 Contract 为 incomplete/contradicted/missing evidence 时保持 OPEN。
 
 ## Global delete queries
 
