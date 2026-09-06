@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
+use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -86,33 +86,63 @@ fn normalized_member_model(input: &crate::backend::models::TeamMemberInput) -> O
         .map(ToString::to_string)
 }
 
-fn map_team_row(row: &SqliteRow) -> AppResult<Team> {
-    Ok(Team {
-        id: row.try_get("id").map_err(AppError::external)?,
-        name: row.try_get("name").map_err(AppError::external)?,
-        description: row.try_get("description").map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
-    })
+#[derive(Debug, FromRow)]
+struct TeamRow {
+    id: String,
+    name: String,
+    description: Option<String>,
+    created_at: String,
+    updated_at: String,
 }
 
-fn map_team_member_row(row: &SqliteRow) -> AppResult<TeamMember> {
-    let role_raw: String = row.try_get("role").map_err(AppError::external)?;
-    let role: TeamRole = decode_enum_app(role_raw)?;
+impl TeamRow {
+    fn into_team(self) -> Team {
+        Team {
+            id: self.id,
+            name: self.name,
+            description: self.description,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
 
-    Ok(TeamMember {
-        id: row.try_get("id").map_err(AppError::external)?,
-        team_id: row.try_get("team_id").map_err(AppError::external)?,
-        role,
-        sort_order: row.try_get("sort_order").map_err(AppError::external)?,
-        agent_id: row.try_get("agent_id").map_err(AppError::external)?,
-        model: row.try_get("model").map_err(AppError::external)?,
-        execution_context_key: row
-            .try_get("execution_context_key")
-            .map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
-    })
+#[derive(Debug, FromRow)]
+struct TeamMemberRow {
+    id: String,
+    team_id: String,
+    role: String,
+    sort_order: i32,
+    agent_id: String,
+    model: Option<String>,
+    execution_context_key: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl TeamMemberRow {
+    fn into_team_member(self) -> AppResult<TeamMember> {
+        let role: TeamRole = decode_enum_app(self.role)?;
+
+        Ok(TeamMember {
+            id: self.id,
+            team_id: self.team_id,
+            role,
+            sort_order: self.sort_order,
+            agent_id: self.agent_id,
+            model: self.model,
+            execution_context_key: self.execution_context_key,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ExistingMemberContextRow {
+    id: String,
+    execution_context_key: String,
+    created_at: String,
 }
 
 pub(crate) async fn create_team_sqlx(
@@ -226,7 +256,7 @@ pub(crate) async fn get_team_detail_sqlx(
     tenant_id: &str,
     team_id: &str,
 ) -> AppResult<Option<TeamDetail>> {
-    let team_row = sqlx::query(
+    let team_row = sqlx::query_as::<_, TeamRow>(
         r#"
         SELECT id, name, description, created_at, updated_at
         FROM teams
@@ -243,9 +273,9 @@ pub(crate) async fn get_team_detail_sqlx(
         return Ok(None);
     };
 
-    let team = map_team_row(&team_row)?;
+    let team = team_row.into_team();
 
-    let member_rows = sqlx::query(
+    let member_rows = sqlx::query_as::<_, TeamMemberRow>(
         r#"
         SELECT id, team_id, role, sort_order, agent_id, model, execution_context_key, created_at, updated_at
         FROM team_members
@@ -260,8 +290,8 @@ pub(crate) async fn get_team_detail_sqlx(
     .map_err(AppError::external)?;
 
     let mut members = Vec::with_capacity(member_rows.len());
-    for row in &member_rows {
-        members.push(map_team_member_row(row)?);
+    for row in member_rows {
+        members.push(row.into_team_member()?);
     }
 
     Ok(Some(TeamDetail { team, members }))
@@ -271,7 +301,7 @@ pub(crate) async fn list_teams_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Vec<TeamDetail>> {
-    let team_rows = sqlx::query(
+    let team_rows = sqlx::query_as::<_, TeamRow>(
         r#"
         SELECT id, name, description, created_at, updated_at
         FROM teams
@@ -285,9 +315,9 @@ pub(crate) async fn list_teams_sqlx(
     .map_err(AppError::external)?;
 
     let mut results = Vec::with_capacity(team_rows.len());
-    for team_row in &team_rows {
-        let team = map_team_row(team_row)?;
-        let member_rows = sqlx::query(
+    for team_row in team_rows {
+        let team = team_row.into_team();
+        let member_rows = sqlx::query_as::<_, TeamMemberRow>(
             r#"
             SELECT id, team_id, role, sort_order, agent_id, model, execution_context_key, created_at, updated_at
             FROM team_members
@@ -302,8 +332,8 @@ pub(crate) async fn list_teams_sqlx(
         .map_err(AppError::external)?;
 
         let mut members = Vec::with_capacity(member_rows.len());
-        for row in &member_rows {
-            members.push(map_team_member_row(row)?);
+        for row in member_rows {
+            members.push(row.into_team_member()?);
         }
 
         results.push(TeamDetail { team, members });
@@ -339,9 +369,9 @@ pub(crate) async fn update_team_sqlx(
     }
 
     // Verify team exists
-    let existing_team = sqlx::query(
+    let team_created_at: Option<String> = sqlx::query_scalar(
         r#"
-        SELECT id, created_at
+        SELECT created_at
         FROM teams
         WHERE tenant_id = ?1 AND id = ?2
         "#,
@@ -352,16 +382,13 @@ pub(crate) async fn update_team_sqlx(
     .await
     .map_err(AppError::external)?;
 
-    let Some(existing_team_row) = existing_team else {
+    let Some(team_created_at) = team_created_at else {
         return Err(AppError::Validation(format!(
             "Team not found: {}",
             input.team_id
         )));
     };
 
-    let team_created_at: String = existing_team_row
-        .try_get("created_at")
-        .map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
 
     // Update team header
@@ -382,7 +409,7 @@ pub(crate) async fn update_team_sqlx(
     .map_err(AppError::external)?;
 
     // Load existing members to preserve stable execution_context_key and created_at
-    let existing_member_rows = sqlx::query(
+    let existing_member_rows = sqlx::query_as::<_, ExistingMemberContextRow>(
         r#"
         SELECT id, execution_context_key, created_at
         FROM team_members
@@ -396,13 +423,8 @@ pub(crate) async fn update_team_sqlx(
     .map_err(AppError::external)?;
 
     let mut existing_members_map = std::collections::HashMap::new();
-    for row in &existing_member_rows {
-        let id: String = row.try_get("id").map_err(AppError::external)?;
-        let context_key: String = row
-            .try_get("execution_context_key")
-            .map_err(AppError::external)?;
-        let created_at: String = row.try_get("created_at").map_err(AppError::external)?;
-        existing_members_map.insert(id, (context_key, created_at));
+    for row in existing_member_rows {
+        existing_members_map.insert(row.id, (row.execution_context_key, row.created_at));
     }
 
     // Delete current members in this transaction to rewrite with updated roster
@@ -564,45 +586,111 @@ fn parse_task_state(value: String) -> AppResult<crate::backend::models::TeamTask
     }
 }
 
-fn map_run_row(row: &SqliteRow) -> AppResult<crate::backend::models::TeamRun> {
-    let roster_json: String = row
-        .try_get("roster_snapshot_json")
-        .map_err(AppError::external)?;
-    Ok(crate::backend::models::TeamRun {
-        id: row.try_get("id").map_err(AppError::external)?,
-        team_id: row.try_get("team_id").map_err(AppError::external)?,
-        state: parse_run_state(row.try_get("state").map_err(AppError::external)?)?,
-        revision: row.try_get("revision").map_err(AppError::external)?,
-        leader_member_id: row
-            .try_get("leader_member_id")
-            .map_err(AppError::external)?,
-        roster_snapshot: serde_json::from_str(&roster_json).map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
-        finished_at: row.try_get("finished_at").map_err(AppError::external)?,
-        error_code: row.try_get("error_code").map_err(AppError::external)?,
-    })
+#[derive(Debug, FromRow)]
+struct TeamRunRow {
+    id: String,
+    team_id: String,
+    state: String,
+    revision: i64,
+    leader_member_id: String,
+    roster_snapshot_json: String,
+    created_at: String,
+    updated_at: String,
+    finished_at: Option<String>,
+    error_code: Option<String>,
 }
 
-fn map_task_row(row: &SqliteRow) -> AppResult<crate::backend::models::TeamTask> {
-    Ok(crate::backend::models::TeamTask {
-        id: row.try_get("id").map_err(AppError::external)?,
-        run_id: row.try_get("run_id").map_err(AppError::external)?,
-        team_id: row.try_get("team_id").map_err(AppError::external)?,
-        title: row.try_get("title").map_err(AppError::external)?,
-        description: row.try_get("description").map_err(AppError::external)?,
-        sort_order: row.try_get("sort_order").map_err(AppError::external)?,
-        recommended_member_id: row
-            .try_get("recommended_member_id")
-            .map_err(AppError::external)?,
-        owner_member_id: row.try_get("owner_member_id").map_err(AppError::external)?,
-        state: parse_task_state(row.try_get("state").map_err(AppError::external)?)?,
-        revision: row.try_get("revision").map_err(AppError::external)?,
-        result: row.try_get("result").map_err(AppError::external)?,
-        error_code: row.try_get("error_code").map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
-    })
+impl TeamRunRow {
+    fn into_team_run(self) -> AppResult<crate::backend::models::TeamRun> {
+        Ok(crate::backend::models::TeamRun {
+            id: self.id,
+            team_id: self.team_id,
+            state: parse_run_state(self.state)?,
+            revision: self.revision,
+            leader_member_id: self.leader_member_id,
+            roster_snapshot: serde_json::from_str(&self.roster_snapshot_json)
+                .map_err(AppError::external)?,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            finished_at: self.finished_at,
+            error_code: self.error_code,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct TeamTaskRow {
+    id: String,
+    run_id: String,
+    team_id: String,
+    title: String,
+    description: String,
+    sort_order: i32,
+    recommended_member_id: String,
+    owner_member_id: Option<String>,
+    state: String,
+    revision: i64,
+    result: Option<String>,
+    error_code: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl TeamTaskRow {
+    fn into_team_task(self) -> AppResult<crate::backend::models::TeamTask> {
+        Ok(crate::backend::models::TeamTask {
+            id: self.id,
+            run_id: self.run_id,
+            team_id: self.team_id,
+            title: self.title,
+            description: self.description,
+            sort_order: self.sort_order,
+            recommended_member_id: self.recommended_member_id,
+            owner_member_id: self.owner_member_id,
+            state: parse_task_state(self.state)?,
+            revision: self.revision,
+            result: self.result,
+            error_code: self.error_code,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct RunDraftStateRow {
+    team_id: String,
+    state: String,
+    roster_snapshot_json: String,
+}
+
+#[derive(Debug, FromRow)]
+struct CancelableTeamTaskRow {
+    id: String,
+    team_id: String,
+    run_id: String,
+    owner_member_id: Option<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct TaskReviewFactRow {
+    id: String,
+    title: String,
+    description: String,
+}
+
+#[derive(Debug, FromRow)]
+struct ConfirmTeamRunStateRow {
+    team_id: String,
+    state: String,
+    revision: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct FinishTeamTaskContextRow {
+    run_id: String,
+    team_id: String,
+    owner_member_id: Option<String>,
 }
 
 async fn load_team_tasks_sqlx(
@@ -610,7 +698,7 @@ async fn load_team_tasks_sqlx(
     tenant_id: &str,
     run_id: &str,
 ) -> AppResult<Vec<crate::backend::models::TeamTask>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, TeamTaskRow>(
         "SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 ORDER BY sort_order ASC, created_at ASC",
     )
     .bind(tenant_id)
@@ -618,7 +706,7 @@ async fn load_team_tasks_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
-    rows.iter().map(map_task_row).collect()
+    rows.into_iter().map(TeamTaskRow::into_team_task).collect()
 }
 
 pub(crate) async fn get_team_run_snapshot_sqlx(
@@ -626,7 +714,7 @@ pub(crate) async fn get_team_run_snapshot_sqlx(
     tenant_id: &str,
     run_id: &str,
 ) -> AppResult<Option<crate::backend::models::TeamRunSnapshot>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, TeamRunRow>(
         "SELECT id, team_id, state, revision, leader_member_id, roster_snapshot_json, created_at, updated_at, finished_at, error_code FROM team_runs WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -637,7 +725,7 @@ pub(crate) async fn get_team_run_snapshot_sqlx(
     let Some(row) = row else {
         return Ok(None);
     };
-    let run = map_run_row(&row)?;
+    let run = row.into_team_run()?;
     let tasks = load_team_tasks_sqlx(pool, tenant_id, run_id).await?;
     let unread_mailbox_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM team_mailbox_messages WHERE tenant_id = ?1 AND run_id = ?2 AND recipient_member_id = ?3 AND acked_at IS NULL",
@@ -747,25 +835,25 @@ pub(crate) async fn complete_team_run_draft_sqlx(
         ));
     }
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let row = sqlx::query("SELECT team_id, state, roster_snapshot_json FROM team_runs WHERE tenant_id = ?1 AND id = ?2")
+    let row = sqlx::query_as::<_, RunDraftStateRow>("SELECT team_id, state, roster_snapshot_json FROM team_runs WHERE tenant_id = ?1 AND id = ?2")
         .bind(tenant_id)
         .bind(run_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(AppError::external)?
         .ok_or_else(|| AppError::NotFound(format!("Team run not found: {run_id}")))?;
-    let team_id: String = row.try_get("team_id").map_err(AppError::external)?;
-    let state: String = row.try_get("state").map_err(AppError::external)?;
+    let RunDraftStateRow {
+        team_id,
+        state,
+        roster_snapshot_json,
+    } = row;
     if state != "drafting" {
         return Err(AppError::Conflict(
             "Team run is no longer drafting".to_string(),
         ));
     }
-    let roster: Vec<crate::backend::models::TeamRosterSnapshotMember> = serde_json::from_str(
-        &row.try_get::<String, _>("roster_snapshot_json")
-            .map_err(AppError::external)?,
-    )
-    .map_err(AppError::external)?;
+    let roster: Vec<crate::backend::models::TeamRosterSnapshotMember> =
+        serde_json::from_str(&roster_snapshot_json).map_err(AppError::external)?;
     let teammate_ids = roster
         .iter()
         .filter(|member| member.role == TeamRole::Teammate)
@@ -859,7 +947,7 @@ pub(crate) async fn cancel_team_run_sqlx(
     error_code: &str,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let task_rows = sqlx::query(
+    let task_rows = sqlx::query_as::<_, CancelableTeamTaskRow>(
         "SELECT id, team_id, run_id, owner_member_id FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 AND state IN ('queued', 'running')",
     )
     .bind(tenant_id)
@@ -869,11 +957,10 @@ pub(crate) async fn cancel_team_run_sqlx(
     .map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
     for row in task_rows {
-        let task_id: String = row.try_get("id").map_err(AppError::external)?;
-        let team_id: String = row.try_get("team_id").map_err(AppError::external)?;
+        let task_id = row.id;
+        let team_id = row.team_id;
         let owner: String = row
-            .try_get::<Option<String>, _>("owner_member_id")
-            .map_err(AppError::external)?
+            .owner_member_id
             .ok_or_else(|| AppError::Validation("Team task has no owner".to_string()))?;
         sqlx::query(
             "UPDATE team_tasks SET state = 'canceled', error_code = ?1, revision = revision + 1, updated_at = ?2 WHERE tenant_id = ?3 AND id = ?4 AND state IN ('queued', 'running')",
@@ -962,29 +1049,18 @@ pub(crate) async fn review_team_run_sqlx(
     let roster: Vec<crate::backend::models::TeamRosterSnapshotMember> =
         serde_json::from_str(&roster_json).map_err(AppError::external)?;
     let task_rows =
-        sqlx::query("SELECT id, title, description FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 ORDER BY id")
+        sqlx::query_as::<_, TaskReviewFactRow>("SELECT id, title, description FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 ORDER BY id")
             .bind(tenant_id)
             .bind(&input.run_id)
             .fetch_all(&mut *tx)
             .await
             .map_err(AppError::external)?;
-    let task_facts = task_rows
-        .iter()
-        .map(|row| {
-            Ok::<_, AppError>((
-                row.try_get::<String, _>("id").map_err(AppError::external)?,
-                row.try_get::<String, _>("title")
-                    .map_err(AppError::external)?,
-                row.try_get::<String, _>("description")
-                    .map_err(AppError::external)?,
-            ))
-        })
-        .collect::<AppResult<Vec<_>>>()?;
-    let expected = task_rows
-        .iter()
-        .map(|row| row.try_get::<String, _>("id"))
-        .collect::<Result<std::collections::HashSet<_>, _>>()
-        .map_err(AppError::external)?;
+    let expected: std::collections::HashSet<String> =
+        task_rows.iter().map(|row| row.id.clone()).collect();
+    let task_facts: Vec<(String, String, String)> = task_rows
+        .into_iter()
+        .map(|row| (row.id, row.title, row.description))
+        .collect();
     let mut supplied = std::collections::HashSet::new();
     let mut updates = Vec::with_capacity(input.tasks.len());
     for task in &input.tasks {
@@ -1060,7 +1136,7 @@ pub(crate) async fn confirm_team_run_sqlx(
     input: &crate::backend::models::TeamConfirmInput,
 ) -> AppResult<crate::backend::models::TeamRunSnapshot> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, ConfirmTeamRunStateRow>(
         "SELECT team_id, state, revision FROM team_runs WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -1074,9 +1150,9 @@ pub(crate) async fn confirm_team_run_sqlx(
             input.run_id
         )));
     };
-    let team_id: String = row.try_get("team_id").map_err(AppError::external)?;
-    let state: String = row.try_get("state").map_err(AppError::external)?;
-    let revision: i64 = row.try_get("revision").map_err(AppError::external)?;
+    let team_id = row.team_id;
+    let state = row.state;
+    let revision = row.revision;
     if state != "awaiting_review" {
         return Err(AppError::Conflict(
             "Only a run awaiting review can be confirmed".to_string(),
@@ -1111,12 +1187,12 @@ pub(crate) async fn claim_team_task_sqlx(
     task_id: &str,
 ) -> AppResult<Option<crate::backend::models::TeamTask>> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let row = sqlx::query("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
+    let row = sqlx::query_as::<_, TeamTaskRow>("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
         .bind(tenant_id).bind(task_id).fetch_optional(&mut *tx).await.map_err(AppError::external)?;
     let Some(row) = row else {
         return Ok(None);
     };
-    let task = map_task_row(&row)?;
+    let task = row.into_team_task()?;
     if !matches!(
         task.state,
         crate::backend::models::TeamTaskState::Queued
@@ -1145,9 +1221,9 @@ pub(crate) async fn get_team_task_sqlx(
     tenant_id: &str,
     task_id: &str,
 ) -> AppResult<Option<crate::backend::models::TeamTask>> {
-    let row = sqlx::query("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
+    let row = sqlx::query_as::<_, TeamTaskRow>("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
         .bind(tenant_id).bind(task_id).fetch_optional(pool).await.map_err(AppError::external)?;
-    row.as_ref().map(map_task_row).transpose()
+    row.map(TeamTaskRow::into_team_task).transpose()
 }
 
 pub(crate) async fn mark_team_task_running_sqlx(
@@ -1156,15 +1232,16 @@ pub(crate) async fn mark_team_task_running_sqlx(
     task_id: &str,
 ) -> AppResult<crate::backend::models::TeamTask> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let row = sqlx::query("SELECT run_id, state FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
-        .bind(tenant_id)
-        .bind(task_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(AppError::external)?
-        .ok_or_else(|| AppError::NotFound(format!("Team task not found: {task_id}")))?;
-    let run_id: String = row.try_get("run_id").map_err(AppError::external)?;
-    let state: String = row.try_get("state").map_err(AppError::external)?;
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT run_id, state FROM team_tasks WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(task_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(AppError::external)?
+    .ok_or_else(|| AppError::NotFound(format!("Team task not found: {task_id}")))?;
+    let (run_id, state) = row;
     let now = Utc::now().to_rfc3339();
     let dispatch_key = format!("{run_id}:{task_id}");
     if state == "running" {
@@ -1242,7 +1319,7 @@ pub(crate) async fn finish_team_task_sqlx(
         ));
     }
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let task = sqlx::query(
+    let task = sqlx::query_as::<_, FinishTeamTaskContextRow>(
         "SELECT run_id, team_id, owner_member_id FROM team_tasks WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -1255,23 +1332,22 @@ pub(crate) async fn finish_team_task_sqlx(
             "Team task not found: {task_id}"
         )));
     };
-    let run_id: String = task.try_get("run_id").map_err(AppError::external)?;
-    let team_id: String = task.try_get("team_id").map_err(AppError::external)?;
+    let run_id = task.run_id;
+    let team_id = task.team_id;
     let owner: String = task
-        .try_get::<Option<String>, _>("owner_member_id")
-        .map_err(AppError::external)?
+        .owner_member_id
         .ok_or_else(|| AppError::Validation("Team task has no owner".to_string()))?;
     let now = Utc::now().to_rfc3339();
     let updated = sqlx::query("UPDATE team_tasks SET state = ?1, result = ?2, error_code = ?3, revision = revision + 1, updated_at = ?4 WHERE tenant_id = ?5 AND id = ?6 AND state IN ('running', 'queued')")
         .bind(state.as_str()).bind(result).bind(error_code).bind(&now).bind(tenant_id).bind(task_id).execute(&mut *tx).await.map_err(AppError::external)?;
     if updated.rows_affected() == 0 {
-        let current = sqlx::query("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
+        let current = sqlx::query_as::<_, TeamTaskRow>("SELECT id, run_id, team_id, title, description, sort_order, recommended_member_id, owner_member_id, state, revision, result, error_code, created_at, updated_at FROM team_tasks WHERE tenant_id = ?1 AND id = ?2")
             .bind(tenant_id)
             .bind(task_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(AppError::external)?
-            .map(|row| map_task_row(&row))
+            .map(TeamTaskRow::into_team_task)
             .transpose()?;
         if let Some(current) = current.filter(|task| task.state.is_terminal()) {
             tx.rollback().await.map_err(AppError::external)?;

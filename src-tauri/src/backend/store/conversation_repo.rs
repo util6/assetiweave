@@ -23,7 +23,8 @@ use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{
-    sqlite::SqliteRow, AssertSqlSafe, Executor, Row as SqlxRow, Sqlite, SqlitePool, Transaction,
+    sqlite::SqliteRow, AssertSqlSafe, Executor, FromRow, Row as SqlxRow, Sqlite, SqlitePool,
+    Transaction,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -219,7 +220,7 @@ pub(crate) struct ConversationImportResult {
     pub(crate) warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, FromRow)]
 pub(crate) struct ConversationSyncDelta {
     pub(crate) sync_run_id: String,
     pub(crate) session_id: String,
@@ -323,7 +324,14 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
         upsert_conversation_adapter_package_sqlx(pool, &package).await?;
     }
 
-    let version_rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageInstallRow {
+        package_id: String,
+        version: String,
+        install_dir: String,
+    }
+
+    let version_rows = sqlx::query_as::<_, AdapterPackageInstallRow>(
         r#"
         SELECT package_id, version, install_dir
         FROM app_conversation_adapter_package_versions
@@ -333,9 +341,6 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
     .await
     .map_err(AppError::external)?;
     for row in version_rows {
-        let package_id: String = row.try_get(0).map_err(AppError::external)?;
-        let version: String = row.try_get(1).map_err(AppError::external)?;
-        let install_dir: String = row.try_get(2).map_err(AppError::external)?;
         sqlx::query(
             r#"
             UPDATE app_conversation_adapter_package_versions
@@ -343,9 +348,9 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
             WHERE package_id = ?2 AND version = ?3
             "#,
         )
-        .bind(normalize_conversation_path(&install_dir)?)
-        .bind(package_id)
-        .bind(version)
+        .bind(normalize_conversation_path(&row.install_dir)?)
+        .bind(row.package_id)
+        .bind(row.version)
         .execute(pool)
         .await
         .map_err(AppError::external)?;
@@ -710,7 +715,13 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     version: &ConversationAdapterPackageVersion,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let existing = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageVersionHashRow {
+        artifact_hash: Option<String>,
+        content_hash: String,
+    }
+
+    let existing = sqlx::query_as::<_, AdapterPackageVersionHashRow>(
         r#"
         SELECT artifact_hash, content_hash
         FROM app_conversation_adapter_package_versions
@@ -723,9 +734,9 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     .await
     .map_err(AppError::external)?;
     if let Some(existing) = existing {
-        let artifact_hash: Option<String> = existing.try_get(0).map_err(AppError::external)?;
-        let content_hash: String = existing.try_get(1).map_err(AppError::external)?;
-        if artifact_hash != version.artifact_hash || content_hash != version.content_hash {
+        if existing.artifact_hash != version.artifact_hash
+            || existing.content_hash != version.content_hash
+        {
             return Err(AppError::Conflict(format!(
                 "conversation adapter package version is immutable: {}@{}",
                 version.package_id, version.version
@@ -944,7 +955,32 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     pool: &SqlitePool,
     package_id: &str,
 ) -> AppResult<Vec<ConversationAdapterPackageVersion>> {
-    let rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageVersionRow {
+        package_id: String,
+        version: String,
+        install_dir: String,
+        artifact_hash: Option<String>,
+        content_hash: String,
+        runtime_gate_status: String,
+        installed_at: String,
+    }
+
+    impl AdapterPackageVersionRow {
+        fn into_domain(self) -> AppResult<ConversationAdapterPackageVersion> {
+            Ok(ConversationAdapterPackageVersion {
+                package_id: self.package_id,
+                version: self.version,
+                install_dir: normalize_conversation_path(&self.install_dir)?,
+                artifact_hash: self.artifact_hash,
+                content_hash: self.content_hash,
+                runtime_gate_status: decode_enum(self.runtime_gate_status)?,
+                installed_at: self.installed_at,
+            })
+        }
+    }
+
+    let rows = sqlx::query_as::<_, AdapterPackageVersionRow>(
         r#"
         SELECT package_id, version, install_dir, artifact_hash, content_hash,
                runtime_gate_status, installed_at
@@ -957,22 +993,8 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok(ConversationAdapterPackageVersion {
-                package_id: row.try_get(0).map_err(AppError::external)?,
-                version: row.try_get(1).map_err(AppError::external)?,
-                install_dir: normalize_conversation_path(
-                    &row.try_get::<String, _>(2).map_err(AppError::external)?,
-                )?,
-                artifact_hash: row.try_get(3).map_err(AppError::external)?,
-                content_hash: row.try_get(4).map_err(AppError::external)?,
-                runtime_gate_status: decode_enum(
-                    row.try_get::<String, _>(5).map_err(AppError::external)?,
-                )?,
-                installed_at: row.try_get(6).map_err(AppError::external)?,
-            })
-        })
+    rows.into_iter()
+        .map(AdapterPackageVersionRow::into_domain)
         .collect()
 }
 
@@ -1014,33 +1036,67 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     Ok(true)
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationAdapterCatalogReleaseRow {
+    catalog_url: String,
+    package_id: String,
+    adapter_id: String,
+    name: String,
+    publisher: String,
+    version: String,
+    channel: String,
+    released_at: Option<String>,
+    core_compatibility: String,
+    artifact_url: String,
+    artifact_size: Option<i64>,
+    artifact_sha256: String,
+    changelog_markdown: String,
+    breaking_change: i64,
+    runtime_protocol: String,
+    record_kind: String,
+    package_manifest_file: String,
+    adapter_manifest_file: String,
+    adapter_manifest_json: Option<String>,
+    source_json: Option<String>,
+    etag: Option<String>,
+    fetched_at: String,
+}
+
+impl ConversationAdapterCatalogReleaseRow {
+    fn into_domain(self) -> AppResult<ConversationAdapterCatalogRelease> {
+        Ok(ConversationAdapterCatalogRelease {
+            catalog_url: self.catalog_url,
+            package_id: self.package_id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            publisher: self.publisher,
+            version: self.version,
+            channel: decode_enum(self.channel)?,
+            released_at: self.released_at,
+            core_compatibility: self.core_compatibility,
+            artifact_url: self.artifact_url,
+            artifact_size: self.artifact_size,
+            artifact_sha256: self.artifact_sha256,
+            changelog_markdown: self.changelog_markdown,
+            breaking_change: self.breaking_change == 1,
+            runtime_protocol: self.runtime_protocol,
+            record_kind: decode_enum(self.record_kind)?,
+            package_manifest_file: self.package_manifest_file,
+            adapter_manifest_file: self.adapter_manifest_file,
+            adapter_manifest_json: self.adapter_manifest_json,
+            source_json: self.source_json,
+            etag: self.etag,
+            fetched_at: self.fetched_at,
+        })
+    }
+}
+
 fn map_sqlx_conversation_adapter_catalog_release(
     row: &SqliteRow,
 ) -> AppResult<ConversationAdapterCatalogRelease> {
-    Ok(ConversationAdapterCatalogRelease {
-        catalog_url: row.try_get(0).map_err(AppError::external)?,
-        package_id: row.try_get(1).map_err(AppError::external)?,
-        adapter_id: row.try_get(2).map_err(AppError::external)?,
-        name: row.try_get(3).map_err(AppError::external)?,
-        publisher: row.try_get(4).map_err(AppError::external)?,
-        version: row.try_get(5).map_err(AppError::external)?,
-        channel: decode_enum(row.try_get::<String, _>(6).map_err(AppError::external)?)?,
-        released_at: row.try_get(7).map_err(AppError::external)?,
-        core_compatibility: row.try_get(8).map_err(AppError::external)?,
-        artifact_url: row.try_get(9).map_err(AppError::external)?,
-        artifact_size: row.try_get(10).map_err(AppError::external)?,
-        artifact_sha256: row.try_get(11).map_err(AppError::external)?,
-        changelog_markdown: row.try_get(12).map_err(AppError::external)?,
-        breaking_change: row.try_get::<i64, _>(13).map_err(AppError::external)? == 1,
-        runtime_protocol: row.try_get(14).map_err(AppError::external)?,
-        record_kind: decode_enum(row.try_get::<String, _>(15).map_err(AppError::external)?)?,
-        package_manifest_file: row.try_get(16).map_err(AppError::external)?,
-        adapter_manifest_file: row.try_get(17).map_err(AppError::external)?,
-        adapter_manifest_json: row.try_get(18).map_err(AppError::external)?,
-        source_json: row.try_get(19).map_err(AppError::external)?,
-        etag: row.try_get(20).map_err(AppError::external)?,
-        fetched_at: row.try_get(21).map_err(AppError::external)?,
-    })
+    ConversationAdapterCatalogReleaseRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 #[cfg(test)]
@@ -1441,6 +1497,111 @@ pub(crate) async fn import_conversation_sessions_with_control_sqlx(
     })
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationSessionListItemRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+    question_count: i64,
+    turn_count: i64,
+}
+
+impl ConversationSessionListItemRow {
+    fn into_item(self) -> AppResult<ConversationSessionListItem> {
+        let question_count = usize::try_from(self.question_count)
+            .map_err(|_| AppError::external("invalid conversation question count"))?;
+        let turn_count = usize::try_from(self.turn_count)
+            .map_err(|_| AppError::external("invalid conversation turn count"))?;
+        let session = ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        };
+        Ok(ConversationSessionListItem {
+            session,
+            question_count,
+            turn_count,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct RecentConversationSessionRecordRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+    question_count: i64,
+    turn_count: i64,
+    last_activity_at: String,
+    cwd: Option<String>,
+    source_agent: String,
+}
+
+impl RecentConversationSessionRecordRow {
+    fn into_record(self) -> AppResult<RecentConversationSessionRecord> {
+        let question_count = usize::try_from(self.question_count)
+            .map_err(|_| AppError::external("invalid recent question count"))?;
+        let turn_count = usize::try_from(self.turn_count)
+            .map_err(|_| AppError::external("invalid recent turn count"))?;
+        let session = ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        };
+        Ok(RecentConversationSessionRecord {
+            session: ConversationSessionListItem {
+                session,
+                question_count,
+                turn_count,
+            },
+            last_activity_at: self.last_activity_at,
+            cwd: self.cwd,
+            source_agent: self.source_agent,
+            recent_events: Vec::new(),
+        })
+    }
+}
+
 pub(crate) async fn list_conversation_sessions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1452,7 +1613,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
@@ -1511,20 +1672,8 @@ pub(crate) async fn list_conversation_sessions_sqlx(
     .await
     .map_err(AppError::external)?;
 
-    rows.iter()
-        .map(|row| {
-            let question_count =
-                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation question count"))?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation turn count"))?;
-            Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row)?,
-                question_count,
-                turn_count,
-            })
-        })
+    rows.into_iter()
+        .map(ConversationSessionListItemRow::into_item)
         .collect()
 }
 
@@ -1624,35 +1773,19 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
     now: &str,
     excluded_project_root: &str,
 ) -> AppResult<Vec<RecentConversationSessionRecord>> {
-    let rows = sqlx::query(LIST_RECENT_CONVERSATION_SESSIONS_SQL)
-        .bind(tenant_id)
-        .bind(cutoff)
-        .bind(now)
-        .bind(excluded_project_root)
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::external)?;
+    let rows = sqlx::query_as::<_, RecentConversationSessionRecordRow>(
+        LIST_RECENT_CONVERSATION_SESSIONS_SQL,
+    )
+    .bind(tenant_id)
+    .bind(cutoff)
+    .bind(now)
+    .bind(excluded_project_root)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
 
-    rows.iter()
-        .map(|row| {
-            let question_count =
-                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid recent question count"))?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid recent turn count"))?;
-            Ok(RecentConversationSessionRecord {
-                session: ConversationSessionListItem {
-                    session: map_sqlx_conversation_session(row)?,
-                    question_count,
-                    turn_count,
-                },
-                last_activity_at: row.try_get(15).map_err(AppError::external)?,
-                cwd: row.try_get(16).map_err(AppError::external)?,
-                source_agent: row.try_get(17).map_err(AppError::external)?,
-                recent_events: Vec::new(),
-            })
-        })
+    rows.into_iter()
+        .map(RecentConversationSessionRecordRow::into_record)
         .collect()
 }
 
@@ -1818,7 +1951,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     question_id: &str,
 ) -> AppResult<Vec<ConversationBlockLocator>> {
     let tables = record_kind.tables();
-    let question_row = sqlx::query(AssertSqlSafe(format!(
+    let session_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
         "SELECT session_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
         tables.questions
     )))
@@ -1830,7 +1963,6 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     .ok_or_else(|| {
         AppError::external({ format!("conversation question not found: {question_id}") })
     })?;
-    let session_id: String = question_row.try_get(0).map_err(AppError::external)?;
 
     let turn_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
@@ -1922,6 +2054,88 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     Ok(locators)
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationTurnWithQuestionRow {
+    id: String,
+    session_id: String,
+    external_id: String,
+    turn_index: i64,
+    user_text: String,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    fingerprint: String,
+    missing: i64,
+    imported_at: String,
+    question_id: String,
+}
+
+impl ConversationTurnWithQuestionRow {
+    fn into_turn(self) -> (String, ConversationTurn) {
+        let question_id = self.question_id;
+        let turn = ConversationTurn {
+            id: self.id,
+            session_id: self.session_id,
+            external_id: self.external_id,
+            turn_index: self.turn_index,
+            user_text: self.user_text,
+            title: self.title,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            fingerprint: self.fingerprint,
+            missing: self.missing == 1,
+            imported_at: self.imported_at,
+        };
+        (question_id, turn)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationPartDetailRow {
+    id: String,
+    turn_id: String,
+    part_index: i64,
+    role: String,
+    kind: String,
+    text: Option<String>,
+    language: Option<String>,
+    command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    metadata_json: Option<String>,
+    content_card_json: Option<String>,
+    translated_text: Option<String>,
+    source_execution_id: Option<String>,
+    command_label: Option<String>,
+    question_id: String,
+    session_id: String,
+}
+
+impl ConversationPartDetailRow {
+    fn into_part(self) -> AppResult<(ConversationPart, String, String)> {
+        let part = ConversationPart {
+            id: self.id,
+            turn_id: self.turn_id,
+            part_index: self.part_index,
+            role: decode_enum(self.role)?,
+            kind: decode_enum(self.kind)?,
+            text: self.text,
+            language: self.language,
+            command: self.command,
+            cwd: self.cwd,
+            status: self.status,
+            exit_code: self.exit_code.map(|v| v as i32),
+            command_label: self.command_label,
+            source_execution_id: self.source_execution_id,
+            content_card: self.content_card_json.map(decode_json).transpose()?,
+            metadata_json: self.metadata_json,
+            translated_text: self.translated_text,
+        };
+        Ok((part, self.question_id, self.session_id))
+    }
+}
+
 pub(crate) async fn load_conversation_block_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1930,7 +2144,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
 ) -> AppResult<ConversationBlockDetail> {
     let tables = record_kind.tables();
     if let Some(turn_id) = block_id.strip_suffix("-question") {
-        let row = sqlx::query(AssertSqlSafe(format!(
+        let row = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(format!(
             r#"
             SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                    t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
@@ -1950,8 +2164,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         .ok_or_else(|| {
             AppError::external({ format!("conversation question block not found: {block_id}") })
         })?;
-        let turn = map_sqlx_conversation_turn(&row)?;
-        let question_id: String = row.try_get(11).map_err(AppError::external)?;
+        let (question_id, turn) = row.into_turn();
         let locator =
             conversation_question_block_locator(record_kind, &turn.session_id, &question_id, &turn);
         return Ok(ConversationBlockDetail {
@@ -1962,7 +2175,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     }
 
     let part_id = conversation_part_id_for_block_id(block_id);
-    let row = sqlx::query(AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
@@ -1985,9 +2198,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     .ok_or_else(|| {
         AppError::external({ format!("conversation content block not found: {block_id}") })
     })?;
-    let part = map_sqlx_conversation_part(&row)?;
-    let question_id: String = row.try_get(16).map_err(AppError::external)?;
-    let session_id: String = row.try_get(17).map_err(AppError::external)?;
+    let (part, question_id, session_id) = row.into_part()?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,
@@ -2462,7 +2673,7 @@ async fn load_conversation_question_details_for_session_sqlx(
             .push(membership);
     }
 
-    let turn_rows = sqlx::query(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
@@ -2482,12 +2693,9 @@ async fn load_conversation_question_details_for_session_sqlx(
     .await
     .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in &turn_rows {
-        let question_id = row.try_get::<String, _>(11).map_err(AppError::external)?;
-        turns_by_question
-            .entry(question_id)
-            .or_default()
-            .push(map_sqlx_conversation_turn(row)?);
+    for row in turn_rows {
+        let (question_id, turn) = row.into_turn();
+        turns_by_question.entry(question_id).or_default().push(turn);
     }
 
     let part_rows = sqlx::query(
@@ -2737,7 +2945,7 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
     let run_limit = i64::try_from(recent_run_limit.clamp(1, 20)).map_err(|_| {
         AppError::external({ "invalid recent conversation sync run limit".to_string() })
     })?;
-    let rows = sqlx::query(
+    sqlx::query_as::<_, ConversationSyncDelta>(
         r#"
         WITH recent_runs AS (
             SELECT r.id
@@ -2767,17 +2975,7 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
     .bind(run_limit)
     .fetch_all(pool)
     .await
-    .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok(ConversationSyncDelta {
-                sync_run_id: row.try_get(0).map_err(AppError::external)?,
-                session_id: row.try_get(1).map_err(AppError::external)?,
-                change_kind: row.try_get(2).map_err(AppError::external)?,
-                observed_at: row.try_get(3).map_err(AppError::external)?,
-            })
-        })
-        .collect()
+    .map_err(AppError::external)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3232,102 +3430,177 @@ fn builtin_sources(now: &str) -> Vec<ConversationSource> {
     ]
 }
 
-fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
-    let protocol_version = row
-        .try_get::<Option<i64>, _>(10)
-        .map_err(AppError::external)?
-        .map(|value| {
-            u32::try_from(value)
-                .map_err(|_| AppError::external({ format!("invalid protocol_version: {value}") }))
-        })
-        .transpose()?;
-    Ok(ConversationAdapter {
-        id: row.try_get(0).map_err(AppError::external)?,
-        name: row.try_get(1).map_err(AppError::external)?,
-        kind: decode_enum(row.try_get::<String, _>(2).map_err(AppError::external)?)?,
-        version: row.try_get(3).map_err(AppError::external)?,
-        enabled: row.try_get::<i64, _>(4).map_err(AppError::external)? == 1,
-        manifest_path: normalize_optional_conversation_path(
-            row.try_get::<Option<String>, _>(5)
-                .map_err(AppError::external)?
-                .as_deref(),
-        )?,
-        executable_path: normalize_optional_conversation_path(
-            row.try_get::<Option<String>, _>(6)
-                .map_err(AppError::external)?
-                .as_deref(),
-        )?,
-        content_hash: row.try_get(7).map_err(AppError::external)?,
-        trusted_hash: row.try_get(8).map_err(AppError::external)?,
-        trust_state: decode_enum(row.try_get::<String, _>(9).map_err(AppError::external)?)?,
-        protocol_version,
-        capabilities: decode_json(row.try_get::<String, _>(11).map_err(AppError::external)?)?,
-        input_kinds: decode_json(row.try_get::<String, _>(12).map_err(AppError::external)?)?,
-        card_contract_version: row
-            .try_get::<Option<i64>, _>(13)
-            .map_err(AppError::external)?
+#[derive(Debug, FromRow)]
+struct ConversationAdapterRow {
+    id: String,
+    name: String,
+    kind: String,
+    version: String,
+    enabled: i64,
+    manifest_path: Option<String>,
+    executable_path: Option<String>,
+    content_hash: Option<String>,
+    trusted_hash: Option<String>,
+    trust_state: String,
+    protocol_version: Option<i64>,
+    capabilities: String,
+    input_kinds: String,
+    card_contract_version: Option<i64>,
+    card_kinds_json: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationAdapterRow {
+    fn into_domain(self) -> AppResult<ConversationAdapter> {
+        let protocol_version = self
+            .protocol_version
+            .map(|value| {
+                u32::try_from(value).map_err(|_| {
+                    AppError::external({ format!("invalid protocol_version: {value}") })
+                })
+            })
+            .transpose()?;
+        let card_contract_version = self
+            .card_contract_version
             .map(|value| {
                 u32::try_from(value).map_err(|_| {
                     AppError::external({ format!("invalid card_contract_version: {value}") })
                 })
             })
-            .transpose()?,
-        card_kinds: decode_json(row.try_get::<String, _>(14).map_err(AppError::external)?)?,
-        created_at: row.try_get(15).map_err(AppError::external)?,
-        updated_at: row.try_get(16).map_err(AppError::external)?,
-    })
+            .transpose()?;
+        Ok(ConversationAdapter {
+            id: self.id,
+            name: self.name,
+            kind: decode_enum(self.kind)?,
+            version: self.version,
+            enabled: self.enabled == 1,
+            manifest_path: normalize_optional_conversation_path(self.manifest_path.as_deref())?,
+            executable_path: normalize_optional_conversation_path(self.executable_path.as_deref())?,
+            content_hash: self.content_hash,
+            trusted_hash: self.trusted_hash,
+            trust_state: decode_enum(self.trust_state)?,
+            protocol_version,
+            capabilities: decode_json(self.capabilities)?,
+            input_kinds: decode_json(self.input_kinds)?,
+            card_contract_version,
+            card_kinds: decode_json(self.card_kinds_json)?,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
+    ConversationAdapterRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationAdapterPackageRow {
+    package_id: String,
+    adapter_id: String,
+    name: String,
+    version: String,
+    record_kind: String,
+    install_dir: String,
+    manifest_path: String,
+    adapter_manifest_path: String,
+    runtime_protocol: String,
+    runtime_ready: i64,
+    origin: String,
+    source_url: Option<String>,
+    git_ref: Option<String>,
+    git_commit: Option<String>,
+    catalog_url: Option<String>,
+    update_policy: String,
+    latest_version: Option<String>,
+    last_checked_at: Option<String>,
+    runtime_gate_status: String,
+    runtime_validated_at: Option<String>,
+    installed_content_hash: Option<String>,
+    trusted_package_hash: Option<String>,
+    error_message: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationAdapterPackageRow {
+    fn into_domain(self) -> AppResult<ConversationAdapterPackage> {
+        Ok(ConversationAdapterPackage {
+            package_id: self.package_id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            version: self.version,
+            record_kind: decode_enum(self.record_kind)?,
+            install_dir: normalize_conversation_path(&self.install_dir)?,
+            manifest_path: normalize_conversation_path(&self.manifest_path)?,
+            adapter_manifest_path: normalize_conversation_path(&self.adapter_manifest_path)?,
+            runtime_protocol: self.runtime_protocol,
+            runtime_ready: self.runtime_ready == 1,
+            origin: decode_enum(self.origin)?,
+            source_url: self.source_url,
+            git_ref: self.git_ref,
+            git_commit: self.git_commit,
+            catalog_url: self.catalog_url,
+            update_policy: decode_enum(self.update_policy)?,
+            latest_version: self.latest_version,
+            last_checked_at: self.last_checked_at,
+            runtime_gate_status: decode_enum(self.runtime_gate_status)?,
+            runtime_validated_at: self.runtime_validated_at,
+            installed_content_hash: self.installed_content_hash,
+            trusted_package_hash: self.trusted_package_hash,
+            error_message: self.error_message,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<ConversationAdapterPackage> {
-    let install_dir: String = row.try_get(5).map_err(AppError::external)?;
-    let manifest_path: String = row.try_get(6).map_err(AppError::external)?;
-    let adapter_manifest_path: String = row.try_get(7).map_err(AppError::external)?;
-    Ok(ConversationAdapterPackage {
-        package_id: row.try_get(0).map_err(AppError::external)?,
-        adapter_id: row.try_get(1).map_err(AppError::external)?,
-        name: row.try_get(2).map_err(AppError::external)?,
-        version: row.try_get(3).map_err(AppError::external)?,
-        record_kind: decode_enum(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
-        install_dir: normalize_conversation_path(&install_dir)?,
-        manifest_path: normalize_conversation_path(&manifest_path)?,
-        adapter_manifest_path: normalize_conversation_path(&adapter_manifest_path)?,
-        runtime_protocol: row.try_get(8).map_err(AppError::external)?,
-        runtime_ready: row.try_get::<i64, _>(9).map_err(AppError::external)? == 1,
-        origin: decode_enum(row.try_get::<String, _>(10).map_err(AppError::external)?)?,
-        source_url: row.try_get(11).map_err(AppError::external)?,
-        git_ref: row.try_get(12).map_err(AppError::external)?,
-        git_commit: row.try_get(13).map_err(AppError::external)?,
-        catalog_url: row.try_get(14).map_err(AppError::external)?,
-        update_policy: decode_enum(row.try_get::<String, _>(15).map_err(AppError::external)?)?,
-        latest_version: row.try_get(16).map_err(AppError::external)?,
-        last_checked_at: row.try_get(17).map_err(AppError::external)?,
-        runtime_gate_status: decode_enum(
-            row.try_get::<String, _>(18).map_err(AppError::external)?,
-        )?,
-        runtime_validated_at: row.try_get(19).map_err(AppError::external)?,
-        installed_content_hash: row.try_get(20).map_err(AppError::external)?,
-        trusted_package_hash: row.try_get(21).map_err(AppError::external)?,
-        error_message: row.try_get(22).map_err(AppError::external)?,
-        created_at: row.try_get(23).map_err(AppError::external)?,
-        updated_at: row.try_get(24).map_err(AppError::external)?,
-    })
+    ConversationAdapterPackageRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationSourceRow {
+    id: String,
+    adapter_id: String,
+    name: String,
+    kind: String,
+    location: String,
+    config_json: Option<String>,
+    enabled: i64,
+    last_synced_at: Option<String>,
+    last_sync_status: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationSourceRow {
+    fn into_domain(self) -> AppResult<ConversationSource> {
+        Ok(ConversationSource {
+            id: self.id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            kind: decode_enum(self.kind)?,
+            location: normalize_conversation_source_location(&self.location)?,
+            config_json: self.config_json,
+            enabled: self.enabled == 1,
+            last_synced_at: self.last_synced_at,
+            last_sync_status: self.last_sync_status,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource> {
-    let location: String = row.try_get(4).map_err(AppError::external)?;
-    Ok(ConversationSource {
-        id: row.try_get(0).map_err(AppError::external)?,
-        adapter_id: row.try_get(1).map_err(AppError::external)?,
-        name: row.try_get(2).map_err(AppError::external)?,
-        kind: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        location: normalize_conversation_source_location(&location)?,
-        config_json: row.try_get(5).map_err(AppError::external)?,
-        enabled: row.try_get::<i64, _>(6).map_err(AppError::external)? == 1,
-        last_synced_at: row.try_get(7).map_err(AppError::external)?,
-        last_sync_status: row.try_get(8).map_err(AppError::external)?,
-        created_at: row.try_get(9).map_err(AppError::external)?,
-        updated_at: row.try_get(10).map_err(AppError::external)?,
-    })
+    ConversationSourceRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 fn normalize_conversation_source_location(location: &str) -> AppResult<String> {
@@ -3349,88 +3622,193 @@ fn normalize_optional_conversation_path(path: Option<&str>) -> AppResult<Option<
     path.map(normalize_conversation_path).transpose()
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationSessionRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+}
+
+impl ConversationSessionRow {
+    fn into_domain(self) -> ConversationSession {
+        ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        }
+    }
+}
+
 pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
-    Ok(ConversationSession {
-        id: row.try_get(0).map_err(AppError::external)?,
-        source_id: row.try_get(1).map_err(AppError::external)?,
-        adapter_id: row.try_get(2).map_err(AppError::external)?,
-        external_id: row.try_get(3).map_err(AppError::external)?,
-        title: row.try_get(4).map_err(AppError::external)?,
-        project_path: row.try_get(5).map_err(AppError::external)?,
-        started_at: row.try_get(6).map_err(AppError::external)?,
-        updated_at: row.try_get(7).map_err(AppError::external)?,
-        source_locator: row.try_get(8).map_err(AppError::external)?,
-        source_fingerprint: row.try_get(9).map_err(AppError::external)?,
-        missing: row.try_get::<i64, _>(10).map_err(AppError::external)? == 1,
-        created_at: row.try_get(11).map_err(AppError::external)?,
-        imported_at: row.try_get(12).map_err(AppError::external)?,
-    })
+    Ok(ConversationSessionRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationTurnRow {
+    id: String,
+    session_id: String,
+    external_id: String,
+    turn_index: i64,
+    user_text: String,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    fingerprint: String,
+    missing: i64,
+    imported_at: String,
+}
+
+impl ConversationTurnRow {
+    fn into_domain(self) -> ConversationTurn {
+        ConversationTurn {
+            id: self.id,
+            session_id: self.session_id,
+            external_id: self.external_id,
+            turn_index: self.turn_index,
+            user_text: self.user_text,
+            title: self.title,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            fingerprint: self.fingerprint,
+            missing: self.missing == 1,
+            imported_at: self.imported_at,
+        }
+    }
 }
 
 pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
-    Ok(ConversationTurn {
-        id: row.try_get(0).map_err(AppError::external)?,
-        session_id: row.try_get(1).map_err(AppError::external)?,
-        external_id: row.try_get(2).map_err(AppError::external)?,
-        turn_index: row.try_get(3).map_err(AppError::external)?,
-        user_text: row.try_get(4).map_err(AppError::external)?,
-        title: row.try_get(5).map_err(AppError::external)?,
-        started_at: row.try_get(6).map_err(AppError::external)?,
-        ended_at: row.try_get(7).map_err(AppError::external)?,
-        fingerprint: row.try_get(8).map_err(AppError::external)?,
-        missing: row.try_get::<i64, _>(9).map_err(AppError::external)? == 1,
-        imported_at: row.try_get(10).map_err(AppError::external)?,
-    })
+    Ok(ConversationTurnRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationPartRow {
+    id: String,
+    turn_id: String,
+    part_index: i64,
+    role: String,
+    kind: String,
+    text: Option<String>,
+    language: Option<String>,
+    command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    metadata_json: Option<String>,
+    command_label: Option<String>,
+    source_execution_id: Option<String>,
+    content_card_json: Option<String>,
+    translated_text: Option<String>,
+}
+
+impl ConversationPartRow {
+    fn into_domain(self) -> AppResult<ConversationPart> {
+        Ok(ConversationPart {
+            id: self.id,
+            turn_id: self.turn_id,
+            part_index: self.part_index,
+            role: decode_enum(self.role)?,
+            kind: decode_enum(self.kind)?,
+            text: self.text,
+            language: self.language,
+            command: self.command,
+            cwd: self.cwd,
+            status: self.status,
+            exit_code: self.exit_code.map(|v| v as i32),
+            command_label: self.command_label,
+            source_execution_id: self.source_execution_id,
+            content_card: self.content_card_json.map(decode_json).transpose()?,
+            metadata_json: self.metadata_json,
+            translated_text: self.translated_text,
+        })
+    }
 }
 
 pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
-    Ok(ConversationPart {
-        id: row.try_get(0).map_err(AppError::external)?,
-        turn_id: row.try_get(1).map_err(AppError::external)?,
-        part_index: row.try_get(2).map_err(AppError::external)?,
-        role: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        kind: decode_enum(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
-        text: row.try_get(5).map_err(AppError::external)?,
-        language: row.try_get(6).map_err(AppError::external)?,
-        command: row.try_get(7).map_err(AppError::external)?,
-        cwd: row.try_get(8).map_err(AppError::external)?,
-        status: row.try_get(9).map_err(AppError::external)?,
-        exit_code: row.try_get(10).map_err(AppError::external)?,
-        metadata_json: row.try_get(11).map_err(AppError::external)?,
-        command_label: row.try_get("command_label").map_err(AppError::external)?,
-        source_execution_id: row
-            .try_get("source_execution_id")
-            .map_err(AppError::external)?,
-        content_card: row
-            .try_get::<Option<String>, _>(12)
-            .map_err(AppError::external)?
-            .map(decode_json)
-            .transpose()?,
-        translated_text: row.try_get(13).map_err(AppError::external)?,
-    })
+    ConversationPartRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationQuestionRow {
+    id: String,
+    session_id: String,
+    title: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationQuestionRow {
+    fn into_domain(self) -> ConversationQuestion {
+        ConversationQuestion {
+            id: self.id,
+            session_id: self.session_id,
+            title: self.title,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<ConversationQuestion> {
-    Ok(ConversationQuestion {
-        id: row.try_get(0).map_err(AppError::external)?,
-        session_id: row.try_get(1).map_err(AppError::external)?,
-        title: row.try_get(2).map_err(AppError::external)?,
-        created_at: row.try_get(3).map_err(AppError::external)?,
-        updated_at: row.try_get(4).map_err(AppError::external)?,
-    })
+    Ok(ConversationQuestionRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationQuestionTurnRow {
+    question_id: String,
+    turn_id: String,
+    turn_order: i64,
+    assignment_origin: String,
+    assigned_at: String,
+    updated_at: String,
+}
+
+impl ConversationQuestionTurnRow {
+    fn into_domain(self) -> AppResult<ConversationQuestionTurn> {
+        Ok(ConversationQuestionTurn {
+            question_id: self.question_id,
+            turn_id: self.turn_id,
+            turn_order: self.turn_order,
+            assignment_origin: decode_enum(self.assignment_origin)?,
+            assigned_at: self.assigned_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 pub(super) fn map_sqlx_conversation_question_turn(
     row: &SqliteRow,
 ) -> AppResult<ConversationQuestionTurn> {
-    Ok(ConversationQuestionTurn {
-        question_id: row.try_get(0).map_err(AppError::external)?,
-        turn_id: row.try_get(1).map_err(AppError::external)?,
-        turn_order: row.try_get(2).map_err(AppError::external)?,
-        assignment_origin: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        assigned_at: row.try_get(4).map_err(AppError::external)?,
-        updated_at: row.try_get(5).map_err(AppError::external)?,
-    })
+    ConversationQuestionTurnRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 fn conversation_session_from_normalized(
@@ -3493,7 +3871,18 @@ async fn conversation_session_is_unchanged_sqlx_tx(
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
-    let Some(row) = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct ConversationSessionUnchangedCheckRow {
+        title: String,
+        project_path: Option<String>,
+        started_at: Option<String>,
+        updated_at: Option<String>,
+        source_locator: Option<String>,
+        source_fingerprint: Option<String>,
+        missing: i64,
+    }
+
+    let Some(row) = sqlx::query_as::<_, ConversationSessionUnchangedCheckRow>(
         r#"
         SELECT title, project_path, started_at, updated_at, source_locator,
                source_fingerprint, missing
@@ -3511,21 +3900,13 @@ async fn conversation_session_is_unchanged_sqlx_tx(
         return Ok(false);
     };
 
-    let title: String = row.try_get(0).map_err(AppError::external)?;
-    let project_path: Option<String> = row.try_get(1).map_err(AppError::external)?;
-    let started_at: Option<String> = row.try_get(2).map_err(AppError::external)?;
-    let updated_at: Option<String> = row.try_get(3).map_err(AppError::external)?;
-    let source_locator: Option<String> = row.try_get(4).map_err(AppError::external)?;
-    let existing_fingerprint: Option<String> = row.try_get(5).map_err(AppError::external)?;
-    let missing: i64 = row.try_get(6).map_err(AppError::external)?;
-
-    Ok(title == session.title
-        && project_path == session.project_path
-        && started_at == session.started_at
-        && updated_at == session.updated_at
-        && source_locator == session.source_locator
-        && existing_fingerprint.as_deref() == Some(source_fingerprint)
-        && missing == 0
+    Ok(row.title == session.title
+        && row.project_path == session.project_path
+        && row.started_at == session.started_at
+        && row.updated_at == session.updated_at
+        && row.source_locator == session.source_locator
+        && row.source_fingerprint.as_deref() == Some(source_fingerprint)
+        && row.missing == 0
         && conversation_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
             .await?)
 }
@@ -3552,7 +3933,14 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
     session_id: &str,
     normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
-    let rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct ConversationTurnUnchangedCheckRow {
+        external_id: String,
+        fingerprint: String,
+        missing: i64,
+    }
+
+    let rows = sqlx::query_as::<_, ConversationTurnUnchangedCheckRow>(
         r#"
         SELECT external_id, fingerprint, missing
         FROM conversation_turns
@@ -3569,12 +3957,9 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
         return Ok(false);
     }
     for (row, turn) in rows.iter().zip(&normalized.turns) {
-        let external_id: String = row.try_get(0).map_err(AppError::external)?;
-        let fingerprint: String = row.try_get(1).map_err(AppError::external)?;
-        let missing: i64 = row.try_get(2).map_err(AppError::external)?;
-        if external_id != turn.external_id
-            || fingerprint != conversation_turn_fingerprint(turn)
-            || missing != 0
+        if row.external_id != turn.external_id
+            || row.fingerprint != conversation_turn_fingerprint(turn)
+            || row.missing != 0
         {
             return Ok(false);
         }
@@ -3849,18 +4234,15 @@ async fn prune_conversation_turns_sqlx_tx(
         .filter(|turn| !turn.user_text.trim().is_empty())
         .map(|turn| stable_id("conversation-turn", &[session_id, &turn.external_id]))
         .collect::<BTreeSet<_>>();
-    let rows =
-        sqlx::query("SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2")
-            .bind(tenant_id)
-            .bind(session_id)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
-    let stale_turn_ids = rows
-        .iter()
-        .map(|row| row.try_get::<String, _>(0))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::external)?
+    let turn_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    let stale_turn_ids = turn_ids
         .into_iter()
         .filter(|turn_id| !retained_turn_ids.contains(turn_id))
         .collect::<Vec<_>>();
@@ -4127,11 +4509,18 @@ async fn ensure_question_turn_scope_sqlx_tx(
     Ok(())
 }
 
+#[derive(Debug, FromRow)]
+struct InvalidConversationQuestionTurnRow {
+    question_id: String,
+    turn_id: String,
+    reason: String,
+}
+
 async fn reject_invalid_conversation_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
 ) -> AppResult<()> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, InvalidConversationQuestionTurnRow>(
         r#"
         SELECT qt.question_id, qt.turn_id,
                CASE
@@ -4153,23 +4542,20 @@ async fn reject_invalid_conversation_question_turns_sqlx_tx(
     .fetch_all(&mut **tx)
     .await
     .map_err(AppError::external)?;
-    if rows.is_empty() {
-        return Ok(());
+    if let Some(first) = rows.first() {
+        return Err(AppError::Validation(format!(
+            "invalid question turn membership ({}): question={}, turn={}",
+            first.reason, first.question_id, first.turn_id
+        )));
     }
-
-    let question_id: String = rows[0].try_get(0).map_err(AppError::external)?;
-    let turn_id: String = rows[0].try_get(1).map_err(AppError::external)?;
-    let reason: String = rows[0].try_get(2).map_err(AppError::external)?;
-    Err(AppError::Validation(format!(
-        "invalid question turn membership ({reason}): question={question_id}, turn={turn_id}"
-    )))
+    Ok(())
 }
 
 async fn audit_invalid_conversation_question_turns_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<()> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, InvalidConversationQuestionTurnRow>(
         r#"
         SELECT qt.question_id, qt.turn_id,
                CASE
@@ -4207,9 +4593,9 @@ async fn audit_invalid_conversation_question_turns_sqlx(
             "#,
         )
         .bind(tenant_id)
-        .bind(row.try_get::<String, _>(0).map_err(AppError::external)?)
-        .bind(row.try_get::<String, _>(1).map_err(AppError::external)?)
-        .bind(row.try_get::<String, _>(2).map_err(AppError::external)?)
+        .bind(&row.question_id)
+        .bind(&row.turn_id)
+        .bind(&row.reason)
         .bind(&detected_at)
         .execute(&mut *tx)
         .await
@@ -4805,7 +5191,7 @@ async fn load_search_sessions_sqlx(
         questions = tables.questions,
         turns = tables.turns,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -4813,23 +5199,8 @@ async fn load_search_sessions_sqlx(
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            let question_count = usize::try_from(
-                row.try_get::<i64, _>(13).map_err(AppError::external)?,
-            )
-            .map_err(|_| {
-                AppError::external({ "invalid conversation search question count".to_string() })
-            })?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation search turn count"))?;
-            Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row)?,
-                question_count,
-                turn_count,
-            })
-        })
+    rows.into_iter()
+        .map(ConversationSessionListItemRow::into_item)
         .collect()
 }
 
@@ -4908,7 +5279,7 @@ async fn load_search_turns_sqlx(
         question_turns = tables.question_turns,
         sessions = tables.sessions,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -4917,12 +5288,9 @@ async fn load_search_turns_sqlx(
         .await
         .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in &rows {
-        let question_id = row.try_get::<String, _>(11).map_err(AppError::external)?;
-        turns_by_question
-            .entry(question_id)
-            .or_default()
-            .push(map_sqlx_conversation_turn(row)?);
+    for row in rows {
+        let (question_id, turn) = row.into_turn();
+        turns_by_question.entry(question_id).or_default().push(turn);
     }
     Ok(turns_by_question)
 }
@@ -5227,22 +5595,27 @@ fn search_entries_for_part(
     .collect()
 }
 
+#[derive(Debug, FromRow)]
+struct AdapterCardKindsRow {
+    id: String,
+    card_kinds_json: String,
+}
+
 async fn load_search_adapter_card_kinds_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<BTreeMap<String, Vec<ConversationCardKindDefinition>>> {
-    let rows =
-        sqlx::query("SELECT id, card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1")
-            .bind(tenant_id)
-            .fetch_all(pool)
-            .await
-            .map_err(AppError::external)?;
-    rows.iter()
+    let rows = sqlx::query_as::<_, AdapterCardKindsRow>(
+        "SELECT id, card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    rows.into_iter()
         .map(|row| {
-            let adapter_id = row.try_get(0).map_err(AppError::external)?;
-            let definitions =
-                decode_json(row.try_get::<String, _>(1).map_err(AppError::external)?)?;
-            Ok((adapter_id, definitions))
+            let definitions = decode_json(row.card_kinds_json)?;
+            Ok((row.id, definitions))
         })
         .collect()
 }
@@ -5452,8 +5825,13 @@ mod tests {
         ));
         let database = Database::open_async(&db_path).await.expect("open database");
         let explain = format!("EXPLAIN QUERY PLAN {LIST_RECENT_CONVERSATION_SESSIONS_SQL}");
+        #[derive(Debug, FromRow)]
+        struct SqliteExplainQueryPlanRow {
+            detail: String,
+        }
+
         let details = async {
-            let rows = sqlx::query(AssertSqlSafe(explain))
+            let rows = sqlx::query_as::<_, SqliteExplainQueryPlanRow>(AssertSqlSafe(explain))
                 .bind(TEST_TENANT_ID)
                 .bind("2026-08-29T00:00:00Z")
                 .bind("2026-09-01T00:00:00Z")
@@ -5461,9 +5839,7 @@ mod tests {
                 .fetch_all(database.pool())
                 .await
                 .map_err(AppError::external)?;
-            rows.iter()
-                .map(|row| row.try_get::<String, _>(3).map_err(AppError::external))
-                .collect::<AppResult<Vec<_>>>()
+            Ok::<_, AppError>(rows.into_iter().map(|row| row.detail).collect::<Vec<_>>())
         }
         .await
         .expect("explain recent query");

@@ -9,7 +9,7 @@ use crate::backend::models::{
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::Utc;
 use sha2::{Digest, Sha256};
-use sqlx::{Row as SqlxRow, Sqlite, SqlitePool, Transaction};
+use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
 
 use super::{
@@ -18,8 +18,8 @@ use super::{
         append_projected_cards_to_question_aggregate, insert_conversation_sync_delta_sqlx_tx,
         map_sqlx_conversation_part, map_sqlx_conversation_question,
         map_sqlx_conversation_question_turn, map_sqlx_conversation_session,
-        map_sqlx_conversation_turn, project_question_content_nodes, project_question_title,
-        ConversationImportResult, CONVERSATION_IMPORT_BATCH_SIZE,
+        project_question_content_nodes, project_question_title, ConversationImportResult,
+        CONVERSATION_IMPORT_BATCH_SIZE,
     },
 };
 
@@ -170,6 +170,25 @@ pub(crate) async fn import_web_record_sessions_sqlx(
     })
 }
 
+#[derive(Debug, FromRow)]
+struct WebRecordSessionListItemRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+    question_count: i64,
+    turn_count: i64,
+}
+
 pub(crate) async fn list_web_record_sessions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -181,7 +200,7 @@ pub(crate) async fn list_web_record_sessions_sqlx(
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, WebRecordSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, NULL AS project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
@@ -241,18 +260,30 @@ pub(crate) async fn list_web_record_sessions_sqlx(
     .await
     .map_err(AppError::external)?;
 
-    rows.iter()
+    rows.into_iter()
         .map(|row| {
-            let question_count =
-                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
-                    .map_err(|_| "invalid web record question count".to_string())
-                    .map_err(AppError::external)?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| "invalid web record turn count".to_string())
-                    .map_err(AppError::external)?;
+            let question_count = usize::try_from(row.question_count)
+                .map_err(|_| "invalid web record question count".to_string())
+                .map_err(AppError::external)?;
+            let turn_count = usize::try_from(row.turn_count)
+                .map_err(|_| "invalid web record turn count".to_string())
+                .map_err(AppError::external)?;
             Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row).map_err(AppError::external)?,
+                session: ConversationSession {
+                    id: row.id,
+                    source_id: row.source_id,
+                    adapter_id: row.adapter_id,
+                    external_id: row.external_id,
+                    title: row.title,
+                    project_path: row.project_path,
+                    started_at: row.started_at,
+                    updated_at: row.updated_at,
+                    source_locator: row.source_locator,
+                    source_fingerprint: row.source_fingerprint,
+                    missing: row.missing == 1,
+                    created_at: row.created_at,
+                    imported_at: row.imported_at,
+                },
                 question_count,
                 turn_count,
             })
@@ -422,7 +453,23 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
             .push(membership);
     }
 
-    let turn_rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct WebRecordDetailTurnRow {
+        id: String,
+        session_id: String,
+        external_id: String,
+        turn_index: i64,
+        user_text: String,
+        title: Option<String>,
+        started_at: Option<String>,
+        ended_at: Option<String>,
+        fingerprint: String,
+        missing: i64,
+        imported_at: String,
+        question_id: String,
+    }
+
+    let turn_rows = sqlx::query_as::<_, WebRecordDetailTurnRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
@@ -442,12 +489,24 @@ pub(crate) async fn load_web_record_session_detail_sqlx(
     .await
     .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in &turn_rows {
-        let question_id = row.try_get(11).map_err(AppError::external)?;
+    for row in turn_rows {
+        let question_id = row.question_id;
         turns_by_question
             .entry(question_id)
             .or_default()
-            .push(map_sqlx_conversation_turn(row).map_err(AppError::external)?);
+            .push(ConversationTurn {
+                id: row.id,
+                session_id: row.session_id,
+                external_id: row.external_id,
+                turn_index: row.turn_index,
+                user_text: row.user_text,
+                title: row.title,
+                started_at: row.started_at,
+                ended_at: row.ended_at,
+                fingerprint: row.fingerprint,
+                missing: row.missing == 1,
+                imported_at: row.imported_at,
+            });
     }
 
     let part_rows = sqlx::query(
@@ -663,6 +722,16 @@ async fn delete_web_record_session_sqlx_tx(
     Ok(())
 }
 
+#[derive(Debug, FromRow)]
+struct ExistingWebRecordSessionRow {
+    title: String,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+}
+
 async fn web_record_session_is_unchanged_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
@@ -672,7 +741,7 @@ async fn web_record_session_is_unchanged_sqlx_tx(
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
-    let Some(row) = sqlx::query(
+    let Some(row) = sqlx::query_as::<_, ExistingWebRecordSessionRow>(
         r#"
         SELECT title, started_at, updated_at, source_locator, source_fingerprint, missing
         FROM web_record_sessions
@@ -688,21 +757,13 @@ async fn web_record_session_is_unchanged_sqlx_tx(
         return Ok(false);
     };
 
-    let title: String = row.try_get(0).map_err(AppError::external)?;
-    let started_at: Option<String> = row.try_get(1).map_err(AppError::external)?;
-    let updated_at: Option<String> = row.try_get(2).map_err(AppError::external)?;
-    let source_locator: Option<String> = row.try_get(3).map_err(AppError::external)?;
-    let existing_fingerprint: Option<String> = row.try_get(4).map_err(AppError::external)?;
-    let missing: i64 = row.try_get(5).map_err(AppError::external)?;
-
-    Ok(title == session.title
-        && started_at == session.started_at
-        && updated_at == session.updated_at
-        && source_locator == session.source_locator
-        && existing_fingerprint.as_deref() == Some(source_fingerprint)
-        && missing == 0
-        && web_record_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
-            .await?)
+    Ok(row.title == session.title
+        && row.started_at == session.started_at
+        && row.updated_at == session.updated_at
+        && row.source_locator == session.source_locator
+        && row.source_fingerprint.as_deref() == Some(source_fingerprint)
+        && row.missing == 0
+        && session_turns_match_normalized_sqlx_tx(tx, tenant_id, &session.id, normalized).await?)
 }
 
 async fn web_record_session_exists_sqlx_tx(
@@ -721,13 +782,20 @@ async fn web_record_session_exists_sqlx_tx(
     Ok(exists != 0)
 }
 
-async fn web_record_session_turns_are_unchanged_sqlx_tx(
+#[derive(Debug, FromRow)]
+struct ExistingWebRecordTurnRow {
+    external_id: String,
+    fingerprint: String,
+    missing: i64,
+}
+
+async fn session_turns_match_normalized_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
     normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ExistingWebRecordTurnRow>(
         r#"
         SELECT external_id, fingerprint, missing
         FROM web_record_turns
@@ -744,12 +812,9 @@ async fn web_record_session_turns_are_unchanged_sqlx_tx(
         return Ok(false);
     }
     for (row, turn) in rows.iter().zip(&normalized.turns) {
-        let external_id: String = row.try_get(0).map_err(AppError::external)?;
-        let fingerprint: String = row.try_get(1).map_err(AppError::external)?;
-        let missing: i64 = row.try_get(2).map_err(AppError::external)?;
-        if external_id != turn.external_id
-            || fingerprint != conversation_turn_fingerprint(turn)
-            || missing != 0
+        if row.external_id != turn.external_id
+            || row.fingerprint != conversation_turn_fingerprint(turn)
+            || row.missing != 0
         {
             return Ok(false);
         }
@@ -982,12 +1047,20 @@ async fn insert_web_record_parts_sqlx_tx(
     Ok(())
 }
 
+#[derive(Debug, FromRow)]
+struct WebRecordPartTranslationRow {
+    id: String,
+    text: Option<String>,
+    command: Option<String>,
+    translated_text: Option<String>,
+}
+
 async fn load_web_record_part_translation_state_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
     session_id: &str,
 ) -> AppResult<BTreeMap<String, (Option<String>, Option<String>, Option<String>)>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, WebRecordPartTranslationRow>(
         r#"
         SELECT p.id, p.text, p.command, p.translated_text
         FROM web_record_parts p
@@ -1000,18 +1073,10 @@ async fn load_web_record_part_translation_state_sqlx_tx(
     .fetch_all(&mut **tx)
     .await
     .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok((
-                row.try_get(0).map_err(AppError::external)?,
-                (
-                    row.try_get(1).map_err(AppError::external)?,
-                    row.try_get(2).map_err(AppError::external)?,
-                    row.try_get(3).map_err(AppError::external)?,
-                ),
-            ))
-        })
-        .collect()
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.id, (row.text, row.command, row.translated_text)))
+        .collect())
 }
 
 async fn insert_web_record_questions_sqlx_tx(
