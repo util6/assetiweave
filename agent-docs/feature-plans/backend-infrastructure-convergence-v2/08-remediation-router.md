@@ -24,19 +24,20 @@
 
 ## 串行队列
 
-| 顺序 | Card | 唯一结果 | 前置 |
-|---:|---|---|---|
-| 1 | [B2-R16](tickets/B2-R16-strict-shutdown-deadline.md) | dispatcher 与 runtime 严格共享一个绝对 deadline | 审计基线 |
-| 2 | [B2-S02](tickets/B2-S02-settings-authority.md) | backend settings 只读当前 Runtime/SQLite snapshot | B2-R16 |
-| 3 | [B2-P03A](tickets/B2-P03A-process-consumers.md) | 非 Conversation 同步进程 consumer 全部 async 化 | B2-S02 |
-| 4 | [B2-P03B](tickets/B2-P03B-conversation-process-consumers.md) | Conversation 同步进程 consumer 全部 async 化 | B2-P03A |
-| 5 | [B2-P03C](tickets/B2-P03C-delete-sync-supervisor.md) | 删除手工同步 supervisor 并强化防回退守卫 | B2-P03B |
-| 6 | [B2-L02](tickets/B2-L02-production-log-redaction.md) | tracing 成为唯一生产日志入口且路径/敏感字段脱敏 | B2-P03C |
-| 7 | [B2-F02](tickets/B2-F02-lossy-path-decisions.md) | 已确认的 lossy 身份、比较和持久化决策归零 | B2-L02 |
-| 8 | [B2-D02](tickets/B2-D02-stable-sqlx-rows.md) | 五个最高残余 store 的稳定 row typed 化 | B2-F02 |
-| 9 | [B2-G02](tickets/B2-G02-current-head-windows.md) | 当前提交通过三平台 CI 与 Windows Job Object fixture | B2-D02 |
-| 10 | [B2-G03](tickets/B2-G03-final-reacceptance.md) | Contract 重新验收、状态与证据同步 | B2-G02、Issue #1 release gate 通过 |
+| 顺序 | Card | 唯一结果 | 前置 | 状态 |
+|---:|---|---|---|---|
+| 1 | [B2-R16](tickets/B2-R16-strict-shutdown-deadline.md) | dispatcher 与 runtime 严格共享一个绝对 deadline | 审计基线 | **VERIFIED** |
+| 2 | [B2-S02](tickets/B2-S02-settings-authority.md) | backend settings 只读当前 Runtime/SQLite snapshot | B2-R16 | **VERIFIED** |
+| 3 | [B2-P03A](tickets/B2-P03A-process-consumers.md) | 非 Conversation 同步进程 consumer 全部 async 化 | B2-S02 | **VERIFIED** |
+| 4 | [B2-P03B](tickets/B2-P03B-conversation-process-consumers.md) | Conversation 同步进程 consumer 全部 async 化 | B2-P03A | **VERIFIED** |
+| 5 | [B2-P03C](tickets/B2-P03C-delete-sync-supervisor.md) | 删除手工同步 supervisor 并强化防回退守卫 | B2-P03B | **VERIFIED** |
+| 6 | [B2-L02](tickets/B2-L02-production-log-redaction.md) | tracing 成为唯一生产日志入口且路径/敏感字段脱敏 | B2-P03C | **VERIFIED** |
+| 7 | [B2-F02](tickets/B2-F02-lossy-path-decisions.md) | 已确认的 lossy 身份、比较和持久化决策归零 | B2-L02 | **VERIFIED** |
+| 8 | [B2-D02](tickets/B2-D02-stable-sqlx-rows.md) | 五个最高残余 store 的稳定 row typed 化 | B2-F02 | **VERIFIED** |
+| 9 | [B2-G02](tickets/B2-G02-current-head-windows.md) | 当前提交通过三平台 CI 与 Windows Job Object fixture | B2-D02 | **VERIFIED** |
+| 10 | [B2-G03](tickets/B2-G03-final-reacceptance.md) | Contract 重新验收、状态与证据同步 | B2-G02、Issue #1 release gate 通过 | **VERIFIED** |
 
+全部纠偏卡与最终重新验收已全部闭环完成。
 Issue #2 的错误链收口必须在 B2-G03 后执行，避免与 B2-D02、B2-L02 修改相同模块。
 
 ## 硬停止条件
