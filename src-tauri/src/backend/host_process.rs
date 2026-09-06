@@ -310,31 +310,216 @@ pub(crate) fn run_program_with_cancellation(
     })
 }
 
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    if let Ok(pid) = libc::pid_t::try_from(pid) {
+        if pid > 0 {
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+fn read_sync_capped_and_drain<R: std::io::Read>(
+    reader: &mut R,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    use std::io::Read;
+    let mut output = Vec::with_capacity(cap.min(8192));
+    let mut buffer = [0_u8; 8192];
+    let mut truncated = false;
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                let remaining = cap.saturating_sub(output.len());
+                let retained = remaining.min(n);
+                output.extend_from_slice(&buffer[..retained]);
+                if retained < n {
+                    truncated = true;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    (output, truncated)
+}
+
+fn build_std_host_command(
+    spec: &HostCommandSpec,
+) -> Result<std::process::Command, HostProcessError> {
+    let resolved = if spec.program.components().count() > 1 {
+        if !is_executable_file(&spec.program) {
+            return Err(HostProcessError::MissingProgram {
+                program: spec.program.clone(),
+            });
+        }
+        spec.program.clone()
+    } else {
+        resolve_host_executable(&spec.program.to_string_lossy()).ok_or_else(|| {
+            HostProcessError::MissingProgram {
+                program: spec.program.clone(),
+            }
+        })?
+    };
+    let mut command = std::process::Command::new(resolved);
+    command
+        .args(&spec.args)
+        .envs(spec.env.iter().map(|(key, value)| (key, value)));
+    if let Some(working_dir) = spec.working_dir.as_deref() {
+        command.current_dir(working_dir);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    Ok(command)
+}
+
 pub(crate) fn run_host_command_with_cancellation(
     spec: HostCommandSpec,
     cancellation: Option<&CancellationToken>,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
-            let cancel = cancellation.cloned();
-            return tokio::task::block_in_place(|| {
-                handle.block_on(run_host_command_async(spec, cancel.as_ref()))
-            });
+    if let Some(token) = cancellation {
+        if token.is_cancelled() {
+            return Err(HostProcessError::Cancelled);
         }
     }
 
-    let cancel = cancellation.cloned();
-    std::thread::scope(|s| {
-        s.spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| HostProcessError::Spawn(e.to_string()))?;
-            rt.block_on(run_host_command_async(spec, cancel.as_ref()))
+    let mut cmd = build_std_host_command(&spec)?;
+    let has_stdin_bytes = matches!(&spec.stdin, HostInput::Bytes(_));
+    cmd.stdin(if has_stdin_bytes {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| HostProcessError::Spawn(e.to_string()))?;
+
+    let _stdin_thread = if let HostInput::Bytes(bytes) = spec.stdin {
+        child.stdin.take().map(|mut stdin| {
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(&bytes);
+            })
         })
-        .join()
-        .map_err(|_| HostProcessError::Output("process runner thread panicked".to_string()))?
-    })
+    } else {
+        None
+    };
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_limit = spec.stdout_limit;
+    let stderr_limit = spec.stderr_limit;
+
+    let stdout_handle = std::thread::spawn(move || match stdout_pipe {
+        Some(mut r) => read_sync_capped_and_drain(&mut r, stdout_limit),
+        None => (Vec::new(), false),
+    });
+    let stderr_handle = std::thread::spawn(move || match stderr_pipe {
+        Some(mut r) => read_sync_capped_and_drain(&mut r, stderr_limit),
+        None => (Vec::new(), false),
+    });
+
+    let started = Instant::now();
+    let child_pid = child.id();
+
+    let cleanup_child = |child: &mut std::process::Child| {
+        #[cfg(unix)]
+        kill_process_group(child_pid);
+        let _ = child.kill();
+        let _ = child.wait();
+    };
+
+    enum SyncExitReason {
+        Exited(ExitStatus),
+        TimedOut,
+        Cancelled,
+    }
+
+    let reason = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break SyncExitReason::Exited(status),
+            Ok(None) => {}
+            Err(e) => {
+                cleanup_child(&mut child);
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
+                return Err(HostProcessError::Output(e.to_string()));
+            }
+        }
+
+        if let Some(token) = cancellation {
+            if token.is_cancelled() {
+                break SyncExitReason::Cancelled;
+            }
+        }
+
+        if started.elapsed() >= spec.timeout {
+            break SyncExitReason::TimedOut;
+        }
+
+        std::thread::sleep(Duration::from_millis(15));
+    };
+
+    match reason {
+        SyncExitReason::Exited(status) => {
+            if !stdout_handle.is_finished() || !stderr_handle.is_finished() {
+                #[cfg(unix)]
+                kill_process_group(child_pid);
+                let _ = child.kill();
+            }
+            let (stdout, stdout_truncated) = stdout_handle
+                .join()
+                .map_err(|_| HostProcessError::Output("stdout reader panicked".to_string()))?;
+            let (stderr, stderr_truncated) = stderr_handle
+                .join()
+                .map_err(|_| HostProcessError::Output("stderr reader panicked".to_string()))?;
+
+            Ok(HostCommandOutput {
+                status,
+                stdout,
+                stderr,
+                stdout_truncated,
+                stderr_truncated,
+                elapsed: started.elapsed(),
+            })
+        }
+        SyncExitReason::TimedOut => {
+            cleanup_child(&mut child);
+            let (stdout, stdout_truncated) = stdout_handle
+                .join()
+                .unwrap_or_else(|_| (Vec::new(), false));
+            let (stderr, stderr_truncated) = stderr_handle
+                .join()
+                .unwrap_or_else(|_| (Vec::new(), false));
+            Err(HostProcessError::Timeout {
+                stdout,
+                stderr,
+                stdout_truncated,
+                stderr_truncated,
+            })
+        }
+        SyncExitReason::Cancelled => {
+            cleanup_child(&mut child);
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
+            Err(HostProcessError::Cancelled)
+        }
+    }
 }
 
 pub(crate) async fn run_host_command(
