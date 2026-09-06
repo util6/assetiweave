@@ -120,7 +120,7 @@ jobs:
         run: bash scripts/gen-surface-matrix.sh --check
 
       - name: Test Rust workspace
-        run: cargo test --workspace
+        run: cargo test --workspace -- --test-threads=1
 
   windows:
     name: Windows Rust / Go / Frontend

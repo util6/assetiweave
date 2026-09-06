@@ -1446,7 +1446,6 @@ fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-#[cfg(unix)]
 fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
     script
         .strip_prefix(root)

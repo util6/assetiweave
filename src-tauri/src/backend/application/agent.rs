@@ -391,8 +391,8 @@ mod tests {
         let context = load_local_request_context_sqlx(&pool)
             .await
             .expect("load request context");
-        let program = crate::backend::host_process::resolve_host_executable("sh")
-            .expect("shell runtime for native fixture");
+        let program = crate::backend::host_process::resolve_host_executable("node")
+            .expect("node runtime for native fixture");
         let stale = (chrono::Utc::now() - chrono::Duration::minutes(31)).to_rfc3339();
         let installation = AgentInstallation {
             agent_id: "native-fixture".to_string(),
@@ -415,7 +415,7 @@ mod tests {
                 "args": [],
                 "env": [],
                 "capabilities": { "textPrompt": true, "modelDiscovery": true },
-                "modelDiscoveryArgs": ["-c", "printf 'fixture-model\\tFixture Model\\n'"]
+                "modelDiscoveryArgs": ["-e", "process.stdout.write('fixture-model\\tFixture Model\\n')"]
             }),
             integrity_json: None,
             source_registry: "native-fixture".to_string(),
