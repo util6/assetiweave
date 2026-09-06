@@ -758,9 +758,16 @@ mod tests {
         let mut wrap = wrap_tokio_command(cmd);
         let mut child = wrap.spawn().expect("spawn ignore-term fixture");
 
-        if let Some(mut stdout) = child.stdout().take() {
-            let mut buf = [0u8; 6];
-            let _ = stdout.read_exact(&mut buf).await;
+        if let Some(stdout) = child.stdout().take() {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(stdout);
+            let mut line = String::new();
+            while let Ok(n) = reader.read_line(&mut line).await {
+                if n == 0 || line.contains("ready") {
+                    break;
+                }
+                line.clear();
+            }
         }
 
         #[cfg(unix)]

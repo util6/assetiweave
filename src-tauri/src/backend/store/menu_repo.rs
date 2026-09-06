@@ -1,7 +1,7 @@
 use crate::backend::dto::{
     HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem,
 };
-use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 
 use super::sql;
@@ -142,101 +142,117 @@ pub(crate) async fn save_navigation_model_sqlx(
     Ok(())
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct NavigationStateRow {
+    active_rail_id: String,
+    active_header_tab_id: String,
+    active_sub_nav_id: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RailMenuItemRow {
+    id: String,
+    label: String,
+    label_zh: Option<String>,
+    label_en: Option<String>,
+    icon: String,
+    scope: String,
+    enabled: i64,
+    position: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct HeaderTabItemRow {
+    id: String,
+    label: String,
+    label_zh: Option<String>,
+    label_en: Option<String>,
+    asset_kind: Option<String>,
+    enabled: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SubNavItemRow {
+    parent_tab_id: String,
+    id: String,
+    label: String,
+    label_zh: Option<String>,
+    label_en: Option<String>,
+    route_key: String,
+    enabled: i64,
+}
+
 pub(crate) async fn load_navigation_model_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> Result<NavigationModel, String> {
-    let state = sqlx::query(sql::GET_NAVIGATION_STATE)
+    let state = sqlx::query_as::<_, NavigationStateRow>(sql::GET_NAVIGATION_STATE)
         .bind(tenant_id)
         .fetch_one(pool)
         .await
         .map_err(|error| error.to_string())?;
-    let rail_rows = sqlx::query(sql::LIST_RAIL_MENU_ITEMS)
+    let rail_rows = sqlx::query_as::<_, RailMenuItemRow>(sql::LIST_RAIL_MENU_ITEMS)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
-    let header_rows = sqlx::query(sql::LIST_HEADER_TAB_ITEMS)
+    let header_rows = sqlx::query_as::<_, HeaderTabItemRow>(sql::LIST_HEADER_TAB_ITEMS)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
-    let sub_nav_rows = sqlx::query(sql::LIST_SUB_NAV_ITEMS)
+    let sub_nav_rows = sqlx::query_as::<_, SubNavItemRow>(sql::LIST_SUB_NAV_ITEMS)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
 
     Ok(NavigationModel {
-        active_rail_id: state.try_get(0).map_err(|error| error.to_string())?,
-        active_header_tab_id: state.try_get(1).map_err(|error| error.to_string())?,
-        active_sub_nav_id: state.try_get(2).map_err(|error| error.to_string())?,
-        rail_items: rail_rows
-            .iter()
-            .map(map_sqlx_rail_item)
-            .collect::<Result<Vec<_>, _>>()?,
-        header_tabs: header_rows
-            .iter()
-            .map(map_sqlx_header_tab)
-            .collect::<Result<Vec<_>, _>>()?,
-        sub_nav_items: map_sqlx_sub_nav_items(&sub_nav_rows)?,
+        active_rail_id: state.active_rail_id,
+        active_header_tab_id: state.active_header_tab_id,
+        active_sub_nav_id: state.active_sub_nav_id,
+        rail_items: rail_rows.into_iter().map(map_sqlx_rail_item).collect(),
+        header_tabs: header_rows.into_iter().map(map_sqlx_header_tab).collect(),
+        sub_nav_items: map_sqlx_sub_nav_items(sub_nav_rows),
     })
 }
 
-fn map_sqlx_rail_item(row: &SqliteRow) -> Result<RailMenuItem, String> {
-    Ok(RailMenuItem {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        label: row.try_get(1).map_err(|error| error.to_string())?,
-        labels: localized_labels(
-            row.try_get(2).map_err(|error| error.to_string())?,
-            row.try_get(3).map_err(|error| error.to_string())?,
-        ),
-        icon: row.try_get(4).map_err(|error| error.to_string())?,
-        scope: row.try_get(5).map_err(|error| error.to_string())?,
-        enabled: row
-            .try_get::<i64, _>(6)
-            .map_err(|error| error.to_string())?
-            == 1,
-        position: row.try_get(7).map_err(|error| error.to_string())?,
-    })
+fn map_sqlx_rail_item(row: RailMenuItemRow) -> RailMenuItem {
+    RailMenuItem {
+        id: row.id,
+        label: row.label,
+        labels: localized_labels(row.label_zh, row.label_en),
+        icon: row.icon,
+        scope: row.scope,
+        enabled: row.enabled == 1,
+        position: row.position,
+    }
 }
 
-fn map_sqlx_header_tab(row: &SqliteRow) -> Result<HeaderTabItem, String> {
-    Ok(HeaderTabItem {
-        id: row.try_get(0).map_err(|error| error.to_string())?,
-        label: row.try_get(1).map_err(|error| error.to_string())?,
-        labels: localized_labels(
-            row.try_get(2).map_err(|error| error.to_string())?,
-            row.try_get(3).map_err(|error| error.to_string())?,
-        ),
-        asset_kind: row.try_get(4).map_err(|error| error.to_string())?,
-        enabled: row
-            .try_get::<i64, _>(5)
-            .map_err(|error| error.to_string())?
-            == 1,
-    })
+fn map_sqlx_header_tab(row: HeaderTabItemRow) -> HeaderTabItem {
+    HeaderTabItem {
+        id: row.id,
+        label: row.label,
+        labels: localized_labels(row.label_zh, row.label_en),
+        asset_kind: row.asset_kind,
+        enabled: row.enabled == 1,
+    }
 }
 
-fn map_sqlx_sub_nav_items(rows: &[SqliteRow]) -> Result<BTreeMap<String, Vec<SubNavItem>>, String> {
+fn map_sqlx_sub_nav_items(rows: Vec<SubNavItemRow>) -> BTreeMap<String, Vec<SubNavItem>> {
     let mut grouped = BTreeMap::new();
     for row in rows {
-        let parent_tab_id: String = row.try_get(0).map_err(|error| error.to_string())?;
+        let parent_tab_id = row.parent_tab_id;
         let item = SubNavItem {
-            id: row.try_get(1).map_err(|error| error.to_string())?,
-            label: row.try_get(2).map_err(|error| error.to_string())?,
-            labels: localized_labels(
-                row.try_get(3).map_err(|error| error.to_string())?,
-                row.try_get(4).map_err(|error| error.to_string())?,
-            ),
-            route_key: row.try_get(5).map_err(|error| error.to_string())?,
-            enabled: row
-                .try_get::<i64, _>(6)
-                .map_err(|error| error.to_string())?
-                == 1,
+            id: row.id,
+            label: row.label,
+            labels: localized_labels(row.label_zh, row.label_en),
+            route_key: row.route_key,
+            enabled: row.enabled == 1,
         };
         grouped
             .entry(parent_tab_id)
             .or_insert_with(Vec::new)
             .push(item);
     }
-    Ok(grouped)
+    grouped
 }
 
 fn enabled_value(enabled: bool) -> i64 {
