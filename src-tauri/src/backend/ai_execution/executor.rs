@@ -414,7 +414,7 @@ impl AgentExecutor {
     }
 
     async fn check_connection(&self, agent_id: &AgentId) -> AgentConnectionResult {
-        let installation = self.registry.check_availability(agent_id);
+        let installation = self.registry.check_availability(agent_id).await;
         let mut result = connection_result_from_availability(agent_id, &installation);
         if !installation.available {
             return result;
@@ -466,7 +466,7 @@ impl AgentExecutor {
     }
 
     async fn discover_agent_models(&self, agent_id: &AgentId) -> AgentModelsResult {
-        let installation = self.registry.check_availability(agent_id);
+        let installation = self.registry.check_availability(agent_id).await;
         if !installation.available {
             return models_result_from_availability(agent_id, &installation);
         }
@@ -601,7 +601,7 @@ impl AgentExecutionRuntime for AgentExecutor {
     }
 
     fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
-        self.registry.check_availability(agent_id)
+        self.registry.cached_availability(agent_id)
     }
 
     fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
@@ -615,7 +615,7 @@ impl AgentExecutionRuntime for AgentExecutor {
     }
 
     fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
-        connection_result_from_availability(agent_id, &self.registry.check_availability(agent_id))
+        connection_result_from_availability(agent_id, &self.registry.cached_availability(agent_id))
     }
 
     fn check_agent_connection<'a>(&'a self, agent_id: &'a AgentId) -> AgentConnectionFuture<'a> {
@@ -629,9 +629,12 @@ impl AgentExecutionRuntime for AgentExecutor {
     fn discover_models(
         &self,
         agent_id: &AgentId,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<Vec<u8>, AgentProbeError> {
-        self.registry.discover_models(agent_id, timeout)
+        Err(AgentProbeError::ProbeNotConfigured {
+            agent_id: agent_id.clone(),
+            kind: "model_discovery",
+        })
     }
 
     fn cancel_all(&self) {

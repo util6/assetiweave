@@ -106,7 +106,7 @@ impl BinaryInstaller {
 }
 
 impl Installer for BinaryInstaller {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         _context: &InstallContext,

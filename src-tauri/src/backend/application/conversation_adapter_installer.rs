@@ -66,7 +66,7 @@ pub(super) async fn install_conversation_adapter_package_from_spec(
     let previous_package = service
         .load_conversation_adapter_package(spec.package_id())
         .await?;
-    let installed = match install_conversation_adapter_package_files(spec, &version_dir) {
+    let installed = match install_conversation_adapter_package_files(spec, &version_dir).await {
         Ok(installed) => installed,
         Err(error) => {
             if previous_package.is_none() {
@@ -191,17 +191,17 @@ struct InstalledConversationAdapterPackage {
     created_version_dir: bool,
 }
 
-fn install_conversation_adapter_package_files(
+async fn install_conversation_adapter_package_files(
     spec: &ConversationAdapterPackageInstallSpec,
     version_dir: &Path,
 ) -> AppResult<InstalledConversationAdapterPackage> {
     let staging_dir = conversation_script_staging_dir(spec)?;
     let prepared_dir = conversation_adapter_package_prepared_dir(spec)?;
-    let install_result = (|| {
+    let install_result: AppResult<InstalledConversationAdapterPackage> = async {
         let source_dir = match spec.source.kind {
             ConversationAdapterPackageInstallSourceKind::Github => {
                 let location = parse_github_install_source(&spec.source)?;
-                clone_github_catalog_source(&location, &staging_dir)?;
+                clone_github_catalog_source(&location, &staging_dir).await?;
                 location.source_dir(&staging_dir)
             }
             ConversationAdapterPackageInstallSourceKind::ArtifactZip => {
@@ -297,7 +297,8 @@ fn install_conversation_adapter_package_files(
                 Err(error)
             }
         }
-    })();
+    }
+    .await;
 
     let _ = fs::remove_dir_all(&staging_dir);
     if install_result.is_err() {
@@ -733,7 +734,10 @@ pub(super) fn parse_github_install_source(
     })
 }
 
-fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) -> AppResult<()> {
+async fn clone_github_catalog_source(
+    location: &GitHubInstallLocation,
+    target: &Path,
+) -> AppResult<()> {
     if target.exists() {
         return Err(AppError::Conflict(format!(
             "conversation adapter package staging path already exists: {}",
@@ -752,15 +756,19 @@ fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) 
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_timeout(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(120),
-        1024 * 1024,
-        256 * 1024,
-    )
-    .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(120),
+        stdout_limit: 1024 * 1024,
+        stderr_limit: 256 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::External(format!("git clone failed: {stderr}")));

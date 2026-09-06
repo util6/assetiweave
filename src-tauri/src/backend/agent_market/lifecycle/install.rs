@@ -170,6 +170,7 @@ async fn materialize_and_activate(
     let materialized = match distribution {
         Distribution::System { .. } => SystemInstaller::default()
             .materialize(distribution, &context)
+            .await
             .map_err(install_error)?,
         Distribution::Binary { url, size, .. } => {
             let dist = distribution.clone();
@@ -190,9 +191,11 @@ async fn materialize_and_activate(
         }
         Distribution::Npx { .. } => NpxInstaller::default()
             .materialize(distribution, &context)
+            .await
             .map_err(install_error)?,
         Distribution::Uvx { .. } => UvxInstaller::default()
             .materialize(distribution, &context)
+            .await
             .map_err(install_error)?,
     };
     context.report_phase(LifecycleTaskPhase::ValidatingLayout);

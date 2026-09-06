@@ -151,7 +151,8 @@ impl AppService {
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        catalog
+        let mut views = Vec::new();
+        for item in catalog
             .catalog()
             .items
             .iter()
@@ -173,38 +174,38 @@ impl AppService {
                         .iter()
                         .any(|installation| installation.agent_id == item.id)
             })
-            .map(|item| {
-                let mut item_context = context.clone();
-                probe_item_system_distributions(item, &mut item_context);
-                let candidates = DistributionSelector::select(item, &item_context, None)
-                    .map_err(distribution_selection_error)?;
-                let installed = installations
-                    .iter()
-                    .find(|installation| installation.agent_id == item.id)
-                    .map(installation_view);
-                let recommended_distribution_id = candidates
-                    .iter()
-                    .find(|candidate| candidate.recommended)
-                    .map(|candidate| candidate.distribution_id.clone());
-                Ok(AgentMarketItemView {
-                    id: item.id.clone(),
-                    catalog_version: catalog.catalog().catalog_version.clone(),
-                    display_name: item.display_name.clone(),
-                    description: item.description.clone(),
-                    protocol: item.protocol.clone(),
-                    version: item.version.clone(),
-                    installability: installability(item, &candidates),
-                    capabilities: item.capabilities.clone(),
-                    verification: item.verification.clone(),
-                    distributions: candidates,
-                    recommended_distribution_id,
-                    update_available: installed
-                        .as_ref()
-                        .is_some_and(|installation| installation.version != item.version),
-                    installed,
-                })
-            })
-            .collect::<Result<Vec<_>, AppError>>()
+        {
+            let mut item_context = context.clone();
+            probe_item_system_distributions(item, &mut item_context).await;
+            let candidates = DistributionSelector::select(item, &item_context, None)
+                .map_err(distribution_selection_error)?;
+            let installed = installations
+                .iter()
+                .find(|installation| installation.agent_id == item.id)
+                .map(installation_view);
+            let recommended_distribution_id = candidates
+                .iter()
+                .find(|candidate| candidate.recommended)
+                .map(|candidate| candidate.distribution_id.clone());
+            views.push(AgentMarketItemView {
+                id: item.id.clone(),
+                catalog_version: catalog.catalog().catalog_version.clone(),
+                display_name: item.display_name.clone(),
+                description: item.description.clone(),
+                protocol: item.protocol.clone(),
+                version: item.version.clone(),
+                installability: installability(item, &candidates),
+                capabilities: item.capabilities.clone(),
+                verification: item.verification.clone(),
+                distributions: candidates,
+                recommended_distribution_id,
+                update_available: installed
+                    .as_ref()
+                    .is_some_and(|installation| installation.version != item.version),
+                installed,
+            });
+        }
+        Ok(views)
     }
 
     pub(crate) async fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
@@ -259,14 +260,17 @@ impl AppService {
             })?;
         let now = chrono::Utc::now().to_rfc3339();
         let probe = if installation.resolved_program.is_file() {
-            Some(crate::backend::host_process::run_program_with_timeout(
-                &installation.resolved_program,
-                &["--version".to_string()],
-                None,
-                Duration::from_secs(8),
-                1024 * 1024,
-                256 * 1024,
-            ))
+            let spec = crate::backend::host_process::HostCommandSpec {
+                program: installation.resolved_program.clone(),
+                args: vec!["--version".to_string()],
+                env: Vec::new(),
+                working_dir: None,
+                stdin: crate::backend::host_process::HostInput::Null,
+                timeout: Duration::from_secs(8),
+                stdout_limit: 1024 * 1024,
+                stderr_limit: 256 * 1024,
+            };
+            Some(crate::backend::host_process::run_host_command_async(spec, None).await)
         } else {
             None
         };
@@ -390,7 +394,7 @@ impl AppService {
             )));
         }
         let mut context = host_distribution_context();
-        probe_item_system_distributions(item, &mut context);
+        probe_item_system_distributions(item, &mut context).await;
         let candidates =
             DistributionSelector::select(item, &context, request.distribution_id.as_deref())
                 .map_err(distribution_selection_error)?;
@@ -695,7 +699,10 @@ fn installability(_item: &CatalogItem, candidates: &[DistributionCandidate]) -> 
     "unsupported".to_string()
 }
 
-fn probe_item_system_distributions(item: &CatalogItem, context: &mut DistributionSelectionContext) {
+async fn probe_item_system_distributions(
+    item: &CatalogItem,
+    context: &mut DistributionSelectionContext,
+) {
     for distribution in &item.distributions {
         let Distribution::System {
             command_candidates, ..
@@ -719,7 +726,9 @@ fn probe_item_system_distributions(item: &CatalogItem, context: &mut Distributio
                 &result,
                 distribution,
                 &install_context,
-            ) {
+            )
+            .await
+            {
                 Ok(runtime) => SystemObservation {
                     resolved_program: Some(runtime.resolved_program),
                     version: Some(runtime.version),
