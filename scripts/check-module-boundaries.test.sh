@@ -68,6 +68,15 @@ run_rejected_fixture host-process-thread-sleep \
 run_rejected_fixture host-process-std-command \
   src-tauri/src/backend/host_process.rs \
   'let _ = std::process::Command::new("sh");'
+run_rejected_fixture error-boundary-cross-module-string \
+  src-tauri/src/backend/runtime/new_service.rs \
+  'pub fn fixture_op() -> Result<(), String> { Ok(()) }'
+run_rejected_fixture error-boundary-map-err-external \
+  src-tauri/src/backend/runtime/app_runtime.rs \
+  'let _ = op().map_err(AppError::external);'
+run_rejected_fixture error-boundary-known-typed-to-string \
+  src-tauri/src/backend/runtime/new_service.rs \
+  'let _ = op().map_err(|e: sqlx::Error| e.to_string());'
 
 # Test runtime bridge zero-match checks (Issue #24 / B2-R14)
 # 1. Backend file with runtime bridge is rejected
