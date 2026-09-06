@@ -294,6 +294,8 @@ impl EventDispatcher {
     }
 
     async fn dispatch_tenant(&self, tenant_id: &str) -> DispatchCycleReport {
+        let span = tracing::info_span!("domain_events.dispatch_tenant", tenant = %tenant_id);
+        let _enter = span.enter();
         let mut report = DispatchCycleReport::default();
         for consumer in &self.consumers {
             let key = Self::retry_key(consumer.id(), tenant_id);
@@ -309,9 +311,11 @@ impl EventDispatcher {
                 Err(error) => {
                     // One consumer owns only its own offset and retry state. A
                     // failure must never prevent later consumers from running.
-                    eprintln!(
-                        "domain event consumer {} failed for tenant {tenant_id}: {error}",
-                        consumer.id()
+                    tracing::error!(
+                        consumer_id = %consumer.id(),
+                        tenant = %tenant_id,
+                        error = %error,
+                        "domain event consumer failed"
                     );
                     self.record_failure(key);
                     report.failures += 1;
@@ -336,8 +340,10 @@ impl EventDispatcher {
         let mut report = DispatchCycleReport::default();
         for tenant_id in tenant_ids {
             if let Err(error) = self.initialize_tenant(&tenant_id).await {
-                eprintln!(
-                    "domain event offset initialization failed for tenant {tenant_id}: {error}"
+                tracing::error!(
+                    tenant = %tenant_id,
+                    error = %error,
+                    "domain event offset initialization failed"
                 );
                 report.failures += 1;
                 continue;
