@@ -1,5 +1,6 @@
-use crate::backend::dto::{
-    HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem,
+use crate::backend::{
+    dto::{HeaderTabItem, LocalizedNavigationLabels, NavigationModel, RailMenuItem, SubNavItem},
+    runtime::AppResult,
 };
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -10,7 +11,7 @@ pub(crate) async fn seed_navigation_model_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     model: &NavigationModel,
-) -> Result<(), String> {
+) -> AppResult<()> {
     save_navigation_model_sqlx(pool, tenant_id, model).await
 }
 
@@ -18,7 +19,7 @@ pub(crate) async fn ensure_navigation_model_items_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     defaults: &NavigationModel,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let mut current = load_navigation_model_sqlx(pool, tenant_id).await?;
     for item in &defaults.rail_items {
         if !current
@@ -75,16 +76,15 @@ pub(crate) async fn save_navigation_model_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     model: &NavigationModel,
-) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|error| error.to_string())?;
+) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
     sqlx::query(sql::UPSERT_NAVIGATION_STATE)
         .bind(tenant_id)
         .bind(&model.active_rail_id)
         .bind(&model.active_header_tab_id)
         .bind(&model.active_sub_nav_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
 
     for (sort_order, item) in model.rail_items.iter().enumerate() {
         sqlx::query(sql::UPSERT_RAIL_MENU_ITEM)
@@ -98,8 +98,7 @@ pub(crate) async fn save_navigation_model_sqlx(
             .bind(&item.position)
             .bind(sort_order as i32)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     }
 
     for (sort_order, tab) in model.header_tabs.iter().enumerate() {
@@ -112,16 +111,14 @@ pub(crate) async fn save_navigation_model_sqlx(
             .bind(enabled_value(tab.enabled))
             .bind(sort_order as i32)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
     }
 
     for (parent_tab_id, items) in &model.sub_nav_items {
         sqlx::query("DELETE FROM sub_nav_items WHERE parent_tab_id = ?1")
             .bind(parent_tab_id)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| error.to_string())?;
+            .await?;
         for (sort_order, item) in items.iter().enumerate() {
             sqlx::query(sql::UPSERT_SUB_NAV_ITEM)
                 .bind(parent_tab_id)
@@ -133,12 +130,11 @@ pub(crate) async fn save_navigation_model_sqlx(
                 .bind(enabled_value(item.enabled))
                 .bind(sort_order as i32)
                 .execute(&mut *tx)
-                .await
-                .map_err(|error| error.to_string())?;
+                .await?;
         }
     }
 
-    tx.commit().await.map_err(|error| error.to_string())?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -185,24 +181,20 @@ struct SubNavItemRow {
 pub(crate) async fn load_navigation_model_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
-) -> Result<NavigationModel, String> {
+) -> AppResult<NavigationModel> {
     let state = sqlx::query_as::<_, NavigationStateRow>(sql::GET_NAVIGATION_STATE)
         .bind(tenant_id)
         .fetch_one(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     let rail_rows = sqlx::query_as::<_, RailMenuItemRow>(sql::LIST_RAIL_MENU_ITEMS)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     let header_rows = sqlx::query_as::<_, HeaderTabItemRow>(sql::LIST_HEADER_TAB_ITEMS)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
     let sub_nav_rows = sqlx::query_as::<_, SubNavItemRow>(sql::LIST_SUB_NAV_ITEMS)
         .fetch_all(pool)
-        .await
-        .map_err(|error| error.to_string())?;
+        .await?;
 
     Ok(NavigationModel {
         active_rail_id: state.active_rail_id,

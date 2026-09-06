@@ -29,6 +29,8 @@ pub(crate) use asset_repo::{
     load_asset_sqlx, load_assets_sqlx, replace_source_assets_sqlx, update_asset_description_sqlx,
 };
 pub(crate) use backup_repo::checkpoint_database_wal_sqlx;
+pub(crate) use codec::CodecError;
+
 pub(crate) use conversation_repo::{
     activate_conversation_adapter_package_sqlx, activate_conversation_adapter_workspace_sqlx,
     conversation_payload_policy_reparse_required_sqlx,

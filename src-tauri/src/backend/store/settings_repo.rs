@@ -20,7 +20,7 @@ pub(crate) async fn load_app_settings_sqlx(pool: &SqlitePool) -> AppResult<Optio
         let schema_version = u32::try_from(schema_version).map_err(|_| {
             AppError::Storage("settings schema version is out of range".to_string())
         })?;
-        let settings = serde_json::from_str(&settings_json).map_err(AppError::external)?;
+        let settings = super::codec::decode_json(&settings_json)?;
         Ok((schema_version, settings))
     })
     .transpose()
@@ -31,7 +31,7 @@ pub(crate) async fn save_app_settings_sqlx(
     schema_version: u32,
     settings: &Value,
 ) -> AppResult<()> {
-    let settings_json = serde_json::to_string(settings).map_err(AppError::external)?;
+    let settings_json = super::codec::encode_json(settings)?;
     let mut query = QueryBuilder::<Sqlite>::new(
         "INSERT INTO app_settings (settings_id, schema_version, settings_json, updated_at) ",
     );

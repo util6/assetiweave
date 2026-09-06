@@ -428,7 +428,7 @@ mod tests {
         let err = load_source_sqlx(database.pool(), "default", &source.id)
             .await
             .expect_err("should fail on invalid JSON");
-        assert_eq!(err.code(), "external_error");
+        assert_eq!(err.code(), "storage_error");
 
         drop(database);
         cleanup_database(&db_path);

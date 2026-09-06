@@ -16,6 +16,8 @@ pub(crate) enum AppError {
     #[error("{0}")]
     Db(#[from] sqlx::Error),
     #[error("{0}")]
+    Codec(#[from] crate::backend::store::CodecError),
+    #[error("{0}")]
     Cancelled(String),
     #[allow(dead_code)]
     #[error("{0}")]
@@ -75,7 +77,9 @@ impl AppError {
             Self::Validation(_) => "validation_error".to_string(),
             Self::NotFound(_) => "not_found".to_string(),
             Self::Conflict(_) => "conflict".to_string(),
-            Self::Io(_) | Self::Db(_) | Self::Storage(_) => "storage_error".to_string(),
+            Self::Io(_) | Self::Db(_) | Self::Codec(_) | Self::Storage(_) => {
+                "storage_error".to_string()
+            }
             Self::Cancelled(_) => "cancelled".to_string(),
             Self::Timeout(_) => "timeout".to_string(),
             Self::Process(_) => "process_error".to_string(),
@@ -96,7 +100,7 @@ impl AppError {
 
     fn public_message(&self) -> String {
         match self {
-            Self::Io(_) | Self::Db(_) | Self::Storage(_) => {
+            Self::Io(_) | Self::Db(_) | Self::Codec(_) | Self::Storage(_) => {
                 "The application could not access local storage.".to_string()
             }
             Self::Process(_) => "The external process failed.".to_string(),
@@ -117,6 +121,7 @@ impl AppError {
             Self::Conflict(_)
             | Self::Io(_)
             | Self::Db(_)
+            | Self::Codec(_)
             | Self::Cancelled(_)
             | Self::Timeout(_)
             | Self::Storage(_)
@@ -422,5 +427,36 @@ mod tests {
         assert_eq!(view.code, "cancelled");
         assert_eq!(view.message, "The operation was cancelled.");
         assert!(view.retryable);
+    }
+
+    #[tokio::test]
+    async fn sqlx_row_error_preserves_database_source_and_wire_code() {
+        use std::error::Error;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
+        let query_err = sqlx::query_as::<_, (i32,)>("SELECT 'not_an_integer' AS count")
+            .fetch_one(&pool)
+            .await
+            .unwrap_err();
+        let app_err = AppError::from(query_err);
+        assert_eq!(app_err.code(), "storage_error");
+        assert!(app_err.retryable());
+        let mut found_sqlx = false;
+        let mut cur: Option<&(dyn Error + 'static)> = app_err.source();
+        while let Some(e) = cur {
+            if e.is::<sqlx::Error>() {
+                found_sqlx = true;
+                break;
+            }
+            cur = e.source();
+        }
+        assert!(found_sqlx, "source chain must contain sqlx::Error");
+        let view = app_err.view();
+        assert_eq!(view.code, "storage_error");
+        assert!(!view.message.to_ascii_lowercase().contains("select"));
+        assert!(!view.message.contains("not_an_integer"));
     }
 }
