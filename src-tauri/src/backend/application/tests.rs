@@ -1455,7 +1455,6 @@ fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
         .to_string()
 }
 
-#[cfg(unix)]
 async fn upsert_conversation_export_fixture(
     service: &AppService,
     root: &Path,
