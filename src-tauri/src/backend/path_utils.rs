@@ -109,7 +109,7 @@ pub(crate) fn git_repository_for_path(path: &Path) -> Option<GitRepositoryInfo> 
     let web_url = remote_url
         .as_deref()
         .and_then(|remote| git_browser_url(remote, &root, path));
-    let root_path = root.to_string_lossy().to_string();
+    let root_path = camino::Utf8Path::from_path(&root)?.as_str().to_string();
     let display_root_path = display_path(&root_path).unwrap_or_else(|_| root_path.clone());
     Some(GitRepositoryInfo {
         root_path,
@@ -289,10 +289,14 @@ pub(crate) fn is_app_library_path(path: &Path) -> bool {
 }
 
 pub(crate) fn normalize_relative_path(path: &Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+    if let Some(utf8_path) = camino::Utf8Path::from_path(path) {
+        return utf8_path
+            .components()
+            .map(|component| component.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+    }
+    path.display().to_string().replace('\\', "/")
 }
 
 fn safe_tenant_path_segment(tenant_id: &str) -> String {
@@ -399,7 +403,9 @@ mod tests {
             app_kind_compat: Some(AppKind::Custom),
             default_targets: vec![TargetPathRule {
                 asset_kind: AssetKind::Skill,
-                path: target.to_string_lossy().to_string(),
+                path: camino::Utf8Path::from_path(&target)
+                    .expect("valid utf8 target path")
+                    .to_string(),
             }],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
@@ -426,7 +432,9 @@ mod tests {
             app_kind_compat: Some(AppKind::Custom),
             default_targets: vec![TargetPathRule {
                 asset_kind: AssetKind::Skill,
-                path: path.to_string_lossy().to_string(),
+                path: camino::Utf8Path::from_path(path)
+                    .expect("valid utf8 path")
+                    .to_string(),
             }],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,

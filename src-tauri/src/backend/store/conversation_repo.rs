@@ -451,7 +451,7 @@ pub(crate) async fn delete_conversation_adapter_sqlx(
         delete_conversation_adapter_registration_sqlx(pool, tenant_id, adapter_id, None)
             .await?
             .ok_or_else(|| {
-                AppError::external({ format!("conversation adapter not found: {adapter_id}") })
+                AppError::external(format!("conversation adapter not found: {adapter_id}"))
             })?,
     )
 }
@@ -5707,8 +5707,9 @@ mod tests {
             Uuid::new_v4()
         ));
         let database = Database::open_async(&db_path).await.expect("open database");
-        let install_dir = dirs::config_dir()
-            .expect("config directory")
+        let install_dir = directories::BaseDirs::new()
+            .expect("base directories")
+            .config_dir()
             .join("assetiweave")
             .join("conversation-adapters")
             .join("packages")
@@ -5812,8 +5813,9 @@ mod tests {
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
-        let adapter_dir = dirs::config_dir()
-            .expect("config directory")
+        let adapter_dir = directories::BaseDirs::new()
+            .expect("base directories")
+            .config_dir()
             .join("assetiweave")
             .join("conversation-adapters")
             .join("portable-adapter");

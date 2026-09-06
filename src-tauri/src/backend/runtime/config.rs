@@ -25,12 +25,17 @@ pub(crate) struct RuntimeConfigDefaults {
 impl RuntimeConfigDefaults {
     #[allow(dead_code)]
     pub(crate) fn from_dirs() -> AppResult<Self> {
-        let home_dir = dirs::home_dir()
+        let base_dirs = directories::BaseDirs::new();
+        let home_dir = base_dirs
+            .as_ref()
+            .map(|b| b.home_dir().to_path_buf())
+            .or_else(dirs::home_dir)
             .context("discovering user home directory")
             .map_err(|e| AppError::NotFound(format!("{e:#}")))?;
-        let data_dir = dirs::data_dir()
-            .context("discovering system data directory")
-            .map_err(|e| AppError::NotFound(format!("{e:#}")))?;
+        let data_dir = directories::ProjectDirs::from("", "", "AssetIWeave")
+            .and_then(|proj| proj.data_dir().parent().map(Path::to_path_buf))
+            .or_else(|| base_dirs.as_ref().map(|b| b.data_dir().to_path_buf()))
+            .unwrap_or_else(|| home_dir.join(".local").join("share"));
         Ok(Self { home_dir, data_dir })
     }
 }
@@ -84,15 +89,26 @@ impl RuntimeConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|| defaults.home_dir.join(".assetiweave"));
 
+        let app_data_dir = if let Some(proj) = directories::ProjectDirs::from("", "", "AssetIWeave")
+        {
+            if proj.data_dir().parent() == Some(&defaults.data_dir) {
+                proj.data_dir().to_path_buf()
+            } else {
+                defaults.data_dir.join("AssetIWeave")
+            }
+        } else {
+            defaults.data_dir.join("AssetIWeave")
+        };
+
         let mut db_path = parsed
             .db_path
             .map(PathBuf::from)
-            .unwrap_or_else(|| defaults.data_dir.join("AssetIWeave").join("app.db"));
+            .unwrap_or_else(|| app_data_dir.join("app.db"));
 
         let mut log_dir = parsed
             .log_dir
             .map(PathBuf::from)
-            .unwrap_or_else(|| defaults.data_dir.join("AssetIWeave").join("logs"));
+            .unwrap_or_else(|| app_data_dir.join("logs"));
 
         let mut policy_path = parsed.policy_path.map(PathBuf::from);
 
