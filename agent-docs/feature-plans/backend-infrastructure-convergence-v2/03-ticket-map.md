@@ -18,9 +18,9 @@
 | 12 | [B2-R10](tickets/B2-R10-memory-recall-async.md) | Memory Recall/Search/Public 链路 async-first | B2-R09 |
 | 13 | [B2-R11](tickets/B2-R11-team-async.md) | Team workflow 与 repository 链路 async-first | B2-R10 |
 | 14 | [B2-R12](tickets/B2-R12-agent-market-async.md) | Agent/Market/AI/HTTP 链路 async-first | B2-R11 |
-| 15 | [B2-R13](tickets/B2-R13-pool-only-runtime.md) | async bootstrap 与 pool-only Database 成为唯一生产结构 | B2-R12 |
-| 16 | [B2-R14](tickets/B2-R14-shutdown-deadline.md) | 单一 deadline 覆盖任务、dispatcher、coordinator 与 pool | B2-R13 |
-| 17 | [B2-P01](tickets/B2-P01-process-fixture.md) | process-wrap/which 通过本地跨平台契约验证 | B2-R14 |
+| 15 | [B2-R14](tickets/B2-R14-pool-only-runtime.md) | async bootstrap 与 pool-only Database 成为唯一生产结构 | B2-R12 |
+| 16 | [B2-R15](tickets/B2-R15-shutdown-deadline.md) | 单一 deadline 覆盖任务、dispatcher、coordinator 与 pool | B2-R14 |
+| 17 | [B2-P01](tickets/B2-P01-process-fixture.md) | process-wrap/which 通过本地跨平台契约验证 | B2-R15 |
 | 18 | [B2-P02](tickets/B2-P02-process-migration.md) | 生产 HostProcess 切换并删除手工进程树 | B2-P01 |
 | 19 | [B2-L01](tickets/B2-L01-tracing-convergence.md) | tracing span/rolling 接管生产日志 consumer | B2-P02 |
 | 20 | [B2-F01](tickets/B2-F01-path-convergence.md) | 应用目录与 UTF-8 边界收口，portable anchors 保真 | B2-L01 |
@@ -30,7 +30,7 @@
 
 ## 默认串行原因
 
-- R03–R13 连续修改 Engine dispatch、`AppService` 签名、adapter 调用方式和测试构造器，必须由编译器逐域驱动，避免多个模型同时制造两套过渡接口。
+- R03–R12、R14–R15 连续修改 Engine dispatch、`AppService` 签名、adapter 调用方式和测试构造器，必须由编译器逐域驱动，避免多个模型同时制造两套过渡接口。
 - P02 与 R12 共享 Agent/Extension 进程 consumer；先完成 runtime 迁移，再替换 OS 机制。
 - L01 需要最终 task/tenant runtime context 才能确定 span 边界。
 - D01 在 async SQL 调用链稳定后迁移 row mapping，避免同一查询重复改写。
@@ -39,3 +39,8 @@
 ## 卡片大小规则
 
 每张卡的提交只改变一个 Authority。若 Preflight 发现某领域超过 12 个生产模块或无法在一次目标测试中闭环，先在 Issue #24 把该卡拆成按公开 workflow 命名的连续子卡；拆分不改变 Contract，也不允许同时执行。
+
+## 2026-09-06 审计后队列
+
+旧队列保留历史顺序。当前唯一执行队列和依赖关系见
+[`08-remediation-router.md`](08-remediation-router.md)。

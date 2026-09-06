@@ -1,6 +1,6 @@
 # Feature Plans 实施状态
 
-更新时间：2026-09-01
+更新时间：2026-09-06
 
 本文是 `agent-docs/feature-plans/` 的实施状态索引。各计划原文保留需求、约束和历史
 执行记录；当前代码、测试、Engine contract 和 Git 历史是实现事实的最终来源。
@@ -21,7 +21,8 @@ AppService/backend；Frontend 通过 `frontend/src/services/`，Go CLI 通过 Ru
 | `team-multi-agent` | **Implemented** | Team roster、review/confirm、execution、mailbox、导航和后台任务：`5e666bf`、`6157d66`、`141b493`。 |
 | `acp-agent-execution-runtime` | **Implemented** | ACP/Native runtime、persistent binding、取消、清理、错误和 OneShot/持久执行接入；现行 Rust 全量测试覆盖。 |
 | `agent-marketplace-dynamic-runtime` | **Implemented** | Catalog、安装生命周期、动态 runtime、跨租户任务、Frontend/CLI/Engine 接入，以及 release/static/network/real ACP E2E 校验。 |
-| `backend-architecture-convergence` | **Implemented** | AppRuntime、TaskRuntime、Extension Kernel、TargetCatalog、结构化错误、后台任务和 SQLite authority 已接入；边界自测与全量 Rust 通过。 |
+| `backend-architecture-convergence` | **Post-audit remediation** | 核心 Authority 已接入；当前 Agent Catalog release evidence 哈希与 bundled Catalog 不一致，Issue #1 保持 OPEN。 |
+| `backend-infrastructure-convergence-v2` | **Incomplete after audit** | Runtime/pool/event 主体完成；同步 HostProcess、严格 shutdown deadline、日志脱敏、lossy path、剩余 SQLx row 与当前 HEAD Windows 证据由重开的 Issue #24 继续收口。 |
 | `runtime-extension-refactor` | **Implemented** | Runtime、事件 outbox、extension kernel、能力边界和 interface coverage 已由生产 consumer 使用。 |
 | `conversation-semantic-projection-refactor` | **Implemented** | Question/Turn/Part/Content Node 读取合同、索引、维护审计、修复/回滚、取消协作式检查、CLI maintenance commands 已落地。历史数据库中无法逆向恢复的逐字段快照差异继续按保守策略保留。 |
 | `conversation-card-contract-v1` | **Implemented** | Card contract、结构化 Content Node、适配器输出与前端投影已由 Conversation 生产链路使用。 |

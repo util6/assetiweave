@@ -1,5 +1,9 @@
 # B2-G01：第二阶段完整验收与交付
 
+> **历史验收已撤销：** 2026-09-06 复核发现同步 HostProcess 回退、绝对 deadline
+> 被突破、路径与日志契约残余，以及当前 HEAD 缺少 Windows 通过证据。本文件保存当时的验收步骤，
+> 当前状态与后续执行以 `../08-remediation-router.md` 和 Issue #24 最新评论为准。
+
 **Objective:** 用行为、删除、跨 surface、跨平台和依赖证据确认 Issue #24 已真实完成。
 
 **Contracts:** 全部 Contract。

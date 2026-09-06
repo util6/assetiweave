@@ -1,6 +1,6 @@
 # SPEC-BA-00：后端架构收口总纲
 
-- 状态：Implemented；当前代码与自动化验收已完成，历史基线记录保留
+- 状态：Post-audit remediation；核心结构已落地，Agent Catalog release evidence 与最终状态文档待重新闭环
 - 日期：2026-08-20
 - 代码基线：`main@bc5c14e`
 - 适用范围：`src-tauri/src/`、`frontend/src/services/`、Agent 设置界面、`cli/` 契约、`builtin-assets/`、CI 与发布脚本

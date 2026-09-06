@@ -1,5 +1,9 @@
 # 后端基础设施生态收口第二阶段 Execution Router
 
+> **2026-09-06 审计路由：** 原 `B2-G01` 的 `VERIFIED` 已被当前代码与发布证据反驳。
+> Issue #24 重新成为未完成状态。执行者必须转到
+> [`08-remediation-router.md`](08-remediation-router.md)，不得从旧卡重放已经完成的迁移。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 `superpowers:executing-plans`，一次执行一张卡。只有维护者明确安排并行工作时才使用 `superpowers:subagent-driven-development`。
 
 **Goal:** 在保留 AssetIWeave 领域语义的前提下，让 Tokio、tokio-util、SQLx、Serde、tracing 与经验证的进程/路径 crate 成为通用基础设施的唯一生产实现。
@@ -61,4 +65,3 @@
 ## 结束条件
 
 只有 `B2-G01` 的全部 Gate 通过、Issue #24 中所有前置交接均为 VERIFIED，才可声明第二阶段完成。此时运行时、进程、设置、日志、路径、SQLx 和错误清理均具有行为与删除证据；任一项只有依赖或类型存在时，整体保持未完成。
-
