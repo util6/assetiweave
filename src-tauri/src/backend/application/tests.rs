@@ -3840,8 +3840,10 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     assert_eq!(
         profile.target_paths,
         vec![
-            skill_target.to_string_lossy().to_string(),
-            prompt_target.to_string_lossy().to_string(),
+            crate::backend::path_utils::normalize_std_path_for_storage(&skill_target)
+                .expect("normalized skill target"),
+            crate::backend::path_utils::normalize_std_path_for_storage(&prompt_target)
+                .expect("normalized prompt target"),
         ]
     );
 
