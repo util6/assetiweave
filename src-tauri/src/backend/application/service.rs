@@ -13,3 +13,13 @@ pub(crate) struct AppService {
     pub(super) conversation_adapter_catalog:
         std::sync::Arc<crate::backend::conversations::ConversationAdapterCatalog>,
 }
+
+impl AppService {
+    pub(crate) fn backend_settings(
+        &self,
+    ) -> AppResult<crate::backend::app_settings::BackendSettings> {
+        crate::backend::app_settings::BackendSettings::from_value(
+            &self.runtime.app_settings_value(),
+        )
+    }
+}

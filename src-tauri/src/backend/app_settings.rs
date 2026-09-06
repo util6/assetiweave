@@ -1,8 +1,4 @@
-use crate::backend::{
-    runtime::AppError,
-    runtime::AppResult,
-    store::{self, Database},
-};
+use crate::backend::{runtime::AppError, runtime::AppResult, store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -300,43 +296,6 @@ pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) ->
     let imported = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
     store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &imported).await?;
     Ok(imported)
-}
-
-pub(crate) fn load_backend_settings_for_database(_db: &Database) -> AppResult<BackendSettings> {
-    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
-        return BackendSettings::from_value(&runtime.app_settings_value());
-    }
-    let paths = app_settings_paths()?;
-    let doc = read_settings_document(&paths.config_path)?;
-    BackendSettings::from_document(&doc)
-}
-
-pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
-    db: &Database,
-) -> AppResult<bool> {
-    Ok(load_backend_settings_for_database(db)?.auto_full_sync_on_startup())
-}
-
-pub(crate) fn memory_generation_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(load_backend_settings_for_database(db)?.is_memory_generation_enabled())
-}
-
-pub(crate) fn memory_usage_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(load_backend_settings_for_database(db)?.is_memory_usage_enabled())
-}
-
-pub(crate) fn memory_session_excluded_for_database(
-    db: &Database,
-    session_id: &str,
-) -> AppResult<bool> {
-    Ok(load_backend_settings_for_database(db)?.is_session_excluded(session_id))
-}
-
-pub(crate) fn memory_source_excluded_for_database(
-    db: &Database,
-    source_id: &str,
-) -> AppResult<bool> {
-    Ok(load_backend_settings_for_database(db)?.is_source_excluded(source_id))
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -1334,5 +1293,55 @@ mod tests {
         assert_eq!(reloaded["conversations"]["autoFullSyncOnStartup"], false);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn sqlite_settings_ignore_corrupt_legacy_file_after_import() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-corrupt-import-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
+
+        let db_path = root.join("app.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .expect("open db");
+
+        let expected_settings = canonicalize_settings(json!({
+            "theme": "synthwave",
+            "locale": "zh",
+            "memory": {
+                "generationEnabled": true,
+                "usageEnabled": false
+            }
+        }))
+        .expect("canonicalize");
+
+        save_app_settings_sqlx(db.pool(), expected_settings.clone())
+            .await
+            .expect("save sqlite settings");
+
+        std::fs::write(root.join(CONFIG_FILE_NAME), "{ this is corrupt json !!!")
+            .expect("write corrupt legacy file");
+
+        let service = crate::backend::application::AppService::open_with_db_path(db_path.clone())
+            .await
+            .expect("open service despite corrupt legacy file");
+
+        let backend_settings = service
+            .backend_settings()
+            .expect("read backend settings from sqlite");
+        assert!(backend_settings.is_memory_generation_enabled());
+        assert!(!backend_settings.is_memory_usage_enabled());
+
+        match previous_home {
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
+        }
+        std::fs::remove_dir_all(root).ok();
     }
 }

@@ -195,15 +195,10 @@ impl AppService {
         let job = store::load_session_memory_job_sqlx(&pool, tenant_id, job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Session Memory job not found".to_string()))?;
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)?
-            || crate::backend::app_settings::memory_session_excluded_for_database(
-                &self.db,
-                &job.session_id,
-            )?
-            || crate::backend::app_settings::memory_source_excluded_for_database(
-                &self.db,
-                &job.source_id,
-            )?
+        let settings = self.backend_settings()?;
+        if !settings.is_memory_generation_enabled()
+            || settings.is_session_excluded(&job.session_id)
+            || settings.is_source_excluded(&job.source_id)
         {
             store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
@@ -352,7 +347,7 @@ impl AppService {
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(0);
         }
         let pool = self.db.pool().clone();
@@ -1298,6 +1293,213 @@ mod tests {
         assert!(!requests[0].prompt.contains(secret));
         drop(requests);
         drop(service);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn session_memory_uses_its_own_runtime_settings_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-session-memory-settings-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create test root");
+        let db_a_path = root.join("app_a.db");
+        let db_b_path = root.join("app_b.db");
+
+        let fake = FakeRuntime::new();
+        fake.set_result(
+            serde_json::json!({
+                "summary": "Phase 1 summary",
+                "topics": ["settings"],
+                "source_references": [],
+                "events": [],
+            })
+            .to_string(),
+        );
+
+        let service_a = AppService::open_with_db_path_and_runtime(db_a_path.clone(), fake.clone())
+            .await
+            .expect("open service A");
+
+        let service_b = AppService::open_with_db_path_and_runtime(db_b_path.clone(), fake.clone())
+            .await
+            .expect("open service B");
+
+        let timestamp = "2026-08-30T23:00:00Z";
+        let now = DateTime::parse_from_rfc3339(timestamp)
+            .expect("parse time")
+            .with_timezone(&Utc);
+
+        async fn setup_job(
+            service: &AppService,
+            session_id: &str,
+            now: DateTime<Utc>,
+        ) -> (String, String) {
+            let pool = service.db.pool();
+            let adapter = ConversationAdapter {
+                id: format!("adapter-{session_id}"),
+                name: "Adapter".to_string(),
+                kind: ConversationAdapterKind::External,
+                version: "1.0.0".to_string(),
+                enabled: true,
+                manifest_path: None,
+                executable_path: None,
+                content_hash: None,
+                trusted_hash: None,
+                trust_state: ConversationAdapterTrustState::Trusted,
+                protocol_version: Some(1),
+                capabilities: vec!["read_session".to_string()],
+                input_kinds: vec![ConversationSourceKind::Directory],
+                card_contract_version: None,
+                card_kinds: Vec::new(),
+                created_at: "2026-08-30T23:00:00Z".to_string(),
+                updated_at: "2026-08-30T23:00:00Z".to_string(),
+            };
+            let source = ConversationSource {
+                id: format!("source-{session_id}"),
+                adapter_id: adapter.id.clone(),
+                name: "Source".to_string(),
+                kind: ConversationSourceKind::Directory,
+                location: "/fixture".to_string(),
+                config_json: None,
+                enabled: true,
+                last_synced_at: None,
+                last_sync_status: None,
+                created_at: "2026-08-30T23:00:00Z".to_string(),
+                updated_at: "2026-08-30T23:00:00Z".to_string(),
+            };
+            let session = NormalizedConversationSession {
+                external_id: session_id.to_string(),
+                title: Some("Session".to_string()),
+                project_path: None,
+                started_at: Some("2026-08-30T22:00:00Z".to_string()),
+                updated_at: Some("2026-08-30T23:00:00Z".to_string()),
+                source_locator: Some("fixture://session".to_string()),
+                source_fingerprint: Some("rev1".to_string()),
+                turns: vec![NormalizedConversationTurn {
+                    external_id: "turn-1".to_string(),
+                    turn_index: 0,
+                    user_text: "Hello".to_string(),
+                    title: None,
+                    started_at: Some("2026-08-30T23:00:00Z".to_string()),
+                    ended_at: Some("2026-08-30T23:00:00Z".to_string()),
+                    parts: vec![NormalizedConversationPart {
+                        role: ConversationPartRole::Assistant,
+                        kind: ConversationPartKind::Text,
+                        text: Some("World".to_string()),
+                        language: None,
+                        command: None,
+                        cwd: None,
+                        status: None,
+                        exit_code: None,
+                        command_label: None,
+                        source_execution_id: None,
+                        content_card: None,
+                        metadata_json: None,
+                    }],
+                }],
+            };
+            crate::backend::store::upsert_conversation_adapter_sqlx(pool, "default", &adapter)
+                .await
+                .unwrap();
+            crate::backend::store::upsert_conversation_source_sqlx(pool, "default", &source)
+                .await
+                .unwrap();
+            crate::backend::store::import_conversation_sessions_sqlx(
+                pool,
+                "default",
+                &source,
+                &[session],
+                false,
+            )
+            .await
+            .unwrap();
+
+            let internal_session_id: String = sqlx::query_scalar(
+                "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = ?1",
+            )
+            .bind(session_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+
+            service
+                .enqueue_session_memory_jobs_at(
+                    &source.id,
+                    "sync-1",
+                    1,
+                    "evt-1",
+                    Some(&[internal_session_id.clone()]),
+                    now,
+                )
+                .await
+                .unwrap();
+            let job_id: String = sqlx::query_scalar(
+                "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1",
+            )
+            .bind(&internal_session_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+
+            let detail = crate::backend::store::load_conversation_session_detail_sqlx(
+                pool,
+                "default",
+                &internal_session_id,
+            )
+            .await
+            .unwrap();
+            let reference_key = detail.questions[0]
+                .projected_content_nodes
+                .first()
+                .map(|node| format!("node:{}", node.node_id))
+                .unwrap_or_else(|| format!("turn:{}", detail.questions[0].turns[0].id));
+
+            (job_id, reference_key)
+        }
+
+        let (job_a_id, _ref_a) = setup_job(&service_a, "session-a", now).await;
+        let (job_b_id, ref_b) = setup_job(&service_b, "session-b", now).await;
+
+        fake.set_result(
+            serde_json::json!({
+                "summary": "Phase 1 summary",
+                "topics": ["settings"],
+                "source_references": [{ "reference_key": ref_b }],
+                "events": [],
+            })
+            .to_string(),
+        );
+
+        let mut settings_a = service_a.app_settings_value();
+        settings_a["memory"]["generationEnabled"] = serde_json::json!(false);
+        service_a.runtime.update_app_settings_value(settings_a);
+
+        let mut settings_b = service_b.app_settings_value();
+        settings_b["memory"]["generationEnabled"] = serde_json::json!(true);
+        service_b.runtime.update_app_settings_value(settings_b);
+
+        let run_at = now + Duration::minutes(30);
+
+        let result_a = service_a
+            .run_session_memory_phase1_at(&job_a_id, run_at)
+            .await
+            .expect("phase1 on A");
+        assert!(result_a.is_none(), "service A should have cancelled job");
+        let status_a: String =
+            sqlx::query_scalar("SELECT status FROM session_memory_jobs WHERE id = ?1")
+                .bind(&job_a_id)
+                .fetch_one(service_a.db.pool())
+                .await
+                .unwrap();
+        assert_eq!(status_a, "canceled", "job A must be canceled in DB_A");
+
+        let result_b = service_b
+            .run_session_memory_phase1_at(&job_b_id, run_at)
+            .await
+            .expect("phase1 on B");
+        assert!(result_b.is_some(), "service B should have executed phase 1");
+
         let _ = std::fs::remove_dir_all(root);
     }
 }

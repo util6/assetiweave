@@ -313,6 +313,13 @@ impl AppRuntime {
             .filter(|adapter| adapter.trust_state == ConversationAdapterTrustState::BuiltIn)
             .cloned()
             .collect();
+        let initial_settings =
+            crate::backend::app_settings::load_or_import_app_settings_sqlx(db.pool())
+                .await
+                .unwrap_or_else(|_| {
+                    crate::backend::app_settings::canonicalize_settings(serde_json::json!({}))
+                        .unwrap_or_else(|_| serde_json::json!({}))
+                });
         Arc::new(Self {
             db_path: db_path.clone(),
             db,
@@ -347,10 +354,7 @@ impl AppRuntime {
                 config.db_path = db_path;
                 Arc::new(config)
             },
-            settings: ArcSwap::from_pointee(
-                crate::backend::app_settings::canonicalize_settings(serde_json::json!({}))
-                    .unwrap_or_else(|_| serde_json::json!({})),
-            ),
+            settings: ArcSwap::from_pointee(initial_settings),
         })
     }
 
@@ -617,6 +621,12 @@ impl AppRuntime {
 
     pub(crate) fn update_app_settings_value(&self, new_settings: serde_json::Value) {
         self.settings.store(Arc::new(new_settings));
+    }
+
+    pub(crate) fn backend_settings(
+        &self,
+    ) -> AppResult<crate::backend::app_settings::BackendSettings> {
+        crate::backend::app_settings::BackendSettings::from_value(&self.app_settings_value())
     }
 
     async fn build_tenant_snapshot(

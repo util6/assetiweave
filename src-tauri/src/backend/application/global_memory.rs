@@ -4,7 +4,6 @@ use crate::backend::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
-    app_settings,
     models::{GlobalMemoryJob, GlobalMemoryJobStatus, GlobalMemorySource, GlobalMemoryVersion},
     runtime::tasks::{TaskContext, TaskFilter, TaskKind, TaskSpec},
     store::{self, GlobalMemoryInputSet, GlobalMemoryPersistInput},
@@ -89,7 +88,7 @@ impl AppService {
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
-        if !app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(0);
         }
         let pool = self.db.pool().clone();
@@ -475,7 +474,7 @@ impl AppService {
             &project_sources,
             &sessions,
         );
-        if app_settings::memory_usage_enabled_for_database(&self.db)? {
+        if self.backend_settings()?.is_memory_usage_enabled() {
             let used_at = Utc::now().to_rfc3339();
             for reference in &compiled.references {
                 store::record_memory_usage_event_sqlx(

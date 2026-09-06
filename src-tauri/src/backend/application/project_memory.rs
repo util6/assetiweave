@@ -93,7 +93,7 @@ impl AppService {
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(0);
         }
         let pool = self.db.pool().clone();

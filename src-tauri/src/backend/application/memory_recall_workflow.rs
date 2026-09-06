@@ -459,7 +459,7 @@ impl AppService {
         turn_id: &str,
         output: &MemoryRecallStructuredOutput,
     ) -> AppResult<()> {
-        if !crate::backend::app_settings::memory_usage_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_usage_enabled() {
             return Ok(());
         }
         let used_at = Utc::now().to_rfc3339();
