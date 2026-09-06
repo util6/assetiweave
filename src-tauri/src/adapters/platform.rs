@@ -3,8 +3,7 @@
 //! 提供在操作系统文件管理器（Finder / Explorer / xdg-open）中定位与打开指定路径的能力。
 
 use crate::backend::{
-    host_process::configure_background_process,
-    path_utils::expand_path,
+    path_utils::{configure_background_process, expand_path},
     runtime::{AppError, AppResult},
 };
 use std::{

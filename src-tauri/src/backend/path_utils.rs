@@ -1,13 +1,22 @@
 use crate::backend::host_paths::HostPathResolver;
 use crate::backend::{
     dto::GitRepositoryInfo,
-    host_process::configure_background_process,
     runtime::{AppError, AppResult},
 };
 use crate::backend::{models::AppKind, target_catalog::TargetCatalog};
 use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
+
+#[cfg(windows)]
+pub(crate) fn configure_background_process(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+pub(crate) fn configure_background_process(_command: &mut Command) {}
 
 pub(crate) fn app_db_path() -> AppResult<PathBuf> {
     let path = crate::backend::runtime::config::runtime_config()?

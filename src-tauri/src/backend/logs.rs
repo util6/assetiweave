@@ -1,4 +1,4 @@
-use crate::backend::host_process::configure_background_process;
+use crate::backend::path_utils::configure_background_process;
 use chrono::Local;
 use serde::Serialize;
 use std::{

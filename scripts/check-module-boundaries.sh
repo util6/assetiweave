@@ -27,6 +27,10 @@ check_max() {
   fi
 }
 
+# C-PROCESS-01 & B2-P03C: host_process must not retain sync runner primitives
+check_absent 'libc::kill|process_group\(0\)|std::thread::spawn|thread::sleep|std::process::Command' \
+  "$ROOT/src-tauri/src/backend/host_process.rs"
+
 # Tauri wrappers must reuse the process runtime and keyed locks, not reopen a
 # database or serialize all commands behind the removed global mutex.
 check_absent 'state\.lock|AppService::open_with_db_path' "$ROOT/src-tauri/src/adapters"
