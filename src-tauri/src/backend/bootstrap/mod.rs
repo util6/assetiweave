@@ -58,28 +58,23 @@ pub(crate) async fn reconcile_app_conversation_adapters(
         let adapter = if package.runtime_ready
             && package.runtime_gate_status == ConversationAdapterRuntimeGateStatus::Ready
         {
-            let adapter_manifest_path = package.adapter_manifest_path.clone();
-            let settings = settings.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::backend::path_utils::expand_path(&adapter_manifest_path)
-                    .and_then(|manifest_path| {
-                        crate::backend::conversations::register_external_adapter_with_settings(
-                            crate::backend::conversations::ExternalAdapterRegisterParams {
-                                manifest_path: manifest_path.to_string_lossy().to_string(),
-                                dry_run: true,
-                                yes: true,
-                            },
-                            &settings,
-                        )
-                        .map_err(AppError::external)
-                    })
-                    .and_then(|preview| {
-                        crate::backend::conversations::adapter_from_registration_preview(preview)
-                    })
-            })
+            async {
+                let manifest_path =
+                    crate::backend::path_utils::expand_path(&package.adapter_manifest_path)?;
+                let preview =
+                    crate::backend::conversations::register_external_adapter_with_settings(
+                        crate::backend::conversations::ExternalAdapterRegisterParams {
+                            manifest_path: manifest_path.to_string_lossy().to_string(),
+                            dry_run: true,
+                            yes: true,
+                        },
+                        &settings,
+                    )
+                    .await
+                    .map_err(AppError::external)?;
+                crate::backend::conversations::adapter_from_registration_preview(preview)
+            }
             .await
-            .map_err(AppError::external)
-            .and_then(|result| result)
             .map_err(|error| {
                 tracing::warn!(
                     target: "assetiweave.operation",

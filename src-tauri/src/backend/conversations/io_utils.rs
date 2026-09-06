@@ -133,7 +133,7 @@ pub(super) fn build_adapter_runtime_invocation_with_settings(
     }
 }
 
-pub(super) fn ensure_adapter_runtime_available(
+pub(super) async fn ensure_adapter_runtime_available(
     runtime: &ConversationAdapterRuntime,
     invocation: &AdapterCommandInvocation,
 ) -> AppResult<()> {
@@ -145,7 +145,8 @@ pub(super) fn ensure_adapter_runtime_available(
         &runtime.kind,
         invocation.program.clone(),
         runtime.version.as_deref(),
-    );
+    )
+    .await;
     if status.available {
         Ok(())
     } else {
@@ -155,25 +156,26 @@ pub(super) fn ensure_adapter_runtime_available(
     }
 }
 
-pub(super) fn list_adapter_runtime_statuses_with_settings(
+pub(super) async fn list_adapter_runtime_statuses_with_settings(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
     settings: &Value,
 ) -> Vec<ConversationAdapterRuntimeStatus> {
-    [
+    let mut statuses = Vec::new();
+    for kind in [
         ConversationAdapterRuntimeKind::Node,
         ConversationAdapterRuntimeKind::Python,
         ConversationAdapterRuntimeKind::Bash,
-    ]
-    .into_iter()
-    .map(|kind| {
+    ] {
         let program = configured_runtime_program(&kind, settings);
         let required_version = requirements
             .iter()
             .find(|(requirement_kind, _)| *requirement_kind == kind)
             .map(|(_, version)| version.as_str());
-        probe_adapter_runtime_status_with_requirement(&kind, program, required_version)
-    })
-    .collect()
+        statuses.push(
+            probe_adapter_runtime_status_with_requirement(&kind, program, required_version).await,
+        );
+    }
+    statuses
 }
 
 pub(super) fn adapter_runtime_requirements(
@@ -263,14 +265,14 @@ pub(super) fn sort_runtime_requirements(
 }
 
 #[cfg(test)]
-pub(super) fn probe_adapter_runtime_status(
+pub(super) async fn probe_adapter_runtime_status(
     kind: &ConversationAdapterRuntimeKind,
     program: PathBuf,
 ) -> ConversationAdapterRuntimeStatus {
-    probe_adapter_runtime_status_with_requirement(kind, program, None)
+    probe_adapter_runtime_status_with_requirement(kind, program, None).await
 }
 
-pub(super) fn probe_adapter_runtime_status_with_requirement(
+pub(super) async fn probe_adapter_runtime_status_with_requirement(
     kind: &ConversationAdapterRuntimeKind,
     program: PathBuf,
     required_version: Option<&str>,
@@ -280,7 +282,9 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
         program.clone(),
         runtime_version_args(kind),
         Duration::from_millis(ADAPTER_RUNTIME_PROBE_TIMEOUT_MS),
-    ) {
+    )
+    .await
+    {
         Ok((status, stdout, stderr)) if status.success() => {
             runtime_status_from_success(kind, &program, required_version, &stdout, &stderr)
         }
@@ -431,43 +435,49 @@ fn runtime_version_mismatch_error(
     )
 }
 
-fn run_runtime_probe(
+async fn run_runtime_probe(
     program: PathBuf,
     args: Vec<&str>,
     timeout: Duration,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), RuntimeProbeError> {
     let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
-    let output = crate::backend::host_process::run_program_with_timeout(
-        &program,
-        &args,
-        None,
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program,
+        args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
         timeout,
-        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
-        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
-            RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
-        }
-        crate::backend::host_process::HostProcessError::Spawn(reason) => {
-            RuntimeProbeError::Spawn(reason)
-        }
-        crate::backend::host_process::HostProcessError::Output(reason) => {
-            RuntimeProbeError::Output(reason)
-        }
-        crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
-            RuntimeProbeError::Timeout { stdout, stderr }
-        }
-        crate::backend::host_process::HostProcessError::Cancelled => {
-            RuntimeProbeError::Output("runtime probe was cancelled".to_string())
-        }
-        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
-            RuntimeProbeError::Output(reason)
-        }
-        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
-            RuntimeProbeError::Output("runtime probe output exceeded configured limit".to_string())
-        }
-    })?;
+        stdout_limit: ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+        stderr_limit: ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+                RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
+            }
+            crate::backend::host_process::HostProcessError::Spawn(reason) => {
+                RuntimeProbeError::Spawn(reason)
+            }
+            crate::backend::host_process::HostProcessError::Output(reason) => {
+                RuntimeProbeError::Output(reason)
+            }
+            crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
+                RuntimeProbeError::Timeout { stdout, stderr }
+            }
+            crate::backend::host_process::HostProcessError::Cancelled => {
+                RuntimeProbeError::Output("runtime probe was cancelled".to_string())
+            }
+            crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+                RuntimeProbeError::Output(reason)
+            }
+            crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                RuntimeProbeError::Output(
+                    "runtime probe output exceeded configured limit".to_string(),
+                )
+            }
+        })?;
     if output.stdout_truncated || output.stderr_truncated {
         return Err(RuntimeProbeError::Output(format!(
             "runtime probe output exceeded cap of {ADAPTER_RUNTIME_PROBE_OUTPUT_CAP} bytes"
@@ -591,10 +601,10 @@ pub(super) fn build_adapter_runtime_invocation(
 }
 
 #[cfg(test)]
-pub(super) fn list_adapter_runtime_statuses(
+pub(super) async fn list_adapter_runtime_statuses(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
 ) -> Vec<ConversationAdapterRuntimeStatus> {
-    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({}))
+    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({})).await
 }
 
 pub(super) fn runtime_program_from_settings(

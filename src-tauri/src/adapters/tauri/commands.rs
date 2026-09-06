@@ -2219,11 +2219,13 @@ pub(crate) async fn unregister_conversation_adapter(
 }
 
 #[tauri::command]
-pub(crate) fn try_run_conversation_adapter(
+pub(crate) async fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
 ) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-    AppService::from_runtime(&state.runtime).try_run_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime)
+        .try_run_conversation_adapter(params)
+        .await
 }
 
 #[tauri::command]
@@ -2231,12 +2233,9 @@ pub(crate) async fn project_conversation_command_parts(
     state: State<'_, AppState>,
     params: ConversationCommandProjectionParams,
 ) -> RuntimeAppResult<Vec<ConversationCommandProjection>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).project_conversation_command_parts(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .project_conversation_command_parts(params)
+        .await
 }
 
 #[tauri::command]

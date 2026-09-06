@@ -1436,7 +1436,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::conversations::ExternalAdapterTryRunParams,
-        Service => |service, params| service.try_run_conversation_adapter(params),
+        ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("method", "Adapter method to run"),
@@ -1882,7 +1882,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::conversations::ConversationCommandProjectionParams,
-        Service => |service, params| service.project_conversation_command_parts(params),
+        ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
             param!("parts", "Stored raw command blocks to project"),
@@ -3511,7 +3511,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ExternalAdapterTryRunParams,
-        Service => |service, params| service.try_run_conversation_adapter(params),
+        ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("method", "Adapter method to run"),
@@ -3926,7 +3926,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ConversationCommandProjectionParams,
-        Service => |service, params| service.project_conversation_command_parts(params),
+        ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
             param!("parts", "Stored raw command blocks to project"),

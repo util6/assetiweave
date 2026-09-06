@@ -92,6 +92,7 @@ pub(super) async fn install_conversation_adapter_package_from_spec(
         },
         &settings,
     )
+    .await
     .map_err(AppError::external)?;
     let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
         .map_err(AppError::external)?;

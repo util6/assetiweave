@@ -154,8 +154,8 @@ fn adapter_output_rejects_oversized_line() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_sync_cancels_an_in_flight_adapter_read() {
+#[tokio::test]
+async fn conversation_sync_cancels_an_in_flight_adapter_read() {
     let fixture = TempFixture::new("assetiweave-sync-cancellation");
     let adapter = adapter_with_manifest_runtime(
         fixture.path(),
@@ -187,7 +187,8 @@ fn conversation_sync_cancels_an_in_flight_adapter_read() {
         &json!({}),
         Some(&cancellation),
         &mut |_, _| {},
-    );
+    )
+    .await;
     worker.join().unwrap();
     assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(
@@ -197,8 +198,8 @@ fn conversation_sync_cancels_an_in_flight_adapter_read() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_sync_probes_runtime_once_per_source() {
+#[tokio::test]
+async fn conversation_sync_probes_runtime_once_per_source() {
     let fixture = TempFixture::new("assetiweave-sync-runtime-reuse");
     let mut adapter = adapter_with_manifest_runtime(
         fixture.path(),
@@ -246,6 +247,7 @@ esac
         None,
         &mut |_, _| {},
     )
+    .await
     .unwrap();
     assert_eq!(result.discovered_session_count, 2);
     assert_eq!(
@@ -258,8 +260,8 @@ esac
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
+#[tokio::test]
+async fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
     let fixture = TempFixture::new("assetiweave-harvester-cancellation");
     write_executable_script(
         fixture.path(),
@@ -293,7 +295,8 @@ fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
         true,
         &json!({}),
         Some(&cancellation),
-    );
+    )
+    .await;
     worker.join().unwrap();
     assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(started.elapsed() < Duration::from_secs(3));
@@ -721,8 +724,8 @@ fn adapter_runtime_invocation_supports_python_and_bash() {
     );
 }
 
-#[test]
-fn adapter_runtime_probe_reports_missing_system_runtime() {
+#[tokio::test]
+async fn adapter_runtime_probe_reports_missing_system_runtime() {
     let runtime = ConversationAdapterRuntime {
         kind: ConversationAdapterRuntimeKind::Node,
         entry: "adapter.mjs".to_string(),
@@ -735,7 +738,9 @@ fn adapter_runtime_probe_reports_missing_system_runtime() {
         display_path: PathBuf::from("adapter.mjs"),
     };
 
-    let error = ensure_adapter_runtime_available(&runtime, &invocation).unwrap_err();
+    let error = ensure_adapter_runtime_available(&runtime, &invocation)
+        .await
+        .unwrap_err();
 
     assert!(error.contains("node >=20"));
     assert!(error.contains("PATH"));
@@ -743,8 +748,8 @@ fn adapter_runtime_probe_reports_missing_system_runtime() {
 }
 
 #[cfg(unix)]
-#[test]
-fn adapter_runtime_probe_rejects_detected_version_below_requirement() {
+#[tokio::test]
+async fn adapter_runtime_probe_rejects_detected_version_below_requirement() {
     let fixture = TempFixture::new("assetiweave-runtime-version-fixture");
     let runtime_program = write_executable_script(
         fixture.path(),
@@ -765,15 +770,17 @@ printf '%s\n' 'v18.19.0'
         display_path: PathBuf::from("adapter.mjs"),
     };
 
-    let error = ensure_adapter_runtime_available(&runtime, &invocation).unwrap_err();
+    let error = ensure_adapter_runtime_available(&runtime, &invocation)
+        .await
+        .unwrap_err();
 
     assert!(error.contains("requires >=20"));
     assert!(error.contains("v18.19.0"));
 }
 
 #[cfg(unix)]
-#[test]
-fn adapter_runtime_status_reports_version_requirement_mismatch() {
+#[tokio::test]
+async fn adapter_runtime_status_reports_version_requirement_mismatch() {
     let fixture = TempFixture::new("assetiweave-runtime-status-version-fixture");
     let runtime_program = write_executable_script(
         fixture.path(),
@@ -787,7 +794,8 @@ printf '%s\n' 'v18.19.0'
         &ConversationAdapterRuntimeKind::Node,
         runtime_program,
         Some(">=20"),
-    );
+    )
+    .await;
 
     assert!(!status.available);
     assert_eq!(status.version.as_deref(), Some("v18.19.0"));
@@ -799,12 +807,13 @@ printf '%s\n' 'v18.19.0'
         .contains("requires >=20"));
 }
 
-#[test]
-fn adapter_runtime_probe_returns_remediation_hint() {
+#[tokio::test]
+async fn adapter_runtime_probe_returns_remediation_hint() {
     let status = probe_adapter_runtime_status(
         &ConversationAdapterRuntimeKind::Node,
         PathBuf::from("assetiweave-missing-node-runtime"),
-    );
+    )
+    .await;
 
     assert!(!status.available);
     assert!(status
@@ -839,9 +848,9 @@ fn adapter_runtime_version_constraints_reject_unsupported_shapes() {
     assert!(runtime_version_satisfies_constraint("node version unknown", ">=20").is_err());
 }
 
-#[test]
-fn adapter_runtime_status_lists_supported_system_runtimes() {
-    let statuses = list_adapter_runtime_statuses(&[]);
+#[tokio::test]
+async fn adapter_runtime_status_lists_supported_system_runtimes() {
+    let statuses = list_adapter_runtime_statuses(&[]).await;
     let kinds = statuses
         .iter()
         .map(|status| status.kind.clone())
@@ -861,12 +870,13 @@ fn adapter_runtime_status_lists_supported_system_runtimes() {
         .all(|status| status.required_version.is_none()));
 }
 
-#[test]
-fn adapter_runtime_status_uses_declared_runtime_requirements() {
+#[tokio::test]
+async fn adapter_runtime_status_uses_declared_runtime_requirements() {
     let statuses = list_adapter_runtime_statuses(&[(
         ConversationAdapterRuntimeKind::Node,
         ">=20".to_string(),
-    )]);
+    )])
+    .await;
 
     assert_eq!(
         statuses
@@ -1307,8 +1317,8 @@ fn external_adapter_validation_rejects_legacy_command_outside_adapter_directory(
     assert!(error.contains("escape"));
 }
 
-#[test]
-fn external_adapter_scaffold_generates_export_markdown_fixtures() {
+#[tokio::test]
+async fn external_adapter_scaffold_generates_export_markdown_fixtures() {
     let fixture = TempFixture::new("assetiweave-adapter-scaffold-fixture");
 
     let result = scaffold_external_adapter(ExternalAdapterScaffoldParams {
@@ -1366,6 +1376,7 @@ fn external_adapter_scaffold_generates_export_markdown_fixtures() {
         session_id: None,
         yes: true,
     })
+    .await
     .unwrap();
     let starter_export = starter_run.markdown_export.expect("starter export");
     assert_eq!(
@@ -1516,8 +1527,8 @@ printf '%s\n' '{"type":"complete","item":{}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_register_runs_probe_before_trusting() {
+#[tokio::test]
+async fn external_adapter_register_runs_probe_before_trusting() {
     let fixture = TempFixture::new("assetiweave-adapter-register-probe-fixture");
     write_executable_script(
         fixture.path(),
@@ -1534,6 +1545,7 @@ printf '%s\n' '{"type":"complete","item":{"ok":true}}'
         dry_run: false,
         yes: true,
     })
+    .await
     .expect("register should probe and trust adapter");
 
     assert_eq!(result["adapter"]["trust_state"], "trusted");
@@ -1545,8 +1557,8 @@ printf '%s\n' '{"type":"complete","item":{"ok":true}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_register_rejects_failed_probe_before_trusting() {
+#[tokio::test]
+async fn external_adapter_register_rejects_failed_probe_before_trusting() {
     let fixture = TempFixture::new("assetiweave-adapter-register-failed-probe-fixture");
     write_executable_script(
         fixture.path(),
@@ -1563,14 +1575,15 @@ printf '%s\n' '{"type":"error","message":"probe failed"}'
         dry_run: false,
         yes: true,
     })
+    .await
     .expect_err("register should reject adapter when probe fails");
 
     assert!(error.contains("probe failed"), "error = {error}");
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_try_run_requires_explicit_confirmation() {
+#[tokio::test]
+async fn external_adapter_try_run_requires_explicit_confirmation() {
     let fixture = TempFixture::new("assetiweave-adapter-confirmation-fixture");
     write_executable_script(
         fixture.path(),
@@ -1589,14 +1602,15 @@ printf '%s\n' '{"type":"complete","item":{}}'
         session_id: None,
         yes: false,
     })
+    .await
     .expect_err("try-run should require confirmation");
 
     assert!(error.contains("requires --yes"));
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_try_run_parses_sessions_without_shell_joining_args() {
+#[tokio::test]
+async fn external_adapter_try_run_parses_sessions_without_shell_joining_args() {
     let fixture = TempFixture::new("assetiweave-adapter-run-fixture");
     let hacked_path = fixture.path().join("hacked");
     write_executable_script(
@@ -1623,6 +1637,7 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
         session_id: Some("external-session-1".to_string()),
         yes: true,
     })
+    .await
     .unwrap();
 
     assert_eq!(result.item_count, 1);
@@ -1633,8 +1648,8 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_try_run_parses_markdown_export() {
+#[tokio::test]
+async fn external_adapter_try_run_parses_markdown_export() {
     let fixture = TempFixture::new("assetiweave-adapter-export-run-fixture");
     write_executable_script(
         fixture.path(),
@@ -1654,6 +1669,7 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
         session_id: None,
         yes: true,
     })
+    .await
     .unwrap();
 
     let export = result.markdown_export.expect("markdown export");
@@ -1663,8 +1679,8 @@ printf '%s\n' '{"type":"complete","item":{"export_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_projects_a_validated_batch_without_persistence() {
+#[tokio::test]
+async fn external_adapter_projects_a_validated_batch_without_persistence() {
     let fixture = TempFixture::new("assetiweave-adapter-project-fixture");
     write_executable_script(
         fixture.path(),
@@ -1705,6 +1721,7 @@ printf '%s\n' '{"type":"complete","item":{"projection_count":1}}'
         }],
         &json!({}),
     )
+    .await
     .expect("project batch");
 
     assert_eq!(projections.len(), 1);
@@ -1713,8 +1730,8 @@ printf '%s\n' '{"type":"complete","item":{"projection_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_sync_reads_registered_adapter_sessions() {
+#[tokio::test]
+async fn external_adapter_sync_reads_registered_adapter_sessions() {
     let fixture = TempFixture::new("assetiweave-adapter-sync-fixture");
     write_executable_script(
         fixture.path(),
@@ -1757,7 +1774,9 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].external_id, "web-session-1");
@@ -1769,8 +1788,8 @@ printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_incremental_incomplete_discovery_falls_back_without_advancing_versions() {
+#[tokio::test]
+async fn conversation_incremental_incomplete_discovery_falls_back_without_advancing_versions() {
     let fixture = TempFixture::new("assetiweave-incomplete-discovery-fixture");
     write_executable_script(
         fixture.path(),
@@ -1826,6 +1845,7 @@ esac
         &source,
         &BTreeMap::from([("session-1".to_string(), "version-1".to_string())]),
     )
+    .await
     .expect("fallback to safe retained full read");
 
     assert!(!result.incremental);
@@ -1834,8 +1854,8 @@ esac
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_incremental_discovery_bounds_initial_hydration_by_session() {
+#[tokio::test]
+async fn conversation_incremental_discovery_bounds_initial_hydration_by_session() {
     let fixture = TempFixture::new("assetiweave-bounded-initial-hydration");
     write_executable_script(
         fixture.path(),
@@ -1904,6 +1924,7 @@ esac
         None,
         &mut |done, total| progress.push((done, total)),
     )
+    .await
     .expect("hydrate discovered sessions through bounded reads");
 
     assert!(result.incremental);
@@ -1914,8 +1935,8 @@ esac
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_incremental_skips_a_session_that_changes_after_discovery() {
+#[tokio::test]
+async fn conversation_incremental_skips_a_session_that_changes_after_discovery() {
     let fixture = TempFixture::new("assetiweave-changing-session-hydration");
     write_executable_script(
         fixture.path(),
@@ -1968,6 +1989,7 @@ esac
 
     let result =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
             .expect("defer a session whose descriptor became stale");
 
     assert!(result.incremental);
@@ -1978,9 +2000,9 @@ esac
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_session() {
-    if !command_available("node") {
+#[tokio::test]
+async fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_session() {
+    if !command_available("node").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-chatgpt-web-incremental-fixture");
@@ -2031,6 +2053,7 @@ fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_sess
 
     let first =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
             .expect("initial web sync");
     assert_eq!(first.active_session_count, 1);
     let known = BTreeMap::from([(
@@ -2043,6 +2066,7 @@ fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_sess
 
     let unchanged =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .await
             .expect("unchanged web sync");
     assert_eq!(unchanged.active_session_count, 0);
     assert!(unchanged.sessions.is_empty());
@@ -2050,15 +2074,16 @@ fn conversation_incremental_web_adapter_skips_unchanged_and_reactivates_old_sess
     write_sessions("2026-07-16T00:00:00Z");
     let reactivated =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known)
+            .await
             .expect("reactivated web sync");
     assert_eq!(reactivated.active_session_count, 1);
     assert_eq!(reactivated.sessions[0].external_id, "old-web-session");
 }
 
 #[cfg(unix)]
-#[test]
-fn official_web_adapters_expose_incremental_session_discovery() {
-    if !command_available("node") {
+#[tokio::test]
+async fn official_web_adapters_expose_incremental_session_discovery() {
+    if !command_available("node").await {
         return;
     }
     for adapter_id in ["chatgpt-web", "gemini-web", "qwen-web"] {
@@ -2135,6 +2160,7 @@ fn official_web_adapters_expose_incremental_session_discovery() {
             &source,
             &BTreeMap::new(),
         )
+        .await
         .unwrap_or_else(|error| panic!("{adapter_id} incremental discovery failed: {error}"));
 
         assert!(result.incremental, "{adapter_id}");
@@ -2215,9 +2241,9 @@ fn official_web_adapters_expose_incremental_session_discovery() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
-    if !command_available("node") {
+#[tokio::test]
+async fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
+    if !command_available("node").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-zcode-card-contract-fixture");
@@ -2251,7 +2277,9 @@ fn official_zcode_adapter_emits_structured_cards_without_legacy_metadata() {
         &db_path.to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
     let parts = &sessions[0].turns[0].parts;
     assert_content_card_types(
         parts,
@@ -2327,9 +2355,9 @@ fn official_adapter_manifests_use_runtime_without_legacy_command() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_session_discovery_does_not_buffer_titles() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_session_discovery_does_not_buffer_titles() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-codex-large-title-discovery");
@@ -2367,6 +2395,7 @@ fn official_codex_session_discovery_does_not_buffer_titles() {
     );
 
     let discovery = discover_external_adapter_sessions(&adapter, &source, &json!({}))
+        .await
         .expect("discover Codex sessions")
         .expect("Codex declares snapshot discovery");
 
@@ -2411,9 +2440,9 @@ fn first_party_adapter_manifests_declare_namespaced_card_contracts() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_separates_skill_context_and_projects_aggregated_commands() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_separates_skill_context_and_projects_aggregated_commands() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-fixture");
@@ -2463,7 +2492,9 @@ fn official_codex_adapter_separates_skill_context_and_projects_aggregated_comman
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].turns.len(), 1);
@@ -2524,9 +2555,9 @@ fn official_codex_adapter_separates_skill_context_and_projects_aggregated_comman
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_preserves_patch_apply_end_as_diff_card() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_preserves_patch_apply_end_as_diff_card() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-diff-fixture");
@@ -2622,7 +2653,9 @@ fn official_codex_adapter_preserves_patch_apply_end_as_diff_card() {
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     let parts = &sessions[0].turns[0].parts;
@@ -2675,9 +2708,9 @@ fn current_first_party_v1_adapters_do_not_ship_legacy_exporters() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-large-fixture");
@@ -2725,7 +2758,9 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     let parts = &sessions[0].turns[0].parts;
@@ -2740,9 +2775,9 @@ fn official_codex_adapter_does_not_embed_raw_tool_payload_metadata() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-truncate-fixture");
@@ -2797,7 +2832,9 @@ fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     let parts = &sessions[0].turns[0].parts;
     assert_content_card_types(parts, &["command"]);
@@ -2807,9 +2844,9 @@ fn official_codex_adapter_omits_large_success_payload_after_browse_policy() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-useful-browse-fixture");
@@ -2883,7 +2920,9 @@ fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output(
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     let parts = &sessions[0].turns[0].parts;
     assert!(parts
@@ -2910,9 +2949,9 @@ fn official_codex_adapter_preserves_useful_browse_cards_after_large_tool_output(
 }
 
 #[cfg(unix)]
-#[test]
-fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-codex-no-marker-fixture");
@@ -2988,7 +3027,9 @@ fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     let text = sessions[0].turns[0]
         .parts
@@ -3003,9 +3044,9 @@ fn official_codex_adapter_does_not_emit_internal_truncation_markers_as_card_text
 }
 
 #[cfg(unix)]
-#[test]
-fn official_opencode_adapter_splits_command_and_result_cards() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_opencode_adapter_splits_command_and_result_cards() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-opencode-fixture");
@@ -3091,7 +3132,9 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
         &db_path.to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].turns.len(), 1);
@@ -3109,9 +3152,9 @@ fn official_opencode_adapter_splits_command_and_result_cards() {
 }
 
 #[cfg(unix)]
-#[test]
-fn conversation_incremental_opencode_detects_reactivated_old_session() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn conversation_incremental_opencode_detects_reactivated_old_session() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-opencode-incremental-fixture");
@@ -3155,6 +3198,7 @@ fn conversation_incremental_opencode_detects_reactivated_old_session() {
 
     let first =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &BTreeMap::new())
+            .await
             .expect("initial incremental import");
     assert!(first.incremental);
     assert_eq!(first.active_session_count, 1);
@@ -3169,6 +3213,7 @@ fn conversation_incremental_opencode_detects_reactivated_old_session() {
 
     let unchanged =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .await
             .expect("skip unchanged session");
     assert_eq!(unchanged.active_session_count, 0);
     assert_eq!(unchanged.skipped_session_count, 1);
@@ -3187,6 +3232,7 @@ fn conversation_incremental_opencode_detects_reactivated_old_session() {
 
     let reactivated =
         read_source_sessions_incrementally_with_adapter(Some(&adapter), &source, &known_versions)
+            .await
             .expect("read reactivated old session");
     assert_eq!(reactivated.discovered_session_count, 1);
     assert_eq!(reactivated.active_session_count, 1);
@@ -3219,9 +3265,9 @@ fn insert_opencode_text_message(
 }
 
 #[cfg(unix)]
-#[test]
-fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
-    if !command_available("node") || !command_available("sqlite3") {
+#[tokio::test]
+async fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
+    if !command_available("node").await || !command_available("sqlite3").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-opencode-json-fixture");
@@ -3346,7 +3392,9 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
         &db_path.to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     let parts = &sessions[0].turns[0].parts;
@@ -3378,9 +3426,9 @@ fn official_opencode_adapter_extracts_json_fields_without_raw_metadata() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_claude_code_adapter_splits_command_and_result_cards() {
-    if !command_available("node") {
+#[tokio::test]
+async fn official_claude_code_adapter_splits_command_and_result_cards() {
+    if !command_available("node").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-claude-fixture");
@@ -3412,7 +3460,9 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].turns.len(), 1);
@@ -3430,9 +3480,9 @@ fn official_claude_code_adapter_splits_command_and_result_cards() {
 }
 
 #[cfg(unix)]
-#[test]
-fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() {
-    if !command_available("node") {
+#[tokio::test]
+async fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() {
+    if !command_available("node").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-claude-array-fixture");
@@ -3464,7 +3514,9 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].turns.len(), 1);
@@ -3496,9 +3548,9 @@ fn official_claude_code_adapter_reads_content_array_tool_use_and_result_cards() 
 }
 
 #[cfg(unix)]
-#[test]
-fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_changes() {
-    if !command_available("node") {
+#[tokio::test]
+async fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_changes() {
+    if !command_available("node").await {
         return;
     }
     let fixture = TempFixture::new("assetiweave-official-claude-reasoning-fixture");
@@ -3523,7 +3575,9 @@ fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_cha
         &fixture.path().to_string_lossy(),
     );
 
-    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source).unwrap();
+    let sessions = read_source_sessions_with_adapter(Some(&adapter), &source)
+        .await
+        .unwrap();
     let parts = &sessions[0].turns[0].parts;
 
     assert_eq!(parts.len(), 2);
@@ -3549,8 +3603,8 @@ fn official_claude_code_adapter_emits_namespaced_reasoning_without_core_kind_cha
 }
 
 #[cfg(unix)]
-#[test]
-fn external_adapter_run_times_out() {
+#[tokio::test]
+async fn external_adapter_run_times_out() {
     let fixture = TempFixture::new("assetiweave-adapter-timeout-fixture");
     write_executable_script(
         fixture.path(),
@@ -3571,6 +3625,7 @@ printf '%s\n' '{"type":"complete","item":{}}'
         json!({"method":"probe"}),
         Duration::from_millis(50),
     )
+    .await
     .unwrap_err();
 
     assert!(error.contains("timed out"));
@@ -3643,18 +3698,24 @@ fn assert_content_card_types(
 }
 
 #[cfg(unix)]
-fn command_available(command: &str) -> bool {
+async fn command_available(command: &str) -> bool {
     let Some(program) = crate::backend::host_process::resolve_host_executable(command) else {
         return false;
     };
-    crate::backend::host_process::run_program_with_timeout(
-        &program,
-        &["--version".to_string()],
+    crate::backend::host_process::run_host_command_async(
+        crate::backend::host_process::HostCommandSpec {
+            program,
+            args: vec!["--version".to_string()],
+            env: Vec::new(),
+            working_dir: None,
+            stdin: crate::backend::host_process::HostInput::Null,
+            timeout: std::time::Duration::from_secs(5),
+            stdout_limit: 8 * 1024,
+            stderr_limit: 8 * 1024,
+        },
         None,
-        std::time::Duration::from_secs(5),
-        8 * 1024,
-        8 * 1024,
     )
+    .await
     .is_ok_and(|output| output.status.success())
 }
 

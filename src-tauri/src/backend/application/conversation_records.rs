@@ -438,6 +438,7 @@ impl AppService {
             "unknown-project",
             &settings,
         )
+        .await
     }
 
     pub(crate) async fn export_web_record_session(
@@ -468,6 +469,7 @@ impl AppService {
         export_loaded_conversation_markdown(
             detail, adapter, source, params, "web", "web", &settings,
         )
+        .await
     }
 
     pub(crate) async fn list_conversation_questions(
@@ -686,7 +688,7 @@ async fn load_export_source_for_detail(
         })
 }
 
-fn export_loaded_conversation_markdown(
+async fn export_loaded_conversation_markdown(
     detail: crate::backend::dto::ConversationSessionDetail,
     adapter: ConversationAdapter,
     source: ConversationSource,
@@ -727,6 +729,7 @@ fn export_loaded_conversation_markdown(
                     &default_relative_path_text,
                     settings,
                 )
+                .await
                 .map_err(AppError::external)?;
             (export.content, export.relative_path)
         }

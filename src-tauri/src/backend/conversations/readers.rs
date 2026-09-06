@@ -13,18 +13,23 @@ pub(crate) struct ConversationSourceReadResult {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn read_source_sessions_with_adapter_with_settings(
+pub(crate) async fn read_source_sessions_with_adapter_with_settings(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     settings: &Value,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
     let adapter = adapter.ok_or_else(|| {
-        AppError::external({ format!("conversation adapter not found: {}", source.adapter_id) })
+        AppError::external(format!(
+            "conversation adapter not found: {}",
+            source.adapter_id
+        ))
     })?;
-    read_external_adapter_sessions(adapter, source, settings).map(|result| result.sessions)
+    read_external_adapter_sessions(adapter, source, settings)
+        .await
+        .map(|result| result.sessions)
 }
 
-pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
+pub(crate) async fn read_source_sessions_incrementally_with_adapter_with_settings(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     known_versions: &BTreeMap<String, String>,
@@ -38,24 +43,29 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter_with_settings(
         None,
         &mut |_, _| {},
     )
+    .await
 }
 
-pub(crate) fn read_source_sessions_with_control(
+pub(crate) async fn read_source_sessions_with_control(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     known_versions: &BTreeMap<String, String>,
     settings: &Value,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
-    on_progress: &mut dyn FnMut(usize, usize),
+    on_progress: &mut (dyn FnMut(usize, usize) + Send),
 ) -> AppResult<ConversationSourceReadResult> {
     let adapter = adapter.ok_or_else(|| {
-        AppError::external({ format!("conversation adapter not found: {}", source.adapter_id) })
+        AppError::external(format!(
+            "conversation adapter not found: {}",
+            source.adapter_id
+        ))
     })?;
     let reader =
-        super::external::ExternalAdapterSourceReader::new(adapter, source, settings, cancellation)?;
-    let Some(discovery) = reader.discover()? else {
+        super::external::ExternalAdapterSourceReader::new(adapter, source, settings, cancellation)
+            .await?;
+    let Some(discovery) = reader.discover().await? else {
         on_progress(0, 0);
-        let result = reader.read(None)?;
+        let result = reader.read(None).await?;
         let sessions = result.sessions;
         on_progress(sessions.len(), sessions.len());
         super::external::ensure_read_not_cancelled(cancellation)?;
@@ -90,7 +100,7 @@ pub(crate) fn read_source_sessions_with_control(
     let mut empty_session_count = 0usize;
     let mut legacy_cards_upgraded = 0usize;
     for (index, descriptor) in active.iter().enumerate() {
-        let result = reader.read(Some(&descriptor.external_id))?;
+        let result = reader.read(Some(&descriptor.external_id)).await?;
         on_progress(index + 1, active.len());
         super::external::ensure_read_not_cancelled(cancellation)?;
         legacy_cards_upgraded += result.legacy_cards_upgraded;
@@ -137,15 +147,15 @@ pub(crate) fn read_source_sessions_with_control(
 }
 
 #[cfg(test)]
-pub(crate) fn read_source_sessions_with_adapter(
+pub(crate) async fn read_source_sessions_with_adapter(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
 ) -> AppResult<Vec<NormalizedConversationSession>> {
-    read_source_sessions_with_adapter_with_settings(adapter, source, &serde_json::json!({}))
+    read_source_sessions_with_adapter_with_settings(adapter, source, &serde_json::json!({})).await
 }
 
 #[cfg(test)]
-pub(crate) fn read_source_sessions_incrementally_with_adapter(
+pub(crate) async fn read_source_sessions_incrementally_with_adapter(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     known_versions: &BTreeMap<String, String>,
@@ -156,6 +166,7 @@ pub(crate) fn read_source_sessions_incrementally_with_adapter(
         known_versions,
         &serde_json::json!({}),
     )
+    .await
 }
 
 fn session_matches_descriptor(

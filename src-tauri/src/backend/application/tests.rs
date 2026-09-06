@@ -85,6 +85,7 @@ async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
                 ],
             },
         )
+        .await
         .expect("project legacy adapter command through fallback");
 
     assert_eq!(projections.len(), 1);
@@ -161,6 +162,7 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
                 ],
             },
         )
+        .await
         .expect("fall back when the adapter projector is unavailable");
 
     assert_eq!(projections.len(), 1);

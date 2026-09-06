@@ -20,16 +20,18 @@ struct HarvesterManifest {
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn run_conversation_harvester_for_source_with_settings(
+pub(crate) async fn run_conversation_harvester_for_source_with_settings(
     source: &ConversationSource,
     settings: &Value,
 ) -> AppResult<()> {
     let source_dir = crate::backend::path_utils::expand_path(&source.location)?;
     let work_dir = resolve_harvester_work_dir(&source_dir);
-    run_conversation_harvester_in_dir(&work_dir, false, settings, None).map(|_| ())
+    run_conversation_harvester_in_dir(&work_dir, false, settings, None)
+        .await
+        .map(|_| ())
 }
 
-pub(crate) fn run_conversation_harvester_with_control(
+pub(crate) async fn run_conversation_harvester_with_control(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     full_reparse: bool,
@@ -41,7 +43,9 @@ pub(crate) fn run_conversation_harvester_with_control(
     let work_dir = resolve_harvester_work_dir(&source_dir);
 
     if work_dir.join(HARVESTER_MANIFEST_FILE).is_file() {
-        if run_conversation_harvester_in_dir(&work_dir, full_reparse, settings, cancellation)? {
+        if run_conversation_harvester_in_dir(&work_dir, full_reparse, settings, cancellation)
+            .await?
+        {
             return Ok(());
         }
     }
@@ -54,22 +58,28 @@ pub(crate) fn run_conversation_harvester_with_control(
                 full_reparse,
                 settings,
                 cancellation,
-            )? {
+            )
+            .await?
+            {
                 return Ok(());
             }
         }
     }
 
-    run_conversation_harvester_in_dir(&source_dir, full_reparse, settings, cancellation).map(|_| ())
+    run_conversation_harvester_in_dir(&source_dir, full_reparse, settings, cancellation)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]
-pub(crate) fn run_conversation_harvester_for_source(source: &ConversationSource) -> AppResult<()> {
-    run_conversation_harvester_for_source_with_settings(source, &serde_json::json!({}))
+pub(crate) async fn run_conversation_harvester_for_source(
+    source: &ConversationSource,
+) -> AppResult<()> {
+    run_conversation_harvester_for_source_with_settings(source, &serde_json::json!({})).await
 }
 
 #[cfg(test)]
-pub(crate) fn run_conversation_harvester_for_adapter_source(
+pub(crate) async fn run_conversation_harvester_for_adapter_source(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
     full_reparse: bool,
@@ -81,6 +91,7 @@ pub(crate) fn run_conversation_harvester_for_adapter_source(
         &serde_json::json!({}),
         None,
     )
+    .await
 }
 
 pub(crate) fn resolve_harvester_work_dir(source_path: &Path) -> PathBuf {
@@ -102,7 +113,7 @@ fn adapter_manifest_dir(adapter: &ConversationAdapter) -> Option<PathBuf> {
     manifest_path.parent().map(Path::to_path_buf)
 }
 
-fn run_conversation_harvester_in_dir(
+async fn run_conversation_harvester_in_dir(
     work_dir: &Path,
     full_reparse: bool,
     settings: &Value,
@@ -115,9 +126,10 @@ fn run_conversation_harvester_in_dir(
         settings,
         cancellation,
     )
+    .await
 }
 
-fn run_conversation_harvester_with_manifest_root_and_work_dir(
+async fn run_conversation_harvester_with_manifest_root_and_work_dir(
     manifest_root: &Path,
     work_dir: &Path,
     full_reparse: bool,
@@ -135,7 +147,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
     let invocation =
         resolve_harvester_invocation_with_settings(manifest_root, &manifest, settings)?;
     if let Some(runtime) = harvester_execution_runtime(&manifest) {
-        ensure_adapter_runtime_available(&runtime, &invocation)?;
+        ensure_adapter_runtime_available(&runtime, &invocation).await?;
     }
 
     fs::create_dir_all(work_dir).map_err(AppError::external)?;
@@ -150,7 +162,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
     if full_reparse {
         env.push(("ASSETIWEAVE_FULL_REPARSE".to_string(), "1".to_string()));
     }
-    let output = match crate::backend::host_process::run_host_command_with_cancellation(
+    let output = match crate::backend::host_process::run_host_command_async(
         crate::backend::host_process::HostCommandSpec {
             program: invocation.program.clone(),
             args: invocation.args.clone(),
@@ -162,7 +174,9 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
             stderr_limit: OUTPUT_CAPTURE_LIMIT,
         },
         cancellation,
-    ) {
+    )
+    .await
+    {
         Ok(output) => output,
         Err(crate::backend::host_process::HostProcessError::MissingProgram { program }) => {
             return Err(AppError::external(format!(
@@ -437,17 +451,19 @@ fn append_captured_output(message: &mut String, label: &str, bytes: &[u8], trunc
 mod tests {
     use super::*;
 
-    #[test]
-    fn source_without_harvester_manifest_is_noop() {
+    #[tokio::test]
+    async fn source_without_harvester_manifest_is_noop() {
         let fixture = TempFixture::new("assetiweave-harvester-noop");
         let source = source_fixture(fixture.path());
 
-        run_conversation_harvester_for_source(&source).expect("missing manifest should be noop");
+        run_conversation_harvester_for_source(&source)
+            .await
+            .expect("missing manifest should be noop");
     }
 
     #[cfg(unix)]
-    #[test]
-    fn runs_external_harvester_entrypoint() {
+    #[tokio::test]
+    async fn runs_external_harvester_entrypoint() {
         let fixture = TempFixture::new("assetiweave-harvester-run");
         fs::write(
             fixture.path().join("harvester.json"),
@@ -472,7 +488,9 @@ mod tests {
         .unwrap();
         let source = source_fixture(fixture.path());
 
-        run_conversation_harvester_for_source(&source).expect("run harvester");
+        run_conversation_harvester_for_source(&source)
+            .await
+            .expect("run harvester");
 
         assert!(fixture
             .path()
@@ -616,8 +634,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn adapter_manifest_directory_harvester_runs_for_normalized_output_source() {
+    #[tokio::test]
+    async fn adapter_manifest_directory_harvester_runs_for_normalized_output_source() {
         let adapter_pkg_fixture = TempFixture::new("assetiweave-harvester-adapter-pkg");
         let data_fixture = TempFixture::new("assetiweave-harvester-data-root");
         let normalized_dir = data_fixture.path().join("output").join("normalized");
@@ -664,6 +682,7 @@ mod tests {
         let source = source_fixture(&normalized_dir);
 
         run_conversation_harvester_for_adapter_source(Some(&adapter), &source, false)
+            .await
             .expect("run adapter-directory harvester");
 
         assert_eq!(
@@ -677,8 +696,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn full_reparse_tells_web_harvesters_to_bypass_incremental_caches() {
+    #[tokio::test]
+    async fn full_reparse_tells_web_harvesters_to_bypass_incremental_caches() {
         let adapter_pkg_fixture = TempFixture::new("assetiweave-harvester-full-adapter-pkg");
         let data_fixture = TempFixture::new("assetiweave-harvester-full-data-root");
         let normalized_dir = data_fixture.path().join("output").join("normalized");
@@ -712,6 +731,7 @@ mod tests {
         let source = source_fixture(&normalized_dir);
 
         run_conversation_harvester_for_adapter_source(Some(&adapter), &source, true)
+            .await
             .expect("run full-reparse harvester");
 
         assert_eq!(
