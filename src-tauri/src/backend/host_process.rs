@@ -321,11 +321,7 @@ fn kill_process_group(pid: u32) {
     }
 }
 
-fn read_sync_capped_and_drain<R: std::io::Read>(
-    reader: &mut R,
-    cap: usize,
-) -> (Vec<u8>, bool) {
-    use std::io::Read;
+fn read_sync_capped_and_drain<R: std::io::Read>(reader: &mut R, cap: usize) -> (Vec<u8>, bool) {
     let mut output = Vec::with_capacity(cap.min(8192));
     let mut buffer = [0_u8; 8192];
     let mut truncated = false;
@@ -500,12 +496,10 @@ pub(crate) fn run_host_command_with_cancellation(
         }
         SyncExitReason::TimedOut => {
             cleanup_child(&mut child);
-            let (stdout, stdout_truncated) = stdout_handle
-                .join()
-                .unwrap_or_else(|_| (Vec::new(), false));
-            let (stderr, stderr_truncated) = stderr_handle
-                .join()
-                .unwrap_or_else(|_| (Vec::new(), false));
+            let (stdout, stdout_truncated) =
+                stdout_handle.join().unwrap_or_else(|_| (Vec::new(), false));
+            let (stderr, stderr_truncated) =
+                stderr_handle.join().unwrap_or_else(|_| (Vec::new(), false));
             Err(HostProcessError::Timeout {
                 stdout,
                 stderr,
