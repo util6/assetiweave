@@ -188,12 +188,12 @@ impl AppService {
             capabilities::catalog_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
         let mut backed_up_assets = Vec::with_capacity(targets.len());
         for target in targets {
-            let target_path = target.target_dir.to_string_lossy();
+            let target_dir = target.target_dir.as_path();
             let backed_up_asset = catalog
                 .iter()
                 .find(|candidate| {
                     candidate.asset.id == target.asset.id
-                        || candidate.asset.absolute_path == target_path
+                        || std::path::Path::new(&candidate.asset.absolute_path) == target_dir
                         || (target.asset.content_hash.is_some()
                             && candidate.asset.content_hash.as_deref()
                                 == target.asset.content_hash.as_deref())
@@ -293,7 +293,9 @@ impl AppService {
         .await?;
         let asset = library_assets
             .into_iter()
-            .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
+            .find(|candidate| {
+                std::path::Path::new(&candidate.absolute_path) == target_dir.as_path()
+            })
             .ok_or_else(|| {
                 AppError::NotFound(
                     "imported skill was copied but not found during rescan".to_string(),

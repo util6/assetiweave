@@ -217,7 +217,8 @@ fn normalize_source_inner(source: &Source, catalog: Option<&TargetCatalog>) -> S
 
     if let Some(git_root) = find_git_root(&root_path) {
         source.source_origin = SourceOrigin::GitRepo;
-        source.repo_root = normalize_path_for_storage(&git_root.to_string_lossy()).ok();
+        source.repo_root =
+            crate::backend::path_utils::normalize_std_path_for_storage(&git_root).ok();
         source.scan_root = root_path
             .strip_prefix(&git_root)
             .ok()
@@ -365,13 +366,15 @@ mod tests {
         source.root_path = dirs::home_dir()
             .expect("home directory")
             .join("portable-source-test")
-            .to_string_lossy()
+            .to_str()
+            .expect("valid utf-8 path")
             .to_string();
         source.repo_root = Some(
             dirs::home_dir()
                 .expect("home directory")
                 .join("code-space")
-                .to_string_lossy()
+                .to_str()
+                .expect("valid utf-8 path")
                 .to_string(),
         );
 

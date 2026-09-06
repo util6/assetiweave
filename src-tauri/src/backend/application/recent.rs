@@ -186,11 +186,7 @@ pub(super) fn resolve_project_directory(
                 .is_within(&cwd, &root)
                 .then_some((root.components().count(), root))
         })
-        .max_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.1.to_string_lossy().cmp(&right.1.to_string_lossy()))
-        })
+        .max_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))
         .map(|(_, root)| root);
 
     let project_root = registered_root
@@ -199,7 +195,7 @@ pub(super) fn resolve_project_directory(
                 .map(|root| canonicalize_or_normalize(&root))
         })
         .unwrap_or(cwd);
-    crate::backend::path_utils::normalize_path_for_storage(&project_root.to_string_lossy()).ok()
+    crate::backend::path_utils::normalize_std_path_for_storage(&project_root).ok()
 }
 
 fn canonicalize_or_normalize(path: &Path) -> PathBuf {

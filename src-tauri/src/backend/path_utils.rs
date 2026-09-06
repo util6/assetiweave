@@ -85,6 +85,15 @@ pub(crate) fn normalize_path_for_storage(path: &str) -> AppResult<String> {
     Ok(resolver.normalize_input(path)?.as_str().to_string())
 }
 
+pub(crate) fn normalize_std_path_for_storage(path: &Path) -> AppResult<String> {
+    let path_str = path.to_str().ok_or_else(|| {
+        AppError::Validation(format!(
+            "path contains invalid UTF-8 characters and cannot be stored: {path:?}"
+        ))
+    })?;
+    normalize_path_for_storage(path_str)
+}
+
 pub(crate) fn display_path(path: &str) -> AppResult<String> {
     let resolver = HostPathResolver::current()?;
     let stored = resolver.normalize_input(path)?;
@@ -546,5 +555,64 @@ mod tests {
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn non_utf8_paths_never_alias_identity_or_persistence_keys() {
+        use crate::backend::runtime::AppError;
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // 1. Filesystem identity comparison must remain lossless and never alias.
+        // Two paths differing only by distinct non-UTF-8 bytes:
+        let non_utf8_a = PathBuf::from(OsStr::from_bytes(b"/tmp/assetiweave_test_\xFF_repo"));
+        let non_utf8_b = PathBuf::from(OsStr::from_bytes(b"/tmp/assetiweave_test_\xFE_repo"));
+        assert_ne!(non_utf8_a, non_utf8_b);
+
+        // Recent root sorting/comparison via Path::cmp must preserve strict ordering
+        let mut sorted_paths = vec![non_utf8_b.clone(), non_utf8_a.clone()];
+        sorted_paths.sort();
+        assert_eq!(sorted_paths, vec![non_utf8_b.clone(), non_utf8_a.clone()]); // \xFE < \xFF
+
+        // Candidate comparison (such as in skills.rs) against Path must be exact and lossless
+        let candidate_path_lossy = non_utf8_a.to_string_lossy().to_string();
+        // In the buggy lossy conversion: candidate_path_lossy == non_utf8_b.to_string_lossy() is TRUE (aliased!)
+        assert_eq!(
+            non_utf8_a.to_string_lossy(),
+            non_utf8_b.to_string_lossy(),
+            "sanity check: lossy string conversion would alias distinct non-UTF-8 paths"
+        );
+        // But with lossless &Path comparison:
+        assert_ne!(
+            Path::new(&candidate_path_lossy),
+            non_utf8_a.as_path(),
+            "lossy string candidate cannot match original raw byte path"
+        );
+        assert_ne!(non_utf8_a.as_path(), non_utf8_b.as_path());
+
+        // 2. Persistence / Storage boundary must fail with AppError::Validation rather than alias
+        let storage_result_a = super::normalize_std_path_for_storage(&non_utf8_a);
+        let storage_result_b = super::normalize_std_path_for_storage(&non_utf8_b);
+        assert!(
+            matches!(storage_result_a, Err(AppError::Validation(_))),
+            "storage normalization must return Validation error on non-utf8 path, got: {storage_result_a:?}"
+        );
+        assert!(
+            matches!(storage_result_b, Err(AppError::Validation(_))),
+            "storage normalization must return Validation error on non-utf8 path, got: {storage_result_b:?}"
+        );
+
+        // 3. Target Catalog conflict key helper must reject non-UTF-8 components
+        let mut target_normalized = std::path::PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+        target_normalized.push(OsStr::from_bytes(b"target_\xFF"));
+        let conflict_key_result = target_normalized
+            .to_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| AppError::Validation("path contains invalid UTF-8".to_string()));
+        assert!(
+            matches!(conflict_key_result, Err(AppError::Validation(_))),
+            "target conflict key must reject non-utf8 components"
+        );
     }
 }
