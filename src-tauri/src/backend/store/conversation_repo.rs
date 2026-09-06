@@ -6063,9 +6063,9 @@ mod tests {
             Uuid::new_v4()
         ));
         let database = Database::open_async(&db_path).await.expect("open database");
-        let install_dir = directories::BaseDirs::new()
-            .expect("base directories")
-            .config_dir()
+        let install_dir = crate::backend::host_paths::HostDirectories::current()
+            .expect("host directories")
+            .config
             .join("assetiweave")
             .join("conversation-adapters")
             .join("packages")
@@ -6169,9 +6169,9 @@ mod tests {
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
-        let adapter_dir = directories::BaseDirs::new()
-            .expect("base directories")
-            .config_dir()
+        let adapter_dir = crate::backend::host_paths::HostDirectories::current()
+            .expect("host directories")
+            .config
             .join("assetiweave")
             .join("conversation-adapters")
             .join("portable-adapter");

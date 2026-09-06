@@ -447,6 +447,8 @@ mod tests {
 
         let handle = thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
                 let body = b"1234";
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -501,6 +503,8 @@ mod tests {
 
         let handle = thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
                 let body = "abcdefghijklmnopqrstuvwxyz";
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -533,6 +537,8 @@ mod tests {
 
         let handle = thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut buf);
                 let body = "hello world text";
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

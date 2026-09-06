@@ -88,10 +88,13 @@ fn definition_with_mode(record: &Path, mode: Option<&str>) -> AgentDefinition {
         installation_id: Some("fixture-installation".to_string()),
         display_name: "Antigravity Fixture".to_string(),
         protocol: AgentProtocol::Native,
-        command: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("test-fixtures/fake-antigravity-agent")
-            .to_string_lossy()
-            .into_owned(),
+        command: {
+            let base =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-antigravity-agent");
+            #[cfg(windows)]
+            let base = base.with_extension("cmd");
+            base.to_string_lossy().into_owned()
+        },
         args: Vec::new(),
         env,
         declared_capabilities: DeclaredAgentCapabilities {
