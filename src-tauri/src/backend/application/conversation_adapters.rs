@@ -232,13 +232,11 @@ impl AppService {
                 &settings,
             ) {
                 Ok(projections) => return Ok(projections),
-                Err(error) => crate::backend::operation_log::log_warn(
-                    "conversation.command_projection.fallback",
-                    "adapter command projector failed; using the core projector",
-                    &[
-                        ("adapter_id", adapter.id.clone()),
-                        ("error", error.to_string()),
-                    ],
+                Err(error) => tracing::warn!(
+                    action = "conversation.command_projection.fallback",
+                    adapter_id = %adapter.id,
+                    error = %error,
+                    "adapter command projector failed; using the core projector"
                 ),
             }
         }
@@ -616,16 +614,14 @@ impl AppService {
             .iter()
             .filter_map(|result| result.get("legacy_cards_upgraded").and_then(Value::as_u64))
             .sum::<u64>();
-        crate::backend::logs::record_info(
-            "conversation.sync",
-            "Conversation sync completed",
-            &[
-                ("legacy_cards_upgraded", legacy_cards_upgraded.to_string()),
-                ("source_count", results.len().to_string()),
-                ("error_count", errors.len().to_string()),
-                ("dry_run", params.dry_run.to_string()),
-                ("mode", format!("{:?}", params.mode).to_ascii_lowercase()),
-            ],
+        tracing::info!(
+            action = "conversation.sync",
+            legacy_cards_upgraded = %legacy_cards_upgraded,
+            source_count = %results.len(),
+            error_count = %errors.len(),
+            dry_run = %params.dry_run,
+            mode = %format!("{:?}", params.mode).to_ascii_lowercase(),
+            "Conversation sync completed"
         );
         Ok(json!({
             "dry_run": params.dry_run,

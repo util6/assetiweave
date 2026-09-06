@@ -582,10 +582,10 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .collect::<Vec<_>>();
     for key in unknown_capabilities {
         agent_capabilities.remove(&key);
-        crate::backend::operation_log::log_warn(
-            "settings.agent_capability",
-            "未知的 Agent capability 已禁用",
-            &[("capability", key)],
+        tracing::warn!(
+            action = "settings.agent_capability",
+            capability = %key,
+            "未知的 Agent capability 已禁用"
         );
     }
     for service_id in ["cardTranslation", "memory", "promptOptimization"] {
@@ -715,10 +715,10 @@ fn normalize_canonical_agent_assignments(
     if let Some(existing) = existing {
         for key in existing.keys() {
             if !assignments.contains_key(key) {
-                crate::backend::operation_log::log_warn(
-                    "settings.agent_assignment",
-                    "未知的 Agent action assignment 已隔离",
-                    &[("action", key.clone())],
+                tracing::warn!(
+                    action = "settings.agent_assignment",
+                    action_id = %key,
+                    "未知的 Agent action assignment 已隔离"
                 );
             }
         }

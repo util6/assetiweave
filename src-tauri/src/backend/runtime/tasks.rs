@@ -860,6 +860,8 @@ impl TaskRuntime {
                     runtime: runtime.clone(),
                 },
             };
+            let span = tracing::info_span!("task_execution", task_id = %run_task_id);
+            let _span_guard = span.enter();
             let result = catch_unwind(AssertUnwindSafe(|| task(context)))
                 .unwrap_or_else(|_| Err(AppError::External("后台任务发生 panic".to_string())));
             runtime.finish_task(&run_task_id, &cancellation, result);
@@ -920,7 +922,9 @@ impl TaskRuntime {
                     runtime: runtime.clone(),
                 },
             };
-            let result = match tokio::spawn(task(context)).await {
+            let span = tracing::info_span!("task_execution", task_id = %run_task_id);
+            use tracing::Instrument;
+            let result = match tokio::spawn(task(context).instrument(span)).await {
                 Ok(task_res) => task_res,
                 Err(join_err) => {
                     if join_err.is_cancelled() {

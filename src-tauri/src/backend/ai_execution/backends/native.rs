@@ -21,7 +21,6 @@ use crate::backend::{
         RuntimeProgramKind,
     },
     host_process::resolve_host_executable,
-    operation_log::log_info,
 };
 
 use super::antigravity;
@@ -94,18 +93,15 @@ impl NativeExecutionBackend {
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
 
-        let cleanup_fields = vec![
-            ("execution_id", request.execution_id.clone()),
-            ("agent_id", definition.id.to_string()),
-            ("protocol", "native".to_string()),
-            ("phase", "cleaning_up".to_string()),
-            ("process_reaped", cleanup.process_reaped.to_string()),
-            ("workspace_removed", cleanup.workspace_removed.to_string()),
-        ];
-        log_info(
-            "ai_execution.cleanup",
-            "Native execution cleanup completed",
-            &cleanup_fields,
+        tracing::info!(
+            action = "ai_execution.cleanup",
+            execution_id = %request.execution_id,
+            agent_id = %definition.id,
+            protocol = "native",
+            phase = "cleaning_up",
+            process_reaped = %cleanup.process_reaped,
+            workspace_removed = %cleanup.workspace_removed,
+            "Native execution cleanup completed"
         );
 
         if (!cleanup.process_reaped || (!cleanup.workspace_removed && !guard.preserve_workspace))

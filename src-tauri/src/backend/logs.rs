@@ -22,32 +22,6 @@ const MIN_LOG_TAIL_LINES: usize = 20;
 const MAX_LOG_TAIL_LINES: usize = 5000;
 const LOG_TAIL_SCAN_CHUNK_BYTES: usize = 8192;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OperationLogLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-impl OperationLogLevel {
-    fn from_str(level: &str) -> Result<Self, String> {
-        match level.trim().to_ascii_uppercase().as_str() {
-            "INFO" => Ok(Self::Info),
-            "WARN" | "WARNING" => Ok(Self::Warn),
-            "ERROR" => Ok(Self::Error),
-            other => Err(format!("不支持的日志级别: {other}")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ManagedLogFile {
     pub log_file_path: String,
@@ -69,69 +43,12 @@ pub struct LogSnapshot {
 }
 
 pub(crate) fn write_startup_log() -> Result<(), String> {
-    record_operation(
-        OperationLogLevel::Info,
-        "app.startup",
-        "AssetIWeave 启动",
-        &[],
+    tracing::info!(
+        target: "assetiweave.operation",
+        operation = "app.startup",
+        "AssetIWeave 启动"
     );
     Ok(())
-}
-
-pub(crate) fn record_operation(
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) {
-    let operation = sanitize_log_key(operation);
-    let message = sanitize_log_text(message);
-    let fields: Vec<(String, String)> = fields
-        .iter()
-        .map(|(key, value)| (sanitize_log_key(key), sanitize_log_value(value)))
-        .collect();
-
-    match level {
-        OperationLogLevel::Info => {
-            tracing::info!(
-                target: "assetiweave.operation",
-                operation = %operation,
-                fields = ?fields,
-                "{}",
-                message
-            );
-        }
-        OperationLogLevel::Warn => {
-            tracing::warn!(
-                target: "assetiweave.operation",
-                operation = %operation,
-                fields = ?fields,
-                "{}",
-                message
-            );
-        }
-        OperationLogLevel::Error => {
-            tracing::error!(
-                target: "assetiweave.operation",
-                operation = %operation,
-                fields = ?fields,
-                "{}",
-                message
-            );
-        }
-    }
-}
-
-pub(crate) fn record_info(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Info, operation, message, fields);
-}
-
-pub(crate) fn record_warn(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Warn, operation, message, fields);
-}
-
-pub(crate) fn record_error(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Error, operation, message, fields);
 }
 
 pub(crate) fn record_fatal_panic(message: &str) {
@@ -183,18 +100,18 @@ pub(crate) fn logs_open_log_directory() -> Result<(), String> {
     let log_dir = get_log_dir()?;
     let result = open_directory(&log_dir);
     match &result {
-        Ok(()) => record_info(
-            "log.open_directory",
-            "打开日志目录成功",
-            &[("path", log_dir.to_string_lossy().to_string())],
+        Ok(()) => tracing::info!(
+            target: "assetiweave.operation",
+            operation = "log.open_directory",
+            path = %log_dir.to_string_lossy(),
+            "打开日志目录成功"
         ),
-        Err(error) => record_error(
-            "log.open_directory",
-            "打开日志目录失败",
-            &[
-                ("path", log_dir.to_string_lossy().to_string()),
-                ("error", error.to_string()),
-            ],
+        Err(error) => tracing::error!(
+            target: "assetiweave.operation",
+            operation = "log.open_directory",
+            path = %log_dir.to_string_lossy(),
+            error = %error,
+            "打开日志目录失败"
         ),
     }
     result
@@ -206,14 +123,41 @@ pub(crate) fn logs_write_operation(
     message: String,
     fields: Option<BTreeMap<String, String>>,
 ) -> Result<(), String> {
-    let level = OperationLogLevel::from_str(&level)?;
-    let field_pairs = fields.unwrap_or_default().into_iter().collect::<Vec<_>>();
-    let borrowed_fields = field_pairs
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.clone()))
-        .collect::<Vec<_>>();
+    let level_str = level.trim().to_ascii_uppercase();
+    let operation = sanitize_log_key(&operation);
+    let message = sanitize_log_text(&message);
+    let fields_map = fields.unwrap_or_default();
 
-    record_operation(level, &operation, &message, &borrowed_fields);
+    match level_str.as_str() {
+        "INFO" => {
+            tracing::info!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        "WARN" | "WARNING" => {
+            tracing::warn!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        "ERROR" => {
+            tracing::error!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        other => return Err(format!("不支持的日志级别: {other}")),
+    }
     Ok(())
 }
 
@@ -227,7 +171,7 @@ fn get_log_dir() -> Result<PathBuf, String> {
 }
 
 fn ensure_default_log_file() -> Result<(), String> {
-    if get_log_dir()?.join(APP_LOG_FILE_PREFIX).is_file() {
+    if get_log_dir()?.join(APP_LOG_FILE_PREFIX).is_file() || !list_managed_log_files()?.is_empty() {
         return Ok(());
     }
 
@@ -242,7 +186,7 @@ fn is_log_file_with_prefix(name: &str, prefix: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn is_managed_log_file_name(name: &str) -> bool {
+pub(crate) fn is_managed_log_file_name(name: &str) -> bool {
     MANAGED_LOG_FILE_PREFIXES
         .iter()
         .any(|prefix| is_log_file_with_prefix(name, prefix))
@@ -501,19 +445,6 @@ mod tests {
             sanitize_log_value("path contains \"target\""),
             "path contains \\\"target\\\""
         );
-    }
-
-    #[test]
-    fn log_level_parser_accepts_expected_levels() {
-        assert_eq!(
-            OperationLogLevel::from_str("info").expect("info level"),
-            OperationLogLevel::Info
-        );
-        assert_eq!(
-            OperationLogLevel::from_str("warning").expect("warning level"),
-            OperationLogLevel::Warn
-        );
-        assert!(OperationLogLevel::from_str("debug").is_err());
     }
 
     #[test]

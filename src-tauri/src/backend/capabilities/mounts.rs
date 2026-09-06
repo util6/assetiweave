@@ -1,26 +1,6 @@
 use super::prelude::*;
 use sqlx::SqlitePool;
 
-pub(crate) async fn mount_log_fields(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    asset_id: &str,
-    profile_id: &str,
-) -> Vec<LogField> {
-    if let Ok((asset, profile)) =
-        load_mount_asset_and_profile_sqlx(pool, tenant_id, asset_id, profile_id).await
-    {
-        let mut fields = asset_log_fields(&asset);
-        fields.extend(profile_log_fields(&profile));
-        return fields;
-    }
-
-    vec![
-        ("asset_id", asset_id.to_string()),
-        ("profile_id", profile_id.to_string()),
-    ]
-}
-
 pub(crate) async fn sync_asset_mount_observations(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -151,16 +131,24 @@ pub(crate) async fn set_asset_mount_record(
     .await;
     match &result {
         Ok(_) => {
-            let mut fields = mount_log_fields(pool, tenant_id, asset_id, profile_id).await;
-            fields.push(("enabled", enabled.to_string()));
-            log_info("skill.mount.preference", "更新 skill 挂载关系成功", &fields);
+            tracing::info!(
+                action = "skill.mount.preference",
+                asset_id = %asset_id,
+                profile_id = %profile_id,
+                enabled = %enabled,
+                "更新 skill 挂载关系成功"
+            );
         }
-        Err(error) => log_error(
-            "skill.mount.preference",
-            "更新 skill 挂载关系失败",
-            error,
-            &mount_log_fields(pool, tenant_id, asset_id, profile_id).await,
-        ),
+        Err(error) => {
+            tracing::error!(
+                action = "skill.mount.preference",
+                asset_id = %asset_id,
+                profile_id = %profile_id,
+                enabled = %enabled,
+                error = %error,
+                "更新 skill 挂载关系失败"
+            );
+        }
     }
     result
 }
@@ -277,17 +265,30 @@ pub(crate) async fn mount_preloaded_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = preloaded_mount_log_fields(asset, profile);
-            fields.push(("target_path", update.status.target_path.clone()));
-            fields.push(("state", format!("{:?}", update.status.state)));
-            log_info("skill.mount.success", "skill 挂载成功", &fields);
+            tracing::info!(
+                action = "skill.mount.success",
+                asset_id = %asset.id,
+                skill_name = %asset.name,
+                source_id = %asset.source_id,
+                profile_id = %profile.id,
+                profile_name = %profile.name,
+                target_path = %update.status.target_path,
+                state = ?update.status.state,
+                "skill 挂载成功"
+            );
         }
-        Err(error) => log_error(
-            "skill.mount.error",
-            "skill 挂载失败",
-            error,
-            &preloaded_mount_log_fields(asset, profile),
-        ),
+        Err(error) => {
+            tracing::error!(
+                action = "skill.mount.error",
+                asset_id = %asset.id,
+                skill_name = %asset.name,
+                source_id = %asset.source_id,
+                profile_id = %profile.id,
+                profile_name = %profile.name,
+                error = %error,
+                "skill 挂载失败"
+            );
+        }
     }
     result
 }
@@ -363,25 +364,32 @@ pub(crate) async fn unmount_preloaded_asset_mount_record(
 
     match &result {
         Ok(update) => {
-            let mut fields = preloaded_mount_log_fields(asset, profile);
-            fields.push(("target_path", update.status.target_path.clone()));
-            fields.push(("state", format!("{:?}", update.status.state)));
-            log_info("skill.unmount.success", "skill 卸载成功", &fields);
+            tracing::info!(
+                action = "skill.unmount.success",
+                asset_id = %asset.id,
+                skill_name = %asset.name,
+                source_id = %asset.source_id,
+                profile_id = %profile.id,
+                profile_name = %profile.name,
+                target_path = %update.status.target_path,
+                state = ?update.status.state,
+                "skill 卸载成功"
+            );
         }
-        Err(error) => log_error(
-            "skill.unmount.error",
-            "skill 卸载失败",
-            error,
-            &preloaded_mount_log_fields(asset, profile),
-        ),
+        Err(error) => {
+            tracing::error!(
+                action = "skill.unmount.error",
+                asset_id = %asset.id,
+                skill_name = %asset.name,
+                source_id = %asset.source_id,
+                profile_id = %profile.id,
+                profile_name = %profile.name,
+                error = %error,
+                "skill 卸载失败"
+            );
+        }
     }
     result
-}
-
-fn preloaded_mount_log_fields(asset: &Asset, profile: &TargetProfile) -> Vec<LogField> {
-    let mut fields = asset_log_fields(asset);
-    fields.extend(profile_log_fields(profile));
-    fields
 }
 
 pub(crate) async fn load_mount_asset_and_profile_sqlx(

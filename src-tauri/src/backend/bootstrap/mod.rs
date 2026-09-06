@@ -81,14 +81,13 @@ pub(crate) async fn reconcile_app_conversation_adapters(
             .map_err(AppError::external)
             .and_then(|result| result)
             .map_err(|error| {
-                crate::backend::operation_log::log_warn(
-                    "app.environment.conversation_adapter_projection",
-                    "conversation adapter package projection was disabled",
-                    &[
-                        ("tenant_id", tenant_id.to_string()),
-                        ("package_id", package.package_id.clone()),
-                        ("error", error.to_string()),
-                    ],
+                tracing::warn!(
+                    target: "assetiweave.operation",
+                    operation = "app.environment.conversation_adapter_projection",
+                    tenant_id = %tenant_id,
+                    package_id = %package.package_id,
+                    error = %error,
+                    "conversation adapter package projection was disabled"
                 );
                 error
             })

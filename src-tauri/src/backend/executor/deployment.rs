@@ -17,17 +17,15 @@ use std::{
 type LogField = (&'static str, String);
 
 fn log_action_info(message: &str, fields: &[LogField]) {
-    crate::backend::logs::record_info("deployment_plan.action", message, fields);
+    tracing::info!(action = "deployment_plan.action", ?fields, "{message}");
 }
 
 fn log_action_warn(message: &str, fields: &[LogField]) {
-    crate::backend::logs::record_warn("deployment_plan.action", message, fields);
+    tracing::warn!(action = "deployment_plan.action", ?fields, "{message}");
 }
 
 fn log_action_error(message: &str, error: &str, fields: &[LogField]) {
-    let mut fields = fields.to_vec();
-    fields.push(("error", error.to_string()));
-    crate::backend::logs::record_error("deployment_plan.action", message, &fields);
+    tracing::error!(action = "deployment_plan.action", error = %error, ?fields, "{message}");
 }
 
 fn action_log_fields(

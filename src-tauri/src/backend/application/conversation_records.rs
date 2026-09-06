@@ -788,19 +788,14 @@ fn record_conversation_export_observation(
     format: ConversationExportFormat,
     legacy_adapter_exporter_used: bool,
 ) {
-    crate::backend::logs::record_info(
-        "conversation.export",
-        "Conversation export completed",
-        &[
-            ("adapter_id", adapter_id.to_string()),
-            ("record_kind", record_kind.to_string()),
-            ("dry_run", dry_run.to_string()),
-            ("format", export_format_label(format).to_string()),
-            (
-                "legacy_adapter_exporter_used",
-                legacy_adapter_exporter_used.to_string(),
-            ),
-        ],
+    tracing::info!(
+        action = "conversation.export",
+        adapter_id = %adapter_id,
+        record_kind = %record_kind,
+        dry_run = %dry_run,
+        format = %export_format_label(format),
+        legacy_adapter_exporter_used = %legacy_adapter_exporter_used,
+        "Conversation export completed"
     );
 }
 

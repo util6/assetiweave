@@ -74,17 +74,13 @@ use crate::{
         AppOverview, AppShortcut, AssetGroupInput, AssetMountStatus, AssetMountUpdateResult,
         CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryContextResult,
         MemoryProjectView, MemoryRebuildResult, MemoryTaskView, NavigationModel,
-        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
-        SkillRemoteSource, SourceInput, TargetProfileInput,
+        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
         ConversationSource, DeploymentPlan, DeploymentStrategy, Source, TargetProfile,
         TargetProfileDescriptor, Tenant,
-    },
-    backend::operation_log::{
-        asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
-        source_input_log_fields, source_log_fields, status_summary_fields,
     },
     backend::runtime::{
         tasks::{TaskContext, TaskFilter, TaskKind},
@@ -132,17 +128,22 @@ pub(crate) async fn create_tenant(
     state: State<'_, AppState>,
     params: TenantCreateParams,
 ) -> RuntimeAppResult<Tenant> {
-    let fields = vec![("name", params.name.clone())];
+    let tenant_name = params.name.clone();
     let result = AppService::from_runtime(&state.runtime)
         .create_tenant(params)
         .await;
     match &result {
-        Ok(tenant) => log_info(
-            "tenant.create",
-            "创建租户成功",
-            &[("tenant_id", tenant.id.clone())],
+        Ok(tenant) => tracing::info!(
+            action = "tenant.create",
+            tenant_id = %tenant.id,
+            "创建租户成功"
         ),
-        Err(error) => log_error("tenant.create", "创建租户失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "tenant.create",
+            name = %tenant_name,
+            error = %error,
+            "创建租户失败"
+        ),
     }
     result
 }
@@ -152,17 +153,21 @@ pub(crate) async fn switch_tenant(
     state: State<'_, AppState>,
     tenant_id: String,
 ) -> RuntimeAppResult<Tenant> {
-    let fields = vec![("tenant_id", tenant_id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .switch_tenant(tenant_id)
+        .switch_tenant(tenant_id.clone())
         .await;
     match &result {
-        Ok(tenant) => log_info(
-            "tenant.switch",
-            "切换租户成功",
-            &[("tenant_id", tenant.id.clone())],
+        Ok(tenant) => tracing::info!(
+            action = "tenant.switch",
+            tenant_id = %tenant.id,
+            "切换租户成功"
         ),
-        Err(error) => log_error("tenant.switch", "切换租户失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "tenant.switch",
+            tenant_id = %tenant_id,
+            error = %error,
+            "切换租户失败"
+        ),
     }
     result
 }
@@ -224,10 +229,10 @@ pub(crate) async fn complete_app_close(
 
     let unfinished_tasks = runtime.stop_tasks_until(deadline).await;
     if !unfinished_tasks.is_empty() {
-        log_warn(
-            "app.close.tasks",
-            "关闭前仍有后台任务未收敛",
-            &[("unfinished_tasks", unfinished_tasks.len().to_string())],
+        tracing::warn!(
+            action = "app.close.tasks",
+            unfinished_tasks = unfinished_tasks.len(),
+            "关闭前仍有后台任务未收敛"
         );
     }
 
@@ -237,27 +242,13 @@ pub(crate) async fn complete_app_close(
 
     let shutdown_report = runtime.shutdown_until(deadline).await;
     if !shutdown_report.is_clean() {
-        log_warn(
-            "app.close.runtime",
-            "应用运行时在关闭期限内未完全收敛",
-            &[
-                (
-                    "unfinished_tasks",
-                    shutdown_report.unfinished_task_ids.len().to_string(),
-                ),
-                (
-                    "dispatcher_remaining_events",
-                    shutdown_report.dispatcher_remaining_events.to_string(),
-                ),
-                (
-                    "dispatcher_timed_out",
-                    shutdown_report.dispatcher_timed_out.to_string(),
-                ),
-                (
-                    "unfinished_stages",
-                    shutdown_report.unfinished_stages.join(","),
-                ),
-            ],
+        tracing::warn!(
+            action = "app.close.runtime",
+            unfinished_tasks = shutdown_report.unfinished_task_ids.len(),
+            dispatcher_remaining_events = shutdown_report.dispatcher_remaining_events,
+            dispatcher_timed_out = shutdown_report.dispatcher_timed_out,
+            unfinished_stages = %shutdown_report.unfinished_stages.join(","),
+            "应用运行时在关闭期限内未完全收敛"
         );
     }
 
@@ -448,10 +439,8 @@ pub(crate) async fn update_skill_backup_settings(
     root_path: String,
     migrate: Option<bool>,
 ) -> RuntimeAppResult<SkillBackupSettings> {
-    let fields = vec![
-        ("root_path", root_path.clone()),
-        ("migrate", migrate.unwrap_or(true).to_string()),
-    ];
+    let root_path_input = root_path.clone();
+    let migrate_input = migrate.unwrap_or(true);
     let result = AppService::from_runtime(&state.runtime)
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
             root_path,
@@ -460,19 +449,18 @@ pub(crate) async fn update_skill_backup_settings(
         .await;
 
     match &result {
-        Ok(settings) => log_info(
-            "skill.backup.settings.update",
-            "更新 Skill 备份目录成功",
-            &[
-                ("root_path", settings.root_path.clone()),
-                ("expanded_root_path", settings.expanded_root_path.clone()),
-            ],
+        Ok(settings) => tracing::info!(
+            action = "skill.backup.settings.update",
+            root_path = %settings.root_path,
+            expanded_root_path = %settings.expanded_root_path,
+            "更新 Skill 备份目录成功"
         ),
-        Err(error) => log_error(
-            "skill.backup.settings.update",
-            "更新 Skill 备份目录失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill.backup.settings.update",
+            root_path = ?root_path_input,
+            migrate = migrate_input,
+            error = %error,
+            "更新 Skill 备份目录失败"
         ),
     }
     result
@@ -483,18 +471,24 @@ pub(crate) async fn backup_skill(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> RuntimeAppResult<CatalogAsset> {
-    let fields = vec![("asset_id", asset_id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .backup_skill(asset_id)
+        .backup_skill(asset_id.clone())
         .await;
 
     match &result {
-        Ok(asset) => log_info(
-            "skill.backup",
-            "备份 Skill 成功",
-            &asset_log_fields(&asset.asset),
+        Ok(asset) => tracing::info!(
+            action = "skill.backup",
+            asset_id = %asset.asset.id,
+            asset_name = %asset.asset.name,
+            asset_kind = ?asset.asset.kind,
+            "备份 Skill 成功"
         ),
-        Err(error) => log_error("skill.backup", "备份 Skill 失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "skill.backup",
+            asset_id = %asset_id,
+            error = %error,
+            "备份 Skill 失败"
+        ),
     }
     result
 }
@@ -529,38 +523,36 @@ pub(crate) fn backup_skills(
                     next_asset_id.map(str::to_string),
                 ) {
                     Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
-                    Err(error) => log_error(
-                        "skill.backup.background",
-                        "更新 Skill 后台备份进度失败",
-                        &error,
-                        &[("task_id", progress_task_id.clone())],
+                    Err(error) => tracing::error!(
+                        action = "skill.backup.background",
+                        task_id = %progress_task_id,
+                        error = %error,
+                        "更新 Skill 后台备份进度失败"
                     ),
                 }
             })
             .await;
         match &result {
-            Ok(assets) => log_info(
-                "skill.backup.background",
-                "后台备份 Skill 成功",
-                &[
-                    ("task_id", task_id.clone()),
-                    ("asset_count", assets.len().to_string()),
-                ],
+            Ok(assets) => tracing::info!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                asset_count = assets.len(),
+                "后台备份 Skill 成功"
             ),
-            Err(error) => log_error(
-                "skill.backup.background",
-                "后台备份 Skill 失败",
-                error,
-                &[("task_id", task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                error = %error,
+                "后台备份 Skill 失败"
             ),
         }
         match background_tasks.finish_skill_backup(&task_id, result) {
             Ok(snapshot) => emit_skill_backup_task(&app, &snapshot),
-            Err(error) => log_error(
-                "skill.backup.background",
-                "更新 Skill 后台备份任务状态失败",
-                &error,
-                &[("task_id", task_id)],
+            Err(error) => tracing::error!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                error = %error,
+                "更新 Skill 后台备份任务状态失败"
             ),
         }
     });
@@ -580,11 +572,11 @@ pub(crate) fn get_skill_backup_task(
 
 fn emit_skill_backup_task(app: &AppHandle, snapshot: &SkillBackupTaskSnapshot) {
     if let Err(error) = app.emit("skill-backup-task-updated", snapshot) {
-        log_error(
-            "skill.backup.background",
-            "推送 Skill 后台备份任务状态失败",
-            &error.to_string(),
-            &[("task_id", snapshot.id.clone())],
+        tracing::error!(
+            action = "skill.backup.background",
+            task_id = %snapshot.id,
+            error = %error,
+            "推送 Skill 后台备份任务状态失败"
         );
     }
 }
@@ -594,11 +586,11 @@ fn emit_conversation_script_install_task(
     snapshot: &ConversationScriptInstallTaskSnapshot,
 ) {
     if let Err(error) = app.emit("conversation-script-install-task-updated", snapshot) {
-        log_error(
-            "conversation.script.install",
-            "推送对话脚本后台安装任务状态失败",
-            &error.to_string(),
-            &[("task_id", snapshot.id.clone())],
+        tracing::error!(
+            action = "conversation.script.install",
+            task_id = %snapshot.id,
+            error = %error,
+            "推送对话脚本后台安装任务状态失败"
         );
     }
 }
@@ -630,19 +622,17 @@ where
             })
         };
         match &result {
-            Ok(value) => log_info(
-                operation_for_runtime,
-                "扩展生命周期任务成功",
-                &[
-                    ("task_id", task_id_for_runtime.clone()),
-                    ("result", value.to_string()),
-                ],
+            Ok(value) => tracing::info!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                result = %value,
+                "扩展生命周期任务成功"
             ),
-            Err(error) => log_error(
-                operation_for_runtime,
-                "扩展生命周期任务失败",
-                error,
-                &[("task_id", task_id_for_runtime.clone())],
+            Err(error) => tracing::error!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                error = %error,
+                "扩展生命周期任务失败"
             ),
         }
         let projection_result = match &result {
@@ -653,11 +643,11 @@ where
             .finish_conversation_script_install(&task_id_for_runtime, projection_result)
         {
             Ok(snapshot) => emit_conversation_script_install_task(&app_for_runtime, &snapshot),
-            Err(error) => log_error(
-                operation_for_runtime,
-                "更新扩展生命周期任务状态失败",
-                &error,
-                &[("task_id", task_id_for_runtime.clone())],
+            Err(error) => tracing::error!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                error = %error,
+                "更新扩展生命周期任务状态失败"
             ),
         }
         result
@@ -676,19 +666,22 @@ pub(crate) fn search_skills(
     state: State<'_, AppState>,
     params: SkillSearchParams,
 ) -> RuntimeAppResult<SkillSearchResult> {
-    let fields = vec![("query", params.query.clone())];
+    let query_input = params.query.clone();
     let result = (|| AppService::from_runtime(&state.runtime).search_skills(params))();
 
     match &result {
-        Ok(result) => log_info(
-            "skill.search",
-            "搜索 Skill 成功",
-            &[
-                ("query", result.query.clone()),
-                ("candidate_count", result.candidates.len().to_string()),
-            ],
+        Ok(result) => tracing::info!(
+            action = "skill.search",
+            query = %result.query,
+            candidate_count = result.candidates.len(),
+            "搜索 Skill 成功"
         ),
-        Err(error) => log_error("skill.search", "搜索 Skill 失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "skill.search",
+            query = %query_input,
+            error = %error,
+            "搜索 Skill 失败"
+        ),
     }
     result
 }
@@ -731,11 +724,11 @@ pub(crate) fn start_skill_acquire(
             )
             .await;
         if let Err(error) = &result {
-            log_error(
-                "skill.acquire",
-                "获取 Skill 失败",
-                error,
-                &[("task_id", task_id.clone())],
+            tracing::error!(
+                action = "skill.acquire",
+                task_id = %task_id,
+                error = %error,
+                "获取 Skill 失败"
             );
         }
         let snapshot = emit_tasks.finish_remote_skill_acquire(&task_id, result);
@@ -808,12 +801,16 @@ pub(crate) async fn list_skill_remote_sources(
         .await;
 
     match &result {
-        Ok(sources) => log_info(
-            "skill.remote.list",
-            "读取远程 Skill 来源成功",
-            &[("source_count", sources.len().to_string())],
+        Ok(sources) => tracing::info!(
+            action = "skill.remote.list",
+            source_count = sources.len(),
+            "读取远程 Skill 来源成功"
         ),
-        Err(error) => log_error("skill.remote.list", "读取远程 Skill 来源失败", error, &[]),
+        Err(error) => tracing::error!(
+            action = "skill.remote.list",
+            error = %error,
+            "读取远程 Skill 来源失败"
+        ),
     }
     result
 }
@@ -823,36 +820,26 @@ pub(crate) async fn check_skill_remote_sources(
     state: State<'_, AppState>,
     params: SkillRemoteCheckParams,
 ) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
-    let fields = params
-        .asset_id
-        .as_ref()
-        .map(|asset_id| vec![("asset_id", asset_id.clone())])
-        .unwrap_or_default();
+    let asset_id_filter = params.asset_id.clone();
     let result = AppService::from_runtime(&state.runtime)
         .check_skill_remote_sources(params)
         .await;
 
     match &result {
-        Ok(sources) => log_info(
-            "skill.remote.check",
-            "检查远程 Skill 来源成功",
-            &[
-                ("checked_count", sources.len().to_string()),
-                (
-                    "changed_count",
-                    sources
-                        .iter()
-                        .filter(|source| source.status == "changed")
-                        .count()
-                        .to_string(),
-                ),
-            ],
+        Ok(sources) => tracing::info!(
+            action = "skill.remote.check",
+            checked_count = sources.len(),
+            changed_count = sources
+                .iter()
+                .filter(|source| source.status == "changed")
+                .count(),
+            "检查远程 Skill 来源成功"
         ),
-        Err(error) => log_error(
-            "skill.remote.check",
-            "检查远程 Skill 来源失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill.remote.check",
+            asset_id = ?asset_id_filter,
+            error = %error,
+            "检查远程 Skill 来源失败"
         ),
     }
     result
@@ -864,22 +851,23 @@ pub(crate) async fn update_asset_description(
     asset_id: String,
     description: Option<String>,
 ) -> RuntimeAppResult<Asset> {
-    let fields = vec![("asset_id", asset_id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .update_asset_description(asset_id, description)
+        .update_asset_description(asset_id.clone(), description)
         .await;
 
     match &result {
-        Ok(asset) => log_info(
-            "asset.update_description",
-            "更新资产说明成功",
-            &asset_log_fields(asset),
+        Ok(asset) => tracing::info!(
+            action = "asset.update_description",
+            asset_id = %asset.id,
+            asset_name = %asset.name,
+            asset_kind = ?asset.kind,
+            "更新资产说明成功"
         ),
-        Err(error) => log_error(
-            "asset.update_description",
-            "更新资产说明失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "asset.update_description",
+            asset_id = %asset_id,
+            error = %error,
+            "更新资产说明失败"
         ),
     }
     result
@@ -891,14 +879,24 @@ pub(crate) async fn delete_asset(
     asset_id: String,
     unmount: Option<bool>,
 ) -> RuntimeAppResult<Asset> {
-    let fields = vec![("asset_id", asset_id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .delete_asset(asset_id, unmount.unwrap_or(false))
+        .delete_asset(asset_id.clone(), unmount.unwrap_or(false))
         .await;
 
     match &result {
-        Ok(asset) => log_info("asset.delete", "删除资产成功", &asset_log_fields(asset)),
-        Err(error) => log_error("asset.delete", "删除资产失败", error, &fields),
+        Ok(asset) => tracing::info!(
+            action = "asset.delete",
+            asset_id = %asset.id,
+            asset_name = %asset.name,
+            asset_kind = ?asset.kind,
+            "删除资产成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "asset.delete",
+            asset_id = %asset_id,
+            error = %error,
+            "删除资产失败"
+        ),
     }
     result
 }
@@ -924,18 +922,27 @@ pub(crate) async fn create_source(
     state: State<'_, AppState>,
     source: SourceInput,
 ) -> RuntimeAppResult<Source> {
-    let input_fields = source_input_log_fields(&source);
+    let source_name = source.name.clone();
+    let source_kind = format!("{:?}", source.kind);
     let result = AppService::from_runtime(&state.runtime)
         .add_source(source)
         .await;
 
     match &result {
-        Ok(source) => log_info(
-            "source.create",
-            "添加数据来源成功",
-            &source_log_fields(source),
+        Ok(source) => tracing::info!(
+            action = "source.create",
+            source_id = %source.id,
+            source_name = %source.name,
+            source_kind = ?source.kind,
+            "添加数据来源成功"
         ),
-        Err(error) => log_error("source.create", "添加数据来源失败", error, &input_fields),
+        Err(error) => tracing::error!(
+            action = "source.create",
+            source_name = %source_name,
+            source_kind = %source_kind,
+            error = %error,
+            "添加数据来源失败"
+        ),
     }
     result
 }
@@ -945,25 +952,35 @@ pub(crate) async fn update_source(
     state: State<'_, AppState>,
     source: Source,
 ) -> RuntimeAppResult<Source> {
-    let input_fields = source_log_fields(&source);
+    let source_id = source.id.clone();
+    let source_name = source.name.clone();
+    let source_kind = format!("{:?}", source.kind);
     let result = AppService::from_runtime(&state.runtime)
         .update_source(source)
         .await;
 
     match &result {
-        Ok(source) => log_info(
-            "source.update",
-            "更新数据来源成功",
-            &source_log_fields(source),
+        Ok(source) => tracing::info!(
+            action = "source.update",
+            source_id = %source.id,
+            source_name = %source.name,
+            source_kind = ?source.kind,
+            "更新数据来源成功"
         ),
-        Err(error) => log_error("source.update", "更新数据来源失败", error, &input_fields),
+        Err(error) => tracing::error!(
+            action = "source.update",
+            source_id = %source_id,
+            source_name = %source_name,
+            source_kind = %source_kind,
+            error = %error,
+            "更新数据来源失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
 pub(crate) async fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
-    let fields = vec![("source_id", id.clone())];
     let result = AppService::from_runtime(&state.runtime)
         .remove_source(SourceRemoveParams {
             id: id.clone(),
@@ -974,8 +991,17 @@ pub(crate) async fn delete_source(state: State<'_, AppState>, id: String) -> Run
         .map(|_| ());
 
     match &result {
-        Ok(()) => log_info("source.delete", "删除数据来源成功", &fields),
-        Err(error) => log_error("source.delete", "删除数据来源失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "source.delete",
+            source_id = %id,
+            "删除数据来源成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "source.delete",
+            source_id = %id,
+            error = %error,
+            "删除数据来源失败"
+        ),
     }
     result
 }
@@ -1010,28 +1036,28 @@ pub(crate) async fn create_profile(
     state: State<'_, AppState>,
     input: TargetProfileInput,
 ) -> RuntimeAppResult<TargetProfile> {
-    let mut input_fields = vec![("profile_name", input.name.clone())];
-    if let Some(target_paths) = &input.target_paths {
-        input_fields.push(("target_paths", target_paths.join(",")));
-    }
-    if let Some(app_kind) = input.app_kind {
-        input_fields.push(("app_kind", format!("{app_kind:?}")));
-    }
+    let profile_name = input.name.clone();
+    let target_paths = input.target_paths.as_ref().map(|paths| paths.join(","));
+    let app_kind = input.app_kind.map(|k| format!("{k:?}"));
     let result = AppService::from_runtime(&state.runtime)
         .create_profile(input)
         .await;
 
     match &result {
-        Ok(profile) => log_info(
-            "profile.create",
-            "添加目标 APP 配置成功",
-            &profile_log_fields(profile),
+        Ok(profile) => tracing::info!(
+            action = "profile.create",
+            profile_id = %profile.id,
+            profile_name = %profile.name,
+            target_paths = ?profile.target_paths,
+            "添加目标 APP 配置成功"
         ),
-        Err(error) => log_error(
-            "profile.create",
-            "添加目标 APP 配置失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "profile.create",
+            profile_name = %profile_name,
+            target_paths = ?target_paths,
+            app_kind = ?app_kind,
+            error = %error,
+            "添加目标 APP 配置失败"
         ),
     }
     result
@@ -1042,22 +1068,28 @@ pub(crate) async fn update_profile(
     state: State<'_, AppState>,
     profile: TargetProfile,
 ) -> RuntimeAppResult<TargetProfile> {
-    let input_fields = profile_log_fields(&profile);
+    let profile_id = profile.id.clone();
+    let profile_name = profile.name.clone();
+    let target_paths = profile.target_paths.clone();
     let result = AppService::from_runtime(&state.runtime)
         .update_profile(profile)
         .await;
 
     match &result {
-        Ok(profile) => log_info(
-            "profile.update",
-            "更新目标 APP 配置成功",
-            &profile_log_fields(profile),
+        Ok(profile) => tracing::info!(
+            action = "profile.update",
+            profile_id = %profile.id,
+            profile_name = %profile.name,
+            target_paths = ?profile.target_paths,
+            "更新目标 APP 配置成功"
         ),
-        Err(error) => log_error(
-            "profile.update",
-            "更新目标 APP 配置失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "profile.update",
+            profile_id = %profile_id,
+            profile_name = %profile_name,
+            target_paths = ?target_paths,
+            error = %error,
+            "更新目标 APP 配置失败"
         ),
     }
     result
@@ -1065,14 +1097,22 @@ pub(crate) async fn update_profile(
 
 #[tauri::command]
 pub(crate) async fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
-    let fields = vec![("profile_id", id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .delete_profile(id)
+        .delete_profile(id.clone())
         .await;
 
     match &result {
-        Ok(()) => log_info("profile.delete", "删除目标 APP 配置成功", &fields),
-        Err(error) => log_error("profile.delete", "删除目标 APP 配置失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "profile.delete",
+            profile_id = %id,
+            "删除目标 APP 配置成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "profile.delete",
+            profile_id = %id,
+            error = %error,
+            "删除目标 APP 配置失败"
+        ),
     }
     result
 }
@@ -1091,19 +1131,32 @@ pub(crate) async fn update_navigation_model(
     state: State<'_, AppState>,
     model: NavigationModel,
 ) -> RuntimeAppResult<NavigationModel> {
-    let fields = vec![
-        ("active_rail_id", model.active_rail_id.clone()),
-        ("active_header_tab_id", model.active_header_tab_id.clone()),
-        ("active_sub_nav_id", model.active_sub_nav_id.clone()),
-        ("rail_count", model.rail_items.len().to_string()),
-    ];
+    let active_rail_id = model.active_rail_id.clone();
+    let active_header_tab_id = model.active_header_tab_id.clone();
+    let active_sub_nav_id = model.active_sub_nav_id.clone();
+    let rail_count = model.rail_items.len();
     let result = AppService::from_runtime(&state.runtime)
         .update_navigation_model(model)
         .await;
 
     match &result {
-        Ok(_) => log_info("navigation.update", "更新导航配置成功", &fields),
-        Err(error) => log_error("navigation.update", "更新导航配置失败", error, &fields),
+        Ok(_) => tracing::info!(
+            action = "navigation.update",
+            active_rail_id = %active_rail_id,
+            active_header_tab_id = %active_header_tab_id,
+            active_sub_nav_id = %active_sub_nav_id,
+            rail_count = rail_count,
+            "更新导航配置成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "navigation.update",
+            active_rail_id = %active_rail_id,
+            active_header_tab_id = %active_header_tab_id,
+            active_sub_nav_id = %active_sub_nav_id,
+            rail_count = rail_count,
+            error = %error,
+            "更新导航配置失败"
+        ),
     }
     result
 }
@@ -1131,22 +1184,22 @@ pub(crate) async fn update_app_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<AppShortcut>,
 ) -> RuntimeAppResult<Vec<AppShortcut>> {
-    let fields = vec![("shortcut_count", shortcuts.len().to_string())];
+    let shortcut_count = shortcuts.len();
     let result = AppService::from_runtime(&state.runtime)
         .update_app_shortcuts(shortcuts)
         .await;
 
     match &result {
-        Ok(shortcuts) => log_info(
-            "settings.app_shortcuts.update",
-            "更新 APP 快捷入口配置成功",
-            &[("shortcut_count", shortcuts.len().to_string())],
+        Ok(shortcuts) => tracing::info!(
+            action = "settings.app_shortcuts.update",
+            shortcut_count = shortcuts.len(),
+            "更新 APP 快捷入口配置成功"
         ),
-        Err(error) => log_error(
-            "settings.app_shortcuts.update",
-            "更新 APP 快捷入口配置失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "settings.app_shortcuts.update",
+            shortcut_count = shortcut_count,
+            error = %error,
+            "更新 APP 快捷入口配置失败"
         ),
     }
     result
@@ -1177,21 +1230,40 @@ pub(crate) async fn refresh_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMountStatus>> {
-    let fields = asset_id
-        .as_ref()
-        .map(|asset_id| vec![("asset_id", asset_id.clone())])
-        .unwrap_or_default();
     let result = AppService::from_runtime(&state.runtime)
         .refresh_asset_mount_statuses(asset_id.as_deref())
         .await;
 
     match &result {
         Ok(statuses) => {
-            let mut fields = fields.clone();
-            fields.extend(status_summary_fields(statuses));
-            log_info("mount_status.refresh", "刷新挂载状态成功", &fields);
+            let mounted = statuses
+                .iter()
+                .filter(|status| status.state == PhysicalMountStateDto::Mounted)
+                .count();
+            let issues = statuses
+                .iter()
+                .filter(|status| {
+                    matches!(
+                        status.state,
+                        PhysicalMountStateDto::Conflict | PhysicalMountStateDto::Broken
+                    )
+                })
+                .count();
+            tracing::info!(
+                action = "mount_status.refresh",
+                asset_id = ?asset_id,
+                count = statuses.len(),
+                mounted = mounted,
+                issues = issues,
+                "刷新挂载状态成功"
+            );
         }
-        Err(error) => log_error("mount_status.refresh", "刷新挂载状态失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "mount_status.refresh",
+            asset_id = ?asset_id,
+            error = %error,
+            "刷新挂载状态失败"
+        ),
     }
     result
 }
@@ -1210,26 +1282,24 @@ pub(crate) async fn create_skill_group(
     state: State<'_, AppState>,
     input: AssetGroupInput,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let input_fields = vec![("group_name", input.name.clone())];
+    let group_name = input.name.clone();
     let result = AppService::from_runtime(&state.runtime)
         .create_skill_group(input)
         .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.create",
-            "添加 skill 分组成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.create",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "添加 skill 分组成功"
         ),
-        Err(error) => log_error(
-            "skill_group.create",
-            "添加 skill 分组失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.create",
+            group_name = %group_name,
+            error = %error,
+            "添加 skill 分组失败"
         ),
     }
     result
@@ -1240,29 +1310,26 @@ pub(crate) async fn update_skill_group(
     state: State<'_, AppState>,
     group: AssetGroup,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let input_fields = vec![
-        ("group_id", group.id.clone()),
-        ("group_name", group.name.clone()),
-    ];
+    let group_id = group.id.clone();
+    let group_name = group.name.clone();
     let result = AppService::from_runtime(&state.runtime)
         .update_skill_group(group)
         .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.update",
-            "更新 skill 分组成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.update",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "更新 skill 分组成功"
         ),
-        Err(error) => log_error(
-            "skill_group.update",
-            "更新 skill 分组失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.update",
+            group_id = %group_id,
+            group_name = %group_name,
+            error = %error,
+            "更新 skill 分组失败"
         ),
     }
     result
@@ -1273,14 +1340,22 @@ pub(crate) async fn delete_skill_group(
     state: State<'_, AppState>,
     group_id: String,
 ) -> RuntimeAppResult<()> {
-    let fields = vec![("group_id", group_id.clone())];
     let result = AppService::from_runtime(&state.runtime)
-        .delete_skill_group(group_id)
+        .delete_skill_group(group_id.clone())
         .await;
 
     match &result {
-        Ok(()) => log_info("skill_group.delete", "删除 skill 分组成功", &fields),
-        Err(error) => log_error("skill_group.delete", "删除 skill 分组失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "skill_group.delete",
+            group_id = %group_id,
+            "删除 skill 分组成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "skill_group.delete",
+            group_id = %group_id,
+            error = %error,
+            "删除 skill 分组失败"
+        ),
     }
     result
 }
@@ -1291,29 +1366,25 @@ pub(crate) async fn set_skill_group_manual_members(
     group_id: String,
     asset_ids: Vec<String>,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let fields = vec![
-        ("group_id", group_id.clone()),
-        ("asset_count", asset_ids.len().to_string()),
-    ];
+    let asset_count = asset_ids.len();
     let result = AppService::from_runtime(&state.runtime)
-        .set_skill_group_manual_members(group_id, asset_ids)
+        .set_skill_group_manual_members(group_id.clone(), asset_ids)
         .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.members.update",
-            "更新 skill 分组成员成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.members.update",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "更新 skill 分组成员成功"
         ),
-        Err(error) => log_error(
-            "skill_group.members.update",
-            "更新 skill 分组成员失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.members.update",
+            group_id = %group_id,
+            asset_count = asset_count,
+            error = %error,
+            "更新 skill 分组成员失败"
         ),
     }
     result
@@ -1324,50 +1395,42 @@ pub(crate) async fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
 ) -> RuntimeAppResult<SkillGroupExclusiveMountPreview> {
-    let fields = vec![
-        ("profile_id", input.profile_id.clone()),
-        ("group_count", input.group_ids.len().to_string()),
-    ];
+    let profile_id = input.profile_id.clone();
+    let group_count = input.group_ids.len();
     let result = AppService::from_runtime(&state.runtime)
         .preview_skill_group_exclusive_mount(input)
         .await;
 
     match &result {
         Ok(preview) => {
-            log_info(
-                "skill_group.exclusive.preview",
-                "预览 skill 分组独占挂载成功",
-                &[
-                    ("profile_id", preview.profile_id.clone()),
-                    ("group_count", preview.group_ids.len().to_string()),
-                    (
-                        "selected_count",
-                        preview.selected_skill_ids.len().to_string(),
-                    ),
-                    ("keep_count", preview.keep_count.to_string()),
-                    ("mount_count", preview.mount_count.to_string()),
-                    ("unmount_count", preview.unmount_count.to_string()),
-                    ("skipped_count", preview.skipped_count.to_string()),
-                ],
+            tracing::info!(
+                action = "skill_group.exclusive.preview",
+                profile_id = %preview.profile_id,
+                group_count = preview.group_ids.len(),
+                selected_count = preview.selected_skill_ids.len(),
+                keep_count = preview.keep_count,
+                mount_count = preview.mount_count,
+                unmount_count = preview.unmount_count,
+                skipped_count = preview.skipped_count,
+                "预览 skill 分组独占挂载成功"
             );
             for item in &preview.skipped {
-                log_warn(
-                    "skill_group.exclusive.skipped",
-                    "skill 独占挂载预览跳过",
-                    &[
-                        ("profile_id", preview.profile_id.clone()),
-                        ("asset_id", item.asset_id.clone()),
-                        ("skill_name", item.name.clone()),
-                        ("reason", item.reason.clone()),
-                    ],
+                tracing::warn!(
+                    action = "skill_group.exclusive.skipped",
+                    profile_id = %preview.profile_id,
+                    asset_id = %item.asset_id,
+                    skill_name = %item.name,
+                    reason = %item.reason,
+                    "skill 独占挂载预览跳过"
                 );
             }
         }
-        Err(error) => log_error(
-            "skill_group.exclusive.preview",
-            "预览 skill 分组独占挂载失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.exclusive.preview",
+            profile_id = %profile_id,
+            group_count = group_count,
+            error = %error,
+            "预览 skill 分组独占挂载失败"
         ),
     }
     result
@@ -1384,11 +1447,12 @@ pub(crate) async fn toggle_asset_mount(
         .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.toggle",
-            "切换 skill 挂载失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.mount.toggle",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "切换 skill 挂载失败"
         );
     }
     result
@@ -1405,11 +1469,12 @@ pub(crate) async fn unmount_asset_mount(
         .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.unmount.command",
-            "卸载 skill 命令失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.unmount.command",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "卸载 skill 命令失败"
         );
     }
     result
@@ -1426,11 +1491,12 @@ pub(crate) async fn mount_asset_mount(
         .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.command",
-            "挂载 skill 命令失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.mount.command",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "挂载 skill 命令失败"
         );
     }
     result
@@ -1449,15 +1515,13 @@ pub(crate) async fn set_asset_mount(
         .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.set",
-            "设置 skill 挂载关系失败",
-            error,
-            &[
-                ("asset_id", asset_id),
-                ("profile_id", profile_id),
-                ("enabled", enabled.to_string()),
-            ],
+        tracing::error!(
+            action = "skill.mount.set",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            enabled = enabled,
+            error = %error,
+            "设置 skill 挂载关系失败"
         );
     }
     result
@@ -1941,11 +2005,11 @@ struct TauriAiExecutionTaskEmitter {
 impl AiExecutionTaskEmitter for TauriAiExecutionTaskEmitter {
     fn emit(&self, snapshot: &AiExecutionTaskSnapshot) {
         if let Err(error) = self.app.emit(AI_EXECUTION_TASK_UPDATED_EVENT, snapshot) {
-            log_error(
-                "ai_execution.task",
-                "推送 AI 执行任务状态失败",
-                &error.to_string(),
-                &[("task_id", snapshot.id.clone())],
+            tracing::error!(
+                action = "ai_execution.task",
+                task_id = %snapshot.id,
+                error = %error,
+                "推送 AI 执行任务状态失败"
             );
         }
     }
@@ -1970,11 +2034,11 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
         }
         match self.tasks.update_ai_execution_phase(&self.task_id, phase) {
             Ok(snapshot) => self.emitter.emit(&snapshot),
-            Err(error) => log_error(
-                "ai_execution.task",
-                "更新 AI 执行任务阶段失败",
-                &error,
-                &[("task_id", self.task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "ai_execution.task",
+                task_id = %self.task_id,
+                error = %error,
+                "更新 AI 执行任务阶段失败"
             ),
         }
     }
@@ -1992,11 +2056,11 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
             .update_ai_execution_cleanup(&self.task_id, report)
         {
             Ok(snapshot) => self.emitter.emit(&snapshot),
-            Err(error) => log_error(
-                "ai_execution.task",
-                "更新 AI 执行清理报告失败",
-                &error,
-                &[("task_id", self.task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "ai_execution.task",
+                task_id = %self.task_id,
+                error = %error,
+                "更新 AI 执行清理报告失败"
             ),
         }
     }
@@ -2071,11 +2135,11 @@ async fn run_ai_execution_task(
         .and_then(|progress| progress.failure_phase());
     match tasks.finish_ai_execution_with_phase(&task_id, result, failure_phase) {
         Ok(snapshot) => emitter.emit(&snapshot),
-        Err(error) => log_error(
-            "ai_execution.task",
-            "收敛 AI 执行任务状态失败",
-            &error,
-            &[("task_id", task_id)],
+        Err(error) => tracing::error!(
+            action = "ai_execution.task",
+            task_id = %task_id,
+            error = %error,
+            "收敛 AI 执行任务状态失败"
         ),
     }
 }
@@ -2548,19 +2612,19 @@ pub(crate) fn start_conversation_sync_background(
                                 if let Err(error) =
                                     progress_app.emit("conversation-sync-task-updated", &snapshot)
                                 {
-                                    log_error(
-                                        "conversation.sync",
-                                        "推送后台同步进度失败",
-                                        &error.to_string(),
-                                        &[("task_id", progress_task_id.clone())],
+                                    tracing::error!(
+                                        action = "conversation.sync",
+                                        task_id = %progress_task_id,
+                                        error = %error,
+                                        "推送后台同步进度失败"
                                     );
                                 }
                             }
-                            Err(error) => log_error(
-                                "conversation.sync",
-                                "更新后台同步进度失败",
-                                &error,
-                                &[("task_id", progress_task_id.clone())],
+                            Err(error) => tracing::error!(
+                                action = "conversation.sync",
+                                task_id = %progress_task_id,
+                                error = %error,
+                                "更新后台同步进度失败"
                             ),
                         }
                     };
@@ -2586,29 +2650,27 @@ pub(crate) fn start_conversation_sync_background(
                 ))
             });
             match &result {
-                Ok(value) => log_info(
-                    "conversation.sync",
-                    "后台同步对话记录成功",
-                    &[
-                        ("task_id", task_id_for_runtime.clone()),
-                        ("result", value.to_string()),
-                    ],
+                Ok(value) => tracing::info!(
+                    action = "conversation.sync",
+                    task_id = %task_id_for_runtime,
+                    result = %value,
+                    "后台同步对话记录成功"
                 ),
-                Err(error) => log_error(
-                    "conversation.sync",
-                    "后台同步对话记录失败",
-                    error,
-                    &[("task_id", task_id_for_runtime.clone())],
+                Err(error) => tracing::error!(
+                    action = "conversation.sync",
+                    task_id = %task_id_for_runtime,
+                    error = %error,
+                    "后台同步对话记录失败"
                 ),
             }
             match task_background_tasks.finish_conversation_sync(&task_id_for_runtime, result) {
                 Ok(snapshot) => {
                     if let Err(error) = task_app.emit("conversation-sync-task-updated", &snapshot) {
-                        log_error(
-                            "conversation.sync",
-                            "推送后台同步任务状态失败",
-                            &error.to_string(),
-                            &[("task_id", task_id_for_runtime.clone())],
+                        tracing::error!(
+                            action = "conversation.sync",
+                            task_id = %task_id_for_runtime,
+                            error = %error,
+                            "推送后台同步任务状态失败"
                         );
                     }
                     Ok(Value::Null)
@@ -2750,11 +2812,11 @@ fn start_conversation_data_maintenance_background(
                             if let Err(error) = progress_app
                                 .emit("conversation-data-maintenance-task-updated", &snapshot)
                             {
-                                log_error(
-                                    "conversation.data.maintenance",
-                                    "推送对话数据维护进度失败",
-                                    &error.to_string(),
-                                    &[("task_id", progress_task_id.clone())],
+                                tracing::error!(
+                                    action = "conversation.data.maintenance",
+                                    task_id = %progress_task_id,
+                                    error = %error,
+                                    "推送对话数据维护进度失败"
                                 );
                             }
                         }
@@ -2988,19 +3050,19 @@ pub(crate) fn start_conversation_search_index_rebuild(
                     if let Err(error) =
                         app.emit("conversation-search-index-task-updated", &snapshot)
                     {
-                        log_error(
-                            "conversation.search.index.rebuild",
-                            "推送对话搜索索引任务状态失败",
-                            &error.to_string(),
-                            &[("task_id", task_id_for_runtime.clone())],
+                        tracing::error!(
+                            action = "conversation.search.index.rebuild",
+                            task_id = %task_id_for_runtime,
+                            error = %error,
+                            "推送对话搜索索引任务状态失败"
                         );
                     }
                 }
-                Err(error) => log_error(
-                    "conversation.search.index.rebuild",
-                    "更新对话搜索索引任务状态失败",
-                    &error,
-                    &[("task_id", task_id_for_runtime.clone())],
+                Err(error) => tracing::error!(
+                    action = "conversation.search.index.rebuild",
+                    task_id = %task_id_for_runtime,
+                    error = %error,
+                    "更新对话搜索索引任务状态失败"
                 ),
             }
             result
@@ -3110,27 +3172,29 @@ pub(crate) async fn create_plan(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> RuntimeAppResult<DeploymentPlan> {
-    let fields = profile_id
-        .as_ref()
-        .map(|profile_id| vec![("profile_id", profile_id.clone())])
-        .unwrap_or_default();
     let result = AppService::from_runtime(&state.runtime)
         .create_plan(profile_id.as_deref())
         .await;
 
     match &result {
         Ok(plan) => {
-            let mut fields = fields.clone();
-            fields.extend([
-                ("plan_id", plan.id.clone()),
-                ("action_count", plan.actions.len().to_string()),
-                ("create_count", plan.summary.create_count.to_string()),
-                ("skip_count", plan.summary.skip_count.to_string()),
-                ("conflict_count", plan.summary.conflict_count.to_string()),
-            ]);
-            log_info("deployment_plan.create", "创建部署计划成功", &fields);
+            tracing::info!(
+                action = "deployment_plan.create",
+                profile_id = ?profile_id,
+                plan_id = %plan.id,
+                action_count = plan.actions.len(),
+                create_count = plan.summary.create_count,
+                skip_count = plan.summary.skip_count,
+                conflict_count = plan.summary.conflict_count,
+                "创建部署计划成功"
+            );
         }
-        Err(error) => log_error("deployment_plan.create", "创建部署计划失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "deployment_plan.create",
+            profile_id = ?profile_id,
+            error = %error,
+            "创建部署计划失败"
+        ),
     }
     result
 }
@@ -3141,42 +3205,48 @@ pub(crate) async fn execute_plan(
     plan: DeploymentPlan,
     action_ids: Option<Vec<String>>,
 ) -> RuntimeAppResult<ExecutionResult> {
-    let fields = vec![
-        ("plan_id", plan.id.clone()),
-        ("action_count", plan.actions.len().to_string()),
-        (
-            "requested_action_count",
-            action_ids.as_ref().map(Vec::len).unwrap_or(0).to_string(),
-        ),
-    ];
+    let plan_id = plan.id.clone();
+    let action_count = plan.actions.len();
+    let requested_action_count = action_ids.as_ref().map(Vec::len).unwrap_or(0);
     let result = AppService::from_runtime(&state.runtime)
         .execute_plan(plan, action_ids)
         .await;
 
     match &result {
         Ok(result) => {
-            let mut fields = fields.clone();
-            fields.extend([
-                ("executed_count", result.executed_count.to_string()),
-                ("skipped_count", result.skipped_count.to_string()),
-                ("conflict_count", result.conflict_count.to_string()),
-                ("error_count", result.errors.len().to_string()),
-            ]);
             if result.conflict_count > 0 || !result.errors.is_empty() {
-                log_warn(
-                    "deployment_plan.execute",
-                    "执行部署计划完成但存在冲突或失败",
-                    &fields,
+                tracing::warn!(
+                    action = "deployment_plan.execute",
+                    plan_id = %plan_id,
+                    action_count = action_count,
+                    requested_action_count = requested_action_count,
+                    executed_count = result.executed_count,
+                    skipped_count = result.skipped_count,
+                    conflict_count = result.conflict_count,
+                    error_count = result.errors.len(),
+                    "执行部署计划完成但存在冲突或失败"
                 );
             } else {
-                log_info("deployment_plan.execute", "执行部署计划成功", &fields);
+                tracing::info!(
+                    action = "deployment_plan.execute",
+                    plan_id = %plan_id,
+                    action_count = action_count,
+                    requested_action_count = requested_action_count,
+                    executed_count = result.executed_count,
+                    skipped_count = result.skipped_count,
+                    conflict_count = result.conflict_count,
+                    error_count = result.errors.len(),
+                    "执行部署计划成功"
+                );
             }
         }
-        Err(error) => log_error(
-            "deployment_plan.execute",
-            "执行部署计划失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "deployment_plan.execute",
+            plan_id = %plan_id,
+            action_count = action_count,
+            requested_action_count = requested_action_count,
+            error = %error,
+            "执行部署计划失败"
         ),
     }
     result
@@ -3184,11 +3254,19 @@ pub(crate) async fn execute_plan(
 
 #[tauri::command]
 pub(crate) fn reveal_path(path: String) -> RuntimeAppResult<()> {
-    let fields = vec![("path", path.clone())];
-    let result = crate::adapters::platform::reveal_path(path);
+    let result = crate::adapters::platform::reveal_path(path.clone());
     match &result {
-        Ok(()) => log_info("path.reveal", "打开路径成功", &fields),
-        Err(error) => log_error("path.reveal", "打开路径失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "path.reveal",
+            path = %path,
+            "打开路径成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "path.reveal",
+            path = %path,
+            error = %error,
+            "打开路径失败"
+        ),
     }
     result
 }
@@ -3206,15 +3284,17 @@ pub(crate) fn install_cli_tools(
 ) -> RuntimeAppResult<crate::adapters::cli_tools::CliToolsStatus> {
     let result = crate::adapters::cli_tools::install(&app);
     match &result {
-        Ok(status) => log_info(
-            "cli.install",
-            "安装命令行工具成功",
-            &[
-                ("install_dir", status.install_dir.clone()),
-                ("path_configured", status.path_configured.to_string()),
-            ],
+        Ok(status) => tracing::info!(
+            action = "cli.install",
+            install_dir = %status.install_dir,
+            path_configured = status.path_configured,
+            "安装命令行工具成功"
         ),
-        Err(error) => log_error("cli.install", "安装命令行工具失败", error, &[]),
+        Err(error) => tracing::error!(
+            action = "cli.install",
+            error = %error,
+            "安装命令行工具失败"
+        ),
     }
     result
 }

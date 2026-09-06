@@ -33,18 +33,22 @@ where
     for (index, mut source) in sources.into_iter().enumerate() {
         before_source(index, total, &source)?;
         if !source.enabled {
-            log_info(
-                "source.scan.skip",
-                "跳过已禁用来源",
-                &source_log_fields(&source),
+            tracing::info!(
+                action = "source.scan.skip",
+                source_id = %source.id,
+                source_name = %source.name,
+                root_path = %source.root_path,
+                "跳过已禁用来源"
             );
             continue;
         }
 
-        log_info(
-            "source.scan.start",
-            "开始扫描来源",
-            &source_log_fields(&source),
+        tracing::info!(
+            action = "source.scan.start",
+            source_id = %source.id,
+            source_name = %source.name,
+            root_path = %source.root_path,
+            "开始扫描来源"
         );
         let now = Utc::now().to_rfc3339();
         match scan(&source) {
@@ -52,15 +56,23 @@ where
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("ok: {} assets", assets.len()));
                 persist_source_scan_result_sqlx(pool, tenant_id, &source, &assets).await?;
-                let mut fields = source_log_fields(&source);
-                fields.push(("asset_count", assets.len().to_string()));
-                log_info("source.scan.success", "扫描来源成功", &fields);
+                tracing::info!(
+                    action = "source.scan.success",
+                    source_id = %source.id,
+                    source_name = %source.name,
+                    root_path = %source.root_path,
+                    asset_count = assets.len(),
+                    "扫描来源成功"
+                );
                 for asset in &assets {
                     if matches!(asset.kind, AssetKind::Skill) {
-                        log_info(
-                            "skill.scan.success",
-                            "扫描到 skill",
-                            &asset_log_fields(asset),
+                        tracing::info!(
+                            action = "skill.scan.success",
+                            asset_id = %asset.id,
+                            skill_name = %asset.name,
+                            source_id = %asset.source_id,
+                            relative_path = %asset.relative_path,
+                            "扫描到 skill"
                         );
                     }
                 }
@@ -68,20 +80,27 @@ where
             Err(error) => {
                 let error_message = error.to_string();
                 if should_remove_source_on_scan_error(&error_message) {
-                    let mut fields = source_log_fields(&source);
-                    fields.push(("error", error_message.clone()));
-                    log_warn("source.scan.removed", "来源路径不存在，已移除", &fields);
+                    tracing::warn!(
+                        action = "source.scan.removed",
+                        source_id = %source.id,
+                        source_name = %source.name,
+                        root_path = %source.root_path,
+                        error = %error_message,
+                        "来源路径不存在，已移除"
+                    );
                     delete_source_sqlx(pool, tenant_id, &source.id).await?;
                     continue;
                 }
                 source.last_scanned_at = Some(now);
                 source.last_scan_status = Some(format!("error: {error_message}"));
                 upsert_source_sqlx(pool, tenant_id, &source).await?;
-                log_error(
-                    "source.scan.error",
-                    "扫描来源失败",
-                    &error_message,
-                    &source_log_fields(&source),
+                tracing::error!(
+                    action = "source.scan.error",
+                    source_id = %source.id,
+                    source_name = %source.name,
+                    root_path = %source.root_path,
+                    error = %error_message,
+                    "扫描来源失败"
                 );
             }
         }
@@ -194,10 +213,12 @@ async fn prune_missing_sources(
     let mut missing_source_ids = Vec::new();
     for source in sources {
         if source_root_is_missing(&source) {
-            log_warn(
-                "source.prune_missing",
-                "来源路径不存在，已从索引移除",
-                &source_log_fields(&source),
+            tracing::warn!(
+                action = "source.prune_missing",
+                source_id = %source.id,
+                source_name = %source.name,
+                root_path = %source.root_path,
+                "来源路径不存在，已从索引移除"
             );
             missing_source_ids.push(source.id);
         } else {

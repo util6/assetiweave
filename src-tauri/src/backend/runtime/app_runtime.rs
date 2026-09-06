@@ -161,10 +161,10 @@ impl AppRuntime {
         let pool = store::open_migrated_pool(&db_path).await?;
         ensure_app_library_dirs()?;
         if let Err(error) = super::archive_legacy_memory_once(&db_path) {
-            crate::backend::operation_log::log_warn(
-                "app.startup.memory_legacy_archive",
-                "legacy Memory archive was not created",
-                &[("error", error.to_string())],
+            tracing::warn!(
+                action = "app.startup.memory_legacy_archive",
+                error = %error,
+                "legacy Memory archive was not created"
             );
         }
         let target_catalog_dir = db_path
@@ -203,10 +203,10 @@ impl AppRuntime {
         )
         .await
         {
-            crate::backend::operation_log::log_warn(
-                "app.startup.agent_market_migration",
-                "agent market legacy migration deferred",
-                &[("error", error.to_string())],
+            tracing::warn!(
+                action = "app.startup.agent_market_migration",
+                error = %error,
+                "agent market legacy migration deferred"
             );
         }
         agent_runtime_manager
@@ -215,10 +215,10 @@ impl AppRuntime {
             .map_err(AppError::External)?;
         if role == RuntimeRole::ResidentHost {
             if let Err(error) = agent_runtime_manager.prepare_startup_health_refresh().await {
-                crate::backend::operation_log::log_warn(
-                    "app.startup.agent_health_prepare",
-                    "Agent startup health refresh could not be prepared",
-                    &[("error", error)],
+                tracing::warn!(
+                    action = "app.startup.agent_health_prepare",
+                    error = %error,
+                    "Agent startup health refresh could not be prepared"
                 );
             }
         }
@@ -365,10 +365,10 @@ impl AppRuntime {
         self.start_session_memory_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants().await {
-            crate::backend::operation_log::log_warn(
-                "app.startup.event_dispatcher",
-                "domain event dispatcher initialization deferred",
-                &[("error", error.to_string())],
+            tracing::warn!(
+                action = "app.startup.event_dispatcher",
+                error = %error,
+                "domain event dispatcher initialization deferred"
             );
             return;
         }
@@ -403,10 +403,11 @@ impl AppRuntime {
                             )
                             .await
                         {
-                            crate::backend::operation_log::log_warn(
-                                "session_memory.coordinator.recovery",
-                                "Session Memory durable coordinator reconciliation failed",
-                                &[("error", error.to_string())],
+                            tracing::warn!(
+                                action = "session_memory.coordinator.recovery",
+                                tenant_id = %tenant.id,
+                                error = %error,
+                                "Session Memory durable coordinator reconciliation failed"
                             );
                         }
                         if let Err(error) = service
@@ -416,10 +417,11 @@ impl AppRuntime {
                             )
                             .await
                         {
-                            crate::backend::operation_log::log_warn(
-                                "project_memory.coordinator.recovery",
-                                "Project Memory durable coordinator reconciliation failed",
-                                &[("error", error.to_string())],
+                            tracing::warn!(
+                                action = "project_memory.coordinator.recovery",
+                                tenant_id = %tenant.id,
+                                error = %error,
+                                "Project Memory durable coordinator reconciliation failed"
                             );
                         }
                         if let Err(error) = service
@@ -429,20 +431,22 @@ impl AppRuntime {
                             )
                             .await
                         {
-                            crate::backend::operation_log::log_warn(
-                                "global_memory.coordinator.recovery",
-                                "Global Memory durable coordinator reconciliation failed",
-                                &[("error", error.to_string())],
+                            tracing::warn!(
+                                action = "global_memory.coordinator.recovery",
+                                tenant_id = %tenant.id,
+                                error = %error,
+                                "Global Memory durable coordinator reconciliation failed"
                             );
                         }
                         if let Err(error) = service
                             .recover_memory_recall_turns_for_tenant(&tenant.id)
                             .await
                         {
-                            crate::backend::operation_log::log_warn(
-                                "memory_recall.coordinator.recovery",
-                                "Recall durable workflow reconciliation failed",
-                                &[("error", error.to_string())],
+                            tracing::warn!(
+                                action = "memory_recall.coordinator.recovery",
+                                tenant_id = %tenant.id,
+                                error = %error,
+                                "Recall durable workflow reconciliation failed"
                             );
                         }
                     }
@@ -450,10 +454,10 @@ impl AppRuntime {
                 }
                 .await;
                 if let Err(error) = result {
-                    crate::backend::operation_log::log_warn(
-                        "session_memory.coordinator.tenants",
-                        "Session Memory tenant enumeration failed",
-                        &[("error", error.to_string())],
+                    tracing::warn!(
+                        action = "session_memory.coordinator.tenants",
+                        error = %error,
+                        "Session Memory tenant enumeration failed"
                     );
                 }
                 for _ in 0..10 {
@@ -492,10 +496,10 @@ impl AppRuntime {
                 while !context.is_cancelled() {
                     if let Err(error) = AppService::from_runtime(&runtime).recover_team_runs().await
                     {
-                        crate::backend::operation_log::log_warn(
-                            "team.coordinator.recovery",
-                            "Team durable coordinator reconciliation failed",
-                            &[("error", error.to_string())],
+                        tracing::warn!(
+                            action = "team.coordinator.recovery",
+                            error = %error,
+                            "Team durable coordinator reconciliation failed"
                         );
                     }
                     for _ in 0..10 {
@@ -539,10 +543,10 @@ impl AppRuntime {
                 }))
             });
         if let Err(error) = spawn {
-            crate::backend::operation_log::log_warn(
-                "app.startup.agent_health_refresh",
-                "Agent startup health refresh could not be started",
-                &[("error", error.to_string())],
+            tracing::warn!(
+                action = "app.startup.agent_health_refresh",
+                error = %error,
+                "Agent startup health refresh could not be started"
             );
         }
     }

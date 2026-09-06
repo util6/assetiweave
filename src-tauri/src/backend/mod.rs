@@ -22,7 +22,6 @@ pub(crate) mod logging;
 pub(crate) mod logs;
 pub(crate) mod memory_redaction;
 pub(crate) mod models;
-pub(crate) mod operation_log;
 pub(crate) mod path_utils;
 pub(crate) mod planner;
 pub(crate) mod projection;
