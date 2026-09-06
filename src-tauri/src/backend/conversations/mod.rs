@@ -18,14 +18,8 @@ pub(crate) use external::{
     scaffold_external_adapter, try_run_external_adapter_with_settings, validate_external_adapter,
 };
 #[cfg(test)]
-pub(crate) use external::{
-    list_conversation_adapter_runtime_statuses, register_external_adapter, try_run_external_adapter,
-};
+pub(crate) use external::{register_external_adapter, try_run_external_adapter};
 pub(crate) use harvester::run_conversation_harvester_with_control;
-#[cfg(test)]
-pub(crate) use harvester::{
-    run_conversation_harvester_for_adapter_source, run_conversation_harvester_for_source,
-};
 pub(crate) use official::{ensure_official_conversation_adapters, ensure_shell_command_projector};
 pub(crate) use package::{
     validate_conversation_adapter_package_dir, ConversationAdapterPackageInstallSource,

@@ -27,9 +27,10 @@ pub(super) fn resolve_adapter_entry_path(
     if let Some(runtime) = manifest.runtime.as_ref() {
         return Ok(resolve_command_path(manifest_dir, &runtime.entry));
     }
-    let command = manifest.command.first().ok_or_else(|| {
-        AppError::external({ "adapter command must include an executable".to_string() })
-    })?;
+    let command = manifest
+        .command
+        .first()
+        .ok_or_else(|| AppError::external("adapter command must include an executable"))?;
     Ok(resolve_command_path(manifest_dir, command))
 }
 
@@ -52,9 +53,10 @@ pub(super) fn build_adapter_invocation_with_settings(
             settings,
         ));
     }
-    let (command, args) = manifest.command.split_first().ok_or_else(|| {
-        AppError::external({ "adapter command must include an executable".to_string() })
-    })?;
+    let (command, args) = manifest
+        .command
+        .split_first()
+        .ok_or_else(|| AppError::external("adapter command must include an executable"))?;
     Ok(build_adapter_command_invocation(
         manifest_dir,
         command,
@@ -572,14 +574,6 @@ fn parse_detected_runtime_version(output: &str) -> Option<semver::Version> {
 
 fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind, settings: &Value) -> PathBuf {
     runtime_program_from_settings(kind, settings).unwrap_or_else(|| default_runtime_program(kind))
-}
-
-#[cfg(test)]
-pub(super) fn build_adapter_invocation(
-    manifest_dir: &Path,
-    manifest: &ConversationAdapterManifest,
-) -> AppResult<AdapterCommandInvocation> {
-    build_adapter_invocation_with_settings(manifest_dir, manifest, &serde_json::json!({}))
 }
 
 #[cfg(test)]

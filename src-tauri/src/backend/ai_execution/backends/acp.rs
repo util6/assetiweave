@@ -1452,14 +1452,6 @@ fn matches_declared_not_found(message: &str, markers: &[String]) -> bool {
     })
 }
 
-fn optional_bool_label(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "true",
-        Some(false) => "false",
-        None => "not_applicable",
-    }
-}
-
 #[derive(Default, Debug)]
 struct CleanupReport {
     failures: Vec<String>,

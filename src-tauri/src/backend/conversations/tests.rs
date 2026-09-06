@@ -189,7 +189,7 @@ fn conversation_sync_cancels_an_in_flight_adapter_read() {
         &mut |_, _| {},
     );
     worker.join().unwrap();
-    assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(
         started.elapsed() < Duration::from_secs(3),
         "cancellation waited for the adapter timeout"
@@ -295,7 +295,7 @@ fn conversation_sync_cancels_web_harvesting_before_its_ten_minute_timeout() {
         Some(&cancellation),
     );
     worker.join().unwrap();
-    assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+    assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
     assert!(started.elapsed() < Duration::from_secs(3));
 }
 

@@ -22,10 +22,12 @@ pub(crate) fn build_env_filter() -> EnvFilter {
     EnvFilter::new("info")
 }
 
+#[cfg(test)]
 pub(crate) fn sanitize_for_log(text: &str) -> String {
     text.replace('\r', "\\r").replace('\n', "\\n")
 }
 
+#[cfg(test)]
 pub(crate) fn redact_sensitive_data(text: &str) -> String {
     let mut result = text.to_string();
     if let Some(pos) = result.find("Bearer ") {

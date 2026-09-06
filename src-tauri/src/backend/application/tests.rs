@@ -894,7 +894,7 @@ async fn conversation_data_maintenance_stops_before_work_when_cancelled() {
             &mut |_, _, _| panic!("cancelled audit must not report progress"),
         )
         .await;
-    assert!(matches!(audit, Err(AppError::Canceled(_))));
+    assert!(matches!(audit, Err(AppError::Cancelled(_))));
 
     let repair = service
         .repair_conversation_data_with_progress_and_cancellation(
@@ -906,7 +906,7 @@ async fn conversation_data_maintenance_stops_before_work_when_cancelled() {
             &mut |_, _, _| panic!("cancelled repair must not report progress"),
         )
         .await;
-    assert!(matches!(repair, Err(AppError::Canceled(_))));
+    assert!(matches!(repair, Err(AppError::Cancelled(_))));
 
     drop(service);
     fs::remove_dir_all(root).ok();

@@ -103,21 +103,6 @@ impl BinaryInstaller {
             Some(serde_json::json!({ "sha256": sha256, "size": file_len })),
         )
     }
-
-    #[cfg(test)]
-    pub(crate) fn materialize_bytes(
-        &self,
-        distribution: &Distribution,
-        context: &InstallContext,
-        bytes: &[u8],
-    ) -> Result<MaterializedRuntime, InstallError> {
-        let temp_artifact = context.staging_dir.join(".test_artifact.tmp");
-        fs::write(&temp_artifact, bytes)
-            .map_err(|error| InstallError::Failed(error.to_string()))?;
-        let res = self.materialize_file(distribution, context, &temp_artifact);
-        let _ = fs::remove_file(&temp_artifact);
-        res
-    }
 }
 
 impl Installer for BinaryInstaller {

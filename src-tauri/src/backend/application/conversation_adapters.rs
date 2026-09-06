@@ -641,7 +641,7 @@ fn ensure_conversation_sync_not_cancelled(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<()> {
     if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-        return Err(AppError::Canceled(
+        return Err(AppError::Cancelled(
             "conversation sync cancelled".to_string(),
         ));
     }

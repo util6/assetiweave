@@ -16,8 +16,6 @@ pub(crate) enum AppError {
     #[error("{0}")]
     Db(#[from] sqlx::Error),
     #[error("{0}")]
-    Canceled(String),
-    #[error("{0}")]
     Cancelled(String),
     #[allow(dead_code)]
     #[error("{0}")]
@@ -28,6 +26,7 @@ pub(crate) enum AppError {
     Process(String),
     #[error("{0}")]
     External(String),
+    #[allow(dead_code)]
     #[error("{0}")]
     Extension(String),
     #[error("{message}")]
@@ -77,7 +76,7 @@ impl AppError {
             Self::NotFound(_) => "not_found".to_string(),
             Self::Conflict(_) => "conflict".to_string(),
             Self::Io(_) | Self::Db(_) | Self::Storage(_) => "storage_error".to_string(),
-            Self::Canceled(_) | Self::Cancelled(_) => "cancelled".to_string(),
+            Self::Cancelled(_) => "cancelled".to_string(),
             Self::Timeout(_) => "timeout".to_string(),
             Self::Process(_) => "process_error".to_string(),
             Self::External(_) => "external_error".to_string(),
@@ -103,7 +102,7 @@ impl AppError {
             Self::Process(_) => "The external process failed.".to_string(),
             Self::External(_) => "An external operation failed.".to_string(),
             Self::Extension(_) => "An extension operation failed.".to_string(),
-            Self::Canceled(_) | Self::Cancelled(_) => "The operation was cancelled.".to_string(),
+            Self::Cancelled(_) => "The operation was cancelled.".to_string(),
             Self::Timeout(_) => "The operation timed out.".to_string(),
             Self::Validation(message)
             | Self::NotFound(message)
@@ -118,7 +117,6 @@ impl AppError {
             Self::Conflict(_)
             | Self::Io(_)
             | Self::Db(_)
-            | Self::Canceled(_)
             | Self::Cancelled(_)
             | Self::Timeout(_)
             | Self::Storage(_)
@@ -208,7 +206,7 @@ impl From<io::ErrorKind> for AppError {
 impl From<tokio::task::JoinError> for AppError {
     fn from(error: tokio::task::JoinError) -> Self {
         if error.is_cancelled() {
-            Self::Canceled("后台任务已取消".to_string())
+            Self::Cancelled("后台任务已取消".to_string())
         } else {
             Self::External(format!("后台任务异常退出: {error}"))
         }
@@ -373,5 +371,56 @@ mod tests {
         );
         assert!(!wire.message.contains("12345"));
         assert!(!wire.message.contains("token"));
+    }
+
+    #[test]
+    fn cancellation_wire_parity_asserts_code_retryable_and_safe_message() {
+        let err = AppError::Cancelled("sensitive internal reason token=123".to_string());
+        assert_eq!(err.code(), "cancelled");
+        assert!(err.retryable());
+        let view = err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
+        assert_eq!(view.details, None);
+
+        let json = serde_json::to_value(&view).expect("serializes to wire error");
+        assert_eq!(json["code"], "cancelled");
+        assert_eq!(json["message"], "The operation was cancelled.");
+        assert_eq!(json["retryable"], true);
+        assert!(json["details"].is_null());
+        assert!(!serde_json::to_string(&json).unwrap().contains("sensitive"));
+        assert!(!serde_json::to_string(&json).unwrap().contains("token"));
+    }
+
+    #[test]
+    fn host_process_cancellation_maps_to_cancelled_wire_parity() {
+        let host_err = crate::backend::host_process::HostProcessError::Cancelled;
+        let app_err: AppError = host_err.into();
+        assert!(matches!(app_err, AppError::Cancelled(_)));
+        assert_eq!(app_err.code(), "cancelled");
+        assert!(app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
+    }
+
+    #[tokio::test]
+    async fn task_runtime_join_cancellation_maps_to_cancelled_wire_parity() {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        });
+        handle.abort();
+        let join_err = handle.await.unwrap_err();
+        assert!(join_err.is_cancelled());
+        let app_err = AppError::from(join_err);
+        assert!(matches!(app_err, AppError::Cancelled(_)));
+        assert_eq!(app_err.code(), "cancelled");
+        assert!(app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
     }
 }

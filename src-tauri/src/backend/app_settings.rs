@@ -6,11 +6,10 @@ use crate::backend::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
-const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
 pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 4;
@@ -238,17 +237,6 @@ impl BackendSettings {
     }
 }
 
-pub(crate) fn read_app_settings_value() -> AppResult<Value> {
-    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
-        return Ok(runtime.app_settings_value());
-    }
-    let paths = app_settings_paths()?;
-    if !paths.config_path.exists() {
-        return canonicalize_settings(json!({}));
-    }
-    Ok(read_normalized_settings_document(&paths.config_path)?.settings)
-}
-
 pub(crate) async fn get_app_settings_sqlx(pool: &sqlx::SqlitePool) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
@@ -289,20 +277,6 @@ pub(crate) async fn initialize_app_locale_sqlx(
 
 pub(crate) async fn read_app_settings_value_sqlx(pool: &sqlx::SqlitePool) -> AppResult<Value> {
     load_or_import_app_settings_sqlx(pool).await
-}
-
-pub(crate) async fn read_app_settings_document_sqlx(
-    pool: &sqlx::SqlitePool,
-) -> AppResult<AppSettingsDocument> {
-    let settings = read_app_settings_value_sqlx(pool).await?;
-    Ok(AppSettingsDocument::new(settings))
-}
-
-pub(crate) async fn load_backend_settings_sqlx(
-    pool: &sqlx::SqlitePool,
-) -> AppResult<BackendSettings> {
-    let doc = read_app_settings_document_sqlx(pool).await?;
-    BackendSettings::from_document(&doc)
 }
 
 /// Load the authoritative SQLite settings row. The legacy JSON document is
@@ -428,18 +402,6 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     Ok(normalize_document(parsed))
 }
 
-fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
-    let mut document = read_settings_document(path)?;
-    let normalized = canonicalize_settings(document.settings.clone())?;
-    let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
-    if normalized != document.settings || schema_changed {
-        document.settings = normalized;
-        document.schema_version = SETTINGS_SCHEMA_VERSION;
-        write_settings_document(path, &document)?;
-    }
-    Ok(document)
-}
-
 fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
     normalize_shared_ai_settings(&mut settings);
     for path in [
@@ -523,6 +485,7 @@ pub(crate) fn canonicalize_settings(settings: Value) -> AppResult<Value> {
     Ok(settings)
 }
 
+#[cfg(test)]
 fn conversation_full_sync_on_startup_enabled_from_value(settings: &Value) -> bool {
     settings
         .get("conversations")

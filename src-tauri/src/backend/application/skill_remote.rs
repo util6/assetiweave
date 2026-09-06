@@ -847,7 +847,7 @@ fn clean_skill_subpath(value: &str) -> Option<String> {
 
 fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> AppResult<()> {
     if cancellation.is_some_and(CancellationToken::is_cancelled) {
-        Err(AppError::Canceled("skill acquire cancelled".to_string()))
+        Err(AppError::Cancelled("skill acquire cancelled".to_string()))
     } else {
         Ok(())
     }
@@ -887,7 +887,7 @@ fn clone_github_skill(
     )
     .map_err(|error| match error {
         crate::backend::host_process::HostProcessError::Cancelled => {
-            AppError::Canceled("skill acquire cancelled".to_string())
+            AppError::Cancelled("skill acquire cancelled".to_string())
         }
         error => AppError::Process(format!("failed to run git clone: {error:?}")),
     })?;

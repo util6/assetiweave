@@ -389,6 +389,7 @@ fn sanitize_log_text(value: &str) -> String {
         .replace('\n', "\\n")
 }
 
+#[cfg(test)]
 fn sanitize_log_value(value: &str) -> String {
     sanitize_log_text(value).replace('"', "\\\"")
 }
@@ -430,9 +431,6 @@ fn open_directory(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static LOG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn sanitize_log_helpers_escape_properly() {

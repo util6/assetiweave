@@ -10,7 +10,7 @@ use crate::backend::models::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Cursor, Read, Seek},
+    io::{Read, Seek},
     time::Duration,
 };
 
@@ -364,12 +364,13 @@ fn download_and_extract_install_artifact(
     result
 }
 
+#[cfg(test)]
 pub(super) fn extract_install_artifact_bytes(
     spec: &ConversationAdapterPackageInstallSpec,
     bytes: Vec<u8>,
     staging_dir: &Path,
 ) -> AppResult<PathBuf> {
-    extract_install_artifact_reader(spec, Cursor::new(bytes), staging_dir)
+    extract_install_artifact_reader(spec, std::io::Cursor::new(bytes), staging_dir)
 }
 
 pub(super) fn extract_install_artifact_reader<R: Read + Seek>(

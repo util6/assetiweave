@@ -419,7 +419,7 @@ fn download_and_materialize_binary(
         };
         crate::backend::http_client::download_to_file(&client, spec, &cancelled).map_err(
             |error| match error {
-                crate::backend::runtime::AppError::Canceled(_) => {
+                crate::backend::runtime::AppError::Cancelled(_) => {
                     market_error("cancelled", "Agent installation was cancelled.", true)
                 }
                 crate::backend::runtime::AppError::Validation(message)

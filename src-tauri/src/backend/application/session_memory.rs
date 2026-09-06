@@ -4,7 +4,6 @@ use crate::backend::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
-    app_settings,
     dto::{ConversationContentNodeLocator, ConversationSessionDetail},
     models::{RecentMemoryEventCategory, SessionMemory, SessionMemoryJob, SessionMemoryJobStatus},
     runtime::{tasks::TaskContext, AppError, AppResult},
@@ -19,7 +18,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    thread,
     time::Duration as StdDuration,
 };
 use tokio_util::sync::CancellationToken;
@@ -141,6 +139,7 @@ struct PromptEvidence<'a> {
 }
 
 impl AppService {
+    #[cfg(test)]
     pub(crate) async fn enqueue_session_memory_jobs_at(
         &self,
         source_id: &str,
@@ -168,13 +167,7 @@ impl AppService {
         .await
     }
 
-    pub(crate) async fn run_session_memory_phase1(
-        &self,
-        job_id: &str,
-    ) -> AppResult<Option<SessionMemory>> {
-        self.run_session_memory_phase1_at(job_id, Utc::now()).await
-    }
-
+    #[cfg(test)]
     pub(crate) async fn run_session_memory_phase1_at(
         &self,
         job_id: &str,
@@ -273,7 +266,7 @@ impl AppService {
                 if context.is_cancelled() {
                     store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "Session Memory task was canceled".to_string(),
                     ));
                 }
@@ -303,7 +296,7 @@ impl AppService {
         if context.is_cancelled() {
             drop(lease_guard);
             store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Session Memory task was canceled".to_string(),
             ));
         }
@@ -331,7 +324,7 @@ impl AppService {
             drop(lease_guard);
             if context.is_cancelled() {
                 store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-                return Err(AppError::Canceled(
+                return Err(AppError::Cancelled(
                     "Session Memory task was canceled".to_string(),
                 ));
             }

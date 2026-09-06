@@ -132,7 +132,7 @@ impl AppService {
                     runtime_for_worker
                         .session_streams()
                         .mark_terminal(&key_for_worker);
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "Team member turn was cancelled before execution".to_string(),
                     ));
                 }
@@ -164,7 +164,7 @@ impl AppService {
                             runtime_for_worker
                                 .session_streams()
                                 .mark_terminal(&key_for_worker);
-                            return Err(AppError::Canceled(
+                            return Err(AppError::Cancelled(
                                 "Team member turn was cancelled".to_string(),
                             ));
                         }
@@ -186,7 +186,7 @@ impl AppService {
                             runtime_for_worker
                                 .session_streams()
                                 .mark_terminal(&key_for_worker);
-                            Err(AppError::Canceled(
+                            Err(AppError::Cancelled(
                                 "Team member turn was cancelled".to_string(),
                             ))
                         } else {
@@ -259,6 +259,7 @@ impl AppService {
     /// Subscribe to the process-local projection for a validated member
     /// scope. Transport adapters use this wrapper instead of reaching into
     /// `SessionStreamRegistry` or reproducing its key validation.
+    #[allow(dead_code)]
     pub(crate) async fn subscribe_member_stream(
         &self,
         team_id: &str,

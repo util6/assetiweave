@@ -22,10 +22,7 @@ use crate::backend::projection::conversation_content_nodes::{
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{
-    sqlite::SqliteRow, AssertSqlSafe, Executor, FromRow, Row as SqlxRow, Sqlite, SqlitePool,
-    Transaction,
-};
+use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Executor, FromRow, Sqlite, SqlitePool, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{decode_enum, decode_json, encode_enum, encode_json};
@@ -548,7 +545,7 @@ pub(crate) async fn disable_builtin_conversation_adapter_sqlx(
     let mut adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation adapter not found: {adapter_id}") })
+            AppError::external(format!("conversation adapter not found: {adapter_id}"))
         })?;
     if adapter.trust_state != ConversationAdapterTrustState::BuiltIn {
         return Err(AppError::Validation(
@@ -794,7 +791,9 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
     let mut package = load_conversation_adapter_package_sqlx(pool, package_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation adapter package not found: {package_id}") })
+            AppError::external(format!(
+                "conversation adapter package not found: {package_id}"
+            ))
         })?;
     if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
         return Err(AppError::Validation(
@@ -1194,9 +1193,7 @@ pub(crate) async fn disable_conversation_source_sqlx(
 ) -> AppResult<ConversationSource> {
     let mut source = load_conversation_source_sqlx(pool, tenant_id, source_id)
         .await?
-        .ok_or_else(|| {
-            AppError::external({ format!("conversation source not found: {source_id}") })
-        })?;
+        .ok_or_else(|| AppError::external(format!("conversation source not found: {source_id}")))?;
     source.enabled = false;
     source.updated_at = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(AppError::external)?;
@@ -1235,6 +1232,7 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     .await
 }
 
+#[cfg(test)]
 pub(crate) async fn import_incremental_conversation_sessions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1279,7 +1277,7 @@ fn ensure_sync_import_active(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<()> {
     if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-        return Err(AppError::Canceled(
+        return Err(AppError::Cancelled(
             "conversation sync cancelled".to_string(),
         ));
     }
@@ -1661,12 +1659,11 @@ pub(crate) async fn list_conversation_sessions_sqlx(
     .bind(id_needle.as_deref())
     .bind(
         i64::try_from(limit)
-            .map_err(|_| AppError::external({ format!("invalid conversation limit: {limit}") }))?,
+            .map_err(|_| AppError::external(format!("invalid conversation limit: {limit}")))?,
     )
     .bind(
-        i64::try_from(offset).map_err(|_| {
-            AppError::external({ format!("invalid conversation offset: {offset}") })
-        })?,
+        i64::try_from(offset)
+            .map_err(|_| AppError::external(format!("invalid conversation offset: {offset}")))?,
     )
     .fetch_all(pool)
     .await
@@ -1808,9 +1805,7 @@ pub(crate) async fn load_conversation_session_detail_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation session not found: {session_id}") })
-    })?;
+    .ok_or_else(|| AppError::external(format!("conversation session not found: {session_id}")))?;
     let session = map_sqlx_conversation_session(&session_row)?;
     let questions =
         load_conversation_question_details_for_session_sqlx(pool, tenant_id, session_id).await?;
@@ -1869,9 +1864,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation question not found: {question_id}") })
-    })?;
+    .ok_or_else(|| AppError::external(format!("conversation question not found: {question_id}")))?;
     let question = map_sqlx_conversation_question(&question_row)?;
     let question_turns = load_question_turn_memberships_sqlx(pool, tenant_id, question_id).await?;
 
@@ -1960,9 +1953,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation question not found: {question_id}") })
-    })?;
+    .ok_or_else(|| AppError::external(format!("conversation question not found: {question_id}")))?;
 
     let turn_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
@@ -2162,7 +2153,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         .await
         .map_err(AppError::external)?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation question block not found: {block_id}") })
+            AppError::external(format!("conversation question block not found: {block_id}"))
         })?;
         let (question_id, turn) = row.into_turn();
         let locator =
@@ -2196,7 +2187,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     .await
     .map_err(AppError::external)?
     .ok_or_else(|| {
-        AppError::external({ format!("conversation content block not found: {block_id}") })
+        AppError::external(format!("conversation content block not found: {block_id}"))
     })?;
     let (part, question_id, session_id) = row.into_part()?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
@@ -2217,9 +2208,9 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         .find(|card| card.node_id == block_id)
         .or_else(|| (block_id == part.id).then(|| cards.first()).flatten())
         .ok_or_else(|| {
-            AppError::external({
-                format!("conversation block is not a readable content card: {block_id}")
-            })
+            AppError::external(format!(
+                "conversation block is not a readable content card: {block_id}"
+            ))
         })?;
     let mut locator =
         conversation_card_block_locator(record_kind, &session_id, &question_id, &part, card);
@@ -2282,9 +2273,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             load_conversation_question_sqlx_tx(&mut tx, tenant_id, &resolved_question_id)
                 .await?
                 .ok_or_else(|| {
-                    AppError::external({
-                        format!("conversation question not found: {question_id}")
-                    })
+                    AppError::external(format!("conversation question not found: {question_id}"))
                 })?,
         );
     }
@@ -2456,7 +2445,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     let question = load_conversation_question_sqlx_tx(&mut tx, tenant_id, question_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation question not found: {question_id}") })
+            AppError::external(format!("conversation question not found: {question_id}"))
         })?;
     reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
     let turns = load_question_turns_sqlx_tx(&mut tx, tenant_id, question_id).await?;
@@ -2491,9 +2480,9 @@ pub(crate) async fn split_conversation_question_sqlx(
                 ],
             });
         }
-        return Err(AppError::external({
-            format!("turn is not in question: {before_turn_id}")
-        }));
+        return Err(AppError::external(format!(
+            "turn is not in question: {before_turn_id}"
+        )));
     };
     if split_index == 0 {
         return Err(AppError::Validation(
@@ -2943,7 +2932,7 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
         ConversationRecordKind::Web => "web",
     };
     let run_limit = i64::try_from(recent_run_limit.clamp(1, 20)).map_err(|_| {
-        AppError::external({ "invalid recent conversation sync run limit".to_string() })
+        AppError::external("invalid recent conversation sync run limit".to_string())
     })?;
     sqlx::query_as::<_, ConversationSyncDelta>(
         r#"
@@ -2998,9 +2987,8 @@ pub(crate) async fn search_conversation_cards_sqlx(
     offset: usize,
     allowed_session_ids: Option<&BTreeSet<String>>,
 ) -> AppResult<ConversationSearchPage> {
-    let needle = normalize_query(Some(query)).ok_or_else(|| {
-        AppError::external({ "conversation search query is required".to_string() })
-    })?;
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| AppError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::models::conversation_id_search_term(query)
         .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let project_path = normalize_project_path(project_path);
@@ -3274,9 +3262,8 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     .flatten()
     .map(|item| (item.id.clone(), item))
     .collect::<BTreeMap<_, _>>();
-    let needle = normalize_query(Some(query)).ok_or_else(|| {
-        AppError::external({ "conversation search query is required".to_string() })
-    })?;
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| AppError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::models::conversation_id_search_term(query)
         .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let mut hits = Vec::with_capacity(matches.hits.len());
@@ -3294,14 +3281,10 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
             .any(|value| crate::backend::models::conversation_id_fragment(value) == fragment)
         });
         let session = sessions.get(&matched.session_id).ok_or_else(|| {
-            AppError::external({
-                "conversation search index hydration missed a session".to_string()
-            })
+            AppError::external("conversation search index hydration missed a session".to_string())
         })?;
         let question = questions.get(&matched.question_id).ok_or_else(|| {
-            AppError::external({
-                "conversation search index hydration missed a question".to_string()
-            })
+            AppError::external("conversation search index hydration missed a question".to_string())
         })?;
         let question_title = search_question_title_from_turns(
             question,
@@ -3312,16 +3295,12 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
         );
         let (part_id, text) = if matched.card_type == "question" {
             let turn = turns.get(&matched.turn_id).ok_or_else(|| {
-                AppError::external({
-                    "conversation search index hydration missed a turn".to_string()
-                })
+                AppError::external("conversation search index hydration missed a turn".to_string())
             })?;
             (None, turn.user_text.clone())
         } else {
             let part = parts.get(&matched.part_id).ok_or_else(|| {
-                AppError::external({
-                    "conversation search index hydration missed a part".to_string()
-                })
+                AppError::external("conversation search index hydration missed a part".to_string())
             })?;
             let cards =
                 crate::backend::projection::conversation_cards::project_conversation_content_cards(
@@ -3337,9 +3316,9 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                 .iter()
                 .find(|card| card.node_id == matched.document_id)
                 .ok_or_else(|| {
-                    AppError::external({
-                        "conversation search index hydration missed a projected card".to_string()
-                    })
+                    AppError::external(
+                        "conversation search index hydration missed a projected card".to_string(),
+                    )
                 })?;
             if card.kind != matched.card_type || card.part_id != part.id {
                 return Err(AppError::Validation(
@@ -3353,9 +3332,9 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                 (matched.card_type == "question").then_some(ConversationSearchCardType::question())
             })
             .ok_or_else(|| {
-                AppError::external({
-                    "conversation search index returned an invalid card type".to_string()
-                })
+                AppError::external(
+                    "conversation search index returned an invalid card type".to_string(),
+                )
             })?;
         hits.push(ConversationSearchHit {
             session: session.clone(),
@@ -3456,16 +3435,15 @@ impl ConversationAdapterRow {
         let protocol_version = self
             .protocol_version
             .map(|value| {
-                u32::try_from(value).map_err(|_| {
-                    AppError::external({ format!("invalid protocol_version: {value}") })
-                })
+                u32::try_from(value)
+                    .map_err(|_| AppError::external(format!("invalid protocol_version: {value}")))
             })
             .transpose()?;
         let card_contract_version = self
             .card_contract_version
             .map(|value| {
                 u32::try_from(value).map_err(|_| {
-                    AppError::external({ format!("invalid card_contract_version: {value}") })
+                    AppError::external(format!("invalid card_contract_version: {value}"))
                 })
             })
             .transpose()?;
@@ -5347,6 +5325,7 @@ struct ConversationSearchEntry {
     semantic_role: Option<String>,
 }
 
+#[cfg(test)]
 pub(super) fn append_declared_card_to_question_aggregate(
     part: &ConversationPart,
     answer_text: &mut Vec<String>,
@@ -5399,6 +5378,7 @@ pub(super) fn append_projected_cards_to_question_aggregate(
     Ok(())
 }
 
+#[cfg(test)]
 fn resolved_content_card_for_part(
     part: &ConversationPart,
 ) -> Option<crate::backend::projection::conversation_cards::ResolvedConversationContentCard> {
@@ -5781,7 +5761,7 @@ mod tests {
                     },
                 )
                 .await;
-                assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+                assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
                 assert_eq!(progress, vec![(0, 2), (1, 2)]);
                 let fingerprints: Vec<Option<String>> = sqlx::query_scalar(
                     "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = ?1",

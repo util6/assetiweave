@@ -29,15 +29,6 @@ pub(crate) fn run_conversation_harvester_for_source_with_settings(
     run_conversation_harvester_in_dir(&work_dir, false, settings, None).map(|_| ())
 }
 
-pub(crate) fn run_conversation_harvester_for_adapter_source_with_settings(
-    adapter: Option<&ConversationAdapter>,
-    source: &ConversationSource,
-    full_reparse: bool,
-    settings: &Value,
-) -> AppResult<()> {
-    run_conversation_harvester_with_control(adapter, source, full_reparse, settings, None)
-}
-
 pub(crate) fn run_conversation_harvester_with_control(
     adapter: Option<&ConversationAdapter>,
     source: &ConversationSource,
@@ -83,11 +74,12 @@ pub(crate) fn run_conversation_harvester_for_adapter_source(
     source: &ConversationSource,
     full_reparse: bool,
 ) -> AppResult<()> {
-    run_conversation_harvester_for_adapter_source_with_settings(
+    run_conversation_harvester_with_control(
         adapter,
         source,
         full_reparse,
         &serde_json::json!({}),
+        None,
     )
 }
 
@@ -206,7 +198,7 @@ fn run_conversation_harvester_with_manifest_root_and_work_dir(
             return Err(AppError::external(message));
         }
         Err(crate::backend::host_process::HostProcessError::Cancelled) => {
-            return Err(AppError::Canceled(format!(
+            return Err(AppError::Cancelled(format!(
                 "harvester {} was cancelled",
                 manifest.id
             )));
@@ -313,7 +305,7 @@ fn resolve_harvester_invocation_with_settings(
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            AppError::external({ format!("harvester {} has no entrypoint", manifest.id) })
+            AppError::external(format!("harvester {} has no entrypoint", manifest.id))
         })?;
     let command_path =
         validate_harvester_relative_entry(root, &manifest.id, "entrypoint", raw_command)?;

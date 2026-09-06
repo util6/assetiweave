@@ -21,17 +21,6 @@ pub(crate) async fn scan_asset_mount_statuses_sqlx(
     inspect_asset_mount_statuses(&assets, &profiles, asset_id)
 }
 
-pub(crate) async fn sync_asset_mount_records_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-) -> AppResult<Vec<AssetMountStatus>> {
-    repair_ghost_mount_symlinks_sqlx(pool, tenant_id, None).await?;
-    let (assets, profiles) = load_mount_status_inputs_sqlx(pool, tenant_id).await?;
-    let statuses = inspect_asset_mount_statuses(&assets, &profiles, None)?;
-    persist_asset_mount_observation_snapshot(pool, tenant_id, &statuses).await?;
-    Ok(statuses)
-}
-
 async fn load_mount_status_inputs_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

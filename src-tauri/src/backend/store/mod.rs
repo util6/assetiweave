@@ -28,7 +28,7 @@ mod web_record_repo;
 pub(crate) use asset_repo::{
     load_asset_sqlx, load_assets_sqlx, replace_source_assets_sqlx, update_asset_description_sqlx,
 };
-pub(crate) use backup_repo::{checkpoint_database_wal_sqlx, vacuum_database_into_sqlx};
+pub(crate) use backup_repo::checkpoint_database_wal_sqlx;
 pub(crate) use conversation_repo::{
     activate_conversation_adapter_package_sqlx, activate_conversation_adapter_workspace_sqlx,
     conversation_payload_policy_reparse_required_sqlx,
@@ -37,7 +37,7 @@ pub(crate) use conversation_repo::{
     disable_conversation_source_sqlx, enable_conversation_sources_by_adapter_sqlx,
     has_running_conversation_sync_for_adapter_sqlx, hydrate_conversation_search_matches_sqlx,
     import_conversation_sessions_sqlx, import_conversation_sessions_with_control_sqlx,
-    import_incremental_conversation_sessions_sqlx, list_conversation_adapter_catalog_releases_sqlx,
+    list_conversation_adapter_catalog_releases_sqlx,
     list_conversation_adapter_package_versions_sqlx, list_conversation_adapter_packages_sqlx,
     list_conversation_adapters_sqlx, list_conversation_block_locators_sqlx,
     list_conversation_question_details_sqlx, list_conversation_sessions_by_id_fragment_sqlx,
@@ -56,15 +56,14 @@ pub(crate) use conversation_repo::{
     split_conversation_question_sqlx, update_conversation_part_translation_sqlx,
     upsert_conversation_adapter_catalog_release_sqlx, upsert_conversation_adapter_package_sqlx,
     upsert_conversation_adapter_sqlx, upsert_conversation_source_sqlx, ConversationImportResult,
-    RecentConversationSessionRecord,
 };
+#[cfg(test)]
+pub(crate) use database::seed_defaults_sqlx;
 pub(crate) use database::{
     count_rows as count_rows_sqlx, latest_scan_status as latest_scan_status_sqlx,
     open_migrated_pool, seed_defaults_sqlx_with_catalog, seed_tenant_defaults_sqlx_with_catalog,
     Database,
 };
-#[cfg(test)]
-pub(crate) use database::{seed_defaults_sqlx, seed_tenant_defaults_sqlx};
 pub(crate) use deployment_repo::{
     count_deployment_state_by_profile_sqlx, delete_orphan_deployment_state_sqlx,
     is_managed_deployment_sqlx, load_managed_deployment_targets_by_profile_sqlx,

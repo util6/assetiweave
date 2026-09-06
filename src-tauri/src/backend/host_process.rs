@@ -88,6 +88,7 @@ pub(crate) enum HostProcessError {
     Cancelled,
     #[error("process output limit exceeded (stdout={stdout}, stderr={stderr})")]
     OutputLimitExceeded { stdout: bool, stderr: bool },
+    #[cfg_attr(not(test), allow(dead_code))]
     #[error("process cleanup failed: {0}")]
     Cleanup(String),
 }
@@ -125,6 +126,7 @@ pub(crate) enum HostCancellation<'a> {
 }
 
 impl HostCancellation<'_> {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn is_cancelled(self) -> bool {
         match self {
             Self::Token(token) => token.is_cancelled(),
@@ -333,12 +335,6 @@ pub(crate) fn run_host_command_with_cancellation(
         .join()
         .map_err(|_| HostProcessError::Output("process runner thread panicked".to_string()))?
     })
-}
-
-pub(crate) fn run_host_command_blocking(
-    spec: HostCommandSpec,
-) -> Result<HostCommandOutput, HostProcessError> {
-    run_host_command_with_cancellation(spec, None)
 }
 
 pub(crate) async fn run_host_command(

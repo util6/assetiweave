@@ -144,12 +144,12 @@ pub(crate) fn download_to_file(
         let mut buffer = [0u8; 8192];
         loop {
             if cancelled() {
-                return Err(AppError::Canceled("download cancelled".into()));
+                return Err(AppError::Cancelled("download cancelled".into()));
             }
             let read =
                 std::io::Read::read(&mut response, &mut buffer).map_err(AppError::external)?;
             if cancelled() {
-                return Err(AppError::Canceled("download cancelled".into()));
+                return Err(AppError::Cancelled("download cancelled".into()));
             }
             if read == 0 {
                 break;
@@ -183,7 +183,7 @@ mod tests {
     use super::*;
     use flate2::write::GzEncoder;
     use flate2::Compression;
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

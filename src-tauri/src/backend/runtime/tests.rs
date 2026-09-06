@@ -19,7 +19,7 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
                 while !context.is_cancelled() {
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                Err(AppError::Canceled("cancelled".to_string()))
+                Err(AppError::Cancelled("cancelled".to_string()))
             }),
         )
         .expect("spawn");

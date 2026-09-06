@@ -4,7 +4,6 @@ use crate::backend::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
-    app_settings,
     models::{ProjectMemoryJob, ProjectMemoryJobStatus, ProjectMemorySource},
     runtime::tasks::{TaskContext, TaskFilter, TaskKind, TaskSpec},
     store::{
@@ -20,7 +19,6 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    thread,
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -192,7 +190,7 @@ impl AppService {
         }
         if context.is_cancelled() {
             store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Project Memory task was canceled".to_string(),
             ));
         }
@@ -234,7 +232,7 @@ impl AppService {
                 if context.is_cancelled() {
                     store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "Project Memory task was canceled".to_string(),
                     ));
                 }
@@ -264,7 +262,7 @@ impl AppService {
         if context.is_cancelled() {
             drop(lease_guard);
             store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Project Memory task was canceled".to_string(),
             ));
         }
@@ -303,7 +301,7 @@ impl AppService {
                     if context.is_cancelled() {
                         store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                             .await?;
-                        return Err(AppError::Canceled(
+                        return Err(AppError::Cancelled(
                             "Project Memory task was canceled".to_string(),
                         ));
                     }

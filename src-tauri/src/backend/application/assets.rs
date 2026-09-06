@@ -392,6 +392,7 @@ impl AppService {
     }
 }
 
+#[cfg(test)]
 fn run_batch_items<T, BeforeItem, ApplyItem>(
     asset_ids: &[String],
     before_item: &mut BeforeItem,

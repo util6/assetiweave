@@ -1,6 +1,6 @@
 use crate::backend::models::{
     RecentMemoryEvent, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
-    SessionMemoryJobStatus, SessionMemorySourceReference, SessionMemoryStatus,
+    SessionMemoryJobStatus, SessionMemoryStatus,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Duration, Utc};
@@ -561,6 +561,7 @@ pub(crate) async fn retry_session_memory_job_sqlx(
     Ok(result.rows_affected() == 1)
 }
 
+#[cfg(test)]
 pub(crate) async fn list_due_session_memory_job_ids_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -809,38 +810,6 @@ pub(crate) async fn load_session_memory_for_job_sqlx(
     load_session_memory_sqlx(pool, tenant_id, &memory_id).await
 }
 
-pub(crate) async fn list_session_memory_source_references_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    memory_id: &str,
-) -> AppResult<Vec<SessionMemorySourceReference>> {
-    let rows = sqlx::query_as::<_, SessionMemorySourceReferenceRow>(
-        "SELECT tenant_id, id, memory_id, source_id, session_id, question_id, turn_id, part_id, node_id, node_order, reference_key, source_revision, created_at FROM session_memory_source_references WHERE tenant_id = ?1 AND memory_id = ?2 ORDER BY reference_key ASC",
-    )
-    .bind(tenant_id)
-    .bind(memory_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::Db)?;
-    Ok(rows.into_iter().map(Into::into).collect())
-}
-
-pub(crate) async fn list_recent_memory_events_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    session_id: &str,
-) -> AppResult<Vec<RecentMemoryEvent>> {
-    let rows = sqlx::query_as::<_, RecentMemoryEventRow>(
-        "SELECT e.tenant_id, e.id, e.memory_id, e.session_id, e.category, e.title, e.summary, e.occurred_at, e.source_reference_id, e.fingerprint, e.created_at FROM recent_memory_events e JOIN session_memories m ON m.tenant_id = e.tenant_id AND m.id = e.memory_id WHERE e.tenant_id = ?1 AND e.session_id = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) ORDER BY e.occurred_at DESC, e.id ASC",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::Db)?;
-    rows.into_iter().map(|r| r.try_into_event()).collect()
-}
-
 pub(crate) async fn load_recent_memory_event_target_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -899,6 +868,7 @@ pub(crate) async fn list_recent_memory_events_for_sessions_sqlx(
     Ok(events_by_session)
 }
 
+#[cfg(test)]
 pub(crate) async fn count_session_memory_rows_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1072,43 +1042,6 @@ impl SessionMemoryRow {
             created_at: self.created_at,
             updated_at: self.updated_at,
         })
-    }
-}
-
-#[derive(Debug, FromRow)]
-struct SessionMemorySourceReferenceRow {
-    tenant_id: String,
-    id: String,
-    memory_id: String,
-    source_id: String,
-    session_id: String,
-    question_id: Option<String>,
-    turn_id: Option<String>,
-    part_id: Option<String>,
-    node_id: Option<String>,
-    node_order: Option<i64>,
-    reference_key: String,
-    source_revision: i64,
-    created_at: String,
-}
-
-impl From<SessionMemorySourceReferenceRow> for SessionMemorySourceReference {
-    fn from(row: SessionMemorySourceReferenceRow) -> Self {
-        Self {
-            tenant_id: row.tenant_id,
-            id: row.id,
-            memory_id: row.memory_id,
-            source_id: row.source_id,
-            session_id: row.session_id,
-            question_id: row.question_id,
-            turn_id: row.turn_id,
-            part_id: row.part_id,
-            node_id: row.node_id,
-            node_order: row.node_order.map(|v| v as usize),
-            reference_key: row.reference_key,
-            source_revision: row.source_revision,
-            created_at: row.created_at,
-        }
     }
 }
 

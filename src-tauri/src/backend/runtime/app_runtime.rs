@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex, OnceLock},
-    thread,
     time::Duration,
 };
 use tokio::time::Instant;
@@ -528,7 +527,7 @@ impl AppRuntime {
             .task_runtime
             .spawn_async(spec, move |context| async move {
                 if context.is_cancelled() {
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "Agent startup health refresh was cancelled".to_string(),
                     ));
                 }
@@ -654,6 +653,7 @@ impl AppRuntime {
     /// Stop accepting work and wait for resident tasks before close-time
     /// persistence runs. The final dispatcher/database shutdown remains in
     /// `shutdown_with_grace` so callers can persist through this same runtime.
+    #[allow(dead_code)]
     pub(crate) async fn stop_tasks_with_grace(&self, grace: Duration) -> Vec<String> {
         self.stop_tasks_until(Instant::now() + grace).await
     }
@@ -739,6 +739,7 @@ impl AppRuntime {
         Ok(())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn conversation_adapter_catalog(&self) -> Arc<ConversationAdapterCatalog> {
         self.context().conversation_adapter_catalog.clone()
     }

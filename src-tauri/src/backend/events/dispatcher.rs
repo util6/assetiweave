@@ -567,6 +567,7 @@ impl EventDispatcherHandle {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn stop_with_timeout(
         &mut self,
         grace: Duration,

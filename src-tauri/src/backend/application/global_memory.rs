@@ -17,7 +17,6 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    thread,
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -165,7 +164,7 @@ impl AppService {
         }
         if context.is_cancelled() {
             store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Global Memory task was canceled".to_string(),
             ));
         }
@@ -206,7 +205,7 @@ impl AppService {
                 if context.is_cancelled() {
                     store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "Global Memory task was canceled".to_string(),
                     ));
                 }
@@ -226,7 +225,7 @@ impl AppService {
         if context.is_cancelled() {
             drop(lease_guard);
             store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Global Memory task was canceled".to_string(),
             ));
         }
@@ -270,7 +269,7 @@ impl AppService {
                     if context.is_cancelled() {
                         store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                             .await?;
-                        return Err(AppError::Canceled(
+                        return Err(AppError::Cancelled(
                             "Global Memory task was canceled".to_string(),
                         ));
                     }
@@ -734,6 +733,7 @@ fn clean_global_markdown(value: &str) -> AppResult<String> {
 }
 
 struct GlobalDocumentPaths {
+    #[cfg_attr(not(test), allow(dead_code))]
     root: PathBuf,
     summary_document_path: PathBuf,
     memory_document_path: PathBuf,

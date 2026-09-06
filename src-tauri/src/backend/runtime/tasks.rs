@@ -281,7 +281,7 @@ impl TaskRuntime {
         spec: TaskSpec,
     ) -> Result<Option<(String, CancellationToken, TaskTrackerToken)>, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "应用正在关闭，不再接受新任务".to_string(),
             ));
         }
@@ -295,7 +295,7 @@ impl TaskRuntime {
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
         if !self.accepting.load(Ordering::Acquire) {
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "应用正在关闭，不再接受新任务".to_string(),
             ));
         }
@@ -381,7 +381,7 @@ impl TaskRuntime {
         spec: TaskSpec,
     ) -> Result<ExternalRegistrationOutcome, AppError> {
         if !self.accepting.load(Ordering::Acquire) {
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "应用正在关闭，不再接受新任务".to_string(),
             ));
         }
@@ -395,7 +395,7 @@ impl TaskRuntime {
             .lock()
             .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
         if !self.accepting.load(Ordering::Acquire) {
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "应用正在关闭，不再接受新任务".to_string(),
             ));
         }
@@ -458,6 +458,7 @@ impl TaskRuntime {
         Ok(ExternalRegistrationOutcome::Started(snapshot))
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn start_external(&self, task_id: &str) -> AppResult<TaskSnapshot> {
         let snapshot = {
             let mut tasks = self
@@ -636,7 +637,7 @@ impl TaskRuntime {
         } else if snapshot.state == TaskState::Cancelling {
             return self.complete_external(
                 task_id,
-                Err(AppError::Canceled("后台任务在启动前已取消".to_string())),
+                Err(AppError::Cancelled("后台任务在启动前已取消".to_string())),
             );
         }
         Ok(snapshot)
@@ -688,7 +689,7 @@ impl TaskRuntime {
         } else if snapshot.state == TaskState::Cancelling {
             return self.complete_external(
                 task_id,
-                Err(AppError::Canceled("后台任务在启动前已取消".to_string())),
+                Err(AppError::Cancelled("后台任务在启动前已取消".to_string())),
             );
         }
         Ok(snapshot)
@@ -717,7 +718,7 @@ impl TaskRuntime {
                 if entry.cancellation.is_cancelled() {
                     entry.snapshot.state = TaskState::Canceled;
                     entry.snapshot.error =
-                        Some(AppError::Canceled("后台任务已取消".to_string()).view());
+                        Some(AppError::Cancelled("后台任务已取消".to_string()).view());
                 } else {
                     entry.snapshot.state = TaskState::Succeeded;
                     entry.snapshot.result = Some(detail);
@@ -726,9 +727,9 @@ impl TaskRuntime {
             Err(_error) if entry.cancellation.is_cancelled() => {
                 entry.snapshot.state = TaskState::Canceled;
                 entry.snapshot.error =
-                    Some(AppError::Canceled("后台任务已取消".to_string()).view());
+                    Some(AppError::Cancelled("后台任务已取消".to_string()).view());
             }
-            Err(error) if matches!(error, AppError::Canceled(_)) => {
+            Err(error) if matches!(error, AppError::Cancelled(_)) => {
                 entry.snapshot.state = TaskState::Canceled;
                 entry.snapshot.error = Some(error.view());
             }
@@ -806,7 +807,7 @@ impl TaskRuntime {
                         Ok(_detail) if cancellation.is_cancelled() => {
                             entry.snapshot.state = TaskState::Canceled;
                             entry.snapshot.error =
-                                Some(AppError::Canceled("后台任务已取消".to_string()).view());
+                                Some(AppError::Cancelled("后台任务已取消".to_string()).view());
                         }
                         Ok(detail) => {
                             entry.snapshot.state = TaskState::Succeeded;
@@ -814,14 +815,14 @@ impl TaskRuntime {
                         }
                         Err(error)
                             if cancellation.is_cancelled()
-                                || matches!(error, AppError::Canceled(_)) =>
+                                || matches!(error, AppError::Cancelled(_)) =>
                         {
                             entry.snapshot.state = TaskState::Canceled;
                             entry.snapshot.error = Some(
-                                if matches!(error, AppError::Canceled(_)) {
+                                if matches!(error, AppError::Cancelled(_)) {
                                     error
                                 } else {
-                                    AppError::Canceled("后台任务已取消".to_string())
+                                    AppError::Cancelled("后台任务已取消".to_string())
                                 }
                                 .view(),
                             );
@@ -928,7 +929,7 @@ impl TaskRuntime {
                 Ok(task_res) => task_res,
                 Err(join_err) => {
                     if join_err.is_cancelled() {
-                        Err(AppError::Canceled("后台任务已取消".to_string()))
+                        Err(AppError::Cancelled("后台任务已取消".to_string()))
                     } else {
                         Err(AppError::External("后台任务发生 panic".to_string()))
                     }
@@ -1050,6 +1051,7 @@ impl TaskRuntime {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn shutdown_with_grace(&self, grace: Duration) -> ShutdownReport {
         self.shutdown_until(Instant::now() + grace).await
     }

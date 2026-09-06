@@ -1,5 +1,7 @@
 use crate::backend::runtime::{AppError, AppResult};
-use sqlx::{Row, SqlitePool};
+#[cfg(test)]
+use sqlx::Row;
+use sqlx::SqlitePool;
 
 pub(crate) async fn record_memory_usage_event_sqlx(
     pool: &SqlitePool,
@@ -25,6 +27,7 @@ pub(crate) async fn record_memory_usage_event_sqlx(
     Ok(result.rows_affected() == 1)
 }
 
+#[cfg(test)]
 pub(crate) async fn count_memory_usage_events_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -42,6 +45,7 @@ pub(crate) async fn count_memory_usage_events_sqlx(
     .map_err(AppError::external)
 }
 
+#[cfg(test)]
 pub(crate) async fn list_memory_usage_events_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

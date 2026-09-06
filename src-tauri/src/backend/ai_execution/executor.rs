@@ -214,23 +214,6 @@ impl AgentExecutor {
         }
     }
 
-    pub(crate) fn with_registry_handle(
-        registry: AgentRegistryHandle,
-        acp: Arc<dyn AgentExecutionBackend>,
-        native: Arc<dyn AgentExecutionBackend>,
-        max_concurrency: usize,
-    ) -> Self {
-        Self {
-            registry,
-            acp,
-            native,
-            permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
-            active: Arc::new(Mutex::new(HashMap::new())),
-            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
-            persistent_bindings: None,
-        }
-    }
-
     pub(crate) async fn execute(
         &self,
         mut request: AiExecutionRequest,

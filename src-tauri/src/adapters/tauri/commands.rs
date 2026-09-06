@@ -611,7 +611,7 @@ where
     let operation_for_runtime = operation;
     let task = Box::new(move |context: TaskContext| {
         let result = if context.is_cancelled() {
-            Err(AppError::Canceled(format!(
+            Err(AppError::Cancelled(format!(
                 "{operation_for_runtime} task cancelled"
             )))
         } else {
@@ -2630,7 +2630,7 @@ pub(crate) fn start_conversation_sync_background(
                     };
                 let cancellation = context.cancellation();
                 if context.is_cancelled() {
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "conversation sync cancelled".to_string(),
                     ));
                 }
@@ -2823,7 +2823,7 @@ fn start_conversation_data_maintenance_background(
                     };
                 let cancellation = context.cancellation();
                 if context.is_cancelled() {
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "conversation data maintenance cancelled".to_string(),
                     ));
                 }

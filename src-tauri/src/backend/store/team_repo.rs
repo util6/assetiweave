@@ -668,7 +668,6 @@ struct RunDraftStateRow {
 struct CancelableTeamTaskRow {
     id: String,
     team_id: String,
-    run_id: String,
     owner_member_id: Option<String>,
 }
 
@@ -948,7 +947,7 @@ pub(crate) async fn cancel_team_run_sqlx(
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let task_rows = sqlx::query_as::<_, CancelableTeamTaskRow>(
-        "SELECT id, team_id, run_id, owner_member_id FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 AND state IN ('queued', 'running')",
+        "SELECT id, team_id, owner_member_id FROM team_tasks WHERE tenant_id = ?1 AND run_id = ?2 AND state IN ('queued', 'running')",
     )
     .bind(tenant_id)
     .bind(run_id)

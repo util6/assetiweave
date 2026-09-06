@@ -103,7 +103,7 @@ pub(super) fn ensure_read_not_cancelled(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<()> {
     if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-        return Err(AppError::Canceled(
+        return Err(AppError::Cancelled(
             "conversation sync cancelled".to_string(),
         ));
     }
@@ -118,6 +118,7 @@ pub(super) fn read_external_adapter_sessions(
     run_external_adapter_read_session(adapter, source, None, settings)
 }
 
+#[cfg(test)]
 pub(super) fn discover_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
@@ -132,12 +133,10 @@ pub(super) fn discover_external_adapter_sessions(
     }
     validate_external_adapter_for_method(adapter, source, "list_sessions")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
-        AppError::external({
-            format!(
-                "external conversation adapter has no manifest: {}",
-                adapter.id
-            )
-        })
+        AppError::external(format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        ))
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "list_sessions")?;
@@ -950,9 +949,10 @@ pub(crate) fn try_run_external_adapter(
 }
 
 pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<ConversationAdapter> {
-    let adapter = value.get("adapter").cloned().ok_or_else(|| {
-        AppError::external({ "registration preview did not include adapter".to_string() })
-    })?;
+    let adapter = value
+        .get("adapter")
+        .cloned()
+        .ok_or_else(|| AppError::external("registration preview did not include adapter"))?;
     serde_json::from_value(adapter).map_err(AppError::external)
 }
 
@@ -969,18 +969,6 @@ pub(crate) fn list_conversation_adapter_runtime_statuses_with_settings(
     ))
 }
 
-#[cfg(test)]
-pub(crate) fn list_conversation_adapter_runtime_statuses(
-    adapters: &[ConversationAdapter],
-    sources: &[ConversationSource],
-) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
-    list_conversation_adapter_runtime_statuses_with_settings(
-        adapters,
-        sources,
-        &serde_json::json!({}),
-    )
-}
-
 pub(super) fn validate_external_adapter_manifest(
     manifest_path: &str,
 ) -> AppResult<ExternalAdapterValidationResult> {
@@ -995,9 +983,9 @@ pub(super) fn validate_external_adapter_manifest(
     let manifest: ConversationAdapterManifest =
         serde_json::from_str(&manifest_text).map_err(AppError::external)?;
     validate_manifest_shape(&manifest)?;
-    let manifest_dir = path.parent().ok_or_else(|| {
-        AppError::external({ "adapter manifest path has no parent directory".to_string() })
-    })?;
+    let manifest_dir = path
+        .parent()
+        .ok_or_else(|| AppError::external("adapter manifest path has no parent directory"))?;
     let executable_path = resolve_adapter_entry_path(manifest_dir, &manifest)?;
     let executable_hash = if executable_path.is_file() {
         Some(hash_file(&executable_path)?)
@@ -1149,9 +1137,7 @@ fn prepare_adapter_invocation(
     let manifest = &validation.manifest;
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
-        .ok_or_else(|| {
-            AppError::external({ "adapter manifest path has no parent directory".to_string() })
-        })?;
+        .ok_or_else(|| AppError::external("adapter manifest path has no parent directory"))?;
     let execution_runtime = adapter_execution_runtime(manifest);
     let mut invocation = match execution_runtime.as_ref() {
         Some(runtime) => {
@@ -1227,7 +1213,7 @@ fn run_prepared_adapter(
     })
     .map_err(|error| {
         if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-            AppError::Canceled("conversation sync cancelled".to_string())
+            AppError::Cancelled("conversation sync cancelled".to_string())
         } else {
             AppError::external(error)
         }
@@ -1316,7 +1302,7 @@ fn parse_external_adapter_output_impl(
             "item" => {
                 item_count += 1;
                 let item = parsed.item.ok_or_else(|| {
-                    AppError::external({ format!("adapter item line {} missing item", index + 1) })
+                    AppError::external(format!("adapter item line {} missing item", index + 1))
                 })?;
                 match adapter_item_kind(&item) {
                     "session_descriptor" => {

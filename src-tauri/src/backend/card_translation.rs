@@ -116,18 +116,6 @@ pub(crate) struct ConversationTranslationModelsResult {
     pub(crate) error: Option<String>,
 }
 
-/// Provider-neutral availability check. The action composition layer selects
-/// the configured agent; this function only reports the runtime probe.
-#[cfg(test)]
-pub(crate) fn check_action_availability(
-    runtime: &dyn AgentExecutionRuntime,
-    action: &crate::backend::ai_execution::composition::ActionId,
-) -> ActionAvailability {
-    let settings = crate::backend::app_settings::read_app_settings_value()
-        .unwrap_or_else(|_| serde_json::json!({}));
-    check_action_availability_with_settings(runtime, action, &settings)
-}
-
 pub(crate) fn check_action_availability_with_settings(
     runtime: &dyn AgentExecutionRuntime,
     action: &crate::backend::ai_execution::composition::ActionId,
@@ -161,8 +149,12 @@ pub(crate) fn check_action_availability_with_settings(
 pub(crate) fn check_opencode_translation_availability(
     runtime: &dyn AgentExecutionRuntime,
 ) -> OpencodeTranslationAvailability {
-    let settings = crate::backend::app_settings::read_app_settings_value()
-        .unwrap_or_else(|_| serde_json::json!({}));
+    let settings = crate::backend::runtime::current_process_runtime()
+        .map(|r| r.app_settings_value())
+        .unwrap_or_else(|| {
+            crate::backend::app_settings::canonicalize_settings(serde_json::json!({}))
+                .unwrap_or_default()
+        });
     check_opencode_translation_availability_with_settings(runtime, &settings)
 }
 
@@ -549,7 +541,7 @@ fn app_error_from_ai(error: AiExecutionError) -> AppError {
     let view = error.to_view();
     match view.code.as_str() {
         "invalid_request" => AppError::Validation(view.message),
-        "cancelled" => AppError::Canceled(view.message),
+        "cancelled" => AppError::Cancelled(view.message),
         _ => AppError::Domain {
             code: view.code,
             message: view.message,

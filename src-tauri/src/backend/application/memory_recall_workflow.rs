@@ -269,7 +269,7 @@ impl AppService {
                     "Recall task cancelled before execution",
                 )
                 .await;
-                return Err(AppError::Canceled("Recall task cancelled".to_string()));
+                return Err(AppError::Cancelled("Recall task cancelled".to_string()));
             }
             service
                 .run_memory_recall_turn_for_tenant(
@@ -315,7 +315,7 @@ impl AppService {
                 "Recall task cancelled before execution",
             )
             .await;
-            return Err(AppError::Canceled("Recall task cancelled".to_string()));
+            return Err(AppError::Cancelled("Recall task cancelled".to_string()));
         }
         crate::backend::store::mark_memory_recall_turn_running_sqlx(
             self.db.pool(),
@@ -394,7 +394,7 @@ impl AppService {
                 "Recall task cancelled during execution",
             )
             .await;
-            return Err(AppError::Canceled("Recall task cancelled".to_string()));
+            return Err(AppError::Cancelled("Recall task cancelled".to_string()));
         }
         let output =
             match parse_and_validate_recall_output(self, tenant_id, &session.scope, &result.text)
@@ -418,7 +418,7 @@ impl AppService {
                 .await?
                 .map(|turn| turn.status);
         if current_status != Some(MemoryRecallTurnStatus::Running) {
-            return Err(AppError::Canceled(
+            return Err(AppError::Cancelled(
                 "Recall turn is no longer active".to_string(),
             ));
         }

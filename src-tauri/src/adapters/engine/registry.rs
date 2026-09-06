@@ -143,6 +143,7 @@ struct TeamGetParams {
 struct TeamDeleteParams {
     team_id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     yes: bool,
 }
 

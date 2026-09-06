@@ -387,6 +387,7 @@ impl BackgroundTaskRegistry {
         Some(self.task_runtime.clone())
     }
 
+    #[allow(dead_code)]
     fn register_external_task(
         &self,
         kind: TaskKind,
@@ -678,6 +679,7 @@ impl BackgroundTaskRegistry {
         self.projection_from_runtime(&self.external_task_snapshot(task_id)?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn source_scan_snapshot(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
         self.projection(task_id)
     }
@@ -690,6 +692,7 @@ impl BackgroundTaskRegistry {
         self.projection_for_tenant(tenant_id, task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn source_scan_snapshots(&self) -> AppResult<Vec<SourceScanTaskSnapshot>> {
         let mut snapshots = self.list_projections::<SourceScanTaskSnapshot>(TaskKind::Scan)?;
         snapshots.sort_by(|left, right| left.started_at.cmp(&right.started_at));
@@ -706,6 +709,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cancel_source_scan(&self, task_id: &str) -> AppResult<SourceScanTaskSnapshot> {
         self.cancel_external_task(task_id)?;
         self.projection(task_id)
@@ -796,6 +800,7 @@ impl BackgroundTaskRegistry {
         self.projection_from_runtime(&self.external_task_snapshot(task_id)?)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn batch_mount_snapshot(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
         self.projection(task_id)
     }
@@ -808,6 +813,7 @@ impl BackgroundTaskRegistry {
         self.projection_for_tenant(tenant_id, task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn batch_mount_snapshots(&self) -> AppResult<Vec<BatchMountTaskSnapshot>> {
         let mut snapshots =
             self.list_projections::<BatchMountTaskSnapshot>(TaskKind::BatchMount)?;
@@ -827,6 +833,7 @@ impl BackgroundTaskRegistry {
         Ok(snapshots)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cancel_batch_mount(&self, task_id: &str) -> AppResult<BatchMountTaskSnapshot> {
         self.cancel_external_task(task_id)?;
         self.projection(task_id)
@@ -1289,6 +1296,7 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn conversation_search_index_snapshot(
         &self,
     ) -> AppResult<Option<ConversationSearchIndexTaskSnapshot>> {
@@ -1398,6 +1406,7 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn conversation_sync_snapshot(
         &self,
     ) -> AppResult<Option<ConversationSyncTaskSnapshot>> {
@@ -1420,6 +1429,7 @@ impl BackgroundTaskRegistry {
             .max_by(|left, right| left.started_at.cmp(&right.started_at)))
     }
 
+    #[allow(dead_code)]
     pub(crate) fn conversation_sync_snapshots(
         &self,
     ) -> AppResult<Vec<ConversationSyncTaskSnapshot>> {
@@ -1841,6 +1851,7 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn skill_backup_snapshot(&self) -> AppResult<Option<SkillBackupTaskSnapshot>> {
         Ok(self
             .list_projections::<SkillBackupTaskSnapshot>(TaskKind::Backup)?
@@ -1949,6 +1960,7 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn finish_ai_execution(
         &self,
         task_id: &str,
@@ -1995,6 +2007,7 @@ impl BackgroundTaskRegistry {
         self.projection(task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn cancel_ai_execution(&self, task_id: &str) -> AppResult<AiExecutionTaskSnapshot> {
         self.cancel_external_task(task_id)?;
         self.projection(task_id)
@@ -2009,6 +2022,7 @@ impl BackgroundTaskRegistry {
         self.projection_for_tenant(tenant_id, task_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn ai_execution_snapshot(
         &self,
         task_id: &str,
@@ -2030,6 +2044,7 @@ impl BackgroundTaskRegistry {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn ai_execution_snapshots(&self) -> AppResult<Vec<AiExecutionTaskSnapshot>> {
         let mut snapshots =
             self.list_projections::<AiExecutionTaskSnapshot>(TaskKind::AiExecution)?;
@@ -2582,7 +2597,7 @@ mod tests {
         let cancelled = registry
             .finish_conversation_data_maintenance(
                 &second.id,
-                Err(crate::backend::runtime::AppError::Canceled(
+                Err(crate::backend::runtime::AppError::Cancelled(
                     "cancelled".to_string(),
                 )),
             )

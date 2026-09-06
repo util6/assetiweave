@@ -168,7 +168,7 @@ impl AppService {
                     let service = AppService::from_runtime(&worker_runtime);
                     if context.is_cancelled() {
                         service.cancel_team_run(&worker_run_id, "cancelled").await?;
-                        return Err(AppError::Canceled("Team draft was cancelled".to_string()));
+                        return Err(AppError::Cancelled("Team draft was cancelled".to_string()));
                     }
                     let progress = context.progress();
                     progress.progress(0, None, Some("leader_draft"));
@@ -332,7 +332,7 @@ impl AppService {
                 serde_json::json!({ "run_id": run_id, "phase": "restoring" }),
                 move |context| async move {
                     if context.is_cancelled() {
-                        return Err(AppError::Canceled(
+                        return Err(AppError::Cancelled(
                             "Team restoration was cancelled".to_string(),
                         ));
                     }
@@ -557,7 +557,7 @@ impl AppService {
                     let service = AppService::from_runtime(&worker_runtime);
                     if context.is_cancelled() {
                         service.cancel_team_run(&worker_run_id, "cancelled").await?;
-                        return Err(AppError::Canceled(
+                        return Err(AppError::Cancelled(
                             "Team execution was cancelled".to_string(),
                         ));
                     }
@@ -605,7 +605,7 @@ impl AppService {
             }
             if cancellation.is_cancelled() {
                 self.cancel_team_run(&run_id, "cancelled").await?;
-                return Err(AppError::Canceled(
+                return Err(AppError::Cancelled(
                     "Team execution was cancelled".to_string(),
                 ));
             }
@@ -714,7 +714,7 @@ impl AppService {
                     .await?;
                     if canceled {
                         self.cancel_team_run(&run_id, "cancelled").await?;
-                        return Err(AppError::Canceled(
+                        return Err(AppError::Cancelled(
                             "Team execution was cancelled".to_string(),
                         ));
                     }

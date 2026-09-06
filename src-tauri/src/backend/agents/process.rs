@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     fmt,
     path::{Path, PathBuf},
-    process::{ExitStatus, Stdio},
+    process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -25,6 +25,7 @@ enum ChildControlAction {
         grace: Duration,
         reply: tokio::sync::oneshot::Sender<ProcessTerminationReport>,
     },
+    #[cfg_attr(not(test), allow(dead_code))]
     ForceKill {
         reply: tokio::sync::oneshot::Sender<ProcessTerminationReport>,
     },
@@ -220,7 +221,6 @@ impl ManagedAgentProcess {
                                     };
                                     child_exit_snapshot = Some(snapshot.clone());
                                     let _ = exit_tx.send(Some(snapshot));
-                                    child_exited = true;
                                 }
                                 _ = tokio::time::sleep(EXIT_WAIT_AFTER_KILL) => {}
                             }
@@ -259,7 +259,6 @@ impl ManagedAgentProcess {
                                     };
                                     child_exit_snapshot = Some(snapshot.clone());
                                     let _ = exit_tx.send(Some(snapshot));
-                                    child_exited = true;
                                 }
                                 _ = tokio::time::sleep(EXIT_WAIT_AFTER_KILL) => {}
                             }
