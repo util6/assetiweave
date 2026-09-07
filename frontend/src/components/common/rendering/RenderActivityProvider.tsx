@@ -13,7 +13,10 @@ import {
   type ScrollActivitySnapshot,
 } from "./ScrollActivityController";
 import { createRenderScheduler, type RenderScheduler } from "./RenderScheduler";
-import { createRenderVisibilityRegistry, type RenderVisibilityRegistry } from "./RenderVisibilityRegistry";
+import {
+  createRenderVisibilityRegistry,
+  type RenderVisibilityRegistry,
+} from "./RenderVisibilityRegistry";
 
 export interface RenderActivityProviderProps {
   children: ReactNode;
@@ -26,16 +29,23 @@ interface RenderActivityContextValue {
   visibility: RenderVisibilityRegistry;
 }
 
-const RenderActivityContext = createContext<RenderActivityContextValue | null>(null);
+const RenderActivityContext = createContext<RenderActivityContextValue | null>(
+  null,
+);
 
-export function RenderActivityProvider({ children, scrollElementRef }: RenderActivityProviderProps): React.ReactElement {
+export function RenderActivityProvider({
+  children,
+  scrollElementRef,
+}: RenderActivityProviderProps): React.ReactElement {
   const controllerRef = useRef<ScrollActivityController | null>(null);
   const schedulerRef = useRef<RenderScheduler | null>(null);
   const visibilityRef = useRef<RenderVisibilityRegistry | null>(null);
   const disposeTimerRef = useRef<number | null>(null);
-  if (!controllerRef.current) controllerRef.current = createScrollActivityController();
+  if (!controllerRef.current)
+    controllerRef.current = createScrollActivityController();
   if (!schedulerRef.current) schedulerRef.current = createRenderScheduler();
-  if (!visibilityRef.current) visibilityRef.current = createRenderVisibilityRegistry();
+  if (!visibilityRef.current)
+    visibilityRef.current = createRenderVisibilityRegistry();
   const value = useMemo(
     () => ({
       controller: controllerRef.current!,
@@ -76,12 +86,19 @@ export function RenderActivityProvider({ children, scrollElementRef }: RenderAct
     };
   }, [scrollElementRef, value]);
 
-  return <RenderActivityContext.Provider value={value}>{children}</RenderActivityContext.Provider>;
+  return (
+    <RenderActivityContext.Provider value={value}>
+      {children}
+    </RenderActivityContext.Provider>
+  );
 }
 
 export function useRenderActivity(): RenderActivityContextValue {
   const value = useContext(RenderActivityContext);
-  if (!value) throw new Error("useRenderActivity must be used within RenderActivityProvider");
+  if (!value)
+    throw new Error(
+      "useRenderActivity must be used within RenderActivityProvider",
+    );
   return value;
 }
 
@@ -91,5 +108,9 @@ export function useRenderVisibilityRegistry(): RenderVisibilityRegistry {
 
 export function useScrollActivitySnapshot(): ScrollActivitySnapshot {
   const { controller } = useRenderActivity();
-  return useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
+  return useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  );
 }

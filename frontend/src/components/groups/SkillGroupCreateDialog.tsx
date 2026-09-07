@@ -1,5 +1,7 @@
+import { zodResolver } from "@hookform/resolvers/zod";
 import { Code2, FolderPlus } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -7,8 +9,18 @@ import { DialogFrame } from "../foundation/DialogFrame";
 import { useI18n } from "../../i18n/I18nProvider";
 import { DEFAULT_GROUP_COLOR_HEX } from "../../theme/themes";
 import { isHexColor } from "../../theme/colorValidation";
-import type { Asset, AssetGroupIconSvg, AssetGroupInput } from "../../types";
-import { AssetPickerHeader, AssetPickerText, GroupField } from "./SkillGroupFormPrimitives";
+import type { Asset, AssetGroupInput } from "../../types";
+import {
+  AssetPickerHeader,
+  AssetPickerText,
+  GroupField,
+} from "./SkillGroupFormPrimitives";
+import {
+  type GroupFormValues,
+  groupFormSchema,
+  groupValuesToInput,
+  parseGroupIconSvgInput,
+} from "./groupFormSchema";
 
 function generateRandomGroupColor(): string {
   const hue = Math.floor(Math.random() * 360);
@@ -46,23 +58,49 @@ export function SkillGroupCreateDialog({
   open,
 }: SkillGroupCreateDialogProps) {
   const { t } = useI18n();
+  const formId = useId();
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [color, setColor] = useState(DEFAULT_GROUP_COLOR_HEX);
-  const [draftColor, setDraftColor] = useState(DEFAULT_GROUP_COLOR_HEX);
-  const [displayIcon, setDisplayIcon] = useState("");
-  const [iconSvg, setIconSvg] = useState<AssetGroupIconSvg | null>(null);
-  const [enabled, setEnabled] = useState(true);
+
+  const {
+    control,
+    formState: { errors },
+    handleSubmit,
+    register,
+    reset,
+    setValue,
+    watch,
+  } = useForm<GroupFormValues>({
+    resolver: zodResolver(groupFormSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+      color: DEFAULT_GROUP_COLOR_HEX,
+      displayIcon: "",
+      iconSvg: null,
+      enabled: true,
+    },
+  });
+
   const [query, setQuery] = useState("");
-  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(new Set());
-  const [formError, setFormError] = useState<string | null>(null);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [svgEditorOpen, setSvgEditorOpen] = useState(false);
   const [svgDraft, setSvgDraft] = useState("");
   const [svgError, setSvgError] = useState("");
 
-  const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
-  const filteredAssets = useMemo(() => filterAssets(skillAssets, query), [query, skillAssets]);
+  const color = watch("color");
+  const displayIcon = watch("displayIcon");
+  const iconSvg = watch("iconSvg");
+
+  const skillAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "skill"),
+    [assets],
+  );
+  const filteredAssets = useMemo(
+    () => filterAssets(skillAssets, query),
+    [query, skillAssets],
+  );
   const selectedCount = selectedAssetIds.size;
 
   useEffect(() => {
@@ -71,34 +109,23 @@ export function SkillGroupCreateDialog({
     }
 
     const randomColor = generateRandomGroupColor();
-    setName("");
-    setDescription("");
-    setColor(randomColor);
-    setDraftColor(randomColor);
-    setDisplayIcon("");
-    setIconSvg(null);
-    setEnabled(true);
+    reset({
+      name: "",
+      description: "",
+      color: randomColor,
+      displayIcon: "",
+      iconSvg: null,
+      enabled: true,
+    });
     setQuery("");
     setSelectedAssetIds(new Set());
-    setFormError(null);
     setSvgEditorOpen(false);
     setSvgDraft("");
     setSvgError("");
-  }, [open]);
+  }, [open, reset]);
 
   if (!open) {
     return null;
-  }
-
-  function commitColor(nextColor: string) {
-    const trimmed = nextColor.trim();
-    if (!isHexColor(trimmed)) {
-      setDraftColor(color);
-      return;
-    }
-    const normalized = trimmed.toLowerCase();
-    setColor(normalized);
-    setDraftColor(normalized);
   }
 
   function openSvgEditor() {
@@ -116,14 +143,14 @@ export function SkillGroupCreateDialog({
   function saveIconSvg() {
     const input = svgDraft.trim();
     if (!input) {
-      setIconSvg(null);
+      setValue("iconSvg", null, { shouldDirty: true });
       closeSvgEditor();
       return;
     }
 
     const result = parseGroupIconSvgInput(input);
     if (result) {
-      setIconSvg(result);
+      setValue("iconSvg", result, { shouldDirty: true });
       closeSvgEditor();
       return;
     }
@@ -132,32 +159,21 @@ export function SkillGroupCreateDialog({
   }
 
   function clearIconSvg() {
-    setIconSvg(null);
+    setValue("iconSvg", null, { shouldDirty: true });
     closeSvgEditor();
   }
 
-  async function handleSubmit() {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setFormError(t("group.form.error.nameRequired"));
-      return;
-    }
-
-    setFormError(null);
+  const onSubmitValid = async (values: GroupFormValues) => {
+    const input = groupValuesToInput(values);
     await onSubmit(
       {
-        name: trimmedName,
-        description: description.trim() || null,
-        color,
-        display_icon: displayIcon.trim() || null,
-        icon_svg: iconSvg,
-        enabled,
+        ...input,
         sort_order: nextSortOrder,
         rules: { source_ids: [], relative_path_globs: [], name_contains: null },
       },
       [...selectedAssetIds],
     );
-  }
+  };
 
   function toggleAsset(assetId: string) {
     setSelectedAssetIds((current) => {
@@ -174,7 +190,9 @@ export function SkillGroupCreateDialog({
   function toggleAllVisible() {
     setSelectedAssetIds((current) => {
       const next = new Set(current);
-      const allVisibleSelected = filteredAssets.length > 0 && filteredAssets.every((asset) => next.has(asset.id));
+      const allVisibleSelected =
+        filteredAssets.length > 0 &&
+        filteredAssets.every((asset) => next.has(asset.id));
       for (const asset of filteredAssets) {
         if (allVisibleSelected) {
           next.delete(asset.id);
@@ -191,11 +209,13 @@ export function SkillGroupCreateDialog({
       <Button disabled={busy} onClick={onClose} type="button" variant="outline">
         {t("group.dialog.cancel")}
       </Button>
-      <Button disabled={busy} onClick={() => void handleSubmit()} type="button">
+      <Button disabled={busy} form={formId} type="submit">
         {t("group.createDialog.submit")}
       </Button>
     </div>
   );
+
+  const { ref: nameFormRef, ...nameRegisterRest } = register("name");
 
   return (
     <>
@@ -210,53 +230,74 @@ export function SkillGroupCreateDialog({
         size="xl"
         title={t("group.createDialog.title")}
       >
-        <div className="grid gap-4">
+        <form
+          className="grid gap-4"
+          id={formId}
+          onSubmit={handleSubmit(onSubmitValid)}
+        >
           <section className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-end gap-2 max-[720px]:grid-cols-1">
-              <GroupField label={t("group.field.name")}>
-                <Input disabled={busy} onChange={(event) => setName(event.target.value)} ref={nameInputRef} value={name} />
+              <GroupField
+                error={
+                  errors.name ? t("group.form.error.nameRequired") : undefined
+                }
+                label={t("group.field.name")}
+              >
+                <Input
+                  {...nameRegisterRest}
+                  disabled={busy}
+                  ref={(element) => {
+                    nameFormRef(element);
+                    nameInputRef.current = element;
+                  }}
+                />
               </GroupField>
               <GroupField label={t("group.field.description")}>
-                <Input disabled={busy} onChange={(event) => setDescription(event.target.value)} value={description} />
+                <Input {...register("description")} disabled={busy} />
               </GroupField>
             </div>
 
             <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-end gap-3 max-[720px]:grid-cols-1">
-              <GroupField label={t("group.field.colorCode")}>
-                <div className="flex h-10 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-2 transition-[background-color,border-color,box-shadow,color] duration-200 focus-within:border-primary-strong/60">
-                  <input
-                    aria-label={t("group.field.color")}
-                    className="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
-                    disabled={busy}
-                    onChange={(event) => {
-                      const nextColor = event.target.value;
-                      setColor(nextColor);
-                      setDraftColor(nextColor);
-                    }}
-                    type="color"
-                    value={color}
-                  />
-                  <Input
-                    aria-label={t("group.field.colorCode")}
-                    className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-code-md focus:border-transparent"
-                    disabled={busy}
-                    maxLength={7}
-                    onBlur={(event) => commitColor(event.currentTarget.value)}
-                    onChange={(event) => setDraftColor(event.target.value.slice(0, 7))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        commitColor(event.currentTarget.value);
-                        event.currentTarget.blur();
-                      }
-                      if (event.key === "Escape") {
-                        setDraftColor(color);
-                        event.currentTarget.blur();
-                      }
-                    }}
-                    value={draftColor}
-                  />
-                </div>
-              </GroupField>
+              <Controller
+                control={control}
+                name="color"
+                render={({ field }) => (
+                  <GroupField
+                    error={
+                      errors.color
+                        ? t("group.form.error.colorInvalid")
+                        : undefined
+                    }
+                    label={t("group.field.colorCode")}
+                  >
+                    <div className="flex h-10 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-2 transition-[background-color,border-color,box-shadow,color] duration-200 focus-within:border-primary-strong/60">
+                      <input
+                        aria-label={t("group.field.color")}
+                        className="size-5 shrink-0 cursor-pointer rounded border-0 bg-transparent p-0"
+                        disabled={busy}
+                        onChange={(event) => {
+                          field.onChange(event.target.value.toLowerCase());
+                        }}
+                        type="color"
+                        value={
+                          isHexColor(field.value)
+                            ? field.value
+                            : DEFAULT_GROUP_COLOR_HEX
+                        }
+                      />
+                      <Input
+                        aria-label={t("group.field.colorCode")}
+                        className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-code-md focus:border-transparent"
+                        disabled={busy}
+                        maxLength={7}
+                        onBlur={field.onBlur}
+                        onChange={(event) => field.onChange(event.target.value)}
+                        value={field.value}
+                      />
+                    </div>
+                  </GroupField>
+                )}
+              />
 
               <GroupField label={t("group.field.icon")}>
                 <div className="flex h-10 items-center gap-2">
@@ -292,13 +333,12 @@ export function SkillGroupCreateDialog({
                     )}
                   </span>
                   <Input
+                    {...register("displayIcon")}
                     aria-label={t("group.field.iconText")}
                     className="h-9 w-20 border-theme-control-border bg-theme-control font-mono text-code-md"
                     disabled={busy}
                     maxLength={4}
-                    onChange={(event) => setDisplayIcon(event.target.value)}
                     placeholder={t("group.field.iconHint")}
-                    value={displayIcon}
                   />
                   <Button
                     aria-label={t("group.icon.editSvg")}
@@ -314,16 +354,26 @@ export function SkillGroupCreateDialog({
                 </div>
               </GroupField>
 
-              <label className="flex h-10 items-center gap-2 self-end rounded-xl border border-theme-control-border bg-theme-control px-3">
-                <Switch checked={enabled} disabled={busy} onCheckedChange={setEnabled} />
-                <span className="text-body-sm text-on-surface-variant">{t("group.field.enabled")}</span>
-              </label>
+              <Controller
+                control={control}
+                name="enabled"
+                render={({ field }) => (
+                  <label className="flex h-10 items-center gap-2 self-end rounded-xl border border-theme-control-border bg-theme-control px-3">
+                    <Switch
+                      checked={field.value}
+                      disabled={busy}
+                      onCheckedChange={field.onChange}
+                    />
+                    <span className="text-body-sm text-on-surface-variant">
+                      {t("group.field.enabled")}
+                    </span>
+                  </label>
+                )}
+              />
             </div>
-
-            {formError && <div className="text-body-sm text-status-remove">{formError}</div>}
           </section>
 
-          <section className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
+          <section className="flex min-h-0 flex-1 flex-col gap-3">
             <AssetPickerHeader
               onQueryChange={setQuery}
               onToggleAll={toggleAllVisible}
@@ -332,15 +382,18 @@ export function SkillGroupCreateDialog({
               title={t("group.createDialog.assets")}
               totalCount={skillAssets.length}
             />
-            <div className="max-h-[340px] overflow-y-auto rounded-xl border border-theme-card-border bg-theme-card/45">
+
+            <div className="grid max-h-72 gap-2 overflow-y-auto">
               {filteredAssets.length === 0 ? (
-                <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("group.assets.empty")}</div>
+                <div className="rounded-xl border border-theme-card-border bg-theme-card/35 px-4 py-8 text-center text-body-sm text-on-surface-variant">
+                  {t("group.assets.empty")}
+                </div>
               ) : (
                 filteredAssets.map((asset) => {
                   const selected = selectedAssetIds.has(asset.id);
                   return (
                     <label
-                      className="grid min-h-[74px] cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-b border-theme-card-border px-4 py-3 text-left last:border-b-0 hover:bg-theme-card-header/70 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+                      className="flex cursor-pointer items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 px-3 py-2 transition-[background-color,border-color,box-shadow,color] duration-200 hover:border-primary-strong/45"
                       key={asset.id}
                     >
                       <input
@@ -357,7 +410,7 @@ export function SkillGroupCreateDialog({
               )}
             </div>
           </section>
-        </div>
+        </form>
       </DialogFrame>
 
       {svgEditorOpen && (
@@ -369,7 +422,11 @@ export function SkillGroupCreateDialog({
                 {t("group.icon.clearSvg")}
               </Button>
               <div className="flex items-center gap-2">
-                <Button onClick={closeSvgEditor} type="button" variant="outline">
+                <Button
+                  onClick={closeSvgEditor}
+                  type="button"
+                  variant="outline"
+                >
                   {t("group.icon.cancelSvg")}
                 </Button>
                 <Button onClick={saveIconSvg} type="button">
@@ -388,9 +445,13 @@ export function SkillGroupCreateDialog({
           title={t("group.icon.svgEditorTitle")}
         >
           <div className="flex min-h-0 flex-col gap-3">
-            <p className="text-body-sm text-on-surface-variant">{t("group.icon.svgEditorDescription")}</p>
+            <p className="text-body-sm text-on-surface-variant">
+              {t("group.icon.svgEditorDescription")}
+            </p>
             <label className="flex min-h-0 flex-1 flex-col gap-2">
-              <span className="text-label-caps uppercase text-outline">{t("group.icon.svgInput")}</span>
+              <span className="text-label-caps uppercase text-outline">
+                {t("group.icon.svgInput")}
+              </span>
               <textarea
                 aria-label={t("group.icon.svgInput")}
                 className="min-h-80 resize-y rounded-xl border border-theme-control-border bg-theme-control px-3 py-3 font-mono text-code-md text-on-surface outline-none transition-[background-color,border-color,box-shadow,color] duration-200 placeholder:text-outline focus:border-primary-strong/60"
@@ -400,7 +461,9 @@ export function SkillGroupCreateDialog({
                 value={svgDraft}
               />
             </label>
-            {svgError && <p className="text-body-sm text-status-remove">{svgError}</p>}
+            {svgError && (
+              <p className="text-body-sm text-status-remove">{svgError}</p>
+            )}
           </div>
         </DialogFrame>
       )}
@@ -415,80 +478,9 @@ function filterAssets(assets: Asset[], query: string) {
   }
 
   return assets.filter((asset) =>
-    [asset.name, asset.description ?? "", asset.relative_path].join(" ").toLowerCase().includes(normalizedQuery),
+    [asset.name, asset.description ?? "", asset.relative_path]
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery),
   );
-}
-
-function parseGroupIconSvgInput(value: string): AssetGroupIconSvg | null {
-  const input = value.trim();
-  if (!input) {
-    return null;
-  }
-
-  // Try JSON parse first
-  try {
-    const candidate = JSON.parse(input);
-    if (isRecord(candidate) && Array.isArray(candidate.paths)) {
-      const paths = candidate.paths.flatMap((path: unknown) => {
-        if (!isRecord(path) || typeof path.d !== "string") return [];
-        const d = path.d.trim();
-        if (!d) return [];
-        const clipRule = normalizeSvgRule(path.clip_rule ?? path.clipRule);
-        const fillRule = normalizeSvgRule(path.fill_rule ?? path.fillRule);
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
-      });
-      if (paths.length === 0) return null;
-      return {
-        paths,
-        ...(typeof candidate.viewBox === "string" && candidate.viewBox.trim()
-          ? { view_box: candidate.viewBox.trim() }
-          : typeof candidate.view_box === "string" && candidate.view_box.trim()
-            ? { view_box: candidate.view_box.trim() }
-            : {}),
-      };
-    }
-  } catch {
-    // Fall through to SVG markup parsing
-  }
-
-  // Try parsing as SVG markup
-  if (input.includes("<svg") && typeof DOMParser !== "undefined") {
-    try {
-      const document = new DOMParser().parseFromString(input, "image/svg+xml");
-      if (document.querySelector("parsererror")) return null;
-      const svg = document.querySelector("svg");
-      if (!svg) return null;
-
-      const paths = Array.from(svg.querySelectorAll("path")).flatMap((path) => {
-        const d = path.getAttribute("d")?.trim();
-        if (!d) return [];
-        const clipRule = normalizeSvgRule(
-          path.getAttribute("clip-rule") ?? path.getAttribute("clipRule"),
-        );
-        const fillRule = normalizeSvgRule(
-          path.getAttribute("fill-rule") ?? path.getAttribute("fillRule"),
-        );
-        return [{ d, ...(clipRule ? { clip_rule: clipRule } : {}), ...(fillRule ? { fill_rule: fillRule } : {}) }];
-      });
-      if (paths.length === 0) return null;
-
-      const viewBox = svg.getAttribute("viewBox")?.trim();
-      return {
-        paths,
-        ...(viewBox ? { view_box: viewBox } : {}),
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-function normalizeSvgRule(value: unknown): "evenodd" | "nonzero" | null {
-  return value === "evenodd" || value === "nonzero" ? value : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

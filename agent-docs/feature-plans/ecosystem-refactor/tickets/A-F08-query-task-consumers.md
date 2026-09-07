@@ -1,6 +1,6 @@
 # A-F08：剩余后台任务迁移并删除自研请求运行时
 
-> **Status: PLANNED**。执行时使用 `superpowers:executing-plans`；本卡内部逐域小步验证，禁止一次改完才跑测试。
+> **Status: VERIFIED**。执行时使用 `superpowers:executing-plans`；本卡内部逐域小步验证，禁止一次改完才跑测试。
 
 **Goal:** 任务快照与通用查询生命周期归Query，Memory/Team的业务投影保持正确。
 **Architecture:** 根级后台任务query组件并列装配；TeamSession按team范围装配；事件桥复用A-F07，后台DTO仍采用当前契约。
@@ -41,11 +41,11 @@ it.each(names)("%s 不再拥有自研请求运行时或poll interval", (name) =>
 
 ## 步骤
 
-- [ ] **Baseline**：按文件列表运行现有测试；记下每域读/start/event/terminal行为。
-- [ ] **Red**：先启用当前要迁移域guard，记录旧runtime引用red；添加该域事件丢失/快照晚到回归。每域完成后启用下一域guard。
-- [ ] **Migrate**：依序Memory→SkillBackup→ConversationSync→Maintenance→AI→AgentLifecycle→Catalog→TeamRun→TeamSession；每域根query观察、页面cache观察、start seed、event bridge一次接管。
-- [ ] **Clean**：所有真实调用方不再导入后，删除 `BackgroundTaskRuntime.tsx` 与只测其旧实现的测试；领域merge测试移到仍保留的纯函数旁；AppProviders不再九层Context嵌套。
-- [ ] **Verify**：每域跑单文件；最终跑下面集合与close prompt。提供源文件diff范围、移除符号清单。
+- [x] **Baseline**：按文件列表运行现有测试；记下每域读/start/event/terminal行为。
+- [x] **Red**：先启用当前要迁移域guard，记录旧runtime引用red；添加该域事件丢失/快照晚到回归。每域完成后启用下一域guard。
+- [x] **Migrate**：依序Memory→SkillBackup→ConversationSync→Maintenance→AI→AgentLifecycle→Catalog→TeamRun→TeamSession；每域根query观察、页面cache观察、start seed、event bridge一次接管。
+- [x] **Clean**：所有真实调用方不再导入后，删除 `BackgroundTaskRuntime.tsx` 与只测其旧实现的测试；领域merge测试移到仍保留的纯函数旁；AppProviders不再九层Context嵌套。
+- [x] **Verify**：每域跑单文件；最终跑下面集合与close prompt。提供源文件diff范围、移除符号清单。
 
 ```sh
 pnpm exec vitest run --config frontend/vite.config.ts frontend/src/app/backgroundTasks frontend/src/app/query/TaskEventBridge.test.tsx frontend/src/app/AppClosePrompt.test.tsx frontend/src/pages/conversations/ConversationsPage.sync.test.tsx frontend/src/pages/memory/MemoryPage.test.tsx frontend/src/pages/team/TeamPage.test.tsx

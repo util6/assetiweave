@@ -18,7 +18,10 @@ describe("settings persistence contract", () => {
   });
 
   it("falls back to defaults when the cache is malformed", () => {
-    vi.stubGlobal("localStorage", { getItem: () => "{invalid", setItem: () => undefined });
+    vi.stubGlobal("localStorage", {
+      getItem: () => "{invalid",
+      setItem: () => undefined,
+    });
     expect(readCachedSettings()).toEqual(defaultSettings);
   });
 });

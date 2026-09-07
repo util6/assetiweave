@@ -7,10 +7,12 @@ export function assetSourceHref(asset: Asset) {
 export function assetSourceLabel(asset: Asset, source?: Source) {
   const sourceName = source?.name.trim();
 
-  return asset.repository?.remote_url
-    ?? asset.repository?.display_root_path
-    ?? asset.repository?.root_path
-    ?? (sourceName && sourceName !== source?.id ? sourceName : undefined)
-    ?? source?.root_path
-    ?? asset.source_id;
+  return (
+    asset.repository?.remote_url ??
+    asset.repository?.display_root_path ??
+    asset.repository?.root_path ??
+    (sourceName && sourceName !== source?.id ? sourceName : undefined) ??
+    source?.root_path ??
+    asset.source_id
+  );
 }

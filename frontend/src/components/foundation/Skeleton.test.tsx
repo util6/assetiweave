@@ -15,10 +15,15 @@ describe("foundation skeleton public entry", () => {
     expect((html.match(/aurora-skeleton/g) ?? []).length).toBe(3);
   });
 
-  it.each(["list", "cards", "columns"] as const)("renders the %s layout", (layout) => {
-    const html = renderToStaticMarkup(<AppSkeleton label="Loading" layout={layout} />);
+  it.each(["list", "cards", "columns"] as const)(
+    "renders the %s layout",
+    (layout) => {
+      const html = renderToStaticMarkup(
+        <AppSkeleton label="Loading" layout={layout} />,
+      );
 
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain("Loading");
-  });
+      expect(html).toContain('aria-busy="true"');
+      expect(html).toContain("Loading");
+    },
+  );
 });

@@ -1,10 +1,5 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelAiExecutionTask,
   listAiExecutionTasks,
@@ -13,15 +8,14 @@ import {
   type AiExecutionTaskSnapshot,
   type ConversationCardTranslationRequest,
 } from "../../services/cardTranslation";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
-
-interface AiExecutionRuntimeEvent {
-  snapshot: AiExecutionTaskSnapshot;
-}
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
 const TERMINAL_TASK_LIMIT = 100;
 
-interface AiExecutionTaskContextValue {
+export interface AiExecutionTaskContextValue {
   tasks: AiExecutionTaskSnapshot[];
   startTranslation: (
     request: ConversationCardTranslationRequest,
@@ -31,65 +25,111 @@ interface AiExecutionTaskContextValue {
   refresh: () => Promise<void>;
 }
 
-const AiExecutionTaskContext = createContext<AiExecutionTaskContextValue | null>(null);
+export function aiExecutionQueryOptions(scope: QueryScope) {
+  return queryOptions<AiExecutionTaskSnapshot[]>({
+    queryKey: taskKeys.resource(scope, "ai-execution"),
+    queryFn: listAiExecutionTasks,
+    structuralSharing: (oldData, newData) => {
+      const current = (oldData as AiExecutionTaskSnapshot[] | undefined) ?? [];
+      const incoming = (newData as AiExecutionTaskSnapshot[] | undefined) ?? [];
+      return mergeAiExecutionTaskSnapshots(current, incoming);
+    },
+    staleTime: 1000,
+  });
+}
 
-export function AiExecutionTaskProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<AiExecutionTaskSnapshot[], AiExecutionRuntimeEvent>>(() => ({
-    initialState: [],
-    isRunning: (tasks: AiExecutionTaskSnapshot[]) => tasks.some(isActiveAiExecutionTask),
-    merge: (current, incoming) => mergeAiExecutionTaskSnapshots(
-      current,
-      "snapshot" in incoming ? [incoming.snapshot] : incoming,
-    ),
-    refresh: listAiExecutionTasks,
-    subscribe: (listener) => subscribeAiExecutionTasks((snapshot) => listener({ snapshot })),
-  }), []);
-  const { merge, refresh, state: tasks } = useBackgroundTaskRuntime(adapter);
+export function AiExecutionTaskProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = taskKeys.resource(activeScope, "ai-execution");
 
-  const startTranslation = useCallback(async (request: ConversationCardTranslationRequest) => {
-    const snapshot = await startConversationCardTranslation(request);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  useQuery({
+    ...aiExecutionQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const tasks = query.state.data;
+      const isRunning = tasks && tasks.some(isActiveAiExecutionTask);
+      return isRunning ? 1000 : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
 
-  const cancelTask = useCallback(async (taskId: string) => {
-    const snapshot = await cancelAiExecutionTask(taskId);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
+  return (
+    <>
+      <TaskEventBridge<AiExecutionTaskSnapshot[], AiExecutionTaskSnapshot>
+        merge={(current, snapshot) =>
+          mergeAiExecutionTaskSnapshots(current ?? [], [snapshot])
+        }
+        queryKey={queryKey}
+        subscribe={subscribeAiExecutionTasks}
+      />
+      {children ?? null}
+    </>
+  );
+}
+
+export function useAiExecutionTasks(): AiExecutionTaskContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "ai-execution");
+
+  const query = useQuery({
+    ...aiExecutionQueryOptions(activeScope),
+  });
+
+  const tasks = query.data ?? [];
+
+  const startTranslation = useCallback(
+    async (request: ConversationCardTranslationRequest) => {
+      const snapshot = await startConversationCardTranslation(request);
+      queryClient.setQueryData<AiExecutionTaskSnapshot[]>(queryKey, (current) =>
+        mergeAiExecutionTaskSnapshots(current ?? [], [snapshot]),
+      );
+      return snapshot;
+    },
+    [queryClient, queryKey],
+  );
+
+  const cancelTask = useCallback(
+    async (taskId: string) => {
+      const snapshot = await cancelAiExecutionTask(taskId);
+      queryClient.setQueryData<AiExecutionTaskSnapshot[]>(queryKey, (current) =>
+        mergeAiExecutionTaskSnapshots(current ?? [], [snapshot]),
+      );
+      return snapshot;
+    },
+    [queryClient, queryKey],
+  );
 
   const getTask = useCallback(
     (taskId: string) => tasks.find((task) => task.id === taskId),
     [tasks],
   );
 
-  const value = useMemo<AiExecutionTaskContextValue>(() => ({
-    tasks,
-    startTranslation,
+  const refresh = useCallback(async () => {
+    await queryClient.refetchQueries({ exact: true, queryKey });
+  }, [queryClient, queryKey]);
+
+  return {
     cancelTask,
     getTask,
-    refresh: async () => {
-      await refresh();
-    },
-  }), [cancelTask, getTask, refresh, startTranslation, tasks]);
-
-  return (
-    <AiExecutionTaskContext.Provider value={value}>
-      {children}
-    </AiExecutionTaskContext.Provider>
-  );
+    refresh,
+    startTranslation,
+    tasks,
+  };
 }
 
-export function useAiExecutionTasks() {
-  const context = useContext(AiExecutionTaskContext);
-  if (!context) {
-    throw new Error("useAiExecutionTasks must be used inside AiExecutionTaskProvider");
+export function useOptionalAiExecutionTasks(): AiExecutionTaskContextValue | null {
+  try {
+    return useAiExecutionTasks();
+  } catch {
+    return null;
   }
-  return context;
-}
-
-export function useOptionalAiExecutionTasks() {
-  return useContext(AiExecutionTaskContext);
 }
 
 export function isActiveAiExecutionTask(task: AiExecutionTaskSnapshot) {
@@ -111,18 +151,22 @@ export function mergeAiExecutionTaskSnapshots(
     }
   }
   if (!changed) return current;
-  return retainRecentAiExecutionTasks([...byId.values()]).sort((left, right) => (
-    left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)
-  ));
+  return retainRecentAiExecutionTasks([...byId.values()]).sort(
+    (left, right) =>
+      left.created_at.localeCompare(right.created_at) ||
+      left.id.localeCompare(right.id),
+  );
 }
 
 function retainRecentAiExecutionTasks(tasks: AiExecutionTaskSnapshot[]) {
   const active = tasks.filter(isActiveAiExecutionTask);
   const terminal = tasks
     .filter((task) => !isActiveAiExecutionTask(task))
-    .sort((left, right) => (
-      right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id)
-    ))
+    .sort(
+      (left, right) =>
+        right.updated_at.localeCompare(left.updated_at) ||
+        right.id.localeCompare(left.id),
+    )
     .slice(0, TERMINAL_TASK_LIMIT);
   return [...active, ...terminal];
 }

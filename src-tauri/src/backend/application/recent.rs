@@ -34,7 +34,7 @@ pub(crate) struct RecentConversationSession {
 }
 
 impl AppService {
-    pub(crate) fn get_recent_memory_event_target(
+    pub(crate) async fn get_recent_memory_event_target(
         &self,
         event_id: String,
     ) -> AppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
@@ -45,20 +45,19 @@ impl AppService {
         }
         let pool = self.db.pool().clone();
         let tenant_id = self.tenant_id().to_string();
-        self.runtime
-            .run_sync(crate::backend::store::load_recent_memory_event_target_sqlx(
-                &pool, &tenant_id, &event_id,
-            ))
+        crate::backend::store::load_recent_memory_event_target_sqlx(&pool, &tenant_id, &event_id)
+            .await
     }
 
-    pub(crate) fn list_recent_conversation_sessions(
+    pub(crate) async fn list_recent_conversation_sessions(
         &self,
         params: RecentConversationSessionListParams,
     ) -> AppResult<Vec<RecentConversationSession>> {
         self.list_recent_conversation_sessions_at(params, Utc::now())
+            .await
     }
 
-    pub(crate) fn list_recent_conversation_sessions_at(
+    pub(crate) async fn list_recent_conversation_sessions_at(
         &self,
         params: RecentConversationSessionListParams,
         now: DateTime<Utc>,
@@ -69,41 +68,38 @@ impl AppService {
         let now_text = now.to_rfc3339();
         let internal_agent_workspace =
             crate::backend::ai_execution::agent_execution_workspace_root(&self.db_path);
-        let (records, registered_roots) = self.runtime.run_sync(async move {
-            let mut records = crate::backend::store::list_recent_conversation_sessions_sqlx(
+        let mut records = crate::backend::store::list_recent_conversation_sessions_sqlx(
+            &pool,
+            &tenant_id,
+            &cutoff,
+            &now_text,
+            &internal_agent_workspace,
+        )
+        .await?;
+        let session_ids = records
+            .iter()
+            .map(|record| record.session.session.id.clone())
+            .collect::<Vec<_>>();
+        let mut events_by_session =
+            crate::backend::store::list_recent_memory_events_for_sessions_sqlx(
                 &pool,
                 &tenant_id,
+                &session_ids,
                 &cutoff,
                 &now_text,
-                &internal_agent_workspace,
             )
             .await?;
-            let session_ids = records
-                .iter()
-                .map(|record| record.session.session.id.clone())
-                .collect::<Vec<_>>();
-            let mut events_by_session =
-                crate::backend::store::list_recent_memory_events_for_sessions_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &session_ids,
-                    &cutoff,
-                    &now_text,
-                )
-                .await?;
-            for record in &mut records {
-                record.recent_events = events_by_session
-                    .remove(&record.session.session.id)
-                    .unwrap_or_default();
-            }
-            // Source.repo_root is the current app-owned registry of project roots.
-            let registered_roots = crate::backend::store::load_sources_sqlx(&pool, &tenant_id)
-                .await?
-                .into_iter()
-                .filter_map(|source| source.repo_root)
-                .collect::<Vec<_>>();
-            Ok::<_, AppError>((records, registered_roots))
-        })?;
+        for record in &mut records {
+            record.recent_events = events_by_session
+                .remove(&record.session.session.id)
+                .unwrap_or_default();
+        }
+        // Source.repo_root is the current app-owned registry of project roots.
+        let registered_roots = crate::backend::store::load_sources_sqlx(&pool, &tenant_id)
+            .await?
+            .into_iter()
+            .filter_map(|source| source.repo_root)
+            .collect::<Vec<_>>();
 
         let cutoff = now - chrono::Duration::hours(RECENT_WINDOW_HOURS);
         let mut sessions = records
@@ -190,11 +186,7 @@ pub(super) fn resolve_project_directory(
                 .is_within(&cwd, &root)
                 .then_some((root.components().count(), root))
         })
-        .max_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.1.to_string_lossy().cmp(&right.1.to_string_lossy()))
-        })
+        .max_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)))
         .map(|(_, root)| root);
 
     let project_root = registered_root
@@ -203,7 +195,7 @@ pub(super) fn resolve_project_directory(
                 .map(|root| canonicalize_or_normalize(&root))
         })
         .unwrap_or(cwd);
-    crate::backend::path_utils::normalize_path_for_storage(&project_root.to_string_lossy()).ok()
+    crate::backend::path_utils::normalize_std_path_for_storage(&project_root).ok()
 }
 
 fn canonicalize_or_normalize(path: &Path) -> PathBuf {

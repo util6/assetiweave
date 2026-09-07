@@ -1,11 +1,5 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   listConversationSyncTasks,
   cancelConversationSync,
@@ -15,8 +9,13 @@ import {
   type ConversationSyncMode,
 } from "../../services/conversations";
 import type { ConversationRecordKind } from "../../types";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
+import { isTerminalStatus } from "./taskMergeUtils";
 
-interface ConversationSyncContextValue {
+export interface ConversationSyncContextValue {
   startSync: (params: {
     source_id?: string | null;
     adapter_id?: string | null;
@@ -26,50 +25,96 @@ interface ConversationSyncContextValue {
   }) => Promise<ConversationSyncTaskSnapshot>;
   cancelSync: (taskId: string) => Promise<ConversationSyncTaskSnapshot>;
   task: ConversationSyncTaskSnapshot | null;
-  taskFor: (recordKind: ConversationRecordKind) => ConversationSyncTaskSnapshot | null;
+  taskFor: (
+    recordKind: ConversationRecordKind,
+  ) => ConversationSyncTaskSnapshot | null;
   tasks: ConversationSyncTaskSnapshot[];
 }
 
-type ConversationSyncTaskScope = ConversationRecordKind | "all";
-type ConversationSyncTaskMap = Record<ConversationSyncTaskScope, ConversationSyncTaskSnapshot | null>;
-type ConversationSyncRuntimeEvent = {
-  fallbackScope?: ConversationSyncTaskScope;
-  snapshot?: ConversationSyncTaskSnapshot;
-  snapshots?: ConversationSyncTaskSnapshot[];
+export type ConversationSyncTaskScope = ConversationRecordKind | "all";
+export type ConversationSyncTaskMap = Record<
+  ConversationSyncTaskScope,
+  ConversationSyncTaskSnapshot | null
+>;
+
+export const EMPTY_TASKS: ConversationSyncTaskMap = {
+  all: null,
+  session: null,
+  web: null,
 };
 
-const EMPTY_TASKS: ConversationSyncTaskMap = { all: null, session: null, web: null };
+export function conversationSyncQueryOptions(scope: QueryScope) {
+  return queryOptions<ConversationSyncTaskMap>({
+    queryKey: taskKeys.resource(scope, "conversation-sync"),
+    queryFn: async () => {
+      const snapshots = await listConversationSyncTasks();
+      return mergeConversationTaskSnapshots(snapshots, EMPTY_TASKS);
+    },
+    networkMode: "always",
+    structuralSharing: (oldData, newData) => {
+      const current =
+        (oldData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
+      const incoming =
+        (newData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
+      return Object.values(incoming).reduce(
+        (next, snapshot) =>
+          snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
+        current,
+      );
+    },
+    staleTime: 1000,
+  });
+}
 
-const ConversationSyncContext = createContext<ConversationSyncContextValue | null>(null);
+export function ConversationSyncProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = taskKeys.resource(activeScope, "conversation-sync");
 
-export function ConversationSyncProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<ConversationSyncTaskMap, ConversationSyncRuntimeEvent>>(
-    () => ({
-      initialState: EMPTY_TASKS,
-      isRunning: (state) => Object.values(state).some(
-        (task) => task?.status === "running" || task?.status === "cancelling",
-      ),
-      merge: (current, incoming) => {
-        if (isConversationSyncRuntimeEvent(incoming)) {
-          if (incoming.snapshots) {
-            return mergeConversationTaskSnapshots(incoming.snapshots, current);
-          }
-          return incoming.snapshot
-            ? mergeConversationTaskIntoMap(incoming.snapshot, current, incoming.fallbackScope)
-            : current;
-        }
-
-        return Object.values(incoming).reduce(
-          (next, snapshot) => snapshot ? mergeConversationTaskIntoMap(snapshot, next) : next,
-          current,
+  useQuery({
+    ...conversationSyncQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const state = query.state.data;
+      const isRunning =
+        state &&
+        Object.values(state).some(
+          (task) => task?.status === "running" || task?.status === "cancelling",
         );
-      },
-      refresh: async () => mergeConversationTaskSnapshots(await listConversationSyncTasks(), EMPTY_TASKS),
-      subscribe: (listener) => subscribeConversationSyncTasks((snapshot) => listener({ snapshot })),
-    }),
-    [],
+      return isRunning ? 1000 : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<ConversationSyncTaskMap, ConversationSyncTaskSnapshot>
+        merge={(current, snapshot) =>
+          mergeConversationTaskIntoMap(snapshot, current ?? EMPTY_TASKS)
+        }
+        queryKey={queryKey}
+        subscribe={subscribeConversationSyncTasks}
+      />
+      {children ?? null}
+    </>
   );
-  const { merge, state: taskMap } = useBackgroundTaskRuntime(adapter);
+}
+
+export function useConversationSync(): ConversationSyncContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "conversation-sync");
+
+  const query = useQuery({
+    ...conversationSyncQueryOptions(activeScope),
+  });
+
+  const taskMap = query.data ?? EMPTY_TASKS;
 
   const startSync = useCallback(
     async (params: {
@@ -80,56 +125,56 @@ export function ConversationSyncProvider({ children }: { children: ReactNode }) 
       dry_run?: boolean;
     }) => {
       const snapshot = await syncConversations(params);
-      const nextSnapshot = mergeConversationTaskSnapshot(
-        snapshot,
-        null,
-        params.record_kind ?? (params.mode === "full" ? "all" : "session"),
-      ) ?? snapshot;
-      merge({
-        snapshot: nextSnapshot,
-        fallbackScope: params.record_kind ?? (params.mode === "full" ? "all" : "session"),
-      });
+      const nextSnapshot =
+        mergeConversationTaskSnapshot(
+          snapshot,
+          null,
+          params.record_kind ?? (params.mode === "full" ? "all" : "session"),
+        ) ?? snapshot;
+      queryClient.setQueryData<ConversationSyncTaskMap>(queryKey, (current) =>
+        mergeConversationTaskIntoMap(
+          nextSnapshot,
+          current ?? EMPTY_TASKS,
+          params.record_kind ?? (params.mode === "full" ? "all" : "session"),
+        ),
+      );
       return nextSnapshot;
     },
-    [merge],
+    [queryClient, queryKey],
+  );
+
+  const cancelSync = useCallback(
+    async (taskId: string) => {
+      const snapshot = await cancelConversationSync(taskId);
+      queryClient.setQueryData<ConversationSyncTaskMap>(queryKey, (current) =>
+        mergeConversationTaskIntoMap(snapshot, current ?? EMPTY_TASKS),
+      );
+      return snapshot;
+    },
+    [queryClient, queryKey],
   );
 
   const taskFor = useCallback(
-    (recordKind: ConversationRecordKind) => latestConversationTask(
-      taskMap[recordKind],
-      taskMap.all,
-    ),
+    (recordKind: ConversationRecordKind) =>
+      latestConversationTask(taskMap[recordKind], taskMap.all),
     [taskMap],
   );
-  const cancelSync = useCallback(async (taskId: string) => {
-    const snapshot = await cancelConversationSync(taskId);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
-  const tasks = useMemo(
-    () => Object.values(taskMap).filter((task): task is ConversationSyncTaskSnapshot => Boolean(task)),
-    [taskMap],
+
+  const tasks = Object.values(taskMap).filter(
+    (task): task is ConversationSyncTaskSnapshot => Boolean(task),
   );
   const task = tasks[tasks.length - 1] ?? null;
-  const value = useMemo<ConversationSyncContextValue>(
-    () => ({
-      startSync,
-      cancelSync,
-      task,
-      taskFor,
-      tasks,
-    }),
-    [cancelSync, startSync, task, taskFor, tasks],
-  );
 
-  return (
-    <ConversationSyncContext.Provider value={value}>
-      {children}
-    </ConversationSyncContext.Provider>
-  );
+  return {
+    startSync,
+    cancelSync,
+    task,
+    taskFor,
+    tasks,
+  };
 }
 
-function mergeConversationTaskSnapshots(
+export function mergeConversationTaskSnapshots(
   snapshots: ConversationSyncTaskSnapshot[],
   current: ConversationSyncTaskMap,
 ): ConversationSyncTaskMap {
@@ -139,84 +184,107 @@ function mergeConversationTaskSnapshots(
   );
 }
 
-function isConversationSyncRuntimeEvent(
-  incoming: ConversationSyncTaskMap | ConversationSyncRuntimeEvent,
-): incoming is ConversationSyncRuntimeEvent {
-  return "snapshot" in incoming || "snapshots" in incoming;
-}
-
-function mergeConversationTaskIntoMap(
+export function mergeConversationTaskIntoMap(
   snapshot: ConversationSyncTaskSnapshot,
   current: ConversationSyncTaskMap,
   fallbackScope: ConversationSyncTaskScope | null = null,
 ): ConversationSyncTaskMap {
-  const currentSnapshot = Object.values(current).find((task) => task?.id === snapshot.id) ?? null;
-  const merged = mergeConversationTaskSnapshot(snapshot, currentSnapshot, fallbackScope);
+  const currentSnapshot =
+    Object.values(current).find((task) => task?.id === snapshot.id) ?? null;
+  const merged = mergeConversationTaskSnapshot(
+    snapshot,
+    currentSnapshot,
+    fallbackScope,
+  );
   const recordKind = normalizeConversationRecordKind(merged?.record_kind);
-  const scope = recordKind ?? (merged?.record_kind === null ? "all" : fallbackScope);
-  if (!merged || !scope) {
-    return current;
-  }
-  return { ...current, [scope]: merged };
+  const scope =
+    fallbackScope === "all"
+      ? "all"
+      : recordKind === "session" || recordKind === "web"
+        ? recordKind
+        : fallbackScope === "session" || fallbackScope === "web"
+          ? fallbackScope
+          : "all";
+
+  return {
+    ...current,
+    [scope]: latestConversationTask(current[scope], merged),
+  };
 }
 
-export function useConversationSync() {
-  const context = useContext(ConversationSyncContext);
-  if (!context) {
-    throw new Error("useConversationSync must be used inside ConversationSyncProvider");
-  }
-  return context;
-}
-
-function mergeConversationTaskSnapshot(
-  snapshot: ConversationSyncTaskSnapshot | null,
+export function mergeConversationTaskSnapshot(
+  incoming: ConversationSyncTaskSnapshot,
   current: ConversationSyncTaskSnapshot | null,
   fallbackScope: ConversationSyncTaskScope | null = null,
+): ConversationSyncTaskSnapshot {
+  if (!current) {
+    return {
+      ...incoming,
+      record_kind:
+        normalizeConversationRecordKind(incoming.record_kind) ??
+        normalizeConversationRecordKind(fallbackScope),
+    };
+  }
+
+  if (current.id !== incoming.id) {
+    return incoming;
+  }
+
+  const currentIsTerminal = isTerminalStatus(current.status);
+  const incomingIsTerminal = isTerminalStatus(incoming.status);
+  const effectiveStatus =
+    currentIsTerminal && !incomingIsTerminal ? current.status : incoming.status;
+
+  const currentKind = normalizeConversationRecordKind(current.record_kind);
+  const incomingKind = normalizeConversationRecordKind(incoming.record_kind);
+  const fallbackKind = normalizeConversationRecordKind(fallbackScope);
+
+  const preserveFinishedAt =
+    current.finished_at &&
+    (!incoming.finished_at || (currentIsTerminal && !incomingIsTerminal));
+
+  return {
+    ...current,
+    ...incoming,
+    status: effectiveStatus,
+    record_kind: incomingKind ?? currentKind ?? fallbackKind ?? null,
+    finished_at: preserveFinishedAt
+      ? current.finished_at
+      : incoming.finished_at,
+    result: incoming.result ?? current.result,
+    error: incoming.error ?? current.error,
+  };
+}
+
+export function latestConversationTask(
+  current: ConversationSyncTaskSnapshot | null,
+  incoming: ConversationSyncTaskSnapshot | null,
 ): ConversationSyncTaskSnapshot | null {
-  if (!snapshot) {
-    return null;
+  if (!current) return incoming;
+  if (!incoming) return current;
+  if (current.id === incoming.id) {
+    return mergeConversationTaskSnapshot(incoming, current);
   }
 
-  const recordKind =
-    normalizeConversationRecordKind(snapshot.record_kind) ??
-    inferConversationRecordKindFromResult(snapshot.result) ??
-    (current?.id === snapshot.id ? normalizeConversationRecordKind(current.record_kind) : null) ??
-    (fallbackScope === "all" ? null : fallbackScope);
+  const currentStartedAt = Date.parse(current.started_at);
+  const incomingStartedAt = Date.parse(incoming.started_at);
 
-  return recordKind ? { ...snapshot, record_kind: recordKind } : snapshot;
+  if (
+    !Number.isNaN(currentStartedAt) &&
+    !Number.isNaN(incomingStartedAt) &&
+    incomingStartedAt >= currentStartedAt
+  ) {
+    return incoming;
+  }
+
+  return current;
 }
 
-function inferConversationRecordKindFromResult(result: unknown): ConversationRecordKind | null {
-  if (!isRecord(result) || !Array.isArray(result.results)) {
-    return null;
+function normalizeConversationRecordKind(
+  kind: ConversationRecordKind | "all" | string | null | undefined,
+): ConversationRecordKind | null {
+  if (kind === "session" || kind === "web") {
+    return kind;
   }
-
-  for (const item of result.results) {
-    if (!isRecord(item)) {
-      continue;
-    }
-    const recordKind = normalizeConversationRecordKind(item.record_kind);
-    if (recordKind) {
-      return recordKind;
-    }
-  }
-
   return null;
-}
-
-function normalizeConversationRecordKind(value: unknown): ConversationRecordKind | null {
-  return value === "session" || value === "web" ? value : null;
-}
-
-function latestConversationTask(
-  scopedTask: ConversationSyncTaskSnapshot | null,
-  allTask: ConversationSyncTaskSnapshot | null,
-) {
-  if (!scopedTask) return allTask;
-  if (!allTask) return scopedTask;
-  return allTask.started_at > scopedTask.started_at ? allTask : scopedTask;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

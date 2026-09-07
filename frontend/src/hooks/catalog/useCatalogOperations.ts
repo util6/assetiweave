@@ -6,7 +6,12 @@ import {
   type SourceScanScope,
   type SourceScanTaskSnapshot,
 } from "../../services/catalog";
-import type { Asset, AssetKind, DeploymentPlan, ExecutionResult } from "../../types";
+import type {
+  Asset,
+  AssetKind,
+  DeploymentPlan,
+  ExecutionResult,
+} from "../../types";
 
 export function useCatalogOperations(
   refreshOverview: (nextAssets?: Asset[]) => Promise<void>,
@@ -18,7 +23,8 @@ export function useCatalogOperations(
   sourceScan?: SourceScanTaskSnapshot | null,
 ) {
   const [plan, setPlan] = useState<DeploymentPlan | null>(null);
-  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [executionResult, setExecutionResult] =
+    useState<ExecutionResult | null>(null);
   const [busy, setBusy] = useState(false);
   const startedScanIdsRef = useRef(new Set<string>());
   const settledScanIdsRef = useRef(new Set<string>());
@@ -41,7 +47,9 @@ export function useCatalogOperations(
     try {
       if (startBackgroundScan) {
         const scanKind =
-          activeAssetKind === "skill" || activeAssetKind === "prompt" || activeAssetKind === "rule"
+          activeAssetKind === "skill" ||
+          activeAssetKind === "prompt" ||
+          activeAssetKind === "rule"
             ? activeAssetKind
             : undefined;
         const task = await startBackgroundScan(scanKind, "all");
@@ -109,5 +117,9 @@ export function useCatalogOperations(
 }
 
 function isTerminalSourceScan(task: SourceScanTaskSnapshot) {
-  return task.status === "completed" || task.status === "failed" || task.status === "cancelled";
+  return (
+    task.status === "completed" ||
+    task.status === "failed" ||
+    task.status === "cancelled"
+  );
 }

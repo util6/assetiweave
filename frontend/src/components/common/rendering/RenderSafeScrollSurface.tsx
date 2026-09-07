@@ -6,17 +6,18 @@ export interface RenderSafeScrollSurfaceProps extends HTMLAttributes<HTMLDivElem
   children: ReactNode;
 }
 
-export const RenderSafeScrollSurface = forwardRef<HTMLDivElement, RenderSafeScrollSurfaceProps>(
-  function RenderSafeScrollSurface({ children, className, ...props }, ref) {
-    return (
-      <div
-        {...props}
-        className={cn("render-safe-scroll-surface", className)}
-        data-render-safe-scroll-surface=""
-        ref={ref}
-      >
-        {children}
-      </div>
-    );
-  },
-);
+export const RenderSafeScrollSurface = forwardRef<
+  HTMLDivElement,
+  RenderSafeScrollSurfaceProps
+>(function RenderSafeScrollSurface({ children, className, ...props }, ref) {
+  return (
+    <div
+      {...props}
+      className={cn("render-safe-scroll-surface", className)}
+      data-render-safe-scroll-surface=""
+      ref={ref}
+    >
+      {children}
+    </div>
+  );
+});

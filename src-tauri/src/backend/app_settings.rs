@@ -1,23 +1,35 @@
-use crate::backend::{
-    runtime::AppError,
-    runtime::AppResult,
-    store::{self, Database},
-};
+use crate::backend::{runtime::AppError, runtime::AppResult, store};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    env, fs,
+    fs,
     path::{Path, PathBuf},
 };
 
-const CONFIG_DIR_NAME: &str = ".assetiweave";
 const CONFIG_FILE_NAME: &str = "config.json";
 const CONVERSATION_ADAPTER_DIR_NAME: &str = "conversation-adapters";
-pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 3;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 4;
 const DEFAULT_AI_RUNTIME_CLI: &str = "opencode";
 const DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP: bool = true;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AppLocale {
+    Zh,
+    En,
+}
+
+impl AppLocale {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Zh => "zh",
+            Self::En => "en",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
+
 pub(crate) struct AppSettingsFile {
     pub(crate) config_dir: String,
     pub(crate) config_path: String,
@@ -28,48 +40,239 @@ pub(crate) struct AppSettingsFile {
     pub(crate) settings: Value,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct AppSettingsDocument {
-    schema_version: u32,
-    settings: Value,
+pub(crate) struct AppSettingsDocument {
+    pub(crate) schema_version: u32,
+    pub(crate) settings: Value,
 }
 
-pub(crate) fn read_app_settings_value() -> AppResult<Value> {
-    if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
-        return read_app_settings_value_for_database(runtime.db());
+impl AppSettingsDocument {
+    pub(crate) fn new(settings: Value) -> Self {
+        Self {
+            schema_version: SETTINGS_SCHEMA_VERSION,
+            settings,
+        }
     }
-    let paths = app_settings_paths()?;
-    if !paths.config_path.exists() {
-        return canonicalize_settings(json!({}));
-    }
-    Ok(read_normalized_settings_document(&paths.config_path)?.settings)
 }
 
-pub(crate) fn get_app_settings_for_database(db: &Database) -> AppResult<AppSettingsFile> {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MemorySettings {
+    #[serde(default = "default_true")]
+    pub(crate) generation_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(crate) usage_enabled: bool,
+    #[serde(default)]
+    pub(crate) excluded_session_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) excluded_source_ids: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for MemorySettings {
+    fn default() -> Self {
+        Self {
+            generation_enabled: true,
+            usage_enabled: true,
+            excluded_session_ids: Vec::new(),
+            excluded_source_ids: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConversationsSettings {
+    #[serde(default = "default_conversation_full_sync")]
+    pub(crate) auto_full_sync_on_startup: bool,
+}
+
+fn default_conversation_full_sync() -> bool {
+    DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP
+}
+
+impl Default for ConversationsSettings {
+    fn default() -> Self {
+        Self {
+            auto_full_sync_on_startup: DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiRuntimeSettings {
+    #[serde(default = "default_ai_runtime_cli")]
+    pub(crate) cli: String,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+}
+
+fn default_ai_runtime_cli() -> String {
+    DEFAULT_AI_RUNTIME_CLI.to_string()
+}
+
+impl Default for AiRuntimeSettings {
+    fn default() -> Self {
+        Self {
+            cli: DEFAULT_AI_RUNTIME_CLI.to_string(),
+            model: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentAssignmentSetting {
+    pub(crate) agent_id: String,
+    #[serde(default)]
+    pub(crate) model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BackendSettings {
+    #[serde(default)]
+    pub(crate) memory: MemorySettings,
+    #[serde(default)]
+    pub(crate) conversations: ConversationsSettings,
+    #[serde(default)]
+    pub(crate) ai_runtime: AiRuntimeSettings,
+    #[serde(default)]
+    pub(crate) agent_assignments: std::collections::BTreeMap<String, AgentAssignmentSetting>,
+    #[serde(default)]
+    pub(crate) locale: Option<AppLocale>,
+    #[serde(default)]
+    pub(crate) column_layouts: std::collections::BTreeMap<String, Vec<f64>>,
+}
+
+impl BackendSettings {
+    pub(crate) fn from_document(document: &AppSettingsDocument) -> AppResult<Self> {
+        Self::from_value(&document.settings)
+    }
+
+    pub(crate) fn from_value(value: &Value) -> AppResult<Self> {
+        serde_json::from_value(value.clone())
+            .map_err(|error| AppError::Validation(format!("invalid settings document: {error}")))
+    }
+
+    pub(crate) fn merge_into_document(
+        &self,
+        mut document: AppSettingsDocument,
+    ) -> AppResult<AppSettingsDocument> {
+        let root = document.settings.as_object_mut().ok_or_else(|| {
+            AppError::Validation("settings root must be a JSON object".to_string())
+        })?;
+
+        root.insert(
+            "memory".to_string(),
+            serde_json::to_value(&self.memory).map_err(AppError::external)?,
+        );
+        if root.contains_key("conversations")
+            || self.conversations != ConversationsSettings::default()
+        {
+            root.insert(
+                "conversations".to_string(),
+                serde_json::to_value(&self.conversations).map_err(AppError::external)?,
+            );
+        }
+        root.insert(
+            "aiRuntime".to_string(),
+            serde_json::to_value(&self.ai_runtime).map_err(AppError::external)?,
+        );
+        root.insert(
+            "agentAssignments".to_string(),
+            serde_json::to_value(&self.agent_assignments).map_err(AppError::external)?,
+        );
+        root.insert(
+            "locale".to_string(),
+            serde_json::to_value(&self.locale).map_err(AppError::external)?,
+        );
+        root.insert(
+            "columnLayouts".to_string(),
+            serde_json::to_value(&self.column_layouts).map_err(AppError::external)?,
+        );
+
+        Ok(document)
+    }
+
+    pub(crate) fn is_memory_generation_enabled(&self) -> bool {
+        self.memory.generation_enabled
+    }
+
+    pub(crate) fn is_memory_usage_enabled(&self) -> bool {
+        self.memory.usage_enabled
+    }
+
+    pub(crate) fn is_session_excluded(&self, session_id: &str) -> bool {
+        self.memory
+            .excluded_session_ids
+            .iter()
+            .any(|id| id == session_id)
+    }
+
+    pub(crate) fn is_source_excluded(&self, source_id: &str) -> bool {
+        self.memory
+            .excluded_source_ids
+            .iter()
+            .any(|id| id == source_id)
+    }
+
+    pub(crate) fn auto_full_sync_on_startup(&self) -> bool {
+        self.conversations.auto_full_sync_on_startup
+    }
+
+    pub(crate) fn resolve_agent_for_action(&self, action: &str) -> Option<(&str, Option<&str>)> {
+        self.agent_assignments
+            .get(action)
+            .map(|assignment| (assignment.agent_id.as_str(), assignment.model_id.as_deref()))
+    }
+}
+
+pub(crate) async fn get_app_settings_sqlx(pool: &sqlx::SqlitePool) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
-    let settings = read_app_settings_value_for_database(db)?;
+    let settings = read_app_settings_value_sqlx(pool).await?;
     Ok(paths.into_file(settings))
 }
 
-pub(crate) fn save_app_settings_for_database(
-    db: &Database,
+pub(crate) async fn save_app_settings_sqlx(
+    pool: &sqlx::SqlitePool,
     settings: Value,
 ) -> AppResult<AppSettingsFile> {
     let paths = app_settings_paths()?;
     ensure_settings_dirs(&paths)?;
     let settings = canonicalize_settings(settings)?;
-    db.block_on(store::save_app_settings_sqlx(
-        db.pool(),
-        SETTINGS_SCHEMA_VERSION,
-        &settings,
-    ))?;
-    Ok(paths.into_file(settings))
+    // Validate known typed slices
+    let typed = BackendSettings::from_value(&settings)?;
+    // Merge known typed slices into the raw document to ensure unknown fields round-trip
+    let document = AppSettingsDocument::new(settings);
+    let merged = typed.merge_into_document(document)?;
+
+    store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &merged.settings).await?;
+    let persisted = read_app_settings_value_sqlx(pool).await?;
+    let canonical = canonicalize_settings(persisted)?;
+    Ok(paths.into_file(canonical))
 }
 
-pub(crate) fn read_app_settings_value_for_database(db: &Database) -> AppResult<Value> {
-    db.block_on(load_or_import_app_settings_sqlx(db.pool()))
+pub(crate) async fn initialize_app_locale_sqlx(
+    pool: &sqlx::SqlitePool,
+    locale: AppLocale,
+) -> AppResult<AppSettingsFile> {
+    let paths = app_settings_paths()?;
+    ensure_settings_dirs(&paths)?;
+    let _ = read_app_settings_value_sqlx(pool).await?;
+    let settings = store::initialize_app_locale_sqlx(pool, locale).await?;
+    let canonical = canonicalize_settings(settings)?;
+    Ok(paths.into_file(canonical))
+}
+
+pub(crate) async fn read_app_settings_value_sqlx(pool: &sqlx::SqlitePool) -> AppResult<Value> {
+    load_or_import_app_settings_sqlx(pool).await
 }
 
 /// Load the authoritative SQLite settings row. The legacy JSON document is
@@ -93,56 +296,6 @@ pub(crate) async fn load_or_import_app_settings_sqlx(pool: &sqlx::SqlitePool) ->
     let imported = canonicalize_settings(read_settings_document(&paths.config_path)?.settings)?;
     store::save_app_settings_sqlx(pool, SETTINGS_SCHEMA_VERSION, &imported).await?;
     Ok(imported)
-}
-
-pub(crate) fn conversation_full_sync_on_startup_enabled_for_database(
-    db: &Database,
-) -> AppResult<bool> {
-    Ok(conversation_full_sync_on_startup_enabled_from_value(
-        &read_app_settings_value_for_database(db)?,
-    ))
-}
-
-pub(crate) fn memory_generation_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("generationEnabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true))
-}
-
-pub(crate) fn memory_usage_enabled_for_database(db: &Database) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("usageEnabled"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true))
-}
-
-pub(crate) fn memory_session_excluded_for_database(
-    db: &Database,
-    session_id: &str,
-) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("excludedSessionIds"))
-        .and_then(Value::as_array)
-        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(session_id))))
-}
-
-pub(crate) fn memory_source_excluded_for_database(
-    db: &Database,
-    source_id: &str,
-) -> AppResult<bool> {
-    Ok(read_app_settings_value_for_database(db)?
-        .get("memory")
-        .and_then(Value::as_object)
-        .and_then(|memory| memory.get("excludedSourceIds"))
-        .and_then(Value::as_array)
-        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(source_id))))
 }
 
 pub(crate) fn conversation_adapter_dir() -> AppResult<PathBuf> {
@@ -184,15 +337,9 @@ fn app_settings_paths() -> AppResult<AppSettingsPaths> {
 }
 
 fn app_config_dir() -> AppResult<PathBuf> {
-    if let Ok(home) = env::var("ASSETIWEAVE_HOME") {
-        let home = home.trim();
-        if !home.is_empty() {
-            return Ok(PathBuf::from(home));
-        }
-    }
-    let home =
-        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home.join(CONFIG_DIR_NAME))
+    Ok(crate::backend::runtime::config::runtime_config()?
+        .home_dir
+        .clone())
 }
 
 fn ensure_settings_dirs(paths: &AppSettingsPaths) -> AppResult<()> {
@@ -214,18 +361,6 @@ fn read_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
     Ok(normalize_document(parsed))
 }
 
-fn read_normalized_settings_document(path: &Path) -> AppResult<AppSettingsDocument> {
-    let mut document = read_settings_document(path)?;
-    let normalized = canonicalize_settings(document.settings.clone())?;
-    let schema_changed = document.schema_version != SETTINGS_SCHEMA_VERSION;
-    if normalized != document.settings || schema_changed {
-        document.settings = normalized;
-        document.schema_version = SETTINGS_SCHEMA_VERSION;
-        write_settings_document(path, &document)?;
-    }
-    Ok(document)
-}
-
 fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
     normalize_shared_ai_settings(&mut settings);
     for path in [
@@ -239,7 +374,7 @@ fn normalize_settings_paths(mut settings: Value) -> AppResult<Value> {
     Ok(settings)
 }
 
-fn canonicalize_settings(settings: Value) -> AppResult<Value> {
+pub(crate) fn canonicalize_settings(settings: Value) -> AppResult<Value> {
     let mut settings = normalize_settings_paths(settings)?;
     let Some(root) = settings.as_object_mut() else {
         return Ok(settings);
@@ -255,9 +390,61 @@ fn canonicalize_settings(settings: Value) -> AppResult<Value> {
         translation.remove("cli");
         translation.remove("model");
     }
+
+    if let Some(locale_val) = root.get("locale") {
+        if !locale_val.is_null() {
+            match locale_val.as_str() {
+                Some("zh") | Some("en") => {}
+                _ => {
+                    return Err(AppError::Validation(format!(
+                        "invalid locale value: {locale_val}"
+                    )));
+                }
+            }
+        }
+    } else {
+        root.insert("locale".to_string(), Value::Null);
+    }
+
+    if let Some(layouts_val) = root.get("columnLayouts") {
+        if let Some(layouts_obj) = layouts_val.as_object() {
+            for (key, array_val) in layouts_obj {
+                let Some(arr) = array_val.as_array() else {
+                    return Err(AppError::Validation(format!(
+                        "columnLayouts entry '{key}' must be an array"
+                    )));
+                };
+                if arr.len() < 2 || arr.len() > 16 {
+                    return Err(AppError::Validation(format!(
+                        "columnLayouts entry '{key}' must have between 2 and 16 elements"
+                    )));
+                }
+                for item in arr {
+                    let Some(num) = item.as_f64() else {
+                        return Err(AppError::Validation(format!(
+                            "columnLayouts entry '{key}' elements must be positive numbers"
+                        )));
+                    };
+                    if !num.is_finite() || num <= 0.0 {
+                        return Err(AppError::Validation(format!(
+                            "columnLayouts entry '{key}' elements must be positive finite numbers"
+                        )));
+                    }
+                }
+            }
+        } else {
+            return Err(AppError::Validation(
+                "columnLayouts must be an object".to_string(),
+            ));
+        }
+    } else {
+        root.insert("columnLayouts".to_string(), json!({}));
+    }
+
     Ok(settings)
 }
 
+#[cfg(test)]
 fn conversation_full_sync_on_startup_enabled_from_value(settings: &Value) -> bool {
     settings
         .get("conversations")
@@ -317,10 +504,10 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .collect::<Vec<_>>();
     for key in unknown_capabilities {
         agent_capabilities.remove(&key);
-        crate::backend::operation_log::log_warn(
-            "settings.agent_capability",
-            "未知的 Agent capability 已禁用",
-            &[("capability", key)],
+        tracing::warn!(
+            action = "settings.agent_capability",
+            capability = %key,
+            "未知的 Agent capability 已禁用"
         );
     }
     for service_id in ["cardTranslation", "memory", "promptOptimization"] {
@@ -450,10 +637,10 @@ fn normalize_canonical_agent_assignments(
     if let Some(existing) = existing {
         for key in existing.keys() {
             if !assignments.contains_key(key) {
-                crate::backend::operation_log::log_warn(
-                    "settings.agent_assignment",
-                    "未知的 Agent action assignment 已隔离",
-                    &[("action", key.clone())],
+                tracing::warn!(
+                    action = "settings.agent_assignment",
+                    action_id = %key,
+                    "未知的 Agent action assignment 已隔离"
                 );
             }
         }
@@ -731,16 +918,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
+    const TEST_HOME_VAR: &str = "ASSETIWEAVE_HOME";
+
+    #[tokio::test]
+    async fn sqlite_settings_import_is_idempotent_and_legacy_keys_are_removed() {
         let _guard = settings_test_lock().lock().expect("settings test lock");
         let root = std::env::temp_dir().join(format!(
             "assetiweave-settings-migration-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create settings test root");
-        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
-        std::env::set_var("ASSETIWEAVE_HOME", &root);
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
         let config = root.join(CONFIG_FILE_NAME);
         std::fs::write(
             &config,
@@ -757,9 +946,12 @@ mod tests {
         .expect("write legacy settings");
 
         let db_path = root.join("settings.db");
-        let database = crate::backend::store::Database::open_initialized(&db_path)
+        let database = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
             .expect("open settings database");
-        let imported = read_app_settings_value_for_database(&database).expect("import settings");
+        let imported = read_app_settings_value_sqlx(database.pool())
+            .await
+            .expect("import settings");
         assert_eq!(
             imported["agentAssignments"]["memory.extraction"]["agentId"],
             "gemini"
@@ -777,44 +969,51 @@ mod tests {
             .expect("encode changed legacy settings"),
         )
         .expect("rewrite legacy settings");
-        let reopened = read_app_settings_value_for_database(&database).expect("read settings");
+        let reopened = read_app_settings_value_sqlx(database.pool())
+            .await
+            .expect("read settings");
         assert_eq!(reopened, imported);
 
         match previous_home {
-            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
-            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
         }
         std::fs::remove_dir_all(root).ok();
     }
 
-    #[test]
-    fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
+    #[tokio::test]
+    async fn sqlite_settings_remain_available_when_legacy_file_is_corrupt() {
         let _guard = settings_test_lock().lock().expect("settings test lock");
         let root = std::env::temp_dir().join(format!(
             "assetiweave-settings-corrupt-file-{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create settings test root");
-        let previous_home = std::env::var_os("ASSETIWEAVE_HOME");
-        std::env::set_var("ASSETIWEAVE_HOME", &root);
-        let database = crate::backend::store::Database::open_initialized(&root.join("settings.db"))
-            .expect("open settings database");
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
+        let database =
+            crate::backend::store::Database::open_initialized_async(&root.join("settings.db"))
+                .await
+                .expect("open settings database");
         let expected = canonicalize_settings(json!({
             "theme": "dark",
             "agentAssignments": {}
         }))
         .expect("canonical settings");
-        save_app_settings_for_database(&database, expected.clone()).expect("save sqlite settings");
+        save_app_settings_sqlx(database.pool(), expected.clone())
+            .await
+            .expect("save sqlite settings");
         std::fs::write(root.join(CONFIG_FILE_NAME), "{ invalid json")
             .expect("write corrupt legacy file");
 
-        let actual = read_app_settings_value_for_database(&database)
+        let actual = read_app_settings_value_sqlx(database.pool())
+            .await
             .expect("read settings from sqlite despite corrupt legacy file");
         assert_eq!(actual, expected);
 
         match previous_home {
-            Some(value) => std::env::set_var("ASSETIWEAVE_HOME", value),
-            None => std::env::remove_var("ASSETIWEAVE_HOME"),
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
         }
         std::fs::remove_dir_all(root).ok();
     }
@@ -839,5 +1038,310 @@ mod tests {
         assert!(settings["agentAssignments"]
             .get("prompt.optimization")
             .is_none());
+    }
+
+    #[test]
+    fn canonical_settings_handles_locale_validation_and_normalization() {
+        // Missing locale normalizes to null
+        let s = canonicalize_settings(json!({})).unwrap();
+        assert_eq!(s["locale"], serde_json::Value::Null);
+
+        // Explicit null stays null
+        let s = canonicalize_settings(json!({ "locale": null })).unwrap();
+        assert_eq!(s["locale"], serde_json::Value::Null);
+
+        // Valid locales are preserved
+        let s_zh = canonicalize_settings(json!({ "locale": "zh" })).unwrap();
+        assert_eq!(s_zh["locale"], "zh");
+        let s_en = canonicalize_settings(json!({ "locale": "en" })).unwrap();
+        assert_eq!(s_en["locale"], "en");
+
+        // Invalid locales return validation error
+        assert!(canonicalize_settings(json!({ "locale": "fr" })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": 123 })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": true })).is_err());
+        assert!(canonicalize_settings(json!({ "locale": {} })).is_err());
+    }
+
+    #[test]
+    fn canonical_settings_handles_column_layouts_validation_and_normalization() {
+        // Missing columnLayouts normalizes to empty map
+        let s = canonicalize_settings(json!({})).unwrap();
+        assert_eq!(s["columnLayouts"], json!({}));
+
+        // Valid map is preserved
+        let s = canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [1.0, 2.0, 1.0] }
+        }))
+        .unwrap();
+        assert_eq!(s["columnLayouts"]["explorer"], json!([1.0, 2.0, 1.0]));
+
+        // Invalid: not an object
+        assert!(canonicalize_settings(json!({ "columnLayouts": [1, 2] })).is_err());
+
+        // Invalid: < 2 items
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [1.0] }
+        }))
+        .is_err());
+
+        // Invalid: > 16 items
+        let seventeen = vec![1.0; 17];
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": seventeen }
+        }))
+        .is_err());
+
+        // Invalid: zero or negative
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [0.0, 1.0] }
+        }))
+        .is_err());
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": [-1.0, 2.0] }
+        }))
+        .is_err());
+        // Invalid: non-number
+        assert!(canonicalize_settings(json!({
+            "columnLayouts": { "explorer": ["1", "2"] }
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn canonical_settings_preserves_unknown_fields() {
+        let s = canonicalize_settings(json!({
+            "customUserKey": "customValue",
+            "nestedObject": { "a": 1 }
+        }))
+        .unwrap();
+        assert_eq!(s["customUserKey"], "customValue");
+        assert_eq!(s["nestedObject"]["a"], 1);
+        assert_eq!(s["locale"], serde_json::Value::Null);
+        assert_eq!(s["columnLayouts"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn sqlite_v3_to_v4_migration_upgrades_schema_version_and_populates_defaults() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE app_settings (settings_id TEXT PRIMARY KEY NOT NULL, schema_version INTEGER NOT NULL, settings_json TEXT NOT NULL, updated_at TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Seed a v3 row without locale or columnLayouts
+        store::save_app_settings_sqlx(&pool, 3, &json!({ "theme": "promptStudio" }))
+            .await
+            .unwrap();
+
+        // Load via load_or_import_app_settings_sqlx
+        let loaded = load_or_import_app_settings_sqlx(&pool).await.unwrap();
+        assert_eq!(loaded["theme"], "promptStudio");
+        assert_eq!(loaded["locale"], serde_json::Value::Null);
+        assert_eq!(loaded["columnLayouts"], json!({}));
+
+        // Verify stored row was upgraded to version 4
+        let (version, stored) = store::load_app_settings_sqlx(&pool).await.unwrap().unwrap();
+        assert_eq!(version, 4);
+        assert_eq!(stored["theme"], "promptStudio");
+        assert_eq!(stored["locale"], serde_json::Value::Null);
+        assert_eq!(stored["columnLayouts"], json!({}));
+    }
+
+    #[tokio::test]
+    async fn save_app_settings_preserves_and_returns_persisted_locale() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "assetiweave-settings-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("test.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .unwrap();
+
+        // 1. 先保存一个带有 locale: "en" 的设置
+        let res1 = save_app_settings_sqlx(db.pool(), json!({ "theme": "dark", "locale": "en" }))
+            .await
+            .unwrap();
+        assert_eq!(res1.settings["locale"], "en");
+
+        // 2. 模拟客户端提交不含 locale 或 locale 为 null 的更新（如只更新 theme）
+        let res2 =
+            save_app_settings_sqlx(db.pool(), json!({ "theme": "sunlight", "locale": null }))
+                .await
+                .unwrap();
+
+        // 3. 验证返回的响应中，locale 依然保留为 "en"，与实际数据库内容一致，而不是返回 null！
+        assert_eq!(res2.settings["theme"], "sunlight");
+        assert_eq!(
+            res2.settings["locale"], "en",
+            "Response must reflect persisted locale from database"
+        );
+
+        // 4. 再次读取数据库，验证数据库本身也是 "en"
+        let loaded = read_app_settings_value_sqlx(db.pool()).await.unwrap();
+        assert_eq!(loaded["theme"], "sunlight");
+        assert_eq!(loaded["locale"], "en");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn missing_known_fields_get_current_defaults() {
+        let settings = BackendSettings::from_value(&json!({})).expect("default backend settings");
+        assert!(settings.is_memory_generation_enabled());
+        assert!(settings.is_memory_usage_enabled());
+        assert!(settings.auto_full_sync_on_startup());
+        assert_eq!(settings.ai_runtime.cli, "opencode");
+        assert_eq!(settings.ai_runtime.model, None);
+        assert_eq!(settings.locale, None);
+        assert!(settings.column_layouts.is_empty());
+        assert!(settings.agent_assignments.is_empty());
+    }
+
+    #[test]
+    fn wrong_known_field_types_return_validation() {
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "memory": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "conversations": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "aiRuntime": 123 })),
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            BackendSettings::from_value(&json!({ "columnLayouts": "not_an_object" })),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn canonicalize_twice_is_identical() {
+        let raw = json!({
+            "theme": "dark",
+            "locale": "zh",
+            "customUnknown": { "nested": [1, 2, 3] },
+            "columnLayouts": { "nav": [1.0, 2.0] },
+            "conversations": { "autoFullSyncOnStartup": false }
+        });
+        let first = canonicalize_settings(raw).expect("first canonicalization");
+        let second = canonicalize_settings(first.clone()).expect("second canonicalization");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn v3_v4_migration_is_idempotent() {
+        let v3_payload = json!({
+            "agentCapabilityAssignments": {
+                "memory": "opencode",
+                "cardTranslation": "opencode"
+            },
+            "agentModels": {
+                "opencode": "default-model"
+            }
+        });
+        let first = canonicalize_settings(v3_payload).expect("v3 migration");
+        assert!(first.get("agentCapabilityAssignments").is_none());
+        assert!(first.get("agentModels").is_none());
+        assert!(first.get("agentAssignments").is_some());
+
+        let second = canonicalize_settings(first.clone()).expect("second pass");
+        assert_eq!(first, second);
+    }
+
+    #[tokio::test]
+    async fn unknown_top_level_and_nested_fields_survive_load_save_load() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "assetiweave-settings-roundtrip-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("roundtrip.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .unwrap();
+
+        let initial = json!({
+            "theme": "synthwave",
+            "unknownPlugin": { "enabled": true, "threshold": 42 },
+            "nested": { "deep": { "value": "preserved" } },
+            "locale": "en",
+            "conversations": { "autoFullSyncOnStartup": false }
+        });
+
+        let saved = save_app_settings_sqlx(db.pool(), initial.clone())
+            .await
+            .unwrap();
+        assert_eq!(saved.settings["theme"], "synthwave");
+        assert_eq!(saved.settings["unknownPlugin"]["threshold"], 42);
+        assert_eq!(saved.settings["nested"]["deep"]["value"], "preserved");
+
+        let reloaded = read_app_settings_value_sqlx(db.pool()).await.unwrap();
+        assert_eq!(reloaded["theme"], "synthwave");
+        assert_eq!(reloaded["unknownPlugin"]["threshold"], 42);
+        assert_eq!(reloaded["nested"]["deep"]["value"], "preserved");
+        assert_eq!(reloaded["locale"], "en");
+        assert_eq!(reloaded["conversations"]["autoFullSyncOnStartup"], false);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn sqlite_settings_ignore_corrupt_legacy_file_after_import() {
+        let _guard = settings_test_lock().lock().expect("settings test lock");
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-settings-corrupt-import-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).expect("create settings test root");
+        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        std::env::set_var(TEST_HOME_VAR, &root);
+
+        let db_path = root.join("app.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .expect("open db");
+
+        let expected_settings = canonicalize_settings(json!({
+            "theme": "synthwave",
+            "locale": "zh",
+            "memory": {
+                "generationEnabled": true,
+                "usageEnabled": false
+            }
+        }))
+        .expect("canonicalize");
+
+        save_app_settings_sqlx(db.pool(), expected_settings.clone())
+            .await
+            .expect("save sqlite settings");
+
+        std::fs::write(root.join(CONFIG_FILE_NAME), "{ this is corrupt json !!!")
+            .expect("write corrupt legacy file");
+
+        let service = crate::backend::application::AppService::open_with_db_path(db_path.clone())
+            .await
+            .expect("open service despite corrupt legacy file");
+
+        let backend_settings = service
+            .backend_settings()
+            .expect("read backend settings from sqlite");
+        assert!(backend_settings.is_memory_generation_enabled());
+        assert!(!backend_settings.is_memory_usage_enabled());
+
+        match previous_home {
+            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+            None => std::env::remove_var(TEST_HOME_VAR),
+        }
+        std::fs::remove_dir_all(root).ok();
     }
 }

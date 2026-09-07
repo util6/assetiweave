@@ -21,7 +21,8 @@ import type { ConversationContentController } from "./useConversationContentCont
 import type {
   ConversationContentCardColorSettings,
   ResolvedConversationTranslationSettings,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
+
 import { conversationIdFragment } from "../../utils/conversationIds";
 import { MarkdownContent } from "./ConversationMarkdown";
 import type { ConversationCommandProjection } from "../../services/conversationCommandProjection";
@@ -38,11 +39,15 @@ export function buildConversationTurnPresentations(
   question: ConversationQuestionDetail,
   commandProjections: readonly ConversationCommandProjection[] = [],
 ): ConversationTurnPresentation[] {
-  const projectionByPartId = new Map(commandProjections.map((projection) => [projection.part_id, projection]));
+  const projectionByPartId = new Map(
+    commandProjections.map((projection) => [projection.part_id, projection]),
+  );
   return question.turns.map((turn) => {
     const displayNodes = applyConversationCommandProjections(
       buildConversationDisplayNodesFromNodes(
-        question.projected_content_nodes.filter((node) => node.turn_id === turn.id),
+        question.projected_content_nodes.filter(
+          (node) => node.turn_id === turn.id,
+        ),
       ),
       projectionByPartId,
     );
@@ -64,21 +69,30 @@ function applyConversationCommandProjections(
   return nodes.flatMap((node): ConversationDisplayNode[] => {
     if (node.type === "card") {
       if (node.block.type !== "command") return [node];
-      const projection = node.block.partId ? projectionByPartId.get(node.block.partId) : undefined;
+      const projection = node.block.partId
+        ? projectionByPartId.get(node.block.partId)
+        : undefined;
       return projection
-        ? projectCommandBlock(node.block, projection).map((block) => ({ ...node, block }))
+        ? projectCommandBlock(node.block, projection).map((block) => ({
+            ...node,
+            block,
+          }))
         : [node];
     }
 
     const commands = node.commands.flatMap((command) => {
-      const projection = command.partId ? projectionByPartId.get(command.partId) : undefined;
+      const projection = command.partId
+        ? projectionByPartId.get(command.partId)
+        : undefined;
       if (!projection) return [command];
       return projectCommandBlock(command, projection);
     });
-    return [{
-      ...node,
-      commands,
-    }];
+    return [
+      {
+        ...node,
+        commands,
+      },
+    ];
   });
 }
 
@@ -90,9 +104,18 @@ function projectCommandBlock(
     ...rawBlock,
     id: `${rawBlock.partId ?? rawBlock.id}::display:${node.display_order}`,
     commandLabel: node.command_label,
-    legacyAnchorIds: index === 0
-      ? Array.from(new Set([rawBlock.id, rawBlock.partId, ...(rawBlock.legacyAnchorIds ?? [])].filter(Boolean) as string[]))
-      : [],
+    legacyAnchorIds:
+      index === 0
+        ? Array.from(
+            new Set(
+              [
+                rawBlock.id,
+                rawBlock.partId,
+                ...(rawBlock.legacyAnchorIds ?? []),
+              ].filter(Boolean) as string[],
+            ),
+          )
+        : [],
     text: node.command,
   }));
 }
@@ -100,13 +123,15 @@ function projectCommandBlock(
 export function collectConversationTurnBlocks(
   models: readonly ConversationTurnPresentation[],
 ): ConversationContentBlock[] {
-  return models.flatMap((model) => (
+  return models.flatMap((model) =>
     model.displayNodes
-      ? model.displayNodes.flatMap((node) => node.type === "card"
-        ? [node.block]
-        : [...node.commands, ...node.results])
-      : model.blocks
-  ));
+      ? model.displayNodes.flatMap((node) =>
+          node.type === "card"
+            ? [node.block]
+            : [...node.commands, ...node.results],
+        )
+      : model.blocks,
+  );
 }
 
 export function buildConversationBlockTurnIndex(
@@ -117,18 +142,21 @@ export function buildConversationBlockTurnIndex(
     index.set(model.promptBlockId, model.turn.id);
     for (const block of model.blocks) {
       index.set(block.id, model.turn.id);
-      for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);
+      for (const legacyAnchorId of block.legacyAnchorIds ?? [])
+        index.set(legacyAnchorId, model.turn.id);
     }
     for (const node of model.displayNodes ?? []) {
       if (node.type === "card") {
         index.set(node.block.id, model.turn.id);
-        for (const legacyAnchorId of node.block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);
+        for (const legacyAnchorId of node.block.legacyAnchorIds ?? [])
+          index.set(legacyAnchorId, model.turn.id);
         continue;
       }
       index.set(node.sourceExecutionId, model.turn.id);
       for (const block of [...node.commands, ...node.results]) {
         index.set(block.id, model.turn.id);
-        for (const legacyAnchorId of block.legacyAnchorIds ?? []) index.set(legacyAnchorId, model.turn.id);
+        for (const legacyAnchorId of block.legacyAnchorIds ?? [])
+          index.set(legacyAnchorId, model.turn.id);
       }
     }
   }
@@ -168,30 +196,43 @@ export const ConversationTurn = memo(function ConversationTurn({
   const copiedTimerRef = useRef<number | null>(null);
   const promptHighlighted = activeBlockId === model.promptBlockId;
 
-  useEffect(() => () => {
-    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current !== null)
+        window.clearTimeout(copiedTimerRef.current);
+    },
+    [],
+  );
 
   async function copyPrompt() {
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API is unavailable");
+      if (!navigator.clipboard?.writeText)
+        throw new Error("Clipboard API is unavailable");
       await navigator.clipboard.writeText(model.turn.user_text);
-      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+      if (copiedTimerRef.current !== null)
+        window.clearTimeout(copiedTimerRef.current);
       setCopied(true);
       copiedTimerRef.current = window.setTimeout(() => {
         setCopied(false);
         copiedTimerRef.current = null;
       }, 1400);
     } catch (error) {
-      onCopyError?.(t("conversation.content.copyFailed", { message: errorMessage(error) }));
+      onCopyError?.(
+        t("conversation.content.copyFailed", { message: errorMessage(error) }),
+      );
     }
   }
 
   return (
-    <section className="conversation-turn mb-6" data-conversation-turn-id={model.turn.id}>
+    <section
+      className="conversation-turn mb-6"
+      data-conversation-turn-id={model.turn.id}
+    >
       <div
         className={`conversation-prompt-block scroll-mt-32 rounded-xl border border-primary/30 bg-primary/[0.055] px-4 py-3 transition-shadow ${
-          promptHighlighted ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]" : ""
+          promptHighlighted
+            ? "ring-2 ring-primary/70 shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)]"
+            : ""
         }`}
         data-conversation-card-id={model.promptBlockId}
         id={conversationCardDomId(model.promptBlockId)}
@@ -215,13 +256,19 @@ export const ConversationTurn = memo(function ConversationTurn({
                 onClick={() => onSplit(model.turn.id)}
               />
             ) : null}
-            <PromptCopyButton copied={copied} onClick={() => void copyPrompt()} t={t} />
+            <PromptCopyButton
+              copied={copied}
+              onClick={() => void copyPrompt()}
+              t={t}
+            />
           </div>
         </div>
         <MarkdownContent value={model.turn.user_text} />
       </div>
       <div className="mt-3 pl-3">
-        <h3 className="mb-3 text-label-caps text-on-surface-muted">{t("conversation.question.parts")}</h3>
+        <h3 className="mb-3 text-label-caps text-on-surface-muted">
+          {t("conversation.question.parts")}
+        </h3>
         {!model.hasContent ? (
           <EmptyPanel>{t("conversation.markdown.empty")}</EmptyPanel>
         ) : (
@@ -244,8 +291,18 @@ export const ConversationTurn = memo(function ConversationTurn({
   );
 });
 
-function PromptCopyButton({ copied, onClick, t }: { copied: boolean; onClick: () => void; t: Translator }) {
-  const label = copied ? t("conversation.content.copied") : t("conversation.question.copyPrompt");
+function PromptCopyButton({
+  copied,
+  onClick,
+  t,
+}: {
+  copied: boolean;
+  onClick: () => void;
+  t: Translator;
+}) {
+  const label = copied
+    ? t("conversation.content.copied")
+    : t("conversation.question.copyPrompt");
   return (
     <button
       aria-label={label}
@@ -254,12 +311,24 @@ function PromptCopyButton({ copied, onClick, t }: { copied: boolean; onClick: ()
       title={label}
       type="button"
     >
-      {copied ? <Check className="size-[1em]" /> : <Copy className="size-[1em]" />}
+      {copied ? (
+        <Check className="size-[1em]" />
+      ) : (
+        <Copy className="size-[1em]" />
+      )}
     </button>
   );
 }
 
-function ToolbarTextButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+function ToolbarTextButton({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
   return (
     <button
       aria-label={label}
@@ -275,7 +344,11 @@ function ToolbarTextButton({ icon, label, onClick }: { icon: ReactNode; label: s
 }
 
 function EmptyPanel({ children }: { children: ReactNode }) {
-  return <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">{children}</div>;
+  return (
+    <div className="conversation-empty-state m-2 rounded-2xl p-6 text-center text-body-sm text-on-surface-variant">
+      {children}
+    </div>
+  );
 }
 
 function errorMessage(error: unknown) {

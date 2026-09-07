@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Copy, FileText, FolderOpen, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  Copy,
+  FileText,
+  FolderOpen,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
-import { getLogSnapshot, openLogDirectory, writeOperationLog, type LogSnapshot } from "../../services/logService";
+import {
+  getLogSnapshot,
+  openLogDirectory,
+  writeOperationLog,
+  type LogSnapshot,
+} from "../../services/logService";
 import {
   clampLogLineLimit,
   DEFAULT_LOG_LINE_LIMIT,
@@ -38,7 +50,9 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
   );
 
   const [lineLimit, setLineLimit] = useState(DEFAULT_LOG_LINE_LIMIT);
-  const [lineLimitDraft, setLineLimitDraft] = useState(String(DEFAULT_LOG_LINE_LIMIT));
+  const [lineLimitDraft, setLineLimitDraft] = useState(
+    String(DEFAULT_LOG_LINE_LIMIT),
+  );
   const [selectedFileName, setSelectedFileName] = useState("");
   const [levelFilter, setLevelFilter] = useState<LogLevelFilter>("ALL");
   const [snapshot, setSnapshot] = useState<LogSnapshot | null>(null);
@@ -90,7 +104,10 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
           setLoading(true);
         }
 
-        const next = await getLogSnapshot(selectedFileName || undefined, lineLimit);
+        const next = await getLogSnapshot(
+          selectedFileName || undefined,
+          lineLimit,
+        );
         setSnapshot(next);
         setError("");
         setRawContent(next.content);
@@ -176,18 +193,28 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
   async function handleCopyLogs() {
     try {
       await navigator.clipboard.writeText(displayedContent);
-      await writeOperationLog("INFO", "log_viewer.copy_logs", "复制日志内容成功", {
-        file: activeFileName,
-        level: levelFilter,
-        copied_chars: displayedContent.length,
-      }).catch(() => undefined);
+      await writeOperationLog(
+        "INFO",
+        "log_viewer.copy_logs",
+        "复制日志内容成功",
+        {
+          file: activeFileName,
+          level: levelFilter,
+          copied_chars: displayedContent.length,
+        },
+      ).catch(() => undefined);
       setCopied(true);
       window.setTimeout(() => setCopied(false), FEEDBACK_DURATION_MS);
     } catch (err) {
-      await writeOperationLog("ERROR", "log_viewer.copy_logs", "复制日志内容失败", {
-        file: activeFileName,
-        error: String(err),
-      }).catch(() => undefined);
+      await writeOperationLog(
+        "ERROR",
+        "log_viewer.copy_logs",
+        "复制日志内容失败",
+        {
+          file: activeFileName,
+          error: String(err),
+        },
+      ).catch(() => undefined);
       setError(String(err));
     }
   }
@@ -199,17 +226,27 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
 
     try {
       await navigator.clipboard.writeText(snapshot.log_file_path);
-      await writeOperationLog("INFO", "log_viewer.copy_path", "复制日志文件路径成功", {
-        file: activeFileName,
-        path: snapshot.log_file_path,
-      }).catch(() => undefined);
+      await writeOperationLog(
+        "INFO",
+        "log_viewer.copy_path",
+        "复制日志文件路径成功",
+        {
+          file: activeFileName,
+          path: snapshot.log_file_path,
+        },
+      ).catch(() => undefined);
       setPathCopied(true);
       window.setTimeout(() => setPathCopied(false), FEEDBACK_DURATION_MS);
     } catch (err) {
-      await writeOperationLog("ERROR", "log_viewer.copy_path", "复制日志文件路径失败", {
-        file: activeFileName,
-        error: String(err),
-      }).catch(() => undefined);
+      await writeOperationLog(
+        "ERROR",
+        "log_viewer.copy_path",
+        "复制日志文件路径失败",
+        {
+          file: activeFileName,
+          error: String(err),
+        },
+      ).catch(() => undefined);
       setError(String(err));
     }
   }
@@ -241,21 +278,43 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
           <Button onClick={onClose} size="sm" type="button" variant="ghost">
             {t("common.close")}
           </Button>
-          <Button onClick={() => void handleManualRefresh()} size="sm" type="button" variant="outline">
+          <Button
+            onClick={() => void handleManualRefresh()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             <RefreshCw size={15} />
             {t("common.refresh")}
           </Button>
-          <Button onClick={handleClearOutput} size="sm" type="button" variant="outline">
+          <Button
+            onClick={handleClearOutput}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             <Trash2 size={15} />
             {t("logViewer.clear")}
           </Button>
-          <Button onClick={() => void handleOpenDir()} size="sm" type="button" variant="outline">
+          <Button
+            onClick={() => void handleOpenDir()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             <FolderOpen size={15} />
             {t("common.open")} {logDirLabel}
           </Button>
-          <Button onClick={() => void handleCopyPath()} size="sm" type="button" variant="outline">
+          <Button
+            onClick={() => void handleCopyPath()}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             <Copy size={15} />
-            {pathCopied ? t("common.success") : `${t("common.copy")} ${t("logViewer.filePath")}`}
+            {pathCopied
+              ? t("common.success")
+              : `${t("common.copy")} ${t("logViewer.filePath")}`}
           </Button>
           <Button onClick={() => void handleCopyLogs()} size="sm" type="button">
             <Copy size={15} />
@@ -298,7 +357,11 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
         </div>
         <div className="log-viewer-meta-item">
           <FolderOpen size={14} />
-          <span className="log-viewer-path-text">{snapshot?.log_dir_path ? abbreviateHomePath(snapshot.log_dir_path) : "-"}</span>
+          <span className="log-viewer-path-text">
+            {snapshot?.log_dir_path
+              ? abbreviateHomePath(snapshot.log_dir_path)
+              : "-"}
+          </span>
         </div>
         <div className="log-viewer-meta-item">
           <RefreshCw size={14} />
@@ -306,12 +369,16 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
         </div>
         <div className="log-viewer-toolbar">
           <div className="log-viewer-filter-wrap">
-            <span className="log-viewer-line-limit-label">{t("logViewer.levelLabel")}</span>
+            <span className="log-viewer-line-limit-label">
+              {t("logViewer.levelLabel")}
+            </span>
             <div className="log-viewer-select-wrap log-viewer-level-select-wrap">
               <select
                 className="log-viewer-select"
                 value={levelFilter}
-                onChange={(event) => setLevelFilter(event.target.value as LogLevelFilter)}
+                onChange={(event) =>
+                  setLevelFilter(event.target.value as LogLevelFilter)
+                }
                 aria-label={t("logViewer.levelLabel")}
               >
                 {levelOptions.map((option) => (
@@ -324,7 +391,9 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
             </div>
           </div>
           <div className="log-viewer-line-limit-wrap">
-            <span className="log-viewer-line-limit-label">{t("logViewer.lineLimit", { count: lineLimit })}</span>
+            <span className="log-viewer-line-limit-label">
+              {t("logViewer.lineLimit", { count: lineLimit })}
+            </span>
             <input
               className="log-viewer-line-limit-input"
               type="number"
@@ -348,7 +417,8 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
         ref={viewRef}
         onScroll={(event) => {
           const target = event.currentTarget;
-          const bottomDistance = target.scrollHeight - target.scrollTop - target.clientHeight;
+          const bottomDistance =
+            target.scrollHeight - target.scrollTop - target.clientHeight;
           shouldStickToBottomRef.current = bottomDistance <= 24;
         }}
       >
@@ -358,7 +428,9 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
           <pre>{displayedContent}</pre>
         ) : (
           <div className="log-viewer-placeholder">
-            {hasFilteredOutContent ? t("logViewer.noMatches") : t("common.none")}
+            {hasFilteredOutContent
+              ? t("logViewer.noMatches")
+              : t("common.none")}
           </div>
         )}
       </div>

@@ -18,7 +18,9 @@ const EMPTY_SESSION: SessionSnapshot = {
   items: [],
 };
 
-export function createTeamSessionStoreState(teamId: string | null = null): TeamSessionStoreState {
+export function createTeamSessionStoreState(
+  teamId: string | null = null,
+): TeamSessionStoreState {
   return { team_id: teamId, members: {} };
 }
 
@@ -31,15 +33,24 @@ export function applyTeamMemberStreamSnapshot(
   }
 
   const previous = current.members[snapshot.member_id];
-  const execution = mergeExecution(previous?.executions[snapshot.execution_id], snapshot);
+  const execution = mergeExecution(
+    previous?.executions[snapshot.execution_id],
+    snapshot,
+  );
   const executions = retainExecutions({
     ...(previous?.executions ?? {}),
     [snapshot.execution_id]: execution,
   });
-  const member = buildMemberProjection(snapshot.team_id, snapshot.member_id, executions);
-  const receivedNewLiveExecution = !snapshot.replay
-    && (!previous?.executions[snapshot.execution_id]
-      || execution.sequence > (previous.executions[snapshot.execution_id]?.sequence ?? 0));
+  const member = buildMemberProjection(
+    snapshot.team_id,
+    snapshot.member_id,
+    executions,
+  );
+  const receivedNewLiveExecution =
+    !snapshot.replay &&
+    (!previous?.executions[snapshot.execution_id] ||
+      execution.sequence >
+        (previous.executions[snapshot.execution_id]?.sequence ?? 0));
   member.unread = (previous?.unread ?? false) || receivedNewLiveExecution;
 
   return {
@@ -103,9 +114,9 @@ export function mergeTeamSessionState(
   incoming: TeamSessionStoreState,
 ): TeamSessionStoreState {
   if (
-    current.team_id !== null
-    && incoming.team_id !== null
-    && current.team_id !== incoming.team_id
+    current.team_id !== null &&
+    incoming.team_id !== null &&
+    current.team_id !== incoming.team_id
   ) {
     return current;
   }
@@ -163,7 +174,11 @@ function mergeExecution(
     team_id: incoming.team_id,
     member_id: incoming.member_id,
     execution_id: incoming.execution_id,
-    sequence: Math.max(current?.sequence ?? 0, incoming.sequence, incoming.stream.revision),
+    sequence: Math.max(
+      current?.sequence ?? 0,
+      incoming.sequence,
+      incoming.stream.revision,
+    ),
     replay: incoming.replay,
     task: mergeTaskSnapshot(current?.task, incoming.task),
     stream: mergeSessionSnapshot(current?.stream, incoming.stream),
@@ -177,11 +192,13 @@ function mergeSessionSnapshot(
   if (!current) return boundedSessionSnapshot(incoming);
   if (incoming.revision < current.revision) return current;
 
-  const isEmptyReset = incoming.revision > current.revision
-    && incoming.event_count === 0
-    && incoming.items.length === 0;
-  const isAuthoritativeSnapshot = incoming.revision > current.revision
-    && (incoming.event_count >= current.event_count || isEmptyReset);
+  const isEmptyReset =
+    incoming.revision > current.revision &&
+    incoming.event_count === 0 &&
+    incoming.items.length === 0;
+  const isAuthoritativeSnapshot =
+    incoming.revision > current.revision &&
+    (incoming.event_count >= current.event_count || isEmptyReset);
   const items = isAuthoritativeSnapshot
     ? incoming.items
     : mergeSessionItems(current.items, incoming.items);
@@ -205,25 +222,28 @@ function shouldReplaceTask(
   current: TeamMemberTaskSnapshot,
   incoming: TeamMemberTaskSnapshot,
 ): boolean {
-  const stateOrder = (state: TeamMemberTaskSnapshot["state"]) => ({
-    Pending: 0,
-    Running: 1,
-    Cancelling: 2,
-    Succeeded: 3,
-    Failed: 3,
-    Canceled: 3,
-  }[state]);
+  const stateOrder = (state: TeamMemberTaskSnapshot["state"]) =>
+    ({
+      Pending: 0,
+      Running: 1,
+      Cancelling: 2,
+      Succeeded: 3,
+      Failed: 3,
+      Canceled: 3,
+    })[state];
   const currentOrder = stateOrder(current.state);
   const incomingOrder = stateOrder(incoming.state);
   if (incomingOrder !== currentOrder) return incomingOrder > currentOrder;
 
   const currentFinishedAt = current.finished_at ?? "";
   const incomingFinishedAt = incoming.finished_at ?? "";
-  if (incomingFinishedAt !== currentFinishedAt) return incomingFinishedAt > currentFinishedAt;
+  if (incomingFinishedAt !== currentFinishedAt)
+    return incomingFinishedAt > currentFinishedAt;
 
   const currentProgress = current.progress?.current ?? 0;
   const incomingProgress = incoming.progress?.current ?? 0;
-  if (incomingProgress !== currentProgress) return incomingProgress > currentProgress;
+  if (incomingProgress !== currentProgress)
+    return incomingProgress > currentProgress;
   if (incoming.result !== null && current.result === null) return true;
   if (incoming.error !== null && current.error === null) return true;
   return false;
@@ -293,8 +313,14 @@ function deriveRestoreState(
       ? { state: "ready", errorCode: null }
       : { state: "partial", errorCode: null };
   }
-  if (latestReplay.task.state === "Failed" || latestReplay.task.state === "Canceled") {
-    return { state: "unavailable", errorCode: latestReplay.task.error?.code ?? null };
+  if (
+    latestReplay.task.state === "Failed" ||
+    latestReplay.task.state === "Canceled"
+  ) {
+    return {
+      state: "unavailable",
+      errorCode: latestReplay.task.error?.code ?? null,
+    };
   }
   return { state: "restoring", errorCode: null };
 }
@@ -302,8 +328,9 @@ function deriveRestoreState(
 function retainExecutions(
   executions: Record<string, TeamMemberExecutionProjection>,
 ): Record<string, TeamMemberExecutionProjection> {
-  const entries = Object.entries(executions)
-    .sort(([, left], [, right]) => compareExecutions(left, right));
+  const entries = Object.entries(executions).sort(([, left], [, right]) =>
+    compareExecutions(left, right),
+  );
   return Object.fromEntries(entries.slice(-MAX_TEAM_SESSION_EXECUTIONS));
 }
 
@@ -311,10 +338,12 @@ function mergeSessionItems(
   current: SessionItemSnapshot[],
   incoming: SessionItemSnapshot[],
 ): SessionItemSnapshot[] {
-  const byIdentity = new Map(current.map((item) => {
-    const normalized = sanitizeSessionItem(item);
-    return [itemIdentity(normalized), normalized];
-  }));
+  const byIdentity = new Map(
+    current.map((item) => {
+      const normalized = sanitizeSessionItem(item);
+      return [itemIdentity(normalized), normalized];
+    }),
+  );
   for (const rawItem of incoming) {
     const item = sanitizeSessionItem(rawItem);
     const key = itemIdentity(item);
@@ -341,10 +370,16 @@ function boundedSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
   };
 }
 
-function shouldReplaceItem(current: SessionItemSnapshot, incoming: SessionItemSnapshot): boolean {
-  if (incoming.sequence !== current.sequence) return incoming.sequence > current.sequence;
-  if (incoming.delivery !== current.delivery) return incoming.delivery === "live";
-  if (incoming.state !== current.state) return itemStateOrder(incoming.state) > itemStateOrder(current.state);
+function shouldReplaceItem(
+  current: SessionItemSnapshot,
+  incoming: SessionItemSnapshot,
+): boolean {
+  if (incoming.sequence !== current.sequence)
+    return incoming.sequence > current.sequence;
+  if (incoming.delivery !== current.delivery)
+    return incoming.delivery === "live";
+  if (incoming.state !== current.state)
+    return itemStateOrder(incoming.state) > itemStateOrder(current.state);
   return true;
 }
 
@@ -359,8 +394,14 @@ function itemStateOrder(state: SessionItemSnapshot["state"]): number {
   }[state];
 }
 
-function compareItems(left: SessionItemSnapshot, right: SessionItemSnapshot): number {
-  return left.sequence - right.sequence || itemIdentity(left).localeCompare(itemIdentity(right));
+function compareItems(
+  left: SessionItemSnapshot,
+  right: SessionItemSnapshot,
+): number {
+  return (
+    left.sequence - right.sequence ||
+    itemIdentity(left).localeCompare(itemIdentity(right))
+  );
 }
 
 function itemIdentity(item: SessionItemSnapshot): string {
@@ -378,18 +419,26 @@ function compareExecutions(
   left: TeamMemberExecutionProjection,
   right: TeamMemberExecutionProjection,
 ): number {
-  return left.task.started_at.localeCompare(right.task.started_at)
-    || left.sequence - right.sequence
-    || left.execution_id.localeCompare(right.execution_id);
+  return (
+    left.task.started_at.localeCompare(right.task.started_at) ||
+    left.sequence - right.sequence ||
+    left.execution_id.localeCompare(right.execution_id)
+  );
 }
 
 function selectCurrentExecution(
   executions: TeamMemberExecutionProjection[],
 ): TeamMemberExecutionProjection | undefined {
   const active = executions.filter((execution) => isActiveTask(execution.task));
-  return [...(active.length > 0 ? active : executions)].sort(compareExecutions).slice(-1)[0];
+  return [...(active.length > 0 ? active : executions)]
+    .sort(compareExecutions)
+    .slice(-1)[0];
 }
 
 function isActiveTask(task: TeamMemberTaskSnapshot): boolean {
-  return task.state === "Pending" || task.state === "Running" || task.state === "Cancelling";
+  return (
+    task.state === "Pending" ||
+    task.state === "Running" ||
+    task.state === "Cancelling"
+  );
 }

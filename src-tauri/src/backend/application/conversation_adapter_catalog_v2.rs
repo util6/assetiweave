@@ -15,7 +15,7 @@ const DEFAULT_CATALOG_V2_URL: &str =
 const CATALOG_CACHE_MAX_AGE_HOURS: i64 = 24;
 
 impl AppService {
-    pub(super) fn install_conversation_adapter_package_release(
+    pub(super) async fn install_conversation_adapter_package_release(
         &self,
         params: ConversationAdapterPackageInstallParams,
     ) -> AppResult<Value> {
@@ -35,13 +35,15 @@ impl AppService {
             ))
         })?;
         let catalog_url = normalized_catalog_v2_url(params.catalog_url.as_deref());
-        let releases = self.list_conversation_adapter_package_releases(
-            ConversationAdapterPackageReleaseListParams {
-                catalog_url: Some(catalog_url.clone()),
-                package_id: params.package_id.clone(),
-                refresh: false,
-            },
-        )?;
+        let releases = self
+            .list_conversation_adapter_package_releases(
+                ConversationAdapterPackageReleaseListParams {
+                    catalog_url: Some(catalog_url.clone()),
+                    package_id: params.package_id.clone(),
+                    refresh: false,
+                },
+            )
+            .await?;
         let release = releases
             .into_iter()
             .find(|release| release.version == version)
@@ -87,9 +89,10 @@ impl AppService {
             params.dry_run,
             Some(&catalog_url),
         )
+        .await
     }
 
-    pub(crate) fn list_conversation_adapter_package_releases(
+    pub(crate) async fn list_conversation_adapter_package_releases(
         &self,
         params: ConversationAdapterPackageReleaseListParams,
     ) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
@@ -100,28 +103,31 @@ impl AppService {
                 "conversation adapter package release list requires package_id".to_string(),
             ));
         }
-        let mut releases =
-            self.load_cached_conversation_adapter_catalog_releases(&catalog_url, Some(package_id))?;
+        let mut releases = self
+            .load_cached_conversation_adapter_catalog_releases(&catalog_url, Some(package_id))
+            .await?;
         if params.refresh || releases.is_empty() || catalog_cache_is_stale(&releases) {
             self.refresh_conversation_adapter_catalogs(ConversationAdapterCatalogRefreshParams {
                 catalog_url: Some(catalog_url.clone()),
                 force: params.refresh,
-            })?;
-            releases = self.load_cached_conversation_adapter_catalog_releases(
-                &catalog_url,
-                Some(package_id),
-            )?;
+            })
+            .await?;
+            releases = self
+                .load_cached_conversation_adapter_catalog_releases(&catalog_url, Some(package_id))
+                .await?;
         }
         sort_releases_newest_first(&mut releases);
         Ok(releases)
     }
 
-    pub(crate) fn refresh_conversation_adapter_catalogs(
+    pub(crate) async fn refresh_conversation_adapter_catalogs(
         &self,
         params: ConversationAdapterCatalogRefreshParams,
     ) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
         let catalog_url = normalized_catalog_v2_url(params.catalog_url.as_deref());
-        let cached = self.load_cached_conversation_adapter_catalog_releases(&catalog_url, None)?;
+        let cached = self
+            .load_cached_conversation_adapter_catalog_releases(&catalog_url, None)
+            .await?;
         if !params.force && !cached.is_empty() && !catalog_cache_is_stale(&cached) {
             return Ok(cached);
         }
@@ -188,32 +194,26 @@ impl AppService {
         }
 
         let pool = self.db.pool().clone();
-        let releases_to_save = releases.clone();
-        self.db.block_on(async move {
-            for release in &releases_to_save {
-                crate::backend::store::upsert_conversation_adapter_catalog_release_sqlx(
-                    &pool, release,
-                )
-                .await
-                .map_err(|error| error)?;
-            }
-            Ok::<(), AppError>(())
-        })?;
+        for release in &releases {
+            crate::backend::store::upsert_conversation_adapter_catalog_release_sqlx(&pool, release)
+                .await?;
+        }
         sort_releases_newest_first(&mut releases);
         Ok(releases)
     }
 
-    pub(crate) fn check_conversation_adapter_package_updates(
+    pub(crate) async fn check_conversation_adapter_package_updates(
         &self,
         params: ConversationAdapterPackageUpdateCheckParams,
     ) -> AppResult<Vec<ConversationAdapterPackageUpdateStatus>> {
         let catalog_url = normalized_catalog_v2_url(params.catalog_url.as_deref());
-        let releases =
-            self.refresh_conversation_adapter_catalogs(ConversationAdapterCatalogRefreshParams {
+        let releases = self
+            .refresh_conversation_adapter_catalogs(ConversationAdapterCatalogRefreshParams {
                 catalog_url: Some(catalog_url),
                 force: params.force,
-            })?;
-        let mut packages = self.load_conversation_adapter_packages()?;
+            })
+            .await?;
+        let mut packages = self.load_conversation_adapter_packages().await?;
         let now = Utc::now().to_rfc3339();
         let mut statuses = Vec::new();
         for package in &mut packages {
@@ -230,7 +230,7 @@ impl AppService {
             {
                 package.latest_version = None;
                 package.last_checked_at = Some(now.clone());
-                self.save_conversation_adapter_package(package)?;
+                self.save_conversation_adapter_package(package).await?;
                 statuses.push(ConversationAdapterPackageUpdateStatus {
                     package_id: package.package_id.clone(),
                     current_version: package.version.clone(),
@@ -258,7 +258,7 @@ impl AppService {
                 .is_some_and(|release| semver_is_newer(&release.version, &package.version));
             package.latest_version = latest.as_ref().map(|release| release.version.clone());
             package.last_checked_at = Some(now.clone());
-            self.save_conversation_adapter_package(package)?;
+            self.save_conversation_adapter_package(package).await?;
             statuses.push(ConversationAdapterPackageUpdateStatus {
                 package_id: package.package_id.clone(),
                 current_version: package.version.clone(),
@@ -269,13 +269,14 @@ impl AppService {
         Ok(statuses)
     }
 
-    pub(crate) fn set_conversation_adapter_package_update_policy(
+    pub(crate) async fn set_conversation_adapter_package_update_policy(
         &self,
         params: ConversationAdapterPackageUpdatePolicyParams,
     ) -> AppResult<crate::backend::models::ConversationAdapterPackage> {
         let package_id = params.package_id.trim();
         let mut package = self
-            .load_conversation_adapter_package(package_id)?
+            .load_conversation_adapter_package(package_id)
+            .await?
             .ok_or_else(|| {
                 AppError::NotFound(format!(
                     "conversation adapter package not found: {package_id}"
@@ -292,28 +293,24 @@ impl AppService {
         }
         package.update_policy = params.update_policy;
         package.updated_at = Utc::now().to_rfc3339();
-        self.save_conversation_adapter_package(&package)?;
+        self.save_conversation_adapter_package(&package).await?;
         Ok(package)
     }
 
-    fn load_cached_conversation_adapter_catalog_releases(
+    async fn load_cached_conversation_adapter_catalog_releases(
         &self,
         catalog_url: &str,
         package_id: Option<&str>,
     ) -> AppResult<Vec<ConversationAdapterCatalogRelease>> {
         let pool = self.db.pool().clone();
         let catalog_url = catalog_url.to_string();
-        let package_id = package_id.map(str::to_string);
-        self.db
-            .block_on(async move {
-                crate::backend::store::list_conversation_adapter_catalog_releases_sqlx(
-                    &pool,
-                    &catalog_url,
-                    package_id.as_deref(),
-                )
-                .await
-            })
-            .map_err(|error| error)
+        crate::backend::store::list_conversation_adapter_catalog_releases_sqlx(
+            &pool,
+            &catalog_url,
+            package_id,
+        )
+        .await
+        .map_err(|error| error)
     }
 }
 
@@ -449,26 +446,49 @@ fn fetch_catalog_document(url: &str, etag: Option<&str>) -> AppResult<CatalogFet
                 ))
             });
     }
-    let mut request = ureq::get(url).set(
-        "User-Agent",
-        "AssetIWeave/0.5 conversation-adapter-catalog-v2",
+    let client = crate::backend::http_client::shared_http_client()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static(
+            "AssetIWeave/0.5 conversation-adapter-catalog-v2",
+        ),
     );
     if let Some(etag) = etag {
-        request = request.set("If-None-Match", etag);
+        headers.insert(
+            reqwest::header::IF_NONE_MATCH,
+            reqwest::header::HeaderValue::from_str(etag).map_err(AppError::external)?,
+        );
     }
-    match request.call() {
-        Ok(response) => {
-            let etag = response.header("ETag").map(str::to_string);
-            let text = response.into_string().map_err(|error| {
-                AppError::External(format!("Catalog v2 response was not text: {error}"))
-            })?;
-            Ok(CatalogFetchResult::Text { text, etag })
-        }
-        Err(ureq::Error::Status(304, _)) => Ok(CatalogFetchResult::NotModified),
-        Err(error) => Err(AppError::External(format!(
+    let response = crate::backend::http_client::get_with_redirects(
+        &client,
+        url,
+        headers,
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|error| {
+        AppError::External(format!(
             "conversation adapter Catalog v2 request failed: {error}"
-        ))),
+        ))
+    })?;
+    if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(CatalogFetchResult::NotModified);
     }
+    let response = response.error_for_status().map_err(|error| {
+        AppError::External(format!(
+            "conversation adapter Catalog v2 request failed: {error}"
+        ))
+    })?;
+    let etag = response
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let text = crate::backend::http_client::read_response_text_with_limit(
+        response,
+        crate::backend::http_client::DEFAULT_MAX_TEXT_RESPONSE_BYTES,
+    )?;
+    Ok(CatalogFetchResult::Text { text, etag })
 }
 
 fn normalized_catalog_v2_url(value: Option<&str>) -> String {
@@ -714,11 +734,13 @@ mod tests {
         assert!(!semver_is_newer("1.0.0", "1.0.0"));
     }
 
-    #[test]
-    fn local_catalog_v2_refresh_caches_history_and_changelog() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn local_catalog_v2_refresh_caches_history_and_changelog() {
         let root = std::env::temp_dir().join(format!("assetiweave-catalog-v2-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create Catalog v2 test root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
@@ -729,6 +751,7 @@ mod tests {
                 catalog_url: Some(index_path.to_string_lossy().to_string()),
                 force: true,
             })
+            .await
             .expect("refresh local Catalog v2");
 
         let index: Value = serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
@@ -761,12 +784,14 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn exact_compatible_release_can_be_selected_for_install_preview() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn exact_compatible_release_can_be_selected_for_install_preview() {
         let root =
             std::env::temp_dir().join(format!("assetiweave-release-select-{}", Uuid::new_v4()));
         fs::create_dir_all(&root).expect("create release selection root");
-        let service = AppService::open_with_db_path(root.join("app.db")).expect("open service");
+        let service = AppService::open_with_db_path(root.join("app.db"))
+            .await
+            .expect("open service");
         let index_path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
@@ -780,6 +805,7 @@ mod tests {
                 dry_run: true,
                 yes: false,
             })
+            .await
             .expect("preview exact release install");
 
         assert_eq!(preview["package_id"], "io.github.util6.codex-session");
@@ -790,5 +816,40 @@ mod tests {
 
         drop(service);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn catalog_fetch_keeps_not_modified() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let n = stream.read(&mut request).unwrap();
+            assert!(String::from_utf8_lossy(&request[..n])
+                .to_lowercase()
+                .contains("if-none-match:"));
+            stream
+                .write_all(b"HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            stream.flush().unwrap();
+        });
+        assert!(matches!(
+            fetch_catalog_document(&format!("http://{address}/index.json"), Some("etag-1"))
+                .unwrap(),
+            CatalogFetchResult::NotModified
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn catalog_document_uses_reqwest_not_ureq() {
+        let source = include_str!("conversation_adapter_catalog_v2.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
     }
 }

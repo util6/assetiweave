@@ -1,108 +1,70 @@
-# Repository Guidelines
+# 仓库架构与开发指引 (Repository Guidelines)
 
-## Project Structure & Module Organization
+## 1. 项目定位与核心红线 (Core Constraints)
 
-- `frontend/src/` contains the React 19 and TypeScript UI. Put reusable controls in `components/ui`, design-system primitives in `components/foundation`, cross-domain composites in `components/common`, and feature code in domain folders such as `components/groups`, `components/assets`, `components/sources`, and `components/conversations`.
-- `frontend/src/services/` is the only frontend boundary for Tauri/Engine calls. Pages, hooks, components, schemas, and utils must not bypass it with direct `invoke(...)` calls.
-- `src-tauri/src/` contains the complete Rust backend. `adapters/` exposes Tauri commands, stdio Engine protocol, platform glue, CLI tooling, and background task state. `backend/` contains application workflows, capabilities, models, scanner, planner, executor, persistence, conversations, settings, backups, logs, and targeting.
-- `cli/` is the Go/Cobra client. It must call the Rust Engine rather than writing SQLite or mount links directly. CLI-specific code may own command UX, plugins, policies, output formatting, update flow, and external harvester orchestration.
-- Tests are colocated with source. User-facing and long-lived knowledge lives in `docs/`; Agent workflow material lives in `agent-docs/`; helper scripts live in `scripts/`. See `docs/knowledge/repository-structure.md` for ownership and migration guidance.
+- **产品定位**：AssetIWeave 是本地优先（Local-first）的 AI 文件资产挂载管理器，统一管理 Prompt、Rule、Memory、Skill、MCP、Agent 等本地文件资产与会话记录。
+- **业务唯一收口**：`src-tauri/src/backend/application/AppService` 是 Tauri 与 Engine 唯一的业务编排边界。前端禁止绕过 `frontend/src/services/` 直调 `invoke(...)`；CLI 禁止绕过 Engine 直接读写 SQLite 或操作文件挂载。
+- **持久化真相源**：SQLite 是应用状态、配置与挂载意图（`asset_mounts`）的唯一真相源。数据库变更必须通过 `src-tauri/migrations/`。源资产目录默认只读，严禁向第三方仓库写入应用状态。
+- **单层直接软链接**：默认采用从目标 App 目录直连真实源资产的单层直接软链接，禁止私自引入中间软链接池。
+- **长任务与并发安全**：目录扫描、大批量挂载、远程拉取、会话同步等 I/O 密集操作必须后台化，禁止在耗时任务期间持有全局应用锁阻塞 UI 或核心读写。
 
-## Runtime Architecture & Data Flow
+## 2. 模块职责与运行时数据流 (Architecture & Data Flow)
 
-- Desktop UI flow: `React pages/hooks -> frontend services -> Tauri commands -> AppService -> backend capabilities/store -> SQLite and filesystem`.
-- CLI flow: `Go Cobra command -> Engine client -> assetiweave-engine stdio JSON protocol -> command registry/runtime -> AppService -> same backend capabilities/store`.
-- `AppService` in `src-tauri/src/backend/application/` is the shared application workflow boundary for Tauri and Engine. Do not create frontend-only or CLI-only business workflows when the action changes persisted app state.
-- SQLite is the source of truth for catalog state, tenants, sources, assets, profiles, groups, mounts, navigation, app shortcuts, conversation records, settings, backup metadata, operation logs, and remote Skill records. Schema changes go through `src-tauri/migrations/`.
-- `cli/internal/schema/contract.json` is generated from the Rust Engine contract. When Engine methods, DTOs, risks, confirmation requirements, or exposure change, run `pnpm cli:contract`; do not hand-edit generated contracts.
-- Browser preview may use `frontend/src/mock/` fallbacks. Mock data must not become a second persistence or rule engine.
+- **桌面端交互流**：`React (UI) -> frontend/src/services -> Tauri Commands -> AppService -> Backend Capabilities/Store -> SQLite & 文件系统`。
+- **CLI 执行流**：`Go Cobra -> Engine Client -> stdio JSON Protocol -> AppService -> 共享 Capabilities/Store`。
+- **核心模块边界**：
+  - `frontend/src/`：React 19 + TypeScript。基础控件位于 `components/foundation` 与 `components/ui`，跨域复用组件在 `components/common`，业务域按 `components/{groups,assets,sources,conversations}` 组织。
+  - `src-tauri/src/`：完整 Rust 后端。`adapters/` 负责 Tauri 命令、Engine stdio 协议、系统胶水与后台任务投影；`backend/` 负责业务逻辑、领域模型与存储。
+  - `cli/`：Go Cobra 客户端。负责命令行交互、格式化输出与外部采集编排；禁止直接触碰底层数据库与挂载文件。
 
-## Build, Test, and Development Commands
+## 3. 开发、契约与验证命令 (Commands & Baseline)
 
-- `pnpm tauri:dev`: run the desktop application with Vite and Tauri.
-- `pnpm dev`: run the browser-only frontend preview on `127.0.0.1:1420`.
-- `pnpm typecheck && pnpm test && pnpm build`: run frontend type checks, Vitest, and the production build.
-- `cargo fmt --all -- --check && cargo test --workspace`: verify Rust formatting and tests.
-- `go vet -C cli ./... && go test -C cli -race ./...`: verify the Go CLI.
-- `pnpm cli:contract`: rebuild the Rust Engine and regenerate `cli/internal/schema/contract.json`.
-- `pnpm cli:test:e2e`: run installed CLI-to-Engine integration tests.
+- **常用命令**：
+  - 前端开发/校验：`pnpm dev`（纯前端预览，1420 端口）、`pnpm typecheck && pnpm test && pnpm build`。
+  - 桌面端联调：`pnpm tauri:dev`。
+  - Rust 校验：`cargo fmt --all -- --check && cargo test --workspace`。
+  - Go CLI 校验：`go vet -C cli ./... && go test -C cli -race ./...`。
+  - 契约同步：当 Engine 接口、DTO、错误类型或暴露范围变动时，必须执行 `pnpm cli:contract`，严禁手改 `cli/internal/schema/contract.json`。
+  - E2E 验证：`pnpm cli:test:e2e`。
+- **环境基线**：Node 22, pnpm 10, Go 1.24, Rust 1.96.0+。
 
-Use Node 22, pnpm 10, Go 1.24, and a stable Rust toolchain satisfying `src-tauri/Cargo.toml` (`rust-version = "1.96.0"` at the current release line).
+## 4. 架构规范与开发模式 (Engineering Patterns)
 
-## Product Architecture Constraints
+- **代码与设计规范**：
+  - TypeScript 采用 2 空格、分号、双引号；组件/类型使用 `PascalCase`，函数/变量/hooks 使用 `camelCase`（hook 加 `use` 前缀）。
+  - Rust 遵守 `rustfmt`，Go 遵守 `gofmt`。
+  - UI 颜色、边框与阴影必须使用语义化 Theme Token 或 Foundation 基础组件，严禁硬编码原始色值。
+  - 参考 Cockpit-tools、VS Code、Finder 的高密度工作区设计（侧边栏、工具栏、可调列宽、操作预览同屏呈现），避免多级弹窗阻断操作。
+- **长耗时功能规范**：
+  - 长任务禁止直接在按钮点击中 `await` 全过程；后端命令应快速返回任务快照（Snapshot），耗时处理委托后台任务。
+  - 前端必须通过统一 Provider 管理任务状态，结合事件订阅与轮询兜底（Polling fallback），展示全局/局部进度。
+  - 批量操作必须在前端完成去重，共享数据一次性装载，完成时触发单次聚合刷新。任务进行中仅禁用冲突操作，保留无关浏览与查看能力。
+- **提交规范**：
+  - 采用 Conventional Commits（如 `feat: add source filter` 或 `fix: refresh mount state`），保持原子提交。禁止提交临时日志、秘密凭证与编译产物。
 
-- AssetIWeave is a local-first AI file asset mount manager. It manages prompts, rules, memory, skills, MCP config, agent definitions, commands, workflows, conversation records, and related metadata as local assets and records.
-- Source directories are read-only by default. Metadata, labels, groups, mount intent, observations, conversation indexes, and settings belong in SQLite or app-owned backup/library directories, not in third-party source repos.
-- Default deployment is a single symlink from target App directory to the real source asset. Do not introduce an intermediate symlink pool unless a spec explicitly changes the product decision.
-- `asset_mounts` is the single source of mount intent for asset/profile relationships. Catalog quick icons, mount cards, source-level batch mount, group batch mount, group exclusive mount, CLI commands, plan generation, and execution must converge on this model.
-- App-local or app-owned source directories have stricter mount rules: avoid directly cross-mounting one App's target directory into another App unless the backend policy explicitly allows it.
-- Long-running work such as scanning, backup, import/export, remote acquisition, conversation sync, catalog refresh, batch mount/unmount, and network calls must be background-capable and must not hold the global app lock while doing blocking I/O.
-- Conversation records are a separate domain, not Catalog assets. They flow through adapters/sources into normalized Session, Turn, Part, Question, and QuestionTurn records, then search/export/grouping surfaces.
-- Remote Skill discovery/import is not a marketplace and not a trust shortcut. GitHub/provider results must be previewed, confirmed, imported into an app-owned library/backup path, recorded with remote metadata, and scanned before use.
+## 5. 事实源与文档规范 (Source of Truth)
 
-## Coding Style & Naming Conventions
+- **权威性优先级**：代码与测试事实（代码、测试、CLI `--help`） > 规划事实（GitHub Issues、Agent Briefs） > 术语字典（`CONTEXT.md`） > 架构决策（`agent-docs/adr/`） > 用户文档（`docs/`）。
+- **目录隔离**：
+  - `docs/`：存放用户手册与可长期沉淀的系统知识。
+  - `agent-docs/`：存放 Agent 治理规范（`governance/`）、架构决策（`adr/`）、专项实施计划与工作过程材料（`feature-plans/`）。
+- 保持单一事实源，避免多处维护副本；产出设计若与已有 ADR 冲突，必须显式说明理由。
 
-Use two-space indentation, strict TypeScript, semicolons, and double quotes. React components and types use `PascalCase`; functions, variables, and hooks use `camelCase`, with hooks prefixed by `use`. Format Rust with `rustfmt` and Go with `gofmt`. UI colors, borders, and shadows must use semantic theme tokens or foundation components, not raw palette values. Extend the current architecture instead of creating parallel `legacy`, `new`, or `v2` trees.
+## 6. Agent 治理与专项路由 (Governance & Agent Skills)
 
-## Product & Frontend Preferences
+### 问题追踪器 (Issue Tracker)
 
-Use cockpit-tools, VS Code, and Codex App as fast product anchors when starting new UI work: quiet, dense, operational, and built for repeated use. Treat those as style references, not feature requirements.
+问题与规格均通过本仓库的 GitHub Issues 跟踪管理。详见 `agent-docs/governance/issue-tracker.md`。
 
-- Prefer workspace-style layouts with side navigation, top/sub navigation, toolbars, and Finder-like column or list views. Long lists must keep critical controls such as splitters, footers, and toolbar actions reachable without scrolling to the bottom.
-- Organize complex records into progressive levels instead of flat lists. Conversation flows should support paths like app -> project folder -> session -> question -> card, so users can move from overview to exact content.
-- Keep reusable UI surfaces consistent. Toolbars, dialogs, forms, cards, empty states, settings rows, and detail panels should share foundation/common components and one design language instead of per-page variants.
-- Persist durable user preferences in the settings system instead of hard-coding them. Theme, typography, app icons/colors, card colors, preview folding, backup directories, and similar long-lived choices should be configurable and validated.
-- Design for power-user workflows: batch selection, bulk mount/unmount, import/export, filtering, syncing, backup, recovery, and review. Avoid single-item-only flows when the domain naturally operates on sets.
-- Important app operations should be coverable by the Go CLI through the Rust Engine. Do not let the frontend become the only surface for a workflow that AI agents or scripts need to drive.
+### 分诊标签 (Triage Labels)
 
-## Long-Running Feature Design
+使用标准五个分诊状态角色（`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`）。详见 `agent-docs/governance/triage-labels.md`。
 
-Any feature that can scan directories, copy files, sync external records, refresh large catalogs, import/export batches, run network I/O, or touch many database rows must be designed as a background-capable workflow from the start.
+### 领域文档 (Domain Docs)
 
-- Do not model long-running work as a normal button click that `await`s the whole operation while a page-level `busy` flag disables unrelated UI.
-- Tauri commands for long-running work should return a task snapshot quickly, run blocking work through a background task, and expose a read command for the current task state.
-- Frontend code should centralize task state in a provider, subscribe to backend events, and use polling as a fallback so missed events do not leave stale progress.
-- Every long-running task needs visible progress in the initiating surface and, when the user can navigate away, a global progress indicator.
-- Batch workflows must deduplicate inputs, load shared data once, avoid per-item full refreshes, and perform one catalog/status refresh after the batch unless correctness requires narrower updates.
-- Backend commands must avoid holding the global app lock while copying files, scanning sources, syncing records, or doing other long-running I/O. Use independent service/database connections and bounded task registries instead.
-- While a background task is running, disable only conflicting actions for that task. Filtering, navigation, settings, viewing details, and unrelated CRUD should remain usable.
-- App close/exit paths must check running background tasks and warn the user before interrupting work that may leave partial files or database state.
-- Engine/CLI contracts must be updated when adding app-visible commands, and CLI-accessible workflows must go through the Rust Engine rather than duplicating persistence or filesystem behavior.
-- Regression tests should prove both behavior and responsiveness: task deduplication, progress updates, event/polling fallback, batch refresh count or equivalent effect, and that unrelated UI controls remain enabled.
+本仓库采用单上下文文档布局。详见 `agent-docs/governance/domain.md`。
 
-## Testing Guidelines
+### 活跃专项执行路由 (Active Feature Routers)
 
-Name frontend tests `*.test.ts(x)` and Go tests `*_test.go`; keep Rust unit tests near the module under test. Add regression coverage for behavior changes. Use a temporary `ASSETIWEAVE_DB_PATH` for tests that could alter local application state.
-
-For behavior that crosses UI, Engine, and filesystem boundaries, prefer layered coverage: pure utility tests first, backend repository/service tests next, CLI contract/e2e tests when public commands change, and browser/Tauri manual verification for visible UI or desktop APIs.
-
-## Documentation and source of truth
-
-- Code, tests, build configuration, and CLI `--help` are the source of truth for implemented behavior; documentation must not restate them as a competing snapshot.
-- GitHub Issues and their Agent Briefs are the source of truth for planned work and its execution contract.
-- `CONTEXT.md` is the concise domain glossary. Add a term only when its meaning is resolved; never turn it into a specification.
-- `agent-docs/adr/` records only hard-to-reverse, non-obvious decisions that resulted from a real trade-off. ADR numbering follows decision date, then recording date and Git evidence.
-- `docs/` contains user guides and distilled, durable knowledge. `agent-docs/` contains Agent governance, plans, work material, archives, and generated references.
-- Create documents lazily, keep each meaning in one place, and delete stale or duplicated material after extracting any enduring decision or knowledge.
-
-## Commit & Pull Request Guidelines
-
-Use concise, imperative Conventional Commit subjects, for example `feat: add source filter` or `fix: refresh mount state`. Keep each commit focused. Pull requests should explain behavior and architectural impact, link the relevant issue or spec, list verification commands, and include screenshots for visible UI changes. Do not commit secrets, local logs, build output, or hand-edited generated contracts.
-
-## Agent skills
-
-### Memory rewrite
-
-执行 Issue #20、Recent Work、Session/Project/Global Memory、Context Resolver、Recall Agent 或旧 Memory 切换时，先读取 `agent-docs/feature-plans/memory-rewrite/00-execution-router.md`。
-
-### Issue tracker
-
-问题与规格通过本仓库的 GitHub Issues 跟踪。详见 `agent-docs/governance/issue-tracker.md`。
-
-### Triage labels
-
-使用默认的五个标准分诊标签。详见 `agent-docs/governance/triage-labels.md`。
-
-### Domain docs
-
-使用单上下文文档布局。详见 `agent-docs/governance/domain.md`。
+- **Memory 架构重写 (Issue #20)**：涉及 Recent Work、Session/Project/Global Memory、Context Resolver、Recall Agent 或旧版 Memory 切换时，先读取 `agent-docs/feature-plans/memory-rewrite/00-execution-router.md`。
+- **后端基础设施收口 (Issue #24)**：涉及 Database Runtime、Event Dispatcher、HostProcess、后端 Settings、tracing、路径契约或 SQLx row 收口时，先读取 `agent-docs/feature-plans/backend-infrastructure-convergence-v2/00-execution-router.md`。

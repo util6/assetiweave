@@ -1,182 +1,245 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+import {
+  invalidateCatalog,
+  useSaveNavigation,
+} from "../../app/query/catalogMutations";
+import {
+  assetsQueryOptions,
+  catalogKeys,
+  mountStatusesQueryOptions,
+  navigationQueryOptions,
+  overviewQueryOptions,
+  profilesQueryOptions,
+  shortcutsQueryOptions,
+  sourcesQueryOptions,
+} from "../../app/query/catalogQueries";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
 import { fallbackNavigationModel } from "../../mock/catalog";
 import type { NavigationModel } from "../../router/types";
 import {
-  getNavigationModel,
-  getOverview,
-  listAppShortcutSettings,
-  listAssetMountStatuses,
-  listAssets,
-  listProfiles,
-  listSources,
   refreshAssetMountStatuses,
   updateAppShortcuts,
-  updateNavigationModel,
 } from "../../services/catalog";
-import type { AppOverview, AppShortcut, Asset, AssetKind, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppOverview,
+  AppShortcut,
+  Asset,
+  AssetKind,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 
 export function useCatalogData() {
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [assetMountStatuses, setAssetMountStatuses] = useState<AssetMountStatus[]>([]);
-  const [overview, setOverview] = useState<AppOverview | null>(null);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [profiles, setProfiles] = useState<TargetProfile[]>([]);
-  const [appShortcuts, setAppShortcuts] = useState<AppShortcut[]>([]);
-  const [navigationModel, setNavigationModel] = useState<NavigationModel>(fallbackNavigationModel);
-  const [loading, setLoading] = useState(true);
-  const navigationSaveSequence = useRef(0);
-  const deferredNavigationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const activeAssetKind = getActiveAssetKind(navigationModel);
+  const queryClient = useQueryClient();
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const enabled = Boolean(scope);
 
+  const [optimisticNavigation, setOptimisticNavigation] =
+    useState<NavigationModel | null>(null);
+
+  // 租户/作用域切换时立即清除乐观导航，防止上一租户状态遮蔽新租户 Query 缓存
   useEffect(() => {
-    void loadCatalogData();
-  }, []);
+    setOptimisticNavigation(null);
+  }, [activeScope.tenantId, activeScope.epoch]);
 
-  useEffect(
-    () => () => {
-      if (deferredNavigationSaveTimer.current !== null) {
-        clearTimeout(deferredNavigationSaveTimer.current);
-      }
+  const { save: saveNav, schedule: scheduleNav } = useSaveNavigation(
+    activeScope,
+    {
+      onSettled: () => {
+        setOptimisticNavigation(null);
+      },
     },
-    [],
   );
 
-  async function loadCatalogData() {
-    setLoading(true);
+  const saveNavigationModel = async (nextModel: NavigationModel) => {
+    setOptimisticNavigation(nextModel);
     try {
-      const loadNavigationSequence = navigationSaveSequence.current;
-      const appNavigationModel = await getNavigationModel();
-      const activeKind = getActiveAssetKind(appNavigationModel);
-      const [assetList, sourceList, appOverview, profileList, shortcutList, mountStatusList] =
-        await Promise.all([
-          listAssets(activeKind),
-          listSources(),
-          getOverview(),
-          listProfiles(),
-          listAppShortcutSettings(),
-          listAssetMountStatuses(),
-        ]);
-      setAssets(assetList);
-      setSources(sourceList);
-      setAssetMountStatuses(mountStatusList);
-      setOverview(appOverview);
-      if (navigationSaveSequence.current === loadNavigationSequence) {
-        setNavigationModel(appNavigationModel);
-      }
-      setProfiles(profileList);
-      setAppShortcuts(shortcutList);
+      const saved = await saveNav(nextModel);
+      return saved;
     } finally {
-      setLoading(false);
+      setOptimisticNavigation(null);
     }
+  };
+
+  const deferNavigationModelSave = (nextModel: NavigationModel) => {
+    setOptimisticNavigation(nextModel);
+    scheduleNav(nextModel);
+  };
+
+  const navigationQuery = useQuery({
+    ...navigationQueryOptions(activeScope),
+    enabled,
+  });
+
+  const navigationModel =
+    optimisticNavigation ?? navigationQuery.data ?? fallbackNavigationModel;
+  const activeAssetKind = getActiveAssetKind(navigationModel);
+
+  const assetsQuery = useQuery({
+    ...assetsQueryOptions(activeScope, activeAssetKind),
+    enabled,
+  });
+
+  const sourcesQuery = useQuery({
+    ...sourcesQueryOptions(activeScope),
+    enabled,
+  });
+
+  const profilesQuery = useQuery({
+    ...profilesQueryOptions(activeScope),
+    enabled,
+  });
+
+  const overviewQuery = useQuery({
+    ...overviewQueryOptions(activeScope),
+    enabled,
+  });
+
+  const shortcutsQuery = useQuery({
+    ...shortcutsQueryOptions(activeScope),
+    enabled,
+  });
+
+  const mountStatusesQuery = useQuery({
+    ...mountStatusesQueryOptions(activeScope),
+    enabled,
+  });
+
+  const assets = assetsQuery.data ?? [];
+  const sources = sourcesQuery.data ?? [];
+  const profiles = profilesQuery.data ?? [];
+  const overview = overviewQuery.data ?? null;
+  const appShortcuts = shortcutsQuery.data ?? [];
+  const assetMountStatuses = mountStatusesQuery.data ?? [];
+
+  const loading =
+    !scope ||
+    assetsQuery.isLoading ||
+    sourcesQuery.isLoading ||
+    profilesQuery.isLoading ||
+    overviewQuery.isLoading ||
+    shortcutsQuery.isLoading ||
+    mountStatusesQuery.isLoading ||
+    navigationQuery.isLoading;
+
+  async function loadCatalogData() {
+    await invalidateCatalog(queryClient, activeScope, [
+      "assets",
+      "sources",
+      "profiles",
+      "overview",
+      "shortcuts",
+      "mountStatuses",
+    ]);
   }
 
   async function refreshOverview(nextAssets?: Asset[]) {
-    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
-      nextAssets ? Promise.resolve(nextAssets) : listAssets(activeAssetKind),
-      listSources(),
-      getOverview(),
-      listAssetMountStatuses(),
-    ]);
-    setAssets(assetList);
-    setSources(sourceList);
-    setAssetMountStatuses(mountStatusList);
-    setOverview(appOverview);
+    if (nextAssets) {
+      queryClient.setQueryData(
+        catalogKeys.assets(activeScope, activeAssetKind),
+        nextAssets,
+      );
+      await invalidateCatalog(queryClient, activeScope, [
+        "sources",
+        "overview",
+        "mountStatuses",
+      ]);
+    } else {
+      await invalidateCatalog(queryClient, activeScope, [
+        "assets",
+        "sources",
+        "overview",
+        "mountStatuses",
+      ]);
+    }
   }
 
   async function refreshMountState() {
     const mountStatusList = await refreshAssetMountStatuses();
-    setAssetMountStatuses(mountStatusList);
+    queryClient.setQueryData(
+      catalogKeys.mountStatuses(activeScope),
+      mountStatusList,
+    );
     return mountStatusList;
   }
 
   async function refreshCatalogAndMountState() {
-    const [assetList, sourceList, appOverview, mountStatusList] = await Promise.all([
-      listAssets(activeAssetKind),
-      listSources(),
-      getOverview(),
-      refreshAssetMountStatuses(),
+    const mountStatusList = await refreshAssetMountStatuses();
+    queryClient.setQueryData(
+      catalogKeys.mountStatuses(activeScope),
+      mountStatusList,
+    );
+    await invalidateCatalog(queryClient, activeScope, [
+      "assets",
+      "sources",
+      "overview",
     ]);
-    setAssets(assetList);
-    setSources(sourceList);
-    setAssetMountStatuses(mountStatusList);
-    setOverview(appOverview);
     return mountStatusList;
   }
 
   async function refreshProfiles() {
-    const [profileList, shortcutList, appOverview, mountStatusList] = await Promise.all([
-      listProfiles(),
-      listAppShortcutSettings(),
-      getOverview(),
-      listAssetMountStatuses(),
+    await invalidateCatalog(queryClient, activeScope, [
+      "profiles",
+      "shortcuts",
+      "overview",
+      "mountStatuses",
     ]);
-    setProfiles(profileList);
-    setAppShortcuts(shortcutList);
-    setAssetMountStatuses(mountStatusList);
-    setOverview(appOverview);
   }
 
   function applyAssetMountStatus(nextStatus: AssetMountStatus) {
-    setAssetMountStatuses((current) => [
-      ...current.filter(
-        (status) => status.asset_id !== nextStatus.asset_id || status.profile_id !== nextStatus.profile_id,
-      ),
-      nextStatus,
-    ]);
-  }
-
-  function applyAssetUpdate(nextAsset: Asset) {
-    setAssets((current) => current.map((asset) => (asset.id === nextAsset.id ? nextAsset : asset)));
-  }
-
-  function removeAsset(assetId: string) {
-    setAssets((current) => current.filter((asset) => asset.id !== assetId));
-    setAssetMountStatuses((current) => current.filter((status) => status.asset_id !== assetId));
-    setOverview((current) =>
-      current ? { ...current, asset_count: Math.max(0, current.asset_count - 1) } : current,
+    queryClient.setQueryData<AssetMountStatus[]>(
+      catalogKeys.mountStatuses(activeScope),
+      (current = []) => [
+        ...current.filter(
+          (status) =>
+            status.asset_id !== nextStatus.asset_id ||
+            status.profile_id !== nextStatus.profile_id,
+        ),
+        nextStatus,
+      ],
     );
   }
 
-  function cancelDeferredNavigationSave() {
-    if (deferredNavigationSaveTimer.current !== null) {
-      clearTimeout(deferredNavigationSaveTimer.current);
-      deferredNavigationSaveTimer.current = null;
-    }
+  function applyAssetUpdate(nextAsset: Asset) {
+    queryClient.setQueryData<Asset[]>(
+      catalogKeys.assets(activeScope, activeAssetKind),
+      (current = []) =>
+        current.map((asset) => (asset.id === nextAsset.id ? nextAsset : asset)),
+    );
   }
 
-  async function saveNavigationModel(nextNavigationModel: NavigationModel) {
-    cancelDeferredNavigationSave();
-    const sequence = navigationSaveSequence.current + 1;
-    navigationSaveSequence.current = sequence;
-    setNavigationModel(nextNavigationModel);
-    const savedNavigationModel = await updateNavigationModel(nextNavigationModel);
-    if (navigationSaveSequence.current === sequence) {
-      setNavigationModel(savedNavigationModel);
-    }
-    return savedNavigationModel;
-  }
-
-  function deferNavigationModelSave(nextNavigationModel: NavigationModel) {
-    const sequence = navigationSaveSequence.current + 1;
-    navigationSaveSequence.current = sequence;
-    setNavigationModel(nextNavigationModel);
-    cancelDeferredNavigationSave();
-    deferredNavigationSaveTimer.current = setTimeout(() => {
-      deferredNavigationSaveTimer.current = null;
-      void updateNavigationModel(nextNavigationModel)
-        .then((savedNavigationModel) => {
-          if (navigationSaveSequence.current === sequence) {
-            setNavigationModel(savedNavigationModel);
-          }
-        })
-        .catch(() => undefined);
-    }, 120);
+  function removeAsset(assetId: string) {
+    queryClient.setQueryData<Asset[]>(
+      catalogKeys.assets(activeScope, activeAssetKind),
+      (current = []) => current.filter((asset) => asset.id !== assetId),
+    );
+    queryClient.setQueryData<AssetMountStatus[]>(
+      catalogKeys.mountStatuses(activeScope),
+      (current = []) => current.filter((status) => status.asset_id !== assetId),
+    );
+    queryClient.setQueryData<AppOverview | null>(
+      catalogKeys.overview(activeScope),
+      (current) =>
+        current
+          ? { ...current, asset_count: Math.max(0, current.asset_count - 1) }
+          : current,
+    );
   }
 
   async function saveAppShortcuts(nextAppShortcuts: AppShortcut[]) {
-    setAppShortcuts(nextAppShortcuts);
+    queryClient.setQueryData(
+      catalogKeys.shortcuts(activeScope),
+      nextAppShortcuts,
+    );
     const savedAppShortcuts = await updateAppShortcuts(nextAppShortcuts);
-    setAppShortcuts(savedAppShortcuts);
+    queryClient.setQueryData(
+      catalogKeys.shortcuts(activeScope),
+      savedAppShortcuts,
+    );
     return savedAppShortcuts;
   }
 
@@ -205,5 +268,6 @@ export function useCatalogData() {
 }
 
 function getActiveAssetKind(model: NavigationModel): AssetKind | undefined {
-  return model.headerTabs.find((tab) => tab.id === model.activeHeaderTabId)?.assetKind;
+  return model.headerTabs.find((tab) => tab.id === model.activeHeaderTabId)
+    ?.assetKind;
 }

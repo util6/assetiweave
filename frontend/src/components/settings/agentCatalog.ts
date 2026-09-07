@@ -1,16 +1,15 @@
 import { Bot, Code2, Cpu, Terminal, Zap, type LucideIcon } from "lucide-react";
-import type { AgentInstallationView, AgentMarketItem } from "../../services/agentRuntime";
+import type {
+  AgentInstallationView,
+  AgentMarketItem,
+} from "../../services/agentRuntime";
 
 /** Runtime Agent IDs come from the curated Market catalog, not a frontend union. */
 export type AgentId = string;
 
 export type AgentFilter = "all" | "available" | "unavailable";
 export type AgentConnectionState =
-  | "checking"
-  | "available"
-  | "failed"
-  | "not-installed"
-  | "not-tested";
+  "checking" | "available" | "failed" | "not-installed" | "not-tested";
 export type AgentConnectionMode = "registry" | "legacy";
 
 export interface AgentCatalogItem {
@@ -28,7 +27,10 @@ export interface AgentCatalogItem {
   hasSelectableDistribution?: boolean;
 }
 
-const agentPresentationMetadata: Record<string, { name: string; icon: LucideIcon }> = {
+const agentPresentationMetadata: Record<
+  string,
+  { name: string; icon: LucideIcon }
+> = {
   opencode: { name: "OpenCode", icon: Bot },
   gemini: { name: "Gemini CLI", icon: Zap },
   kiro: { name: "Kiro", icon: Code2 },
@@ -56,15 +58,17 @@ const legacyPresentationItems: Array<[string, string]> = [
  * Compatibility fallback for older desktop builds/browser previews. Runtime
  * commands, package names and distribution details must come from Market DTOs.
  */
-export const agentCatalog: AgentCatalogItem[] = legacyPresentationItems.map(([id, protocol]) => ({
-  id,
-  name: agentPresentationMetadata[id].name,
-  command: "managed runtime",
-  protocol,
-  description: "Agent Market runtime metadata is unavailable in this build.",
-  icon: agentPresentationMetadata[id].icon,
-  connectionMode: "registry",
-}));
+export const agentCatalog: AgentCatalogItem[] = legacyPresentationItems.map(
+  ([id, protocol]) => ({
+    id,
+    name: agentPresentationMetadata[id].name,
+    command: "managed runtime",
+    protocol,
+    description: "Agent Market runtime metadata is unavailable in this build.",
+    icon: agentPresentationMetadata[id].icon,
+    connectionMode: "registry",
+  }),
+);
 
 /*
   Presentation-only metadata intentionally does not include executable
@@ -86,16 +90,21 @@ export const registryAgentIds = agentCatalog
   .filter((agent) => agent.connectionMode === "registry")
   .map((agent) => agent.id);
 
-export function marketItemToCatalogItem(item: AgentMarketItem): AgentCatalogItem {
+export function marketItemToCatalogItem(
+  item: AgentMarketItem,
+): AgentCatalogItem {
   const known = agentPresentationMetadata[item.id];
-  const recommended = item.distributions.find((distribution) => distribution.recommended);
+  const recommended = item.distributions.find(
+    (distribution) => distribution.recommended,
+  );
   return {
     id: item.id,
     name: item.displayName || known?.name || item.id,
-    command: item.installed?.displayInstallPath
-      || recommended?.targetPath
-      || recommended?.distributionId
-      || item.id,
+    command:
+      item.installed?.displayInstallPath ||
+      recommended?.targetPath ||
+      recommended?.distributionId ||
+      item.id,
     protocol: item.protocol.toUpperCase(),
     description: item.description,
     icon: known?.icon ?? Bot,
@@ -104,6 +113,8 @@ export function marketItemToCatalogItem(item: AgentMarketItem): AgentCatalogItem
     marketVersion: item.version,
     updateAvailable: item.updateAvailable,
     installability: item.installability,
-    hasSelectableDistribution: item.distributions.some((distribution) => distribution.selectable),
+    hasSelectableDistribution: item.distributions.some(
+      (distribution) => distribution.selectable,
+    ),
   };
 }

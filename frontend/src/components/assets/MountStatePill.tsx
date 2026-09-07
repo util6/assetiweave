@@ -27,7 +27,9 @@ export function MountStatePill({
   return (
     <>
       <button
-        aria-label={t("mount.stateHelp.openAria", { status: t(`mount.display.${state}` as TranslationKey) })}
+        aria-label={t("mount.stateHelp.openAria", {
+          status: t(`mount.display.${state}` as TranslationKey),
+        })}
         className={clsx(
           "inline-flex shrink-0 items-center gap-1.5 rounded-full border font-bold transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:-translate-y-px hover:border-current active:translate-y-0 focus:outline-none focus:ring-2 focus:ring-primary/45 focus:ring-offset-2 focus:ring-offset-background",
           compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[10px]",
@@ -40,20 +42,33 @@ export function MountStatePill({
         title={t("mount.stateHelp.open")}
         type="button"
       >
-        <span className={clsx("size-1.5 shrink-0 rounded-full", mountStateDotClass(state))} aria-hidden="true" />
+        <span
+          className={clsx(
+            "size-1.5 shrink-0 rounded-full",
+            mountStateDotClass(state),
+          )}
+          aria-hidden="true"
+        />
         {t(`mount.display.${state}` as TranslationKey)}
         <Info className={compact ? "size-3" : "size-3.5"} aria-hidden="true" />
       </button>
 
-      <MountStateHelpDialog currentState={state} onClose={() => setHelpOpen(false)} open={helpOpen} />
+      <MountStateHelpDialog
+        currentState={state}
+        onClose={() => setHelpOpen(false)}
+        open={helpOpen}
+      />
     </>
   );
 }
 
 export function mountStatePillClass(state: MountDisplayState) {
-  if (state === "mounted") return "border-status-create/35 bg-status-create/15 text-status-create";
-  if (state === "conflict") return "border-status-remove/45 bg-status-remove/12 text-status-remove";
-  if (state === "broken") return "border-status-remove/45 bg-status-remove/12 text-status-remove";
+  if (state === "mounted")
+    return "border-status-create/35 bg-status-create/15 text-status-create";
+  if (state === "conflict")
+    return "border-status-remove/45 bg-status-remove/12 text-status-remove";
+  if (state === "broken")
+    return "border-status-remove/45 bg-status-remove/12 text-status-remove";
   return "border-theme-control-border bg-theme-control-hover text-on-surface-variant";
 }
 
@@ -99,13 +114,23 @@ function MountStateHelpDialog({
             <article
               className={clsx(
                 "rounded-xl border bg-theme-control/65 p-3 transition-[background-color,border-color,box-shadow] duration-200",
-                active ? "border-primary/60 ring-1 ring-primary/20" : "border-theme-control-border",
+                active
+                  ? "border-primary/60 ring-1 ring-primary/20"
+                  : "border-theme-control-border",
               )}
               key={state}
             >
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className={clsx("size-2 rounded-full", mountStateDotClass(state))} aria-hidden="true" />
-                <h3 className="text-body-md font-bold text-on-surface">{t(`mount.display.${state}` as TranslationKey)}</h3>
+                <span
+                  className={clsx(
+                    "size-2 rounded-full",
+                    mountStateDotClass(state),
+                  )}
+                  aria-hidden="true"
+                />
+                <h3 className="text-body-md font-bold text-on-surface">
+                  {t(`mount.display.${state}` as TranslationKey)}
+                </h3>
                 {active && (
                   <span className="rounded-md border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
                     {t("mount.stateHelp.current")}
@@ -115,12 +140,20 @@ function MountStateHelpDialog({
 
               <div className="mt-3 grid gap-2 text-body-sm text-on-surface-variant">
                 <p>
-                  <span className="font-bold text-on-surface">{t("mount.stateHelp.meaning")}</span>
-                  <span className="ml-2">{t(`mount.stateHelp.${state}.meaning` as TranslationKey)}</span>
+                  <span className="font-bold text-on-surface">
+                    {t("mount.stateHelp.meaning")}
+                  </span>
+                  <span className="ml-2">
+                    {t(`mount.stateHelp.${state}.meaning` as TranslationKey)}
+                  </span>
                 </p>
                 <p>
-                  <span className="font-bold text-on-surface">{t("mount.stateHelp.action")}</span>
-                  <span className="ml-2">{t(`mount.stateHelp.${state}.action` as TranslationKey)}</span>
+                  <span className="font-bold text-on-surface">
+                    {t("mount.stateHelp.action")}
+                  </span>
+                  <span className="ml-2">
+                    {t(`mount.stateHelp.${state}.action` as TranslationKey)}
+                  </span>
                 </p>
               </div>
             </article>

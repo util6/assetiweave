@@ -1,6 +1,6 @@
 # SPEC-BA-00：后端架构收口总纲
 
-- 状态：Implemented；当前代码与自动化验收已完成，历史基线记录保留
+- 状态：VERIFIED；Agent Catalog release evidence 重新闭环，发布门禁与静态/release/network/E2E 门禁全绿
 - 日期：2026-08-20
 - 代码基线：`main@bc5c14e`
 - 适用范围：`src-tauri/src/`、`frontend/src/services/`、Agent 设置界面、`cli/` 契约、`builtin-assets/`、CI 与发布脚本

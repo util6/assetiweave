@@ -19,38 +19,48 @@ export function ConversationDiff({
     <div className="grid gap-3" data-conversation-diff="unified">
       {parsed.files.map((file, index) => {
         const fileSummary = summary?.files[index];
-        const additions = fileSummary?.additions ?? countChanges(file, "insert");
-        const deletions = fileSummary?.deletions ?? countChanges(file, "delete");
+        const additions =
+          fileSummary?.additions ?? countChanges(file, "insert");
+        const deletions =
+          fileSummary?.deletions ?? countChanges(file, "delete");
         return (
           <section
-          className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-control/55"
-          data-diff-file={displayPath(file)}
-          key={`${displayPath(file)}-${index}`}
-        >
-          <header className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-theme-card-border bg-theme-card-header/80 px-3 py-2">
-            <span className="min-w-0 truncate font-mono text-code-sm font-semibold text-on-surface" title={displayPath(file)}>
-              {displayPath(file)}
-            </span>
-            <span className="flex shrink-0 items-center gap-2 font-mono text-code-sm" aria-label={`${additions} additions, ${deletions} deletions`}>
-              <span className="text-status-create">+{additions}</span>
-              <span className="text-status-remove">-{deletions}</span>
-            </span>
-          </header>
-          {file.isBinary || file.hunks.length === 0 ? (
-            <PlainDiffFallback value={file.raw} />
-          ) : (
-            <div className="conversation-diff-view overflow-x-auto p-2">
-              <Diff
-                className="min-w-[42rem] font-mono text-code-sm"
-                diffType={file.type}
-                gutterType="default"
-                hunks={file.hunks}
-                viewType="unified"
+            className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-control/55"
+            data-diff-file={displayPath(file)}
+            key={`${displayPath(file)}-${index}`}
+          >
+            <header className="flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-theme-card-border bg-theme-card-header/80 px-3 py-2">
+              <span
+                className="min-w-0 truncate font-mono text-code-sm font-semibold text-on-surface"
+                title={displayPath(file)}
               >
-                {(hunks) => hunks.map((hunk) => <Hunk hunk={hunk} key={hunk.content} />)}
-              </Diff>
-            </div>
-          )}
+                {displayPath(file)}
+              </span>
+              <span
+                className="flex shrink-0 items-center gap-2 font-mono text-code-sm"
+                aria-label={`${additions} additions, ${deletions} deletions`}
+              >
+                <span className="text-status-create">+{additions}</span>
+                <span className="text-status-remove">-{deletions}</span>
+              </span>
+            </header>
+            {file.isBinary || file.hunks.length === 0 ? (
+              <PlainDiffFallback value={file.raw} />
+            ) : (
+              <div className="conversation-diff-view overflow-x-auto p-2">
+                <Diff
+                  className="min-w-[42rem] font-mono text-code-sm"
+                  diffType={file.type}
+                  gutterType="default"
+                  hunks={file.hunks}
+                  viewType="unified"
+                >
+                  {(hunks) =>
+                    hunks.map((hunk) => <Hunk hunk={hunk} key={hunk.content} />)
+                  }
+                </Diff>
+              </div>
+            )}
           </section>
         );
       })}
@@ -76,7 +86,9 @@ export interface ConversationDiffSummary {
   deletions: number;
 }
 
-export function summarizeConversationDiff(value: string): ConversationDiffSummary {
+export function summarizeConversationDiff(
+  value: string,
+): ConversationDiffSummary {
   const parsed = parseConversationDiff(value);
   const files = parsed.files.map((file) => ({
     path: displayPath(file),
@@ -115,14 +127,23 @@ function parseConversationDiff(value: string): { files: ParsedDiffFile[] } {
 function prepareDiffForParser(value: string) {
   const lines = value.split("\n");
   if (lines[0]?.startsWith("@@")) {
-    return ["diff --git a/patch b/patch", "--- a/patch", "+++ b/patch", ...lines].join("\n");
+    return [
+      "diff --git a/patch b/patch",
+      "--- a/patch",
+      "+++ b/patch",
+      ...lines,
+    ].join("\n");
   }
   const prepared: string[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const oldHeader = lines[index];
     if (oldHeader == null) break;
     const newHeader = lines[index + 1];
-    if (oldHeader?.startsWith("--- ") && newHeader?.startsWith("+++ ") && !lines[index - 1]?.startsWith("diff --git ")) {
+    if (
+      oldHeader?.startsWith("--- ") &&
+      newHeader?.startsWith("+++ ") &&
+      !lines[index - 1]?.startsWith("diff --git ")
+    ) {
       const oldPath = oldHeader.slice(4).split("\t", 1)[0];
       const newPath = newHeader.slice(4).split("\t", 1)[0];
       prepared.push(`diff --git ${oldPath} ${newPath}`);
@@ -133,7 +154,9 @@ function prepareDiffForParser(value: string) {
 }
 
 function rawFileForIndex(value: string, index: number, fileCount: number) {
-  const starts = [...value.matchAll(/^diff --git .*$/gm)].map((match) => match.index ?? 0);
+  const starts = [...value.matchAll(/^diff --git .*$/gm)].map(
+    (match) => match.index ?? 0,
+  );
   if (starts.length !== fileCount || starts[index] == null) return value;
   return value.slice(starts[index], starts[index + 1] ?? value.length);
 }
@@ -141,7 +164,8 @@ function rawFileForIndex(value: string, index: number, fileCount: number) {
 function displayPath(file: FileData) {
   const oldPath = visiblePath(file.oldPath);
   const newPath = visiblePath(file.newPath);
-  if (oldPath && newPath && oldPath !== newPath) return `${oldPath} → ${newPath}`;
+  if (oldPath && newPath && oldPath !== newPath)
+    return `${oldPath} → ${newPath}`;
   return newPath ?? oldPath ?? "diff";
 }
 
@@ -159,14 +183,18 @@ function visiblePath(value?: string | null) {
 
 function countChanges(file: FileData, type: "insert" | "delete") {
   return file.hunks.reduce(
-    (total, hunk) => total + hunk.changes.filter((change) => change.type === type).length,
+    (total, hunk) =>
+      total + hunk.changes.filter((change) => change.type === type).length,
     0,
   );
 }
 
 function PlainDiffFallback({ value }: { value: string }) {
   return (
-    <pre className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-code-sm leading-6 text-on-surface" data-diff-fallback="plain">
+    <pre
+      className="max-h-[38rem] overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-code-sm leading-6 text-on-surface"
+      data-diff-fallback="plain"
+    >
       <code>{value}</code>
     </pre>
   );

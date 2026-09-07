@@ -44,10 +44,20 @@ export function ConfirmDialog({
       contentClassName="grid gap-4"
       footer={
         <>
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             {cancelLabel ?? t("common.cancel")}
           </Button>
-          <Button disabled={busy} onClick={onConfirm} type="button" variant={danger ? "destructive" : "default"}>
+          <Button
+            disabled={busy}
+            onClick={onConfirm}
+            type="button"
+            variant={danger ? "destructive" : "default"}
+          >
             {confirmLabel ?? t("common.confirm")}
           </Button>
         </>
@@ -63,7 +73,9 @@ export function ConfirmDialog({
       size="md"
       title={title}
     >
-      <p className="text-body-sm leading-6 text-on-surface-variant">{message}</p>
+      <p className="text-body-sm leading-6 text-on-surface-variant">
+        {message}
+      </p>
       {children}
     </DialogFrame>
   );

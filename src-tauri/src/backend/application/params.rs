@@ -259,6 +259,11 @@ pub(crate) struct SaveAppSettingsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct InitializeAppLocaleParams {
+    pub(crate) locale: crate::backend::app_settings::AppLocale,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SourceAddParams {
     #[serde(flatten)]
     pub(crate) source: SourceInput,

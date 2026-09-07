@@ -27,6 +27,8 @@ describe("ConfirmDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("dialog").parentElement?.className).toContain(expectedClass);
+    expect(screen.getByRole("dialog").parentElement?.className).toContain(
+      expectedClass,
+    );
   });
 });

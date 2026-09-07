@@ -13,15 +13,14 @@ import {
 import { useOptionalAiExecutionTasks } from "../../app/backgroundTasks/AiExecutionTaskProvider";
 import type { ConversationContentBlock } from "./ConversationContentCards";
 import type { ConversationRecordKind } from "../../types";
-import type {
-  ResolvedConversationTranslationSettings,
-} from "../../store/settings/AppSettingsProvider";
+import type { ResolvedConversationTranslationSettings } from "../../store/settings/settingsSchema";
 import {
   DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
   DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
-} from "../../store/settings/AppSettingsProvider";
+} from "../../store/settings/settingsSchema";
 
-export type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
+export type TranslationAvailabilityStatus =
+  "idle" | "checking" | "available" | "unavailable";
 
 export interface ConversationTranslationTaskController {
   tasks: AiExecutionTaskSnapshot[];
@@ -63,13 +62,14 @@ export interface UseConversationContentControllerOptions {
   ) => Promise<OpencodeTranslationResult>;
 }
 
-export const DEFAULT_TRANSLATION_SETTINGS: ResolvedConversationTranslationSettings = {
-  agentId: "opencode",
-  model: "",
-  promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
-  provider: "cli",
-  targetLanguage: DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
-};
+export const DEFAULT_TRANSLATION_SETTINGS: ResolvedConversationTranslationSettings =
+  {
+    agentId: "opencode",
+    model: "",
+    promptTemplate: DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE,
+    provider: "cli",
+    targetLanguage: DEFAULT_CONVERSATION_TRANSLATION_TARGET_LANGUAGE,
+  };
 
 export function useConversationContentController({
   blocks,
@@ -87,17 +87,29 @@ export function useConversationContentController({
 }: UseConversationContentControllerOptions): ConversationContentController {
   const globalTranslationTasks = useOptionalAiExecutionTasks();
   const taskController = translationTaskController ?? globalTranslationTasks;
-  const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(new Set());
+  const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null);
-  const [translatedBlocks, setTranslatedBlocks] = useState<Record<string, string>>({});
-  const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(new Set());
-  const [translationTaskByBlockId, setTranslationTaskByBlockId] = useState<Record<string, string>>({});
-  const [translationAvailability, setTranslationAvailability] = useState<TranslationAvailabilityStatus>("idle");
+  const [translatedBlocks, setTranslatedBlocks] = useState<
+    Record<string, string>
+  >({});
+  const [translatingBlockIds, setTranslatingBlockIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [translationTaskByBlockId, setTranslationTaskByBlockId] = useState<
+    Record<string, string>
+  >({});
+  const [translationAvailability, setTranslationAvailability] =
+    useState<TranslationAvailabilityStatus>("idle");
   const copiedResetTimerRef = useRef<number | null>(null);
   const handledTerminalTaskIdsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const previousScopeKeyRef = useRef(scopeKey);
-  const blockById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
+  const blockById = useMemo(
+    () => new Map(blocks.map((block) => [block.id, block])),
+    [blocks],
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -123,15 +135,20 @@ export function useConversationContentController({
     if (!enabled || blocks.length === 0) return;
     let cancelled = false;
     setTranslationAvailability("checking");
-    const checkAvailability = translationAvailabilityChecker ?? (() =>
-      checkConversationTranslationAvailability({
-        agentId: translationSettings.agentId,
-        model: translationSettings.model,
-        provider: translationSettings.provider,
-      }));
+    const checkAvailability =
+      translationAvailabilityChecker ??
+      (() =>
+        checkConversationTranslationAvailability({
+          agentId: translationSettings.agentId,
+          model: translationSettings.model,
+          provider: translationSettings.provider,
+        }));
     checkAvailability()
       .then((availability) => {
-        if (!cancelled) setTranslationAvailability(availability.available ? "available" : "unavailable");
+        if (!cancelled)
+          setTranslationAvailability(
+            availability.available ? "available" : "unavailable",
+          );
       })
       .catch(() => {
         if (!cancelled) setTranslationAvailability("unavailable");
@@ -152,7 +169,9 @@ export function useConversationContentController({
   useEffect(() => {
     if (!enabled || !taskController) return;
     for (const [blockId, taskId] of Object.entries(translationTaskByBlockId)) {
-      const task = taskController.tasks.find((candidate) => candidate.id === taskId);
+      const task = taskController.tasks.find(
+        (candidate) => candidate.id === taskId,
+      );
       if (!task || !isTerminalAiExecutionTask(task)) continue;
       if (handledTerminalTaskIdsRef.current.has(task.id)) continue;
       handledTerminalTaskIdsRef.current.add(task.id);
@@ -173,21 +192,34 @@ export function useConversationContentController({
         continue;
       }
       if (task.state === "failed" || !task.result?.text) {
-        const message = task.state === "failed"
-          ? task.error?.message ?? t("conversation.content.translationUnknownError")
-          : t("conversation.content.translationUnknownError");
-        onTranslationError?.(t("conversation.content.translationFailed", { message }));
+        const message =
+          task.state === "failed"
+            ? (task.error?.message ??
+              t("conversation.content.translationUnknownError"))
+            : t("conversation.content.translationUnknownError");
+        onTranslationError?.(
+          t("conversation.content.translationFailed", { message }),
+        );
         continue;
       }
 
       const translatedText = task.result.text;
-      setTranslatedBlocks((current) => ({ ...current, [blockId]: translatedText }));
+      setTranslatedBlocks((current) => ({
+        ...current,
+        [blockId]: translatedText,
+      }));
       const block = blockById.get(blockId);
       if (!block?.partId) continue;
-      void translationSaver({ partId: block.partId, recordKind, translatedText }).catch((error) => {
+      void translationSaver({
+        partId: block.partId,
+        recordKind,
+        translatedText,
+      }).catch((error) => {
         if (!mountedRef.current) return;
         const message = errorMessage(error);
-        onTranslationError?.(t("conversation.content.translationSaveFailed", { message }));
+        onTranslationError?.(
+          t("conversation.content.translationSaveFailed", { message }),
+        );
       });
     }
   }, [
@@ -201,87 +233,119 @@ export function useConversationContentController({
     translationTaskByBlockId,
   ]);
 
-  const copyBlock = useCallback(async (block: ConversationContentBlock) => {
-    try {
-      await writeClipboardText(block.text);
-      clearCopiedResetTimer(copiedResetTimerRef);
-      setCopiedBlockId(block.id);
-      copiedResetTimerRef.current = window.setTimeout(() => {
-        setCopiedBlockId((current) => (current === block.id ? null : current));
-        copiedResetTimerRef.current = null;
-      }, 1400);
-    } catch (error) {
-      onCopyError?.(t("conversation.content.copyFailed", { message: errorMessage(error) }));
-    }
-  }, [onCopyError, t]);
-
-  const translateBlock = useCallback(async (block: ConversationContentBlock) => {
-    if (!enabled || translationAvailability !== "available") return;
-    setTranslatingBlockIds((current) => new Set(current).add(block.id));
-    const request: ConversationCardTranslationRequest = {
-      agentId: translationSettings.agentId,
-      model: translationSettings.model,
-      promptTemplate: translationSettings.promptTemplate,
-      provider: translationSettings.provider,
-      targetLanguage: translationSettings.targetLanguage,
-      text: block.text,
-    };
-    try {
-      if (taskController) {
-        const snapshot = await taskController.startTranslation(request);
-        handledTerminalTaskIdsRef.current.delete(snapshot.id);
-        setTranslationTaskByBlockId((current) => ({ ...current, [block.id]: snapshot.id }));
-        return;
+  const copyBlock = useCallback(
+    async (block: ConversationContentBlock) => {
+      try {
+        await writeClipboardText(block.text);
+        clearCopiedResetTimer(copiedResetTimerRef);
+        setCopiedBlockId(block.id);
+        copiedResetTimerRef.current = window.setTimeout(() => {
+          setCopiedBlockId((current) =>
+            current === block.id ? null : current,
+          );
+          copiedResetTimerRef.current = null;
+        }, 1400);
+      } catch (error) {
+        onCopyError?.(
+          t("conversation.content.copyFailed", {
+            message: errorMessage(error),
+          }),
+        );
       }
-      if (!translator) throw new Error("AI execution task provider is unavailable");
-      const result = await translator(request);
-      setTranslatedBlocks((current) => ({ ...current, [block.id]: result.translated_text }));
-      if (block.partId) {
-        try {
-          await translationSaver({ partId: block.partId, recordKind, translatedText: result.translated_text });
-        } catch (error) {
-          const message = errorMessage(error);
-          onTranslationError?.(t("conversation.content.translationSaveFailed", { message }));
+    },
+    [onCopyError, t],
+  );
+
+  const translateBlock = useCallback(
+    async (block: ConversationContentBlock) => {
+      if (!enabled || translationAvailability !== "available") return;
+      setTranslatingBlockIds((current) => new Set(current).add(block.id));
+      const request: ConversationCardTranslationRequest = {
+        agentId: translationSettings.agentId,
+        model: translationSettings.model,
+        promptTemplate: translationSettings.promptTemplate,
+        provider: translationSettings.provider,
+        targetLanguage: translationSettings.targetLanguage,
+        text: block.text,
+      };
+      try {
+        if (taskController) {
+          const snapshot = await taskController.startTranslation(request);
+          handledTerminalTaskIdsRef.current.delete(snapshot.id);
+          setTranslationTaskByBlockId((current) => ({
+            ...current,
+            [block.id]: snapshot.id,
+          }));
+          return;
+        }
+        if (!translator)
+          throw new Error("AI execution task provider is unavailable");
+        const result = await translator(request);
+        setTranslatedBlocks((current) => ({
+          ...current,
+          [block.id]: result.translated_text,
+        }));
+        if (block.partId) {
+          try {
+            await translationSaver({
+              partId: block.partId,
+              recordKind,
+              translatedText: result.translated_text,
+            });
+          } catch (error) {
+            const message = errorMessage(error);
+            onTranslationError?.(
+              t("conversation.content.translationSaveFailed", { message }),
+            );
+          }
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        onTranslationError?.(
+          t("conversation.content.translationFailed", { message }),
+        );
+      } finally {
+        if (!taskController) {
+          setTranslatingBlockIds((current) => {
+            const next = new Set(current);
+            next.delete(block.id);
+            return next;
+          });
         }
       }
-    } catch (error) {
-      const message = errorMessage(error);
-      onTranslationError?.(t("conversation.content.translationFailed", { message }));
-    } finally {
-      if (!taskController) {
-        setTranslatingBlockIds((current) => {
-          const next = new Set(current);
-          next.delete(block.id);
-          return next;
-        });
-      }
-    }
-  }, [
-    enabled,
-    onTranslationError,
-    recordKind,
-    t,
-    taskController,
-    translationAvailability,
-    translationSaver,
-    translationSettings.agentId,
-    translationSettings.model,
-    translationSettings.promptTemplate,
-    translationSettings.provider,
-    translationSettings.targetLanguage,
-    translator,
-  ]);
+    },
+    [
+      enabled,
+      onTranslationError,
+      recordKind,
+      t,
+      taskController,
+      translationAvailability,
+      translationSaver,
+      translationSettings.agentId,
+      translationSettings.model,
+      translationSettings.promptTemplate,
+      translationSettings.provider,
+      translationSettings.targetLanguage,
+      translator,
+    ],
+  );
 
-  const cancelTranslation = useCallback(async (blockId: string) => {
-    const taskId = translationTaskByBlockId[blockId];
-    if (!taskController || !taskId) return;
-    try {
-      await taskController.cancelTask(taskId);
-    } catch (error) {
-      const message = errorMessage(error);
-      onTranslationError?.(t("conversation.content.translationFailed", { message }));
-    }
-  }, [onTranslationError, t, taskController, translationTaskByBlockId]);
+  const cancelTranslation = useCallback(
+    async (blockId: string) => {
+      const taskId = translationTaskByBlockId[blockId];
+      if (!taskController || !taskId) return;
+      try {
+        await taskController.cancelTask(taskId);
+      } catch (error) {
+        const message = errorMessage(error);
+        onTranslationError?.(
+          t("conversation.content.translationFailed", { message }),
+        );
+      }
+    },
+    [onTranslationError, t, taskController, translationTaskByBlockId],
+  );
 
   const toggleExpanded = useCallback((blockId: string) => {
     setExpandedBlockIds((current) => {
@@ -292,42 +356,59 @@ export function useConversationContentController({
     });
   }, []);
 
-  return useMemo(() => ({
-    cancelTranslation,
-    copyBlock,
-    expandedBlockIds,
-    getTranslatedText: (block: ConversationContentBlock) => translatedBlocks[block.id] ?? block.translatedText ?? undefined,
-    getTranslationPhase: (blockId: string) => {
-      const taskId = translationTaskByBlockId[blockId];
-      const task = taskId ? taskController?.tasks.find((candidate) => candidate.id === taskId) : undefined;
-      return task && !isTerminalAiExecutionTask(task) ? task.phase : undefined;
-    },
-    isCopied: (blockId: string) => copiedBlockId === blockId,
-    isTranslating: (blockId: string) => {
-      const taskId = translationTaskByBlockId[blockId];
-      const task = taskId ? taskController?.tasks.find((candidate) => candidate.id === taskId) : undefined;
-      return translatingBlockIds.has(blockId) || Boolean(task && !isTerminalAiExecutionTask(task));
-    },
-    toggleExpanded,
-    translateBlock,
-    translationAvailability,
-  }), [
-    cancelTranslation,
-    copiedBlockId,
-    copyBlock,
-    expandedBlockIds,
-    taskController,
-    translatedBlocks,
-    translatingBlockIds,
-    translationAvailability,
-    translationTaskByBlockId,
-    toggleExpanded,
-    translateBlock,
-  ]);
+  return useMemo(
+    () => ({
+      cancelTranslation,
+      copyBlock,
+      expandedBlockIds,
+      getTranslatedText: (block: ConversationContentBlock) =>
+        translatedBlocks[block.id] ?? block.translatedText ?? undefined,
+      getTranslationPhase: (blockId: string) => {
+        const taskId = translationTaskByBlockId[blockId];
+        const task = taskId
+          ? taskController?.tasks.find((candidate) => candidate.id === taskId)
+          : undefined;
+        return task && !isTerminalAiExecutionTask(task)
+          ? task.phase
+          : undefined;
+      },
+      isCopied: (blockId: string) => copiedBlockId === blockId,
+      isTranslating: (blockId: string) => {
+        const taskId = translationTaskByBlockId[blockId];
+        const task = taskId
+          ? taskController?.tasks.find((candidate) => candidate.id === taskId)
+          : undefined;
+        return (
+          translatingBlockIds.has(blockId) ||
+          Boolean(task && !isTerminalAiExecutionTask(task))
+        );
+      },
+      toggleExpanded,
+      translateBlock,
+      translationAvailability,
+    }),
+    [
+      cancelTranslation,
+      copiedBlockId,
+      copyBlock,
+      expandedBlockIds,
+      taskController,
+      translatedBlocks,
+      translatingBlockIds,
+      translationAvailability,
+      translationTaskByBlockId,
+      toggleExpanded,
+      translateBlock,
+    ],
+  );
 }
 
 function isTerminalAiExecutionTask(task: AiExecutionTaskSnapshot) {
-  return task.state === "succeeded" || task.state === "failed" || task.state === "cancelled";
+  return (
+    task.state === "succeeded" ||
+    task.state === "failed" ||
+    task.state === "cancelled"
+  );
 }
 
 function clearCopiedResetTimer(timerRef: { current: number | null }) {

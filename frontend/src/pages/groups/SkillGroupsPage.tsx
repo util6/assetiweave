@@ -15,17 +15,29 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import {
+  catalogKeys,
+  groupsQueryOptions,
+} from "../../app/query/catalogQueries";
 import { assetKindLabel } from "../../i18n/domain";
 import { AssetRow } from "../../components/assets/AssetRow";
 import { AssetToolbar } from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
-import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
+import {
+  ToolbarMultiSelectDropdown,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
+} from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { GroupBulkMountControls } from "../../components/groups/GroupBulkMountControls";
-import { GroupExclusiveMountControls, type GroupMountMode } from "../../components/groups/GroupExclusiveMountControls";
+import {
+  GroupExclusiveMountControls,
+  type GroupMountMode,
+} from "../../components/groups/GroupExclusiveMountControls";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
@@ -35,11 +47,10 @@ import { SkillGroupEditDialog } from "../../components/groups/SkillGroupEditDial
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   createSkillGroup,
   deleteSkillGroup,
-  listSkillGroups,
   setSkillGroupManualMembers,
   updateSkillGroup,
 } from "../../services/catalog";
@@ -54,7 +65,10 @@ import type {
   Source,
   TargetProfile,
 } from "../../types";
-import { getAssetMountSummaryState, groupMountStatusesByAssetId } from "../../utils/mountState";
+import {
+  getAssetMountSummaryState,
+  groupMountStatusesByAssetId,
+} from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
 import {
@@ -74,12 +88,27 @@ interface SkillGroupsPageProps {
   onNotifyError: (message: string) => void;
   onOpenSettings: () => void;
   onReady?: () => void;
-  onApplyGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<void>;
-  onPreviewGroupExclusiveMount: (groupIds: string[], profileId: string) => Promise<SkillGroupExclusiveMountPreview>;
+  onApplyGroupExclusiveMount: (
+    groupIds: string[],
+    profileId: string,
+  ) => Promise<void>;
+  onPreviewGroupExclusiveMount: (
+    groupIds: string[],
+    profileId: string,
+  ) => Promise<SkillGroupExclusiveMountPreview>;
   onRefreshMountStatus: () => Promise<void>;
   onRevealPath: (path: string) => void;
-  onSetGroupMountProfile: (groupId: string, assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetGroupMountProfile: (
+    groupId: string,
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -90,8 +119,6 @@ interface SkillGroupsPageProps {
 type GroupViewMode = "list" | "columns";
 type GroupStatusFilter = "enabled" | "disabled";
 type GroupSortBy = "sort-order" | "name" | "member-count" | "updated";
-
-const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
 
 export function SkillGroupsPage({
   appShortcuts,
@@ -116,10 +143,28 @@ export function SkillGroupsPage({
 }: SkillGroupsPageProps) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
-  const [groups, setGroups] = useState<AssetGroupDetail[]>(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+  const groupsQuery = useQuery(groupsQueryOptions(activeScope));
+  const groups = groupsQuery.data ?? [];
+
+  const setGroups = (
+    updater:
+      | AssetGroupDetail[]
+      | ((current: AssetGroupDetail[]) => AssetGroupDetail[]),
+  ) => {
+    queryClient.setQueryData<AssetGroupDetail[]>(
+      catalogKeys.groups(activeScope),
+      typeof updater === "function"
+        ? (current = []) =>
+            (updater as (c: AssetGroupDetail[]) => AssetGroupDetail[])(current)
+        : updater,
+    );
+  };
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
+    new Set(),
   );
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupQuery, setGroupQuery] = useState("");
   const [viewMode, setViewMode] = useState<GroupViewMode>("list");
@@ -127,33 +172,55 @@ export function SkillGroupsPage({
   const [sortBy, setSortBy] = useState<GroupSortBy>("sort-order");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<AssetGroupDetail | null>(null);
-  const [deletingGroup, setDeletingGroup] = useState<AssetGroupDetail | null>(null);
+  const [editingGroup, setEditingGroup] = useState<AssetGroupDetail | null>(
+    null,
+  );
+  const [deletingGroup, setDeletingGroup] = useState<AssetGroupDetail | null>(
+    null,
+  );
   const [mountingGroupId, setMountingGroupId] = useState<string | null>(null);
-  const [exclusivePreview, setExclusivePreview] = useState<SkillGroupExclusiveMountPreview | null>(null);
-  const [exclusiveShortcut, setExclusiveShortcut] = useState<AppShortcut | null>(null);
-  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
-  const [groupMountMode, setGroupMountMode] = useState<GroupMountMode>("exclusive");
+  const [exclusivePreview, setExclusivePreview] =
+    useState<SkillGroupExclusiveMountPreview | null>(null);
+  const [exclusiveShortcut, setExclusiveShortcut] =
+    useState<AppShortcut | null>(null);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [groupMountMode, setGroupMountMode] =
+    useState<GroupMountMode>("exclusive");
   const [exclusiveBusy, setExclusiveBusy] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) === undefined,
-  );
+  const loading = groupsQuery.isLoading;
 
   const skillAssetsById = useMemo(() => {
-    return new Map(assets.filter((asset) => asset.kind === "skill").map((asset) => [asset.id, asset]));
+    return new Map(
+      assets
+        .filter((asset) => asset.kind === "skill")
+        .map((asset) => [asset.id, asset]),
+    );
   }, [assets]);
-  const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
+  const sourceById = useMemo(
+    () => new Map(sources.map((source) => [source.id, source])),
+    [sources],
+  );
   const mountStatusesByAssetId = useMemo(
     () => groupMountStatusesByAssetId(assetMountStatuses),
     [assetMountStatuses],
   );
   const memberTotal = useMemo(
-    () => groups.reduce((total, detail) => total + groupMemberAssetIds(detail).length, 0),
+    () =>
+      groups.reduce(
+        (total, detail) => total + groupMemberAssetIds(detail).length,
+        0,
+      ),
     [groups],
   );
   const selectedGroupDetails = useMemo(
-    () => groups.filter((detail) => detail.group.enabled && selectedGroupIds.has(detail.group.id)),
+    () =>
+      groups.filter(
+        (detail) =>
+          detail.group.enabled && selectedGroupIds.has(detail.group.id),
+      ),
     [groups, selectedGroupIds],
   );
   const selectedExclusiveSkillIds = useMemo(() => {
@@ -183,8 +250,14 @@ export function SkillGroupsPage({
 
   useEffect(() => {
     setSelectedGroupIds((current) => {
-      const enabledGroupIds = new Set(groups.filter((detail) => detail.group.enabled).map((detail) => detail.group.id));
-      const next = new Set([...current].filter((groupId) => enabledGroupIds.has(groupId)));
+      const enabledGroupIds = new Set(
+        groups
+          .filter((detail) => detail.group.enabled)
+          .map((detail) => detail.group.id),
+      );
+      const next = new Set(
+        [...current].filter((groupId) => enabledGroupIds.has(groupId)),
+      );
       return next.size === current.size ? current : next;
     });
   }, [groups]);
@@ -199,43 +272,69 @@ export function SkillGroupsPage({
       sortDirection,
       statusFilters,
     });
-  }, [groupQuery, groups, skillAssetsById, sortBy, sortDirection, statusFilters]);
+  }, [
+    groupQuery,
+    groups,
+    skillAssetsById,
+    sortBy,
+    sortDirection,
+    statusFilters,
+  ]);
   const groupStatusOptions = useMemo(
     () => [
       {
-        label: t("toolbar.filter.enabled", { count: groups.filter((detail) => detail.group.enabled).length }),
+        label: t("toolbar.filter.enabled", {
+          count: groups.filter((detail) => detail.group.enabled).length,
+        }),
         value: "enabled" as const,
       },
       {
-        label: t("toolbar.filter.disabled", { count: groups.filter((detail) => !detail.group.enabled).length }),
+        label: t("toolbar.filter.disabled", {
+          count: groups.filter((detail) => !detail.group.enabled).length,
+        }),
         value: "disabled" as const,
       },
     ],
     [groups, t],
   );
-  const selectableFilteredGroupIds = useMemo(() => enabledGroupIds(filteredGroups), [filteredGroups]);
+  const selectableFilteredGroupIds = useMemo(
+    () => enabledGroupIds(filteredGroups),
+    [filteredGroups],
+  );
   const allFilteredGroupsSelected = useMemo(
-    () => selectableFilteredGroupIds.length > 0 && selectableFilteredGroupIds.every((groupId) => selectedGroupIds.has(groupId)),
+    () =>
+      selectableFilteredGroupIds.length > 0 &&
+      selectableFilteredGroupIds.every((groupId) =>
+        selectedGroupIds.has(groupId),
+      ),
     [selectableFilteredGroupIds, selectedGroupIds],
   );
   const partiallySelectedFilteredGroups = useMemo(
-    () => selectableFilteredGroupIds.some((groupId) => selectedGroupIds.has(groupId)) && !allFilteredGroupsSelected,
+    () =>
+      selectableFilteredGroupIds.some((groupId) =>
+        selectedGroupIds.has(groupId),
+      ) && !allFilteredGroupsSelected,
     [allFilteredGroupsSelected, selectableFilteredGroupIds, selectedGroupIds],
   );
   const selectedColumnGroup = useMemo(
-    () => filteredGroups.find((detail) => detail.group.id === selectedGroupId) ?? filteredGroups[0] ?? null,
+    () =>
+      filteredGroups.find((detail) => detail.group.id === selectedGroupId) ??
+      filteredGroups[0] ??
+      null,
     [filteredGroups, selectedGroupId],
   );
 
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, { force: true }));
+      await queryClient.invalidateQueries({
+        queryKey: catalogKeys.groups(activeScope),
+      });
+      await queryClient.fetchQuery(groupsQueryOptions(activeScope));
     } catch (loadError) {
       onNotifyError(errorMessage(loadError));
     } finally {
       setBusy(false);
-      setLoading(false);
     }
   }
 
@@ -243,9 +342,10 @@ export function SkillGroupsPage({
     setBusy(true);
     try {
       const createdDetail = await createSkillGroup(input);
-      const detail = assetIds.length > 0
-        ? await setSkillGroupManualMembers(createdDetail.group.id, assetIds)
-        : createdDetail;
+      const detail =
+        assetIds.length > 0
+          ? await setSkillGroupManualMembers(createdDetail.group.id, assetIds)
+          : createdDetail;
       setGroups((current) => upsertGroupDetail(current, detail));
       setSelectedGroupId(detail.group.id);
       setExpandedGroupIds((current) => {
@@ -261,7 +361,10 @@ export function SkillGroupsPage({
     }
   }
 
-  async function handleUpdateGroup(group: AssetGroup, manualAssetIds: string[]) {
+  async function handleUpdateGroup(
+    group: AssetGroup,
+    manualAssetIds: string[],
+  ) {
     setBusy(true);
     try {
       await updateSkillGroup(group);
@@ -297,8 +400,12 @@ export function SkillGroupsPage({
     setBusy(true);
     try {
       await deleteSkillGroup(detail.group.id);
-      setGroups((current) => current.filter((candidate) => candidate.group.id !== detail.group.id));
-      setSelectedGroupId((current) => (current === detail.group.id ? null : current));
+      setGroups((current) =>
+        current.filter((candidate) => candidate.group.id !== detail.group.id),
+      );
+      setSelectedGroupId((current) =>
+        current === detail.group.id ? null : current,
+      );
       setExpandedGroupIds((current) => {
         const next = new Set(current);
         next.delete(detail.group.id);
@@ -347,9 +454,13 @@ export function SkillGroupsPage({
 
     setExclusiveBusy(true);
     try {
-      const preview = groupMountMode === "exclusive"
-        ? await onPreviewGroupExclusiveMount(selectedExclusiveGroupIds, shortcut.profileId)
-        : buildAdditiveMountPreview(shortcut.profileId);
+      const preview =
+        groupMountMode === "exclusive"
+          ? await onPreviewGroupExclusiveMount(
+              selectedExclusiveGroupIds,
+              shortcut.profileId,
+            )
+          : buildAdditiveMountPreview(shortcut.profileId);
       setExclusivePreview(preview);
       setExclusiveShortcut(shortcut);
     } catch (previewError) {
@@ -367,7 +478,10 @@ export function SkillGroupsPage({
     setExclusiveBusy(true);
     try {
       if (groupMountMode === "exclusive") {
-        await onApplyGroupExclusiveMount(exclusivePreview.group_ids, exclusivePreview.profile_id);
+        await onApplyGroupExclusiveMount(
+          exclusivePreview.group_ids,
+          exclusivePreview.profile_id,
+        );
       } else {
         await onSetSkillMountProfiles(
           exclusivePreview.mount.map((item) => item.asset_id),
@@ -384,10 +498,14 @@ export function SkillGroupsPage({
   }
 
   function toggleAllFilteredGroups() {
-    setSelectedGroupIds((current) => toggleEnabledGroupSelection(current, filteredGroups));
+    setSelectedGroupIds((current) =>
+      toggleEnabledGroupSelection(current, filteredGroups),
+    );
   }
 
-  function buildAdditiveMountPreview(profileId: string): SkillGroupExclusiveMountPreview {
+  function buildAdditiveMountPreview(
+    profileId: string,
+  ): SkillGroupExclusiveMountPreview {
     const keep: SkillGroupExclusiveMountPreview["keep"] = [];
     const mount: SkillGroupExclusiveMountPreview["mount"] = [];
     const skipped: SkillGroupExclusiveMountPreview["skipped"] = [];
@@ -399,9 +517,15 @@ export function SkillGroupsPage({
       }
 
       const source = sourceById.get(asset.source_id);
-      const status = (mountStatusesByAssetId.get(asset.id) ?? []).find((candidate) => candidate.profile_id === profileId);
+      const status = (mountStatusesByAssetId.get(asset.id) ?? []).find(
+        (candidate) => candidate.profile_id === profileId,
+      );
       if (isDirectMountBlockedSource(source)) {
-        skipped.push({ asset_id: asset.id, name: asset.name, reason: t("mount.blockedAppSource") });
+        skipped.push({
+          asset_id: asset.id,
+          name: asset.name,
+          reason: t("mount.blockedAppSource"),
+        });
       } else if (status?.state === "mounted") {
         keep.push({ asset_id: asset.id, name: asset.name });
       } else if (status?.state === "conflict" || status?.state === "broken") {
@@ -440,14 +564,21 @@ export function SkillGroupsPage({
     profileId: string,
     enabled: boolean,
   ) {
-    const assetIds = groupAssets.filter((asset) => asset.kind === "skill").map((asset) => asset.id);
+    const assetIds = groupAssets
+      .filter((asset) => asset.kind === "skill")
+      .map((asset) => asset.id);
     if (assetIds.length === 0) {
       return;
     }
 
     setMountingGroupId(detail.group.id);
     try {
-      await onSetGroupMountProfile(detail.group.id, assetIds, profileId, enabled);
+      await onSetGroupMountProfile(
+        detail.group.id,
+        assetIds,
+        profileId,
+        enabled,
+      );
     } finally {
       setMountingGroupId(null);
     }
@@ -489,7 +620,11 @@ export function SkillGroupsPage({
               label: t("toolbar.refreshMountStatus"),
               onClick: () => void onRefreshMountStatus(),
             },
-            { icon: <Settings size={17} />, label: t("toolbar.settings"), onClick: onOpenSettings },
+            {
+              icon: <Settings size={17} />,
+              label: t("toolbar.settings"),
+              onClick: onOpenSettings,
+            },
           ],
         ]}
         ariaLabel={t("group.page.title")}
@@ -503,7 +638,9 @@ export function SkillGroupsPage({
               icon={<Power size={15} />}
               label={t("group.toolbar.statusFilter")}
               onClear={() => setStatusFilters([])}
-              onToggleValue={(value) => setStatusFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setStatusFilters((current) => toggleFilterValue(current, value))
+              }
               options={groupStatusOptions}
               selectedValues={statusFilters}
             />
@@ -512,9 +649,15 @@ export function SkillGroupsPage({
               icon={<ArrowDownWideNarrow size={15} />}
               onChange={setSortBy}
               options={[
-                { label: t("group.toolbar.sort.sortOrder"), value: "sort-order" },
+                {
+                  label: t("group.toolbar.sort.sortOrder"),
+                  value: "sort-order",
+                },
                 { label: t("toolbar.sort.name"), value: "name" },
-                { label: t("group.toolbar.sort.memberCount"), value: "member-count" },
+                {
+                  label: t("group.toolbar.sort.memberCount"),
+                  value: "member-count",
+                },
                 { label: t("group.toolbar.sort.updated"), value: "updated" },
               ]}
               value={sortBy}
@@ -522,8 +665,16 @@ export function SkillGroupsPage({
             <ToolbarSortDirectionButton
               direction={sortDirection}
               label={t("toolbar.sort.direction.label")}
-              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+              onClick={() =>
+                setSortDirection((current) =>
+                  current === "desc" ? "asc" : "desc",
+                )
+              }
+              title={t(
+                sortDirection === "desc"
+                  ? "toolbar.sort.direction.descTitle"
+                  : "toolbar.sort.direction.ascTitle",
+              )}
             />
           </>
         }
@@ -538,8 +689,16 @@ export function SkillGroupsPage({
         viewAriaLabel={t("toolbar.view.aria")}
         viewMode={viewMode}
         viewOptions={[
-          { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
-          { icon: <Columns3 size={17} />, label: t("toolbar.view.columns"), value: "columns" },
+          {
+            icon: <LayoutList size={17} />,
+            label: t("toolbar.view.list"),
+            value: "list",
+          },
+          {
+            icon: <Columns3 size={17} />,
+            label: t("toolbar.view.columns"),
+            value: "columns",
+          },
         ]}
       />
 
@@ -561,7 +720,12 @@ export function SkillGroupsPage({
       )}
 
       {loading ? (
-        <AppSkeleton label={t("common.loading")} layout="columns" layoutProps={{ columns: 3 }} scope="content" />
+        <AppSkeleton
+          label={t("common.loading")}
+          layout="columns"
+          layoutProps={{ columns: 3 }}
+          scope="content"
+        />
       ) : filteredGroups.length === 0 ? (
         <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
           {t("group.empty")}
@@ -578,20 +742,25 @@ export function SkillGroupsPage({
           onSelectGroup={setSelectedGroupId}
           onToggleGroupSelected={toggleGroupSelected}
           onSetGroupMountProfile={(detail, groupAssets, profileId, enabled) =>
-            void handleSetGroupMountProfile(detail, groupAssets, profileId, enabled)
+            void handleSetGroupMountProfile(
+              detail,
+              groupAssets,
+              profileId,
+              enabled,
+            )
           }
           onToggleMount={onToggleMount}
           profiles={profiles}
           selectedGroup={selectedColumnGroup}
-          selectedGroupAssets={resolveGroupAssets(selectedColumnGroup, skillAssetsById)}
+          selectedGroupAssets={resolveGroupAssets(
+            selectedColumnGroup,
+            skillAssetsById,
+          )}
           selectedGroupIds={selectedGroupIds}
           sourceById={sourceById}
         />
       ) : (
-        <div
-          aria-label={t("group.page.title")}
-          className="aurora-list-surface"
-        >
+        <div aria-label={t("group.page.title")} className="aurora-list-surface">
           {filteredGroups.map((detail) => {
             const groupAssets = resolveGroupAssets(detail, skillAssetsById);
             return (
@@ -608,7 +777,12 @@ export function SkillGroupsPage({
                 onEdit={() => setEditingGroup(detail)}
                 onToggleSelected={() => toggleGroupSelected(detail)}
                 onSetGroupMountProfile={(profileId, enabled) =>
-                  void handleSetGroupMountProfile(detail, groupAssets, profileId, enabled)
+                  void handleSetGroupMountProfile(
+                    detail,
+                    groupAssets,
+                    profileId,
+                    enabled,
+                  )
                 }
                 onToggleAsset={onToggleAsset}
                 onToggleExpanded={() => toggleGroupExpanded(detail.group.id)}
@@ -656,7 +830,13 @@ export function SkillGroupsPage({
       <ConfirmDialog
         busy={busy}
         confirmLabel={t("common.delete")}
-        message={deletingGroup ? t("group.deleteDialog.message", { name: deletingGroup.group.name }) : ""}
+        message={
+          deletingGroup
+            ? t("group.deleteDialog.message", {
+                name: deletingGroup.group.name,
+              })
+            : ""
+        }
         onClose={() => setDeletingGroup(null)}
         onConfirm={() => deletingGroup && void handleDeleteGroup(deletingGroup)}
         open={Boolean(deletingGroup)}
@@ -697,7 +877,12 @@ function GroupColumnView({
   onDelete: (detail: AssetGroupDetail) => void;
   onEdit: (detail: AssetGroupDetail) => void;
   onSelectGroup: (groupId: string) => void;
-  onSetGroupMountProfile: (detail: AssetGroupDetail, groupAssets: Asset[], profileId: string, enabled: boolean) => void;
+  onSetGroupMountProfile: (
+    detail: AssetGroupDetail,
+    groupAssets: Asset[],
+    profileId: string,
+    enabled: boolean,
+  ) => void;
   onToggleGroupSelected: (detail: AssetGroupDetail) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -732,8 +917,15 @@ function GroupColumnView({
       storageKey="assetiweave.groupColumns.v2"
     >
       <section className="aurora-workbench-column flex min-h-0 flex-col">
-        <GroupColumnHeader title={t("group.column.groups")} meta={t("group.metric.groupsWithCount", { count: groups.length })} />
-        <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("group.column.groups")}>
+        <GroupColumnHeader
+          title={t("group.column.groups")}
+          meta={t("group.metric.groupsWithCount", { count: groups.length })}
+        />
+        <div
+          className="min-h-0 overflow-y-auto py-1"
+          role="listbox"
+          aria-label={t("group.column.groups")}
+        >
           {groups.map((detail) => {
             const memberCount = groupMemberAssetIds(detail).length;
             const active = detail.group.id === selectedGroup.group.id;
@@ -743,16 +935,16 @@ function GroupColumnView({
                 aria-selected={active}
                 className={clsx(
                   "aurora-workbench-item grid min-h-[72px] w-[calc(100%-0.7rem)] grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-3 text-left",
-                  active
-                    ? "text-on-surface"
-                    : "text-on-surface-variant",
+                  active ? "text-on-surface" : "text-on-surface-variant",
                 )}
                 data-selected={active}
                 key={detail.group.id}
                 role="option"
               >
                 <input
-                  aria-label={t("group.exclusive.selectGroup", { name: detail.group.name })}
+                  aria-label={t("group.exclusive.selectGroup", {
+                    name: detail.group.name,
+                  })}
                   checked={selected}
                   className="mt-1.5 size-4 rounded border-theme-control-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
                   disabled={!detail.group.enabled}
@@ -765,15 +957,24 @@ function GroupColumnView({
                   onClick={() => onSelectGroup(detail.group.id)}
                   type="button"
                 >
-                  <GroupAvatar color={detail.group.color} displayIcon={detail.group.display_icon} enabled={detail.group.enabled} iconSvg={detail.group.icon_svg} compact />
+                  <GroupAvatar
+                    color={detail.group.color}
+                    displayIcon={detail.group.display_icon}
+                    enabled={detail.group.enabled}
+                    iconSvg={detail.group.icon_svg}
+                    compact
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
                       {detail.group.name}
                     </span>
                     <span className="mt-1 line-clamp-1 text-body-sm text-on-surface-variant">
-                      {detail.group.description || summarizeRules(detail, sourceById, t)}
+                      {detail.group.description ||
+                        summarizeRules(detail, sourceById, t)}
                     </span>
-                    <span className="mt-1 text-body-sm text-outline">{t("group.memberCount", { count: memberCount })}</span>
+                    <span className="mt-1 text-body-sm text-outline">
+                      {t("group.memberCount", { count: memberCount })}
+                    </span>
                   </span>
                 </button>
               </div>
@@ -789,12 +990,16 @@ function GroupColumnView({
         />
         <div className="min-h-0 overflow-y-auto">
           {selectedGroupAssets.length === 0 ? (
-            <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("group.emptyMembers")}</div>
+            <div className="px-4 py-5 text-body-sm text-on-surface-variant">
+              {t("group.emptyMembers")}
+            </div>
           ) : (
             selectedGroupAssets.map((asset) => {
               const source = sourceById.get(asset.source_id);
               const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
-              const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+              const mountBlockedReason = isDirectMountBlockedSource(source)
+                ? t("mount.blocked")
+                : undefined;
               return (
                 <article
                   className="aurora-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
@@ -805,8 +1010,13 @@ function GroupColumnView({
                       <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
                         {asset.name}
                       </span>
-                      <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
-                      <MountStatePill compact state={getAssetMountSummaryState(mountStatuses)} />
+                      <span className={kindBadgeClass(asset.kind)}>
+                        {assetKindLabel(asset.kind, t)}
+                      </span>
+                      <MountStatePill
+                        compact
+                        state={getAssetMountSummaryState(mountStatuses)}
+                      />
                     </div>
                     <button
                       className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
@@ -835,7 +1045,11 @@ function GroupColumnView({
       <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
         <GroupColumnHeader
           title={t("group.column.details")}
-          meta={selectedGroup.group.enabled ? t("group.status.enabled") : t("group.status.disabled")}
+          meta={
+            selectedGroup.group.enabled
+              ? t("group.status.enabled")
+              : t("group.status.disabled")
+          }
         />
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -865,7 +1079,12 @@ function GroupColumnView({
               detail={selectedGroup}
               mountStatusesByAssetId={mountStatusesByAssetId}
               onSetGroupMountProfile={(profileId, enabled) =>
-                onSetGroupMountProfile(selectedGroup, selectedGroupAssets, profileId, enabled)
+                onSetGroupMountProfile(
+                  selectedGroup,
+                  selectedGroupAssets,
+                  profileId,
+                  enabled,
+                )
               }
               profiles={profiles}
               variant="panel"
@@ -873,20 +1092,45 @@ function GroupColumnView({
           </div>
 
           <div className="aurora-detail-surface mt-4 space-y-3 p-3">
-            <GroupDetailRow label={t("group.field.description")} value={selectedGroup.group.description ?? t("group.noDescription")} />
-            <GroupDetailRow label={t("group.metric.members")} value={String(selectedMemberIds.length)} mono />
-            <GroupDetailRow label={t("group.detail.manualMembers")} value={String(manualMemberCount)} mono />
-            <GroupDetailRow label={t("group.detail.ruleMembers")} value={String(ruleMemberCount)} mono />
+            <GroupDetailRow
+              label={t("group.field.description")}
+              value={
+                selectedGroup.group.description ?? t("group.noDescription")
+              }
+            />
+            <GroupDetailRow
+              label={t("group.metric.members")}
+              value={String(selectedMemberIds.length)}
+              mono
+            />
+            <GroupDetailRow
+              label={t("group.detail.manualMembers")}
+              value={String(manualMemberCount)}
+              mono
+            />
+            <GroupDetailRow
+              label={t("group.detail.ruleMembers")}
+              value={String(ruleMemberCount)}
+              mono
+            />
             <GroupDetailRow
               label={t("group.rules.nameContains")}
-              value={selectedGroup.group.rules.name_contains || t("group.rules.empty")}
+              value={
+                selectedGroup.group.rules.name_contains ||
+                t("group.rules.empty")
+              }
               mono={Boolean(selectedGroup.group.rules.name_contains)}
             />
             <GroupRuleList
               label={t("group.rules.sources")}
-              rules={selectedGroup.group.rules.source_ids.map((sourceId) => sourceById.get(sourceId)?.name ?? sourceId)}
+              rules={selectedGroup.group.rules.source_ids.map(
+                (sourceId) => sourceById.get(sourceId)?.name ?? sourceId,
+              )}
             />
-            <GroupRuleList label={t("group.rules.pathGlobs")} rules={selectedGroup.group.rules.relative_path_globs} />
+            <GroupRuleList
+              label={t("group.rules.pathGlobs")}
+              rules={selectedGroup.group.rules.relative_path_globs}
+            />
           </div>
         </div>
       </section>
@@ -894,28 +1138,39 @@ function GroupColumnView({
   );
 }
 
-function GroupColumnHeader({
-  meta,
-  title,
-}: {
-  meta: string;
-  title: string;
-}) {
+function GroupColumnHeader({ meta, title }: { meta: string; title: string }) {
   return (
     <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
+        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+          {title}
+        </h3>
+        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+          {meta}
+        </p>
       </div>
     </header>
   );
 }
 
-function GroupDetailRow({ label, mono = false, value }: { label: string; mono?: boolean; value: string }) {
+function GroupDetailRow({
+  label,
+  mono = false,
+  value,
+}: {
+  label: string;
+  mono?: boolean;
+  value: string;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div className={clsx("mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface", mono && "font-mono")}>
+      <div
+        className={clsx(
+          "mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface",
+          mono && "font-mono",
+        )}
+      >
         {value}
       </div>
     </div>
@@ -929,7 +1184,9 @@ function GroupRuleList({ label, rules }: { label: string; rules: string[] }) {
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
       {rules.length === 0 ? (
-        <div className="mt-1 text-body-sm text-on-surface-variant">{t("group.rules.empty")}</div>
+        <div className="mt-1 text-body-sm text-on-surface-variant">
+          {t("group.rules.empty")}
+        </div>
       ) : (
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (
@@ -957,7 +1214,14 @@ function GroupAvatar({
   compact?: boolean;
   displayIcon?: string | null;
   enabled: boolean;
-  iconSvg?: { paths: Array<{ d: string; clip_rule?: 'evenodd' | 'nonzero'; fill_rule?: 'evenodd' | 'nonzero' }>; view_box?: string } | null;
+  iconSvg?: {
+    paths: Array<{
+      d: string;
+      clip_rule?: "evenodd" | "nonzero";
+      fill_rule?: "evenodd" | "nonzero";
+    }>;
+    view_box?: string;
+  } | null;
 }) {
   const hasCustomIcon = iconSvg && iconSvg.paths.length > 0;
 
@@ -992,7 +1256,12 @@ function GroupAvatar({
           ))}
         </svg>
       ) : displayIcon ? (
-        <span className={clsx("font-mono font-bold", compact ? "text-[11px]" : "text-[13px]")}>
+        <span
+          className={clsx(
+            "font-mono font-bold",
+            compact ? "text-[11px]" : "text-[13px]",
+          )}
+        >
           {displayIcon.slice(0, 4)}
         </span>
       ) : (
@@ -1001,7 +1270,9 @@ function GroupAvatar({
       <span
         className={clsx(
           "absolute rounded-full border border-surface-card",
-          compact ? "-right-0.5 -top-0.5 size-2.5" : "-right-0.5 -top-0.5 size-3",
+          compact
+            ? "-right-0.5 -top-0.5 size-2.5"
+            : "-right-0.5 -top-0.5 size-3",
           enabled ? "bg-status-create" : "bg-outline",
         )}
       />
@@ -1055,7 +1326,9 @@ function GroupRow({
     <article className="aurora-list-row" data-expanded={expanded}>
       <div className="grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[760px]:grid-cols-[auto_minmax(0,1fr)]">
         <input
-          aria-label={t("group.exclusive.selectGroup", { name: detail.group.name })}
+          aria-label={t("group.exclusive.selectGroup", {
+            name: detail.group.name,
+          })}
           checked={selected}
           className="size-4 rounded border-theme-control-border accent-primary disabled:cursor-not-allowed disabled:opacity-40"
           disabled={busy || !detail.group.enabled}
@@ -1063,7 +1336,12 @@ function GroupRow({
           type="checkbox"
         />
         <div className="flex min-w-0 items-start gap-3">
-          <GroupAvatar color={detail.group.color} displayIcon={detail.group.display_icon} enabled={detail.group.enabled} iconSvg={detail.group.icon_svg} />
+          <GroupAvatar
+            color={detail.group.color}
+            displayIcon={detail.group.display_icon}
+            enabled={detail.group.enabled}
+            iconSvg={detail.group.icon_svg}
+          />
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md text-on-surface">
@@ -1095,14 +1373,32 @@ function GroupRow({
             profiles={profiles}
           />
           <div className="flex items-start gap-1.5">
-            <GroupIconButton disabled={busy} label={t("group.action.edit")} onClick={onEdit}>
+            <GroupIconButton
+              disabled={busy}
+              label={t("group.action.edit")}
+              onClick={onEdit}
+            >
               <Pencil size={16} />
             </GroupIconButton>
-            <GroupIconButton disabled={busy} label={t("group.action.delete")} onClick={onDelete} danger>
+            <GroupIconButton
+              disabled={busy}
+              label={t("group.action.delete")}
+              onClick={onDelete}
+              danger
+            >
               <Trash2 size={16} />
             </GroupIconButton>
-            <GroupIconButton label={t(expanded ? "group.action.collapse" : "group.action.expand")} onClick={onToggleExpanded}>
-              {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+            <GroupIconButton
+              label={t(
+                expanded ? "group.action.collapse" : "group.action.expand",
+              )}
+              onClick={onToggleExpanded}
+            >
+              {expanded ? (
+                <ChevronDown size={17} />
+              ) : (
+                <ChevronRight size={17} />
+              )}
             </GroupIconButton>
           </div>
         </div>
@@ -1112,7 +1408,9 @@ function GroupRow({
         <div className="aurora-list-row-detail py-2 pl-4 pr-3">
           <div className="pl-3">
             {assets.length === 0 ? (
-              <div className="px-4 py-4 text-body-sm text-on-surface-variant">{t("group.emptyMembers")}</div>
+              <div className="px-4 py-4 text-body-sm text-on-surface-variant">
+                {t("group.emptyMembers")}
+              </div>
             ) : (
               <div className="aurora-list-surface !gap-2 !p-2">
                 {assets.map((asset) => (
@@ -1124,7 +1422,9 @@ function GroupRow({
                     mountStatuses={mountStatusesByAssetId.get(asset.id) ?? []}
                     onRevealPath={onAssetReveal}
                     onToggleExpanded={() => onToggleAsset(asset.id)}
-                    onToggleMount={(profileId) => onToggleMount(asset.id, profileId)}
+                    onToggleMount={(profileId) =>
+                      onToggleMount(asset.id, profileId)
+                    }
                     profiles={profiles}
                     source={sourceById.get(asset.source_id)}
                   />
@@ -1168,7 +1468,10 @@ function GroupIconButton({
   );
 }
 
-function resolveGroupAssets(detail: AssetGroupDetail, assetById: Map<string, Asset>) {
+function resolveGroupAssets(
+  detail: AssetGroupDetail,
+  assetById: Map<string, Asset>,
+) {
   return groupMemberAssetIds(detail).flatMap((assetId) => {
     const asset = assetById.get(assetId);
     return asset ? [asset] : [];
@@ -1196,7 +1499,10 @@ function filterAndSortGroups({
     .filter((detail) => {
       if (
         statusSet.size > 0 &&
-        !((statusSet.has("enabled") && detail.group.enabled) || (statusSet.has("disabled") && !detail.group.enabled))
+        !(
+          (statusSet.has("enabled") && detail.group.enabled) ||
+          (statusSet.has("disabled") && !detail.group.enabled)
+        )
       ) {
         return false;
       }
@@ -1212,7 +1518,9 @@ function filterAndSortGroups({
         .toLowerCase()
         .includes(query);
     })
-    .sort((left, right) => compareGroups(left, right, sortBy, sortDirection, skillAssetsById));
+    .sort((left, right) =>
+      compareGroups(left, right, sortBy, sortDirection, skillAssetsById),
+    );
 }
 
 function compareGroups(
@@ -1228,9 +1536,14 @@ function compareGroups(
   if (sortBy === "name") {
     primary = left.group.name.localeCompare(right.group.name);
   } else if (sortBy === "member-count") {
-    primary = countResolvedGroupMembers(left, skillAssetsById) - countResolvedGroupMembers(right, skillAssetsById);
+    primary =
+      countResolvedGroupMembers(left, skillAssetsById) -
+      countResolvedGroupMembers(right, skillAssetsById);
   } else if (sortBy === "updated") {
-    primary = compareOptionalDate(left.group.updated_at, right.group.updated_at);
+    primary = compareOptionalDate(
+      left.group.updated_at,
+      right.group.updated_at,
+    );
   } else {
     primary = left.group.sort_order - right.group.sort_order;
   }
@@ -1239,20 +1552,34 @@ function compareGroups(
     return primary * direction;
   }
 
-  return left.group.name.localeCompare(right.group.name) || left.group.id.localeCompare(right.group.id);
+  return (
+    left.group.name.localeCompare(right.group.name) ||
+    left.group.id.localeCompare(right.group.id)
+  );
 }
 
-function countResolvedGroupMembers(detail: AssetGroupDetail, skillAssetsById: Map<string, Asset>) {
-  return groupMemberAssetIds(detail).filter((assetId) => skillAssetsById.has(assetId)).length;
+function countResolvedGroupMembers(
+  detail: AssetGroupDetail,
+  skillAssetsById: Map<string, Asset>,
+) {
+  return groupMemberAssetIds(detail).filter((assetId) =>
+    skillAssetsById.has(assetId),
+  ).length;
 }
 
-function compareOptionalDate(left: string | null | undefined, right: string | null | undefined) {
+function compareOptionalDate(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
   const leftTime = left ? Date.parse(left) : 0;
   const rightTime = right ? Date.parse(right) : 0;
   return leftTime - rightTime;
 }
 
-function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+function toggleFilterValue<Value extends string>(
+  current: Value[],
+  value: Value,
+) {
   if (current.includes(value)) {
     return current.filter((item) => item !== value);
   }
@@ -1270,21 +1597,37 @@ function summarizeRules(
   const rules = [
     ...sourceNames,
     ...detail.group.rules.relative_path_globs.slice(0, 2),
-    detail.group.rules.name_contains ? `${t("group.rules.nameContains")}: ${detail.group.rules.name_contains}` : null,
+    detail.group.rules.name_contains
+      ? `${t("group.rules.nameContains")}: ${detail.group.rules.name_contains}`
+      : null,
   ].filter(Boolean);
 
   return rules.length > 0 ? rules.join(" · ") : t("group.emptyMembers");
 }
 
-function upsertGroupDetail(groups: AssetGroupDetail[], detail: AssetGroupDetail) {
-  return [...groups.filter((candidate) => candidate.group.id !== detail.group.id), detail].sort((left, right) => {
+function upsertGroupDetail(
+  groups: AssetGroupDetail[],
+  detail: AssetGroupDetail,
+) {
+  return [
+    ...groups.filter((candidate) => candidate.group.id !== detail.group.id),
+    detail,
+  ].sort((left, right) => {
     const sortOrder = left.group.sort_order - right.group.sort_order;
-    return sortOrder === 0 ? left.group.name.localeCompare(right.group.name) : sortOrder;
+    return sortOrder === 0
+      ? left.group.name.localeCompare(right.group.name)
+      : sortOrder;
   });
 }
 
-function compareMountItems(left: { asset_id: string; name: string }, right: { asset_id: string; name: string }) {
-  return left.name.localeCompare(right.name) || left.asset_id.localeCompare(right.asset_id);
+function compareMountItems(
+  left: { asset_id: string; name: string },
+  right: { asset_id: string; name: string },
+) {
+  return (
+    left.name.localeCompare(right.name) ||
+    left.asset_id.localeCompare(right.asset_id)
+  );
 }
 
 function errorMessage(error: unknown) {

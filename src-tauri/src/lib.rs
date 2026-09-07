@@ -7,7 +7,6 @@ use crate::{
         application::AppService,
         data_backup::backup_database_from_settings_value,
         logs::write_startup_log,
-        operation_log::{log_error, log_warn},
         path_utils::app_db_path,
         runtime::{AppRuntime, RuntimeRole},
     },
@@ -31,21 +30,22 @@ pub(crate) async fn converge_ai_executions_before_close(
         .cancel_ai_executions_and_wait(AI_EXECUTION_CLOSE_TIMEOUT, AI_EXECUTION_CLOSE_POLL_INTERVAL)
         .await
     {
-        Ok(report) if !report.converged => log_warn(
-            "app.close.ai_execution",
-            "HIGH PRIORITY: AI execution cleanup did not converge before app close",
-            &[
-                ("cancelled_count", report.cancelled_count.to_string()),
-                ("remaining_count", report.remaining_count.to_string()),
-            ],
-        ),
+        Ok(report) if !report.converged => {
+            tracing::warn!(
+                action = "app.close.ai_execution",
+                cancelled_count = report.cancelled_count,
+                remaining_count = report.remaining_count,
+                "HIGH PRIORITY: AI execution cleanup did not converge before app close"
+            );
+        }
         Ok(_) => {}
-        Err(error) => log_error(
-            "app.close.ai_execution",
-            "HIGH PRIORITY: failed to cancel AI executions before app close",
-            &error,
-            &[],
-        ),
+        Err(error) => {
+            tracing::error!(
+                action = "app.close.ai_execution",
+                error = %error,
+                "HIGH PRIORITY: failed to cancel AI executions before app close"
+            );
+        }
     }
 }
 
@@ -93,145 +93,159 @@ fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), St
     backend::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
     let db_path = app_db_path().map_err(|error| format!("数据库路径初始化失败: {error}"))?;
-    let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
-        .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
-    let report = runtime.shutdown_with_grace(std::time::Duration::from_secs(5));
-    if !report.unfinished_task_ids.is_empty()
-        || !report.dispatcher_drained
-        || report.dispatcher_remaining_events > 0
-        || report.dispatcher_timed_out
-    {
-        return Err(format!(
-            "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}",
-            report.unfinished_task_ids.len(),
-            report.dispatcher_drained,
-            report.dispatcher_remaining_events,
-            report.dispatcher_timed_out
-        ));
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("初始化 Tokio 运行时失败: {error}"))?;
+    rt.block_on(async {
+        let runtime = AppRuntime::bootstrap(db_path, RuntimeRole::OneShot)
+            .await
+            .map_err(|error| format!("数据库和运行时初始化失败: {error}"))?;
+        let report = runtime
+            .shutdown_with_grace(std::time::Duration::from_secs(5))
+            .await;
+        if !report.is_clean() {
+            return Err(format!(
+                "运行时关闭自检失败: unfinished_tasks={}, dispatcher_drained={}, remaining_events={}, timed_out={}, unfinished_stages={:?}",
+                report.unfinished_task_ids.len(),
+                report.dispatcher_drained,
+                report.dispatcher_remaining_events,
+                report.dispatcher_timed_out,
+                report.unfinished_stages
+            ));
+        }
+        Ok(())
+    })
+}
+
+fn init_app_logging() -> Option<backend::logging::LoggingGuard> {
+    match backend::runtime::config::runtime_config() {
+        Ok(config) => match backend::logging::init_logging(&config) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                eprintln!("failed to initialize logging: {error}");
+                None
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to load runtime config for logging: {error}");
+            None
+        }
     }
-    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     setup_panic_hook();
+    let _logging_guard = init_app_logging();
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     if has_startup_self_check_arg(std::env::args()) {
         match run_startup_self_check(context) {
             Ok(()) => return,
             Err(error) => {
                 let message = format!("AssetIWeave startup self-check failed: {error}");
-                log_error("app.startup.self_check", "启动自检失败", &error, &[]);
+                tracing::error!(
+                    action = "app.startup.self_check",
+                    error = %error,
+                    "启动自检失败"
+                );
                 crate::backend::logs::record_fatal_panic(&message);
                 eprintln!("{message}");
+                drop(_logging_guard);
                 std::process::exit(1);
             }
         }
     }
 
     if let Err(error) = backend::builtin_skills::install_builtin_skills() {
-        log_error(
-            "app.startup.skills",
-            "failed to install AssetIWeave system Skills",
-            &error,
-            &[],
+        tracing::error!(
+            action = "app.startup.skills",
+            error = %error,
+            "failed to install AssetIWeave system Skills"
         );
         panic!("failed to install AssetIWeave system Skills: {error}");
     }
     let db_path = match app_db_path() {
         Ok(path) => path,
         Err(error) => {
-            log_error(
-                "app.startup.db_path",
-                "failed to resolve AssetIWeave database path",
-                &error,
-                &[],
+            tracing::error!(
+                action = "app.startup.db_path",
+                error = %error,
+                "failed to resolve AssetIWeave database path"
             );
             panic!("failed to resolve AssetIWeave database path: {error}");
         }
     };
-    let runtime = match AppRuntime::bootstrap(db_path.clone(), RuntimeRole::ResidentHost) {
+    let runtime = match tauri::async_runtime::block_on(AppRuntime::bootstrap(
+        db_path.clone(),
+        RuntimeRole::ResidentHost,
+    )) {
         Ok(runtime) => runtime,
         Err(error) => {
-            log_error(
-                "app.startup.runtime",
-                "failed to initialize AssetIWeave AppRuntime",
-                &error,
-                &[],
+            tracing::error!(
+                action = "app.startup.runtime",
+                error = %error,
+                "failed to initialize AssetIWeave AppRuntime"
             );
             panic!("failed to initialize AssetIWeave AppRuntime: {error}");
         }
     };
     if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
-        log_error(
-            "app.startup.runtime_install",
-            "failed to install the resident AppRuntime as the process settings authority",
-            &error,
-            &[],
+        tracing::error!(
+            action = "app.startup.runtime_install",
+            error = %error,
+            "failed to install the resident AppRuntime as the process settings authority"
         );
         panic!("failed to install AssetIWeave process AppRuntime: {error}");
     }
     let agent_runtime = runtime.agent_runtime();
-    let conversation_full_sync_on_startup_enabled =
-        match backend::app_settings::conversation_full_sync_on_startup_enabled_for_database(
-            runtime.db(),
-        ) {
-            Ok(enabled) => enabled,
-            Err(error) => {
-                log_error(
-                    "app.startup.conversation_sync_setting",
-                    "failed to read Conversation startup sync setting",
-                    &error,
-                    &[],
-                );
-                true
-            }
-        };
-    let conversation_payload_policy_reparse_required = {
-        let service = AppService::from_runtime(&runtime);
-        if let Err(error) = service.recover_team_runs() {
-            log_error(
-                "app.startup.team_recovery",
-                "failed to schedule durable Team runs",
-                &error,
-                &[],
+    let conversation_full_sync_on_startup_enabled = match runtime.backend_settings() {
+        Ok(settings) => settings.auto_full_sync_on_startup(),
+        Err(error) => {
+            tracing::error!(
+                action = "app.startup.conversation_sync_setting",
+                error = %error,
+                "failed to read Conversation startup sync setting"
             );
-        }
-        if let Err(error) = service.refresh_recorded_assets() {
-            log_error(
-                "app.startup.asset_refresh",
-                "failed to validate recorded AssetIWeave assets on startup",
-                &error,
-                &[],
-            );
-        }
-        if let Err(error) = service.refresh_asset_mount_statuses(None) {
-            log_error(
-                "app.startup.mount_refresh",
-                "failed to sync AssetIWeave mount observations on startup",
-                &error,
-                &[],
-            );
-        }
-        match service.conversation_payload_policy_reparse_required() {
-            Ok(required) => required,
-            Err(error) => {
-                log_error(
-                    "app.startup.conversation_policy",
-                    "failed to inspect Conversation payload policy state",
-                    &error,
-                    &[],
-                );
-                false
-            }
+            true
         }
     };
+    {
+        let recovery_runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = AppService::from_runtime(&recovery_runtime);
+            if let Err(error) = service.recover_team_runs().await {
+                tracing::error!(
+                    action = "app.startup.team_recovery",
+                    error = %error,
+                    "failed to schedule durable Team runs"
+                );
+            }
+        });
+        let refresh_runtime = runtime.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = AppService::from_runtime(&refresh_runtime);
+            if let Err(error) = service.refresh_recorded_assets().await {
+                tracing::error!(
+                    action = "app.startup.asset_refresh",
+                    error = %error,
+                    "failed to validate recorded AssetIWeave assets on startup"
+                );
+            }
+            if let Err(error) = service.refresh_asset_mount_statuses(None).await {
+                tracing::error!(
+                    action = "app.startup.mount_refresh",
+                    error = %error,
+                    "failed to sync AssetIWeave mount observations on startup"
+                );
+            }
+        });
+    };
     if let Err(error) = write_startup_log() {
-        log_error(
-            "app.startup.log",
-            "failed to write AssetIWeave startup log",
-            &error,
-            &[],
+        tracing::error!(
+            action = "app.startup.log",
+            error = %error,
+            "failed to write AssetIWeave startup log"
         );
     }
     let app = tauri::Builder::default()
@@ -283,20 +297,29 @@ pub fn run() {
                             if quit_anyway {
                                 tauri::async_runtime::spawn(async move {
                                     converge_ai_executions_before_close(background_tasks).await;
-                                    let _ = tauri::async_runtime::spawn_blocking(move || {
-                                        runtime.shutdown_with_grace(
+                                    let report = runtime
+                                        .shutdown_with_grace(
                                             std::time::Duration::from_secs(5),
                                         )
-                                    })
-                                    .await;
+                                        .await;
+                                    if !report.is_clean() {
+                                        tracing::warn!(
+                                            action = "app.close.window",
+                                            unfinished_tasks = report.unfinished_task_ids.len(),
+                                            dispatcher_drained = report.dispatcher_drained,
+                                            dispatcher_remaining_events = report.dispatcher_remaining_events,
+                                            dispatcher_timed_out = report.dispatcher_timed_out,
+                                            unfinished_stages = %report.unfinished_stages.join(","),
+                                            "AssetIWeave shut down with unfinished resources"
+                                        );
+                                    }
                                     allow_close.store(true, Ordering::SeqCst);
                                     allow_exit.store(true, Ordering::SeqCst);
                                     if let Err(error) = close_window.close() {
-                                        log_error(
-                                            "app.close.window",
-                                            "failed to close AssetIWeave after confirmation",
-                                            &error,
-                                            &[],
+                                        tracing::error!(
+                                            action = "app.close.window",
+                                            error = %error,
+                                            "failed to close AssetIWeave after confirmation"
                                         );
                                     }
                                 });
@@ -310,21 +333,19 @@ pub fn run() {
                     return;
                 }
                 if let Err(error) = window.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
-                    log_error(
-                        "app.close.request",
-                        "failed to notify frontend about close request",
-                        &error,
-                        &[],
+                    tracing::error!(
+                        action = "app.close.request",
+                        error = %error,
+                        "failed to notify frontend about close request"
                     );
                     state.exit_prompt_open.store(false, Ordering::SeqCst);
                     state.allow_close.store(true, Ordering::SeqCst);
                     state.allow_exit.store(true, Ordering::SeqCst);
                     if let Err(close_error) = window.close() {
-                        log_error(
-                            "app.close.window",
-                            "failed to close AssetIWeave after close prompt notification error",
-                            &close_error,
-                            &[],
+                        tracing::error!(
+                            action = "app.close.window",
+                            error = %close_error,
+                            "failed to close AssetIWeave after close prompt notification error"
                         );
                     }
                 }
@@ -345,7 +366,11 @@ pub fn run() {
         .invoke_handler(adapters::tauri::command_handler())
         .build(context)
         .unwrap_or_else(|error| {
-            log_error("app.startup.tauri", "error while running AssetIWeave", &error, &[]);
+            tracing::error!(
+                action = "app.startup.tauri",
+                error = %error,
+                "error while running AssetIWeave"
+            );
             panic!("error while running AssetIWeave: {error}");
         });
     let mut task_events = runtime.task_runtime().subscribe();
@@ -375,28 +400,45 @@ pub fn run() {
             }
         }
     });
-    if conversation_full_sync_on_startup_enabled && conversation_payload_policy_reparse_required {
-        let state = app.state::<AppState>();
-        let params = backend::application::ConversationSyncParams {
-            source_id: None,
-            adapter_id: None,
-            record_kind: None,
-            mode: backend::application::ConversationSyncMode::Full,
-            dry_run: false,
-        };
-        if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
-            app.handle().clone(),
-            state.runtime.clone(),
-            state.background_tasks.clone(),
-            params,
-        ) {
-            log_error(
-                "app.startup.conversation_policy_reparse",
-                "failed to start Conversation payload policy reparse",
-                &error,
-                &[],
-            );
-        }
+    if conversation_full_sync_on_startup_enabled {
+        let app_handle = app.handle().clone();
+        let sync_runtime = runtime.clone();
+        let background_tasks = app.state::<AppState>().background_tasks.clone();
+        tauri::async_runtime::spawn(async move {
+            let service = backend::application::AppService::from_runtime(&sync_runtime);
+            let required = match service.conversation_payload_policy_reparse_required().await {
+                Ok(required) => required,
+                Err(error) => {
+                    tracing::error!(
+                        action = "app.startup.conversation_policy",
+                        error = %error,
+                        "failed to inspect Conversation payload policy state"
+                    );
+                    false
+                }
+            };
+            if required {
+                let params = backend::application::ConversationSyncParams {
+                    source_id: None,
+                    adapter_id: None,
+                    record_kind: None,
+                    mode: backend::application::ConversationSyncMode::Full,
+                    dry_run: false,
+                };
+                if let Err(error) = adapters::tauri::commands::start_conversation_sync_background(
+                    app_handle,
+                    sync_runtime,
+                    background_tasks,
+                    params,
+                ) {
+                    tracing::error!(
+                        action = "app.startup.conversation_policy_reparse",
+                        error = %error,
+                        "failed to start Conversation payload policy reparse"
+                    );
+                }
+            }
+        });
     }
     app.run(move |app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
@@ -434,12 +476,22 @@ pub fn run() {
                         if quit_anyway {
                             tauri::async_runtime::spawn(async move {
                                 converge_ai_executions_before_close(background_tasks).await;
-                                let _ = tauri::async_runtime::spawn_blocking(move || {
-                                    runtime.shutdown_with_grace(
+                                let report = runtime
+                                    .shutdown_with_grace(
                                         std::time::Duration::from_secs(5),
                                     )
-                                })
-                                .await;
+                                    .await;
+                                if !report.is_clean() {
+                                    tracing::warn!(
+                                        action = "app.close.exit",
+                                        unfinished_tasks = report.unfinished_task_ids.len(),
+                                        dispatcher_drained = report.dispatcher_drained,
+                                        dispatcher_remaining_events = report.dispatcher_remaining_events,
+                                        dispatcher_timed_out = report.dispatcher_timed_out,
+                                        unfinished_stages = %report.unfinished_stages.join(","),
+                                        "AssetIWeave shut down with unfinished resources"
+                                    );
+                                }
                                 allow_exit.store(true, Ordering::SeqCst);
                                 exit_app.exit(0);
                             });
@@ -453,11 +505,10 @@ pub fn run() {
                 return;
             }
             if let Err(error) = app_handle.emit(APP_CLOSE_REQUESTED_EVENT, ()) {
-                log_error(
-                    "app.exit.request",
-                    "failed to notify frontend about app exit request",
-                    &error,
-                    &[],
+                tracing::error!(
+                    action = "app.exit.request",
+                    error = %error,
+                    "failed to notify frontend about app exit request"
                 );
                 state.exit_prompt_open.store(false, Ordering::SeqCst);
                 state.allow_exit.store(true, Ordering::SeqCst);
@@ -467,34 +518,22 @@ pub fn run() {
     });
 }
 
-pub(crate) fn sync_before_close_with_runtime(
+pub(crate) async fn sync_before_close_with_runtime(
     runtime: &Arc<AppRuntime>,
     db_path: &std::path::Path,
     backup_database: bool,
 ) {
     let service = AppService::from_runtime(runtime);
-    if let Err(error) = service.refresh_asset_mount_statuses(None) {
-        log_error(
-            "app.close.mount_refresh",
-            "failed to sync AssetIWeave mount observations before close",
-            &error,
-            &[],
+    if let Err(error) = service.refresh_asset_mount_statuses(None).await {
+        tracing::error!(
+            action = "app.close.mount_refresh",
+            error = %error,
+            "failed to sync AssetIWeave mount observations before close"
         );
     }
 
     if backup_database {
-        let settings = match service.get_app_settings() {
-            Ok(settings) => settings.settings,
-            Err(error) => {
-                log_error(
-                    "app.close.database_backup_settings",
-                    "读取 SQLite 备份设置失败，使用默认备份目录",
-                    &error,
-                    &[],
-                );
-                serde_json::Value::Object(Default::default())
-            }
-        };
+        let settings = service.app_settings_value();
         let backup_result = backup_database_from_settings_value(db_path, &settings);
         match backup_result {
             Ok(report) => {
@@ -505,19 +544,18 @@ pub(crate) fn sync_before_close_with_runtime(
                         .map(|error| format!("{}: {}", error.directory, error.message))
                         .collect::<Vec<_>>()
                         .join("; ");
-                    log_warn(
-                        "app.close.database_backup",
-                        "AssetIWeave database backup completed with warnings",
-                        &[("errors", errors)],
+                    tracing::warn!(
+                        action = "app.close.database_backup",
+                        errors = %errors,
+                        "AssetIWeave database backup completed with warnings"
                     );
                 }
             }
             Err(error) => {
-                log_error(
-                    "app.close.database_backup",
-                    "failed to back up AssetIWeave database before close",
-                    &error,
-                    &[],
+                tracing::error!(
+                    action = "app.close.database_backup",
+                    error = %error,
+                    "failed to back up AssetIWeave database before close"
                 );
             }
         }
@@ -525,41 +563,62 @@ pub(crate) fn sync_before_close_with_runtime(
 }
 
 pub fn run_engine_stdio() {
+    let _logging_guard = init_app_logging();
     if let Err(error) = backend::builtin_skills::install_builtin_skills() {
         eprintln!("failed to install AssetIWeave system Skills: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
-    let engine_db_path = std::env::var("ASSETIWEAVE_DB_PATH")
-        .ok()
-        .filter(|path| !path.trim().is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
-    let runtime = match engine_db_path {
-        Ok(path) => match AppRuntime::bootstrap(path, RuntimeRole::OneShot) {
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            eprintln!("failed to initialize Engine async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let engine_db_path = backend::path_utils::app_db_path();
+    let (_app_runtime, runtime) = match engine_db_path {
+        Ok(path) => match tokio_runtime.block_on(AppRuntime::bootstrap(path, RuntimeRole::OneShot))
+        {
             Ok(runtime) => {
                 if let Err(error) = backend::runtime::install_process_runtime(runtime.clone()) {
                     eprintln!("failed to install Engine AppRuntime: {error}");
+                    drop(_logging_guard);
                     std::process::exit(1);
                 }
-                runtime.agent_runtime()
+                (runtime.clone(), runtime.agent_runtime())
             }
             Err(error) => {
                 eprintln!("failed to initialize Engine AppRuntime: {error}");
+                drop(_logging_guard);
                 std::process::exit(1);
             }
         },
         Err(error) => {
             eprintln!("failed to initialize Engine agent runtime: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Err(error) = install_engine_termination_handlers(runtime) {
         eprintln!("failed to install Engine termination handlers: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = adapters::engine::run_stdio() {
+    let engine_result = tokio_runtime.block_on(async {
+        let res = adapters::engine::run_stdio().await;
+        let _ = _app_runtime
+            .shutdown_with_grace(std::time::Duration::from_secs(3))
+            .await;
+        res
+    });
+    if let Err(error) = engine_result {
         eprintln!("{error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }
@@ -568,23 +627,41 @@ pub fn run_engine_stdio() {
 /// The bridge is a separate process with only a tenant/member-scoped opaque
 /// credential in its environment; every operation still crosses AppService.
 pub fn run_team_mcp_stdio() {
-    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
-    let runtime = match db_path.and_then(|path| {
-        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
-    }) {
-        Ok(runtime) => runtime,
+    let _logging_guard = init_app_logging();
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
         Err(error) => {
-            eprintln!("failed to initialize Team MCP runtime: {error}");
+            eprintln!("failed to initialize Team MCP async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let db_path = backend::path_utils::app_db_path();
+    let runtime = match db_path {
+        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
+            path,
+            backend::runtime::RuntimeRole::OneShot,
+        )) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to initialize Team MCP runtime: {error}");
+                drop(_logging_guard);
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to resolve Team MCP db path: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_TEAM_TOOL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+        if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
             eprintln!("failed to activate Team MCP tenant: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     }
@@ -593,10 +670,12 @@ pub fn run_team_mcp_stdio() {
     let member_id = std::env::var("ASSETIWEAVE_TEAM_TOOL_MEMBER_ID").unwrap_or_default();
     if credential.trim().is_empty() || member_id.trim().is_empty() {
         eprintln!("Team MCP credentials are missing");
+        drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_team_mcp_loop(&service, &credential, &member_id) {
+    if let Err(error) = run_team_mcp_loop(&tokio_runtime, &service, &credential, &member_id) {
         eprintln!("Team MCP bridge stopped: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }
@@ -605,23 +684,41 @@ pub fn run_team_mcp_stdio() {
 /// The bridge intentionally exposes search and locator reads only; mutation
 /// commands are not part of this protocol surface.
 pub fn run_memory_recall_mcp_stdio() {
-    let db_path = std::env::var_os("ASSETIWEAVE_DB_PATH")
-        .filter(|value| !value.is_empty())
-        .map(std::path::PathBuf::from)
-        .map(Ok)
-        .unwrap_or_else(backend::path_utils::app_db_path);
-    let runtime = match db_path.and_then(|path| {
-        backend::runtime::AppRuntime::bootstrap(path, backend::runtime::RuntimeRole::OneShot)
-    }) {
-        Ok(runtime) => runtime,
+    let _logging_guard = init_app_logging();
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
         Err(error) => {
-            eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+            eprintln!("failed to initialize Memory Recall MCP async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let db_path = backend::path_utils::app_db_path();
+    let runtime = match db_path {
+        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
+            path,
+            backend::runtime::RuntimeRole::OneShot,
+        )) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to initialize Memory Recall MCP runtime: {error}");
+                drop(_logging_guard);
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to resolve Memory Recall MCP db path: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     };
     if let Ok(tenant_id) = std::env::var("ASSETIWEAVE_MEMORY_RECALL_TENANT_ID") {
-        if let Err(error) = runtime.activate_tenant(&tenant_id) {
+        if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
             eprintln!("failed to activate Memory Recall MCP tenant: {error}");
+            drop(_logging_guard);
             std::process::exit(1);
         }
     }
@@ -629,15 +726,18 @@ pub fn run_memory_recall_mcp_stdio() {
     let session_id = std::env::var("ASSETIWEAVE_MEMORY_RECALL_SESSION_ID").unwrap_or_default();
     if session_id.trim().is_empty() {
         eprintln!("Memory Recall MCP session is missing");
+        drop(_logging_guard);
         std::process::exit(1);
     }
-    if let Err(error) = run_memory_recall_mcp_loop(&service, &session_id) {
+    if let Err(error) = run_memory_recall_mcp_loop(&tokio_runtime, &service, &session_id) {
         eprintln!("Memory Recall MCP bridge stopped: {error}");
+        drop(_logging_guard);
         std::process::exit(1);
     }
 }
 
 fn run_memory_recall_mcp_loop(
+    tokio_runtime: &tokio::runtime::Runtime,
     service: &backend::application::AppService,
     session_id: &str,
 ) -> Result<(), String> {
@@ -662,11 +762,11 @@ fn run_memory_recall_mcp_loop(
         let result = match method {
             "initialize" => Ok(memory_recall_mcp_initialize_result()),
             "tools/list" => Ok(memory_recall_mcp_tools_result()),
-            "tools/call" => memory_recall_mcp_call(
+            "tools/call" => tokio_runtime.block_on(memory_recall_mcp_call(
                 service,
                 session_id,
                 request.get("params").unwrap_or(&serde_json::Value::Null),
-            ),
+            )),
             _ => Err("unsupported Memory Recall MCP method".to_string()),
         };
         let response = match (id, result) {
@@ -735,7 +835,7 @@ fn memory_recall_mcp_tools_result() -> serde_json::Value {
     })
 }
 
-fn memory_recall_mcp_call(
+async fn memory_recall_mcp_call(
     service: &backend::application::AppService,
     recall_session_id: &str,
     params: &serde_json::Value,
@@ -752,6 +852,7 @@ fn memory_recall_mcp_call(
         .get_memory_recall_session(backend::application::MemoryRecallSessionGetParams {
             session_id: recall_session_id.to_string(),
         })
+        .await
         .map_err(|error| error.view().message)?;
     let string = |key: &str| {
         arguments
@@ -776,6 +877,7 @@ fn memory_recall_mcp_call(
                         .map(|value| value as usize),
                     offset: Some(0),
                 })
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -788,68 +890,19 @@ fn memory_recall_mcp_call(
             let question_id =
                 string("question_id").ok_or_else(|| "missing question_id".to_string())?;
             let block_id = string("block_id").ok_or_else(|| "missing block_id".to_string())?;
-            let record_kind = match record_kind {
-                backend::models::MemoryRecordKind::Session => {
-                    backend::dto::ConversationRecordKind::Session
-                }
-                backend::models::MemoryRecordKind::Web => backend::dto::ConversationRecordKind::Web,
-            };
             let reference = backend::models::MemoryRecallContentReference {
-                record_kind: match record_kind {
-                    backend::dto::ConversationRecordKind::Session => {
-                        backend::models::MemoryRecordKind::Session
-                    }
-                    backend::dto::ConversationRecordKind::Web => {
-                        backend::models::MemoryRecordKind::Web
-                    }
-                },
+                record_kind,
                 session_id: string("session_id").unwrap_or_default(),
-                question_id: question_id.clone(),
+                question_id,
                 turn_id: string("turn_id"),
                 part_id: string("part_id"),
-                block_id: block_id.clone(),
+                block_id,
             };
-            if !service
-                .recall_content_reference_exists_for_scope(
-                    service.tenant_id(),
-                    &session.scope,
-                    &reference,
-                )
-                .map_err(|error| error.view().message)?
-            {
-                return Err("Recall locator is not readable in this session scope".to_string());
-            }
-            let locators = service
-                .memory_recall_run_sync(backend::store::list_conversation_block_locators_sqlx(
-                    service.memory_recall_pool(),
-                    service.tenant_id(),
-                    record_kind,
-                    &question_id,
-                ))
+            let block = service
+                .load_memory_recall_block(&session.scope, &reference)
+                .await
                 .map_err(|error| error.view().message)?;
-            let Some(locator) = locators.into_iter().find(|locator| {
-                locator.session_id == string("session_id").unwrap_or_default()
-                    && locator.block_id == block_id
-                    && string("turn_id")
-                        .as_deref()
-                        .is_none_or(|id| locator.turn_id == id)
-                    && string("part_id")
-                        .as_deref()
-                        .is_none_or(|id| locator.part_id.as_deref() == Some(id))
-            }) else {
-                return Err("Recall locator is not readable in this tenant".to_string());
-            };
-            serde_json::to_value(
-                service
-                    .memory_recall_run_sync(backend::store::load_conversation_block_detail_sqlx(
-                        service.memory_recall_pool(),
-                        service.tenant_id(),
-                        record_kind,
-                        &locator.block_id,
-                    ))
-                    .map_err(|error| error.view().message)?,
-            )
-            .map_err(|error| error.to_string())?
+            serde_json::to_value(block).map_err(|error| error.to_string())?
         }
         _ => return Err(format!("unsupported Memory Recall MCP tool: {name}")),
     };
@@ -859,6 +912,7 @@ fn memory_recall_mcp_call(
 }
 
 fn run_team_mcp_loop(
+    tokio_runtime: &tokio::runtime::Runtime,
     service: &backend::application::AppService,
     credential: &str,
     member_id: &str,
@@ -884,12 +938,12 @@ fn run_team_mcp_loop(
         let result = match method {
             "initialize" => Ok(team_mcp_initialize_result()),
             "tools/list" => Ok(team_mcp_tools_result()),
-            "tools/call" => team_mcp_call(
+            "tools/call" => tokio_runtime.block_on(team_mcp_call(
                 service,
                 credential,
                 member_id,
                 request.get("params").unwrap_or(&serde_json::Value::Null),
-            ),
+            )),
             _ => Err("unsupported Team MCP method".to_string()),
         };
         let response = match (id, result) {
@@ -975,7 +1029,7 @@ fn team_mcp_tools_result() -> serde_json::Value {
     })
 }
 
-fn team_mcp_call(
+async fn team_mcp_call(
     service: &backend::application::AppService,
     credential: &str,
     member_id: &str,
@@ -1007,6 +1061,7 @@ fn team_mcp_call(
                     backend::models::TeamToolTaskListInput { team_id, run_id },
                     member_id,
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -1028,6 +1083,7 @@ fn team_mcp_call(
                             error_code: string("error_code"),
                         },
                     )
+                    .await
                     .map_err(|error| error.view().message)?,
             )
             .map_err(|error| error.to_string())?
@@ -1047,6 +1103,7 @@ fn team_mcp_call(
                         idempotency_key: required_string("idempotency_key")?,
                     },
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -1064,6 +1121,7 @@ fn team_mcp_call(
                             .unwrap_or(false),
                     },
                 )
+                .await
                 .map_err(|error| error.view().message)?,
         )
         .map_err(|error| error.to_string())?,
@@ -1092,18 +1150,6 @@ fn install_engine_termination_handlers(
         });
     }
     Ok(())
-}
-
-pub(crate) fn sync_before_close(db_path: &std::path::Path, backup_database: bool) {
-    match AppRuntime::bootstrap(db_path.to_path_buf(), RuntimeRole::OneShot) {
-        Ok(runtime) => sync_before_close_with_runtime(&runtime, db_path, backup_database),
-        Err(error) => log_error(
-            "app.close.database",
-            "failed to open AssetIWeave database before close",
-            &error,
-            &[],
-        ),
-    }
 }
 
 #[cfg(test)]

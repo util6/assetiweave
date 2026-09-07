@@ -1,5 +1,12 @@
 import { Archive } from "lucide-react";
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import {
   getSkillBackupSettings,
@@ -55,7 +62,9 @@ export function SkillBackupLibraryDialog({
   async function handlePickDirectory() {
     setBusy(true);
     try {
-      const selected = await selectTargetDirectory(t("backup.dialog.pickDirectory"));
+      const selected = await selectTargetDirectory(
+        t("backup.dialog.pickDirectory"),
+      );
       if (selected) {
         setRootPath(abbreviateHomePath(selected));
       }
@@ -76,7 +85,10 @@ export function SkillBackupLibraryDialog({
 
     setBusy(true);
     try {
-      const nextSettings = await updateSkillBackupSettings(trimmedRootPath, true);
+      const nextSettings = await updateSkillBackupSettings(
+        trimmedRootPath,
+        true,
+      );
       setSettings(nextSettings);
       setRootPath(abbreviateHomePath(nextSettings.root_path));
       await onSaved?.(nextSettings);
@@ -97,10 +109,19 @@ export function SkillBackupLibraryDialog({
       contentClassName="p-0"
       footer={
         <>
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             {t("common.cancel")}
           </Button>
-          <Button disabled={disabled || !rootPath.trim()} form={formId} type="submit">
+          <Button
+            disabled={disabled || !rootPath.trim()}
+            form={formId}
+            type="submit"
+          >
             {busy ? t("common.saving") : t("backup.action.save")}
           </Button>
         </>
@@ -114,7 +135,11 @@ export function SkillBackupLibraryDialog({
       size="lg"
       title={t("backup.dialog.title")}
     >
-      <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
+      <form
+        className="px-5 py-5"
+        id={formId}
+        onSubmit={(event) => void handleSubmit(event)}
+      >
         <div className="grid gap-4">
           <Field label={t("backup.field.rootPath")} required>
             <PathPickerInput
@@ -123,7 +148,12 @@ export function SkillBackupLibraryDialog({
               onChange={(event) => setRootPath(event.target.value)}
               onPick={() => void handlePickDirectory()}
               pickLabel={t("backup.dialog.pickDirectory")}
-              placeholder={settings?.display_default_root_path ?? (settings?.default_root_path ? abbreviateHomePath(settings.default_root_path) : "~/.assetiweave/library/skills")}
+              placeholder={
+                settings?.display_default_root_path ??
+                (settings?.default_root_path
+                  ? abbreviateHomePath(settings.default_root_path)
+                  : "~/.assetiweave/library/skills")
+              }
               ref={inputRef}
               value={rootPath}
             />
@@ -131,19 +161,45 @@ export function SkillBackupLibraryDialog({
 
           {settings && (
             <div className="grid gap-2 rounded-xl border border-theme-control-border bg-theme-control/65 p-3">
-              <ReadonlyRow label={t("backup.field.currentPath")} value={settings.display_root_path ?? abbreviateHomePath(settings.expanded_root_path)} />
-              <ReadonlyRow label={t("backup.field.defaultPath")} value={settings.display_default_root_path ?? abbreviateHomePath(settings.default_root_path)} />
-              <ReadonlyRow label={t("backup.field.mode")} value={settings.is_default_root ? t("backup.mode.default") : t("backup.mode.custom")} />
+              <ReadonlyRow
+                label={t("backup.field.currentPath")}
+                value={
+                  settings.display_root_path ??
+                  abbreviateHomePath(settings.expanded_root_path)
+                }
+              />
+              <ReadonlyRow
+                label={t("backup.field.defaultPath")}
+                value={
+                  settings.display_default_root_path ??
+                  abbreviateHomePath(settings.default_root_path)
+                }
+              />
+              <ReadonlyRow
+                label={t("backup.field.mode")}
+                value={
+                  settings.is_default_root
+                    ? t("backup.mode.default")
+                    : t("backup.mode.custom")
+                }
+              />
             </div>
           )}
         </div>
-
       </form>
     </DialogFrame>
   );
 }
 
-function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+function Field({
+  children,
+  label,
+  required = false,
+}: {
+  children: ReactNode;
+  label: string;
+  required?: boolean;
+}) {
   return (
     <label className="grid gap-1.5">
       <span className="text-body-sm font-medium text-on-surface-variant">
@@ -159,7 +215,10 @@ function ReadonlyRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3 text-body-sm max-[640px]:grid-cols-1">
       <span className="text-on-surface-variant">{label}</span>
-      <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-on-surface" title={value}>
+      <span
+        className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-on-surface"
+        title={value}
+      >
         {value}
       </span>
     </div>

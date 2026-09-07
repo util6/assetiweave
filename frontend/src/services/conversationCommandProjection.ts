@@ -34,7 +34,10 @@ interface ProjectionCacheEntry {
 
 const projectionCache = new Map<string, ProjectionCacheEntry>();
 const latestProjectionKeyBySource = new Map<string, string>();
-const inFlightBatches = new Map<string, Promise<ConversationCommandProjection[]>>();
+const inFlightBatches = new Map<
+  string,
+  Promise<ConversationCommandProjection[]>
+>();
 
 export async function projectConversationCommandParts(
   request: ConversationCommandProjectionRequest,
@@ -47,7 +50,9 @@ export async function projectConversationCommandParts(
   for (const part of normalizedParts) {
     const sourceKey = projectionSourceKey(request, part);
     const projectionKey = latestProjectionKeyBySource.get(sourceKey);
-    const cached = projectionKey ? projectionCache.get(projectionKey) : undefined;
+    const cached = projectionKey
+      ? projectionCache.get(projectionKey)
+      : undefined;
     if (cached?.command === part.command) {
       projections.set(part.partId, cached.projection);
     } else {
@@ -55,11 +60,17 @@ export async function projectConversationCommandParts(
     }
   }
 
-  for (let offset = 0; offset < missing.length; offset += MAX_PROJECTION_BATCH_SIZE) {
+  for (
+    let offset = 0;
+    offset < missing.length;
+    offset += MAX_PROJECTION_BATCH_SIZE
+  ) {
     const batch = missing.slice(offset, offset + MAX_PROJECTION_BATCH_SIZE);
     const projected = await projectBatch(request, batch);
     for (const projection of projected) {
-      const part = batch.find((candidate) => candidate.partId === projection.part_id)!;
+      const part = batch.find(
+        (candidate) => candidate.partId === projection.part_id,
+      )!;
       const sourceKey = projectionSourceKey(request, part);
       const projectionKey = `${sourceKey}\0${projection.projector_version}`;
       projectionCache.set(projectionKey, { command: part.command, projection });
@@ -75,7 +86,9 @@ async function projectBatch(
   request: ConversationCommandProjectionRequest,
   parts: ConversationCommandProjectionPartInput[],
 ): Promise<ConversationCommandProjection[]> {
-  const batchKey = parts.map((part) => projectionSourceKey(request, part)).join("\u001e");
+  const batchKey = parts
+    .map((part) => projectionSourceKey(request, part))
+    .join("\u001e");
   const current = inFlightBatches.get(batchKey);
   if (current) return current;
   const promise = projectBatchUncached(request.adapterId, parts).finally(() => {
@@ -94,11 +107,13 @@ async function projectBatchUncached(
       part_id: part.partId,
       schema_version: 1,
       projector_version: "browser-preview-raw-v1",
-      nodes: [{
-        display_order: 0,
-        command: part.command,
-        command_label: part.commandLabel ?? null,
-      }],
+      nodes: [
+        {
+          display_order: 0,
+          command: part.command,
+          command_label: part.commandLabel ?? null,
+        },
+      ],
     }));
   }
   const result = await invoke<ConversationCommandProjection[]>(
@@ -127,12 +142,19 @@ function validateProjectionBatch(
     if (!requestedIds.has(projection.part_id) || seen.has(projection.part_id)) {
       throw new Error(`Invalid command projection Part: ${projection.part_id}`);
     }
-    if (projection.schema_version !== 1 || !projection.projector_version?.trim()) {
-      throw new Error(`Invalid command projection version for Part: ${projection.part_id}`);
+    if (
+      projection.schema_version !== 1 ||
+      !projection.projector_version?.trim()
+    ) {
+      throw new Error(
+        `Invalid command projection version for Part: ${projection.part_id}`,
+      );
     }
     projection.nodes.forEach((node, index) => {
       if (node.display_order !== index || !node.command?.trim()) {
-        throw new Error(`Invalid command projection node for Part: ${projection.part_id}`);
+        throw new Error(
+          `Invalid command projection node for Part: ${projection.part_id}`,
+        );
       }
     });
     seen.add(projection.part_id);
@@ -140,7 +162,9 @@ function validateProjectionBatch(
   if (seen.size !== parts.length) {
     throw new Error("Command projector returned an incomplete batch");
   }
-  const byPartId = new Map(result.map((projection) => [projection.part_id, projection]));
+  const byPartId = new Map(
+    result.map((projection) => [projection.part_id, projection]),
+  );
   return parts.map((part) => byPartId.get(part.partId)!);
 }
 
@@ -153,7 +177,10 @@ function normalizePart(part: ConversationCommandProjectionPartInput) {
 }
 
 function projectionSourceKey(
-  request: Pick<ConversationCommandProjectionRequest, "adapterId" | "adapterVersion">,
+  request: Pick<
+    ConversationCommandProjectionRequest,
+    "adapterId" | "adapterVersion"
+  >,
   part: ConversationCommandProjectionPartInput,
 ) {
   return [

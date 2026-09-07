@@ -463,13 +463,15 @@ mod tests {
         assert_eq!(detail.members[0].asset_id, "frontend-ui");
     }
 
-    #[test]
-    fn sqlx_group_repo_round_trips_members_and_cleans_orphans() {
+    #[tokio::test]
+    async fn sqlx_group_repo_round_trips_members_and_cleans_orphans() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-group-sqlx-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let assets = vec![
             test_asset("frontend-ui", "source-a", "frontend/frontend-ui"),
             test_asset("tampermonkey", "source-a", "scripts/tampermonkey"),
@@ -486,50 +488,57 @@ mod tests {
             name_contains: Some("ui".to_string()),
         });
 
-        let (details, detail, cleaned_detail, after_delete) = database
-            .block_on(async {
-                crate::backend::store::replace_source_assets_sqlx(
-                    database.pool(),
-                    "default",
-                    "source-a",
-                    &assets,
-                )
-                .await?;
-                upsert_asset_group_sqlx(database.pool(), "default", &group).await?;
-                replace_asset_group_members_sqlx(
-                    database.pool(),
-                    "default",
-                    &group.id,
-                    &[
-                        "tampermonkey".to_string(),
-                        "frontend-ui".to_string(),
-                        "tampermonkey".to_string(),
-                    ],
-                    &assets,
-                )
-                .await?;
-                let details =
-                    load_skill_group_details_sqlx(database.pool(), "default", &assets).await?;
-                let detail =
-                    load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
-                        .await?;
-                sqlx::query(sql::INSERT_ASSET_GROUP_MEMBER)
-                    .bind("default")
-                    .bind(&group.id)
-                    .bind("missing-skill")
-                    .bind("2026-01-01T00:00:00Z")
-                    .execute(database.pool())
-                    .await?;
-                delete_orphan_asset_group_members_sqlx(database.pool(), "default").await?;
-                let cleaned_detail =
-                    load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
-                        .await?;
-                delete_asset_group_sqlx(database.pool(), "default", &group.id).await?;
-                let after_delete =
-                    load_skill_group_details_sqlx(database.pool(), "default", &assets).await?;
-                AppResult::Ok((details, detail, cleaned_detail, after_delete))
-            })
-            .expect("round trip SQLx asset groups");
+        crate::backend::store::replace_source_assets_sqlx(
+            database.pool(),
+            "default",
+            "source-a",
+            &assets,
+        )
+        .await
+        .expect("replace source assets");
+        upsert_asset_group_sqlx(database.pool(), "default", &group)
+            .await
+            .expect("upsert asset group");
+        replace_asset_group_members_sqlx(
+            database.pool(),
+            "default",
+            &group.id,
+            &[
+                "tampermonkey".to_string(),
+                "frontend-ui".to_string(),
+                "tampermonkey".to_string(),
+            ],
+            &assets,
+        )
+        .await
+        .expect("replace asset group members");
+        let details = load_skill_group_details_sqlx(database.pool(), "default", &assets)
+            .await
+            .expect("load skill group details");
+        let detail = load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
+            .await
+            .expect("load skill group detail");
+        sqlx::query(sql::INSERT_ASSET_GROUP_MEMBER)
+            .bind("default")
+            .bind(&group.id)
+            .bind("missing-skill")
+            .bind("2026-01-01T00:00:00Z")
+            .execute(database.pool())
+            .await
+            .expect("insert asset group member");
+        delete_orphan_asset_group_members_sqlx(database.pool(), "default")
+            .await
+            .expect("delete orphan asset group members");
+        let cleaned_detail =
+            load_skill_group_detail_sqlx(database.pool(), "default", &group.id, &assets)
+                .await
+                .expect("load cleaned skill group detail");
+        delete_asset_group_sqlx(database.pool(), "default", &group.id)
+            .await
+            .expect("delete asset group");
+        let after_delete = load_skill_group_details_sqlx(database.pool(), "default", &assets)
+            .await
+            .expect("load skill group details after delete");
 
         assert_eq!(details.len(), 1);
         assert_eq!(

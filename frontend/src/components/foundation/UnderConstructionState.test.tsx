@@ -15,12 +15,16 @@ describe("UnderConstructionState", () => {
 
     expect(html).toContain("Feature in progress");
     expect(html).toContain("MCP servers is under construction");
-    expect(html).toContain("This view is wired into navigation but is not ready yet.");
+    expect(html).toContain(
+      "This view is wired into navigation but is not ready yet.",
+    );
     expect(html).toContain("Open roadmap");
   });
 
   it("renders a labelled static section without browser globals", () => {
-    const html = renderToStaticMarkup(<UnderConstructionState title="此功能正在建设中" />);
+    const html = renderToStaticMarkup(
+      <UnderConstructionState title="此功能正在建设中" />,
+    );
 
     expect(html).toContain("<section");
     expect(html).toContain("aria-labelledby=");

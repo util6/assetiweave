@@ -1,0 +1,50 @@
+export const memoryEn = {
+  "memory.page.eyebrow": "Progressive Recall",
+  "memory.recent.title": "Recent",
+  "memory.recent.description":
+    "Review work from the last 72 hours and return to the Conversation source.",
+  "memory.recent.projectView": "By project",
+  "memory.recent.timeView": "By time",
+  "memory.recent.refresh": "Refresh",
+  "memory.recent.noProject": "No project",
+  "memory.recent.questions": "questions",
+  "memory.recent.noEvents": "No visible events.",
+  "memory.recent.emptyTitle": "No work in the last 72 hours",
+  "memory.recent.emptyDescription":
+    "Recent work appears here after Conversation sources are synced.",
+  "memory.task.running": "Memory background task running",
+  "memory.recall.title": "Recall",
+  "memory.recall.description":
+    "Answer focused questions with local source content in one persistent session.",
+  "memory.recall.session": "Recall session",
+  "memory.recall.newSession": "New session",
+  "memory.recall.turnCount": "Turns",
+  "memory.recall.agent": "Agent",
+  "memory.recall.status": "Status",
+  "memory.recall.conversation": "Continuous conversation",
+  "memory.recall.send": "Send",
+  "memory.recall.sendHint": "⌘/Ctrl + Enter to send",
+  "memory.recall.turn": "Turn",
+  "memory.recall.openReference": "Open source",
+  "memory.recall.followUps": "Suggested follow-ups",
+  "memory.recall.referenceUnavailable": "The source is temporarily unavailable",
+  "memory.recall.status.active": "Active",
+  "memory.recall.status.completed": "Completed",
+  "memory.recall.status.failed": "Failed",
+  "memory.recall.status.cancelled": "Cancelled",
+  "memory.recall.status.resume_unavailable": "Resume unavailable",
+  "memory.recall.status.queued": "Queued",
+  "memory.recall.status.running": "Running",
+  "memory.recall.query": "Recall question",
+  "memory.recall.queryPlaceholder":
+    "For example: Why did we choose the AppService boundary?",
+  "memory.recall.projectPath": "Project path",
+  "memory.recall.projectPlaceholder":
+    "Optional; limit this Recall session to a project",
+  "memory.recall.emptyTitle": "等待第一轮回忆",
+  "memory.recall.emptyDescription":
+    "Send a question to continue a persistent Recall session.",
+  "memory.recall.browserTitle": "Recall data is unavailable in browser preview",
+  "memory.recall.browserDescription":
+    "Use the desktop app to search local Conversation records.",
+} as const;

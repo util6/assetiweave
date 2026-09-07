@@ -49,23 +49,15 @@ impl CatalogRevision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CatalogError {
+    #[error("Agent catalog exceeds the 5 MiB limit")]
     TooLarge,
+    #[error("{0}")]
     InvalidJson(String),
+    #[error("{0}")]
     Invalid(String),
 }
-
-impl std::fmt::Display for CatalogError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TooLarge => formatter.write_str("Agent catalog exceeds the 5 MiB limit"),
-            Self::InvalidJson(message) | Self::Invalid(message) => formatter.write_str(message),
-        }
-    }
-}
-
-impl std::error::Error for CatalogError {}
 
 #[derive(Clone, Debug)]
 pub(crate) struct CatalogService {
@@ -170,7 +162,8 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
                 item.id
             )));
         }
-        item.validate_basic().map_err(CatalogError::Invalid)?;
+        item.validate_basic()
+            .map_err(|e| CatalogError::Invalid(e.to_string()))?;
         if item.verification.evidence_id.is_none()
             && matches!(
                 item.verification.status,

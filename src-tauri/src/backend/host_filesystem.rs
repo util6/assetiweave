@@ -56,16 +56,25 @@ impl HostFilesystem {
     }
 
     pub(crate) fn is_within(&self, path: &Path, root: &Path) -> bool {
-        self.relative_components(path, root).is_some()
+        self.relative_components_os(path, root).is_some()
     }
 
-    pub(crate) fn relative_components(&self, path: &Path, root: &Path) -> Option<Vec<String>> {
+    pub(crate) fn relative_components_os(&self, path: &Path, root: &Path) -> Option<Vec<OsString>> {
         let path = self.normalized_path(path);
         let root = self.normalized_path(root);
         (path.prefix == root.prefix
             && path.absolute == root.absolute
             && path.components.starts_with(&root.components))
         .then(|| path.components[root.components.len()..].to_vec())
+    }
+
+    pub(crate) fn relative_components(&self, path: &Path, root: &Path) -> Option<Vec<String>> {
+        let components = self.relative_components_os(path, root)?;
+        let mut strings = Vec::with_capacity(components.len());
+        for component in components {
+            strings.push(component.into_string().ok()?);
+        }
+        Some(strings)
     }
 
     pub(crate) fn validate_path_segment(&self, segment: &str) -> AppResult<String> {
@@ -272,7 +281,7 @@ impl HostFilesystem {
         } else {
             path.to_path_buf()
         };
-        NormalizedPath::parse(self.platform, &path.to_string_lossy())
+        NormalizedPath::from_path(self.platform, &path)
     }
 }
 
@@ -372,17 +381,97 @@ fn canonicalize_with_missing_tail(path: &Path) -> PathBuf {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedPath {
-    prefix: String,
+    prefix: OsString,
     absolute: bool,
-    components: Vec<String>,
+    components: Vec<OsString>,
 }
 
 impl NormalizedPath {
-    fn parse(platform: HostPlatform, raw: &str) -> Self {
-        let mut value = raw.replace('\\', "/");
-        if platform == HostPlatform::Windows {
-            value.make_ascii_lowercase();
+    fn from_path(platform: HostPlatform, path: &Path) -> Self {
+        if platform != HostPlatform::Windows {
+            return parse_unix_path(path);
         }
+        parse_windows_path(path)
+    }
+}
+
+#[cfg(not(unix))]
+fn parse_unix_path(path: &Path) -> NormalizedPath {
+    let raw = path.to_string_lossy();
+    let value = raw.as_ref();
+    let (prefix, absolute, remainder) = if value.starts_with("//") && !value.starts_with("///") {
+        (OsString::from("//"), true, &value[2..])
+    } else if let Some(stripped) = value.strip_prefix('/') {
+        (OsString::from("/"), true, stripped)
+    } else {
+        (OsString::new(), false, value)
+    };
+
+    let mut components = Vec::<OsString>::new();
+    for part in remainder.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if components.last().is_some_and(|last| last != "..") {
+                    components.pop();
+                } else if !absolute {
+                    components.push(OsString::from(".."));
+                }
+            }
+            _ => {
+                components.push(OsString::from(part));
+            }
+        }
+    }
+
+    NormalizedPath {
+        prefix,
+        absolute,
+        components,
+    }
+}
+
+#[cfg(unix)]
+fn parse_unix_path(path: &Path) -> NormalizedPath {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let bytes = path.as_os_str().as_bytes();
+    let (prefix, absolute, remainder) = if bytes.starts_with(b"//") && !bytes.starts_with(b"///") {
+        (OsString::from("//"), true, &bytes[2..])
+    } else if let Some(stripped) = bytes.strip_prefix(b"/") {
+        (OsString::from("/"), true, stripped)
+    } else {
+        (OsString::new(), false, bytes)
+    };
+
+    let mut components = Vec::<OsString>::new();
+    for part in remainder.split(|&b| b == b'/') {
+        match part {
+            b"" | b"." => {}
+            b".." => {
+                if components.last().is_some_and(|last| last != "..") {
+                    components.pop();
+                } else if !absolute {
+                    components.push(OsString::from(".."));
+                }
+            }
+            _ => {
+                components.push(OsStringExt::from_vec(part.to_vec()));
+            }
+        }
+    }
+
+    NormalizedPath {
+        prefix,
+        absolute,
+        components,
+    }
+}
+
+fn parse_windows_path(path: &Path) -> NormalizedPath {
+    if let Some(raw) = path.to_str() {
+        let mut value = raw.replace('\\', "/");
+        value.make_ascii_lowercase();
 
         let (prefix, absolute, remainder) = if let Some(remainder) = value.strip_prefix("//") {
             ("//".to_string(), true, remainder)
@@ -404,16 +493,22 @@ impl NormalizedPath {
                     if components.last().is_some_and(|last| last != "..") {
                         components.pop();
                     } else if !absolute {
-                        components.push(component.to_string());
+                        components.push(OsString::from(".."));
                     }
                 }
-                _ => components.push(component.to_string()),
+                _ => components.push(OsString::from(component)),
             }
         }
-        Self {
-            prefix,
+        NormalizedPath {
+            prefix: OsString::from(prefix),
             absolute,
             components,
+        }
+    } else {
+        NormalizedPath {
+            prefix: OsString::new(),
+            absolute: false,
+            components: vec![path.as_os_str().to_os_string()],
         }
     }
 }
@@ -588,5 +683,74 @@ mod tests {
         assert!(fs::symlink_metadata(&target).is_err());
         assert!(root.is_dir());
         fs::remove_dir_all(root).expect("remove test root");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_non_utf8_os_string_path_operations_and_comparisons() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let filesystem = HostFilesystem::new(HostPlatform::Linux);
+
+        // Construct non-UTF-8 paths with invalid UTF-8 bytes: 0xFF, 0xFE, 0xFD
+        let base = std::ffi::OsString::from_vec(b"/home/user/assets\xFF".to_vec());
+        let child1 = std::ffi::OsString::from_vec(b"/home/user/assets\xFF/sub\xFE".to_vec());
+        let child2 = std::ffi::OsString::from_vec(b"/home/user/assets\xFF/sub\xFD".to_vec());
+
+        let base_path = Path::new(&base);
+        let child1_path = Path::new(&child1);
+        let child2_path = Path::new(&child2);
+
+        // Same path equality
+        assert!(filesystem.same_path(base_path, base_path));
+        assert!(filesystem.same_path(child1_path, child1_path));
+        // Different non-UTF-8 bytes must not be considered equal (which lossy conversion would cause)
+        assert!(!filesystem.same_path(child1_path, child2_path));
+
+        // Containment check (is_within) works without lossy conversion
+        assert!(filesystem.is_within(child1_path, base_path));
+        assert!(filesystem.is_within(child2_path, base_path));
+        assert!(!filesystem.is_within(base_path, child1_path));
+
+        // Relative components OS
+        let rel = filesystem
+            .relative_components_os(child1_path, base_path)
+            .expect("must find relative components");
+        assert_eq!(rel.len(), 1);
+        assert_eq!(rel[0].as_os_str().as_bytes(), b"sub\xFE");
+
+        // Prove actual filesystem file creation and same_path work with non-UTF-8 OsString.
+        // Note: macOS APFS kernel enforces valid UTF-8 and rejects non-UTF-8 with EILSEQ (errno 92),
+        // whereas Linux ext4/tmpfs accepts arbitrary non-zero bytes.
+        let temp_dir =
+            std::env::temp_dir().join(format!("assetiweave-non-utf8-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let non_utf8_filename = std::ffi::OsString::from_vec(b"file_\xFF\xFE.txt".to_vec());
+        let file_path = temp_dir.join(non_utf8_filename);
+        match fs::write(&file_path, b"hello non-utf8") {
+            Ok(()) => {
+                let current_fs = HostFilesystem::current();
+                assert!(current_fs.same_path(&file_path, &file_path));
+                assert!(current_fs.is_within(&file_path, &temp_dir));
+                let read_content = fs::read(&file_path).expect("read non-utf8 file");
+                assert_eq!(read_content, b"hello non-utf8");
+            }
+            Err(err) if err.raw_os_error() == Some(92) => {
+                // macOS APFS kernel rejected non-UTF-8 filename with EILSEQ as expected.
+                // Verify with multi-byte non-ASCII filename on disk.
+                let non_ascii_filename =
+                    std::ffi::OsString::from_vec("文件_测试_🦀.txt".as_bytes().to_vec());
+                let non_ascii_path = temp_dir.join(non_ascii_filename);
+                fs::write(&non_ascii_path, b"hello non-ascii").expect("write non-ascii file");
+                let current_fs = HostFilesystem::current();
+                assert!(current_fs.same_path(&non_ascii_path, &non_ascii_path));
+                assert!(current_fs.is_within(&non_ascii_path, &temp_dir));
+                let read_content = fs::read(&non_ascii_path).expect("read non-ascii file");
+                assert_eq!(read_content, b"hello non-ascii");
+            }
+            Err(err) => panic!("unexpected fs::write error: {err:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

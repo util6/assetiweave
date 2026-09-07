@@ -1,7 +1,9 @@
 import type { AssetGroupDetail, AssetMountStatus } from "../types";
 import { getMountDisplayState } from "./mountState";
 
-export function groupMemberAssetIds(group: AssetGroupDetail | null | undefined) {
+export function groupMemberAssetIds(
+  group: AssetGroupDetail | null | undefined,
+) {
   const assetIds = new Set<string>();
   const manualAssetIds = new Set(group?.manual_asset_ids ?? []);
   for (const member of group?.members ?? []) {
@@ -17,13 +19,20 @@ export function groupMemberAssetIds(group: AssetGroupDetail | null | undefined) 
 }
 
 export function enabledGroupIds(groups: AssetGroupDetail[]) {
-  return groups.filter((detail) => detail.group.enabled).map((detail) => detail.group.id);
+  return groups
+    .filter((detail) => detail.group.enabled)
+    .map((detail) => detail.group.id);
 }
 
-export function toggleEnabledGroupSelection(currentIds: Iterable<string>, groups: AssetGroupDetail[]) {
+export function toggleEnabledGroupSelection(
+  currentIds: Iterable<string>,
+  groups: AssetGroupDetail[],
+) {
   const current = new Set(currentIds);
   const enabledIds = enabledGroupIds(groups);
-  const allSelected = enabledIds.length > 0 && enabledIds.every((groupId) => current.has(groupId));
+  const allSelected =
+    enabledIds.length > 0 &&
+    enabledIds.every((groupId) => current.has(groupId));
   for (const groupId of enabledIds) {
     if (allSelected) {
       current.delete(groupId);
@@ -34,7 +43,9 @@ export function toggleEnabledGroupSelection(currentIds: Iterable<string>, groups
   return current;
 }
 
-export function shouldShowGroupExclusiveMountControls(selectedGroupCount: number) {
+export function shouldShowGroupExclusiveMountControls(
+  selectedGroupCount: number,
+) {
   return selectedGroupCount > 0;
 }
 

@@ -13,7 +13,9 @@ const Switch = React.forwardRef<
     {...props}
     ref={ref}
   >
-    <SwitchPrimitives.Thumb className={cn("aurora-switch-thumb", switchThumbRecipe())} />
+    <SwitchPrimitives.Thumb
+      className={cn("aurora-switch-thumb", switchThumbRecipe())}
+    />
   </SwitchPrimitives.Root>
 ));
 Switch.displayName = SwitchPrimitives.Root.displayName;

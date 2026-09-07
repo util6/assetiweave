@@ -41,60 +41,14 @@ pub(crate) fn agent_execution_workspace_root(db_path: &Path) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(test)]
-pub(crate) fn agent_runtime_manager(
-    db_path: &Path,
-) -> Result<Arc<crate::backend::agent_market::AgentRuntimeManager>, AiExecutionError> {
-    let db = crate::backend::store::Database::open_initialized(db_path).map_err(|_| {
-        AiExecutionError::Protocol {
-            operation: "runtime_database_initialize",
-        }
-    })?;
-    let workspace_root = db_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("agent-executions");
-    let manager = Arc::new(crate::backend::agent_market::AgentRuntimeManager::new(
-        db.pool().clone(),
-        workspace_root,
-    ));
-    let runtime_root = crate::backend::agent_market::default_runtime_root().map_err(|_| {
-        AiExecutionError::Protocol {
-            operation: "runtime_root_initialize",
-        }
-    })?;
-    db.block_on(manager.recover_startup(&runtime_root))
-        .map_err(|_| AiExecutionError::Protocol {
-            operation: "runtime_registry_reload",
-        })?;
-    Ok(manager)
-}
-
-/// Runs the async Agent runtime from synchronous application/Engine seams.
-///
-/// The dedicated thread is intentional: callers may already be inside a Tokio
-/// runtime, where nesting `Runtime::block_on` would panic. Desktop background
-/// tasks should call `AgentExecutionRuntime::execute` directly instead.
-pub(crate) fn execute_agent_blocking(
+pub(crate) async fn execute_agent(
     runtime: Arc<dyn AgentExecutionRuntime>,
     request: AiExecutionRequest,
 ) -> Result<AiExecutionResult, AiExecutionError> {
-    std::thread::spawn(move || {
-        let runtime_driver = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| AiExecutionError::Protocol {
-                operation: "blocking_runtime_initialize",
-            })?;
-        runtime_driver.block_on(runtime.execute(request))
-    })
-    .join()
-    .map_err(|_| AiExecutionError::Protocol {
-        operation: "blocking_runtime_join",
-    })?
+    runtime.execute(request).await
 }
 
-pub(crate) fn check_agent_connection_blocking(
+pub(crate) async fn check_agent_connection(
     runtime: Arc<dyn AgentExecutionRuntime>,
     agent_id: AgentId,
     mode: AgentConnectionCheckMode,
@@ -102,101 +56,14 @@ pub(crate) fn check_agent_connection_blocking(
     if matches!(mode, AgentConnectionCheckMode::Installation) {
         return runtime.check_agent_installation(&agent_id);
     }
-
-    let thread_runtime = runtime.clone();
-    let fallback_agent_id = agent_id.clone();
-    std::thread::spawn(move || {
-        let runtime_driver = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime_driver) => runtime_driver,
-            Err(_) => {
-                return connection_probe_failure(
-                    &agent_id,
-                    "connection_runtime_initialize",
-                    "The Agent connection probe runtime could not be initialized.",
-                )
-            }
-        };
-        runtime_driver.block_on(thread_runtime.check_agent_connection(&agent_id))
-    })
-    .join()
-    .unwrap_or_else(|_| {
-        connection_probe_failure(
-            &fallback_agent_id,
-            "connection_runtime_join",
-            "The Agent connection probe did not complete.",
-        )
-    })
+    runtime.check_agent_connection(&agent_id).await
 }
 
-pub(crate) fn discover_agent_models_blocking(
+pub(crate) async fn discover_agent_models(
     runtime: Arc<dyn AgentExecutionRuntime>,
     agent_id: AgentId,
 ) -> AgentModelsResult {
-    let fallback_agent_id = agent_id.clone();
-    std::thread::spawn(move || {
-        let runtime_driver = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime_driver) => runtime_driver,
-            Err(_) => {
-                return unavailable_models_result(
-                    &agent_id,
-                    "model_discovery_runtime_initialize",
-                    "The Agent model discovery runtime could not be initialized.",
-                )
-            }
-        };
-        runtime_driver.block_on(runtime.discover_agent_models(&agent_id))
-    })
-    .join()
-    .unwrap_or_else(|_| {
-        unavailable_models_result(
-            &fallback_agent_id,
-            "model_discovery_runtime_join",
-            "The Agent model discovery did not complete.",
-        )
-    })
-}
-
-fn connection_probe_failure(
-    agent_id: &AgentId,
-    error_code: &str,
-    error: &str,
-) -> AgentConnectionResult {
-    AgentConnectionResult {
-        agent_id: agent_id.to_string(),
-        available: false,
-        installed: false,
-        connected: false,
-        version: None,
-        connection_method: None,
-        error_code: Some(error_code.to_string()),
-        error: Some(error.to_string()),
-        installation_status: None,
-        runtime_status: None,
-        protocol_status: None,
-        execution_ready: false,
-        health_stale: false,
-    }
-}
-
-fn unavailable_models_result(
-    agent_id: &AgentId,
-    error_code: &str,
-    error: &str,
-) -> AgentModelsResult {
-    AgentModelsResult {
-        agent_id: agent_id.to_string(),
-        available: false,
-        models: Vec::new(),
-        current_model_id: None,
-        error_code: Some(error_code.to_string()),
-        error: Some(error.to_string()),
-    }
+    runtime.discover_agent_models(&agent_id).await
 }
 
 pub(crate) fn normalize_prompt(prompt: &str) -> Result<String, AiExecutionError> {

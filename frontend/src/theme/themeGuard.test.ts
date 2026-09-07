@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const srcRoot = fileURLToPath(new URL("..", import.meta.url));
-const scannedRoots = ["components", "pages", "layouts"].map((dir) => resolve(srcRoot, dir));
+const scannedRoots = ["components", "pages", "layouts"].map((dir) =>
+  resolve(srcRoot, dir),
+);
 const scannedExtensions = new Set([".ts", ".tsx"]);
 const ignoredFilePatterns = [/\.test\./, /\.spec\./];
 
@@ -22,7 +24,9 @@ describe("theme usage guard", () => {
   it("keeps business components on theme tokens and foundation recipes", () => {
     const violations = scanFiles().flatMap((filePath) => {
       const content = readFileSync(filePath, "utf8");
-      return forbiddenPatterns.flatMap(({ name, pattern }) => findMatches(content, pattern, name, filePath));
+      return forbiddenPatterns.flatMap(({ name, pattern }) =>
+        findMatches(content, pattern, name, filePath),
+      );
     });
 
     expect(violations).toEqual([]);
@@ -30,13 +34,15 @@ describe("theme usage guard", () => {
 });
 
 function scanFiles() {
-  return scannedRoots.flatMap((root) => walk(root)).filter((filePath) => {
-    if (ignoredFilePatterns.some((pattern) => pattern.test(filePath))) {
-      return false;
-    }
+  return scannedRoots
+    .flatMap((root) => walk(root))
+    .filter((filePath) => {
+      if (ignoredFilePatterns.some((pattern) => pattern.test(filePath))) {
+        return false;
+      }
 
-    return scannedExtensions.has(filePath.slice(filePath.lastIndexOf(".")));
-  });
+      return scannedExtensions.has(filePath.slice(filePath.lastIndexOf(".")));
+    });
 }
 
 function walk(path: string): string[] {
@@ -48,7 +54,12 @@ function walk(path: string): string[] {
   return readdirSync(path).flatMap((entry) => walk(resolve(path, entry)));
 }
 
-function findMatches(content: string, pattern: RegExp, name: string, filePath: string) {
+function findMatches(
+  content: string,
+  pattern: RegExp,
+  name: string,
+  filePath: string,
+) {
   return [...content.matchAll(pattern)].map((match) => {
     const index = match.index ?? 0;
     const line = content.slice(0, index).split("\n").length;

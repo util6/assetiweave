@@ -13,5 +13,7 @@ export const DEFAULT_APP_PROFILE_IDS = [
 ] as const;
 
 export function isDefaultAppProfileId(profileId: string) {
-  return DEFAULT_APP_PROFILE_IDS.includes(profileId as (typeof DEFAULT_APP_PROFILE_IDS)[number]);
+  return DEFAULT_APP_PROFILE_IDS.includes(
+    profileId as (typeof DEFAULT_APP_PROFILE_IDS)[number],
+  );
 }

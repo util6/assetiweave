@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -27,8 +26,8 @@ use crate::backend::{
 use super::{
     repository::AgentInstallationRepository,
     types::{
-        AgentInstallation, AgentMarketProtocol, CatalogCapabilities, InstallationStatus, Ownership,
-        ProtocolStatus, RuntimeStatus,
+        AgentInstallation, AgentMarketError, AgentMarketProtocol, CatalogCapabilities,
+        InstallationStatus, Ownership, ProtocolStatus, RuntimeStatus,
     },
 };
 
@@ -44,7 +43,9 @@ pub(crate) struct AgentPackageSystem {
 }
 
 impl AgentPackageSystem {
-    pub(crate) fn from_installation(installation: &AgentInstallation) -> Result<Self, String> {
+    pub(crate) fn from_installation(
+        installation: &AgentInstallation,
+    ) -> Result<Self, AgentMarketError> {
         Ok(Self {
             manifest: installation.package_manifest()?,
         })
@@ -140,15 +141,18 @@ impl AgentRuntimeManager {
         self.executor.mutation_gate(agent_id)
     }
 
-    pub(crate) async fn reload(&self) -> Result<u64, String> {
+    pub(crate) async fn reload(&self) -> Result<u64, AgentMarketError> {
         let installations = self.repository.list_registry_candidates().await?;
         let definitions = installations
             .iter()
             .map(|installation| {
-                let package_system = AgentPackageSystem::from_installation(installation)
-                    .map_err(|error| error.to_string())?;
+                let package_system = AgentPackageSystem::from_installation(installation)?;
                 if package_system.kind() != crate::backend::extension_kernel::PackageKind::Agent {
-                    return Err("Agent package system returned the wrong package kind".to_string());
+                    return Err(AgentMarketError::new(
+                        "package_kind_invalid",
+                        "Agent package system returned the wrong package kind",
+                        false,
+                    ));
                 }
                 let install_dir = installation
                     .install_dir
@@ -159,16 +163,23 @@ impl AgentRuntimeManager {
                             .parent()
                             .map(Path::to_path_buf)
                     })
-                    .ok_or_else(|| "Agent installation has no runtime directory".to_string())?;
-                let inspected = package_system
-                    .inspect(&install_dir)
-                    .map_err(|error| error.to_string())?;
+                    .ok_or_else(|| {
+                        AgentMarketError::new(
+                            "missing_runtime_directory",
+                            "Agent installation has no runtime directory",
+                            false,
+                        )
+                    })?;
+                let inspected = package_system.inspect(&install_dir).map_err(|error| {
+                    AgentMarketError::new("package_inspect_failed", &error.to_string(), false)
+                })?;
                 let _ = inspected;
                 definition_from_installation(installation)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let next =
-            AgentRegistry::from_definitions(definitions).map_err(|error| error.to_string())?;
+        let next = AgentRegistry::from_definitions(definitions).map_err(|error| {
+            AgentMarketError::new("registry_init_failed", &error.to_string(), false)
+        })?;
         self.registry_snapshot.replace(next);
         Ok(self.registry.bump_generation())
     }
@@ -176,7 +187,10 @@ impl AgentRuntimeManager {
     /// Recover only state that can be proven to be owned by the Agent Market.
     /// This performs no network or protocol probes and is safe to call on each
     /// process start before the first registry publication.
-    pub(crate) async fn recover_startup(&self, runtime_root: &Path) -> Result<Vec<String>, String> {
+    pub(crate) async fn recover_startup(
+        &self,
+        runtime_root: &Path,
+    ) -> Result<Vec<String>, AgentMarketError> {
         let installations = self.repository.list().await?;
         let mut warnings = cleanup_runtime_directories(runtime_root);
         for installation in installations {
@@ -235,7 +249,7 @@ impl AgentRuntimeManager {
                         &installation.agent_id,
                         RuntimeStatus::Failed,
                         "definition_invalid",
-                        &error,
+                        &error.to_string(),
                         &chrono::Utc::now().to_rfc3339(),
                     )
                     .await?;
@@ -249,7 +263,7 @@ impl AgentRuntimeManager {
         Ok(warnings)
     }
 
-    pub(crate) async fn prepare_startup_health_refresh(&self) -> Result<u64, String> {
+    pub(crate) async fn prepare_startup_health_refresh(&self) -> Result<u64, AgentMarketError> {
         let changed = self
             .repository
             .mark_health_unchecked(&chrono::Utc::now().to_rfc3339())
@@ -260,7 +274,7 @@ impl AgentRuntimeManager {
 
     pub(crate) async fn refresh_installed_agent_health(
         &self,
-    ) -> Result<AgentHealthRefreshSummary, String> {
+    ) -> Result<AgentHealthRefreshSummary, AgentMarketError> {
         let agent_ids = self
             .repository
             .list()
@@ -298,51 +312,19 @@ impl AgentRuntimeManager {
         Ok(summary)
     }
 
-    pub(crate) fn refresh_installed_agent_health_blocking(
-        self: Arc<Self>,
-    ) -> Result<AgentHealthRefreshSummary, String> {
-        run_process_capable_runtime(
-            "aiw-agent-startup-health",
-            "The Agent startup health refresh did not complete.",
-            async move { self.refresh_installed_agent_health().await },
-        )
-    }
-
-    pub(crate) fn refresh_native_health_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentConnectionResult, String> {
-        run_process_capable_runtime(
-            "aiw-native-health",
-            "The native Agent health refresh did not complete.",
-            async move { self.refresh_native_health(&agent_id).await },
-        )
-    }
-
     pub(crate) async fn refresh_native_health(
         &self,
         agent_id: &str,
-    ) -> Result<AgentConnectionResult, String> {
+    ) -> Result<AgentConnectionResult, AgentMarketError> {
         let result = self.probe_native_health(agent_id).await?;
         self.reload().await?;
         Ok(result)
     }
 
-    pub(crate) fn refresh_native_models_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentModelsResult, String> {
-        run_process_capable_runtime(
-            "aiw-native-models",
-            "The native Agent model discovery did not complete.",
-            async move { self.refresh_native_models(&agent_id).await },
-        )
-    }
-
     pub(crate) async fn refresh_native_models(
         &self,
         agent_id: &str,
-    ) -> Result<AgentModelsResult, String> {
+    ) -> Result<AgentModelsResult, AgentMarketError> {
         let health = self.refresh_native_health(agent_id).await?;
         if !health.available {
             return Ok(unavailable_models(
@@ -360,11 +342,11 @@ impl AgentRuntimeManager {
 
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
-        let mut installation = self
-            .repository
-            .get(agent_id)
-            .await?
-            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        let mut installation = self.repository.get(agent_id).await?.ok_or_else(|| {
+            AgentMarketError::InstallationNotFound {
+                agent_id: agent_id.to_string(),
+            }
+        })?;
         let now = chrono::Utc::now().to_rfc3339();
         let definition = definition_from_installation(&installation)?;
         let discovery = NativeExecutionBackend::new(self.workspace_root.clone())
@@ -402,16 +384,23 @@ impl AgentRuntimeManager {
         Ok(result)
     }
 
-    async fn probe_native_health(&self, agent_id: &str) -> Result<AgentConnectionResult, String> {
+    async fn probe_native_health(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentConnectionResult, AgentMarketError> {
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
-        let mut installation = self
-            .repository
-            .get(agent_id)
-            .await?
-            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        let mut installation = self.repository.get(agent_id).await?.ok_or_else(|| {
+            AgentMarketError::InstallationNotFound {
+                agent_id: agent_id.to_string(),
+            }
+        })?;
         if installation.protocol != AgentMarketProtocol::Native {
-            return Err("The installed Agent does not use the native runtime.".to_string());
+            return Err(AgentMarketError::new(
+                "protocol_mismatch",
+                "The installed Agent does not use the native runtime.",
+                false,
+            ));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -451,7 +440,7 @@ impl AgentRuntimeManager {
                     &now,
                     RuntimeStatus::Failed,
                     "definition_invalid",
-                    &error,
+                    &error.to_string(),
                 );
                 self.repository.update_health(&installation).await?;
                 return Ok(unavailable_native_connection(
@@ -512,33 +501,29 @@ impl AgentRuntimeManager {
     pub(crate) async fn refresh_acp_health(
         &self,
         agent_id: &str,
-    ) -> Result<AgentModelsResult, String> {
+    ) -> Result<AgentModelsResult, AgentMarketError> {
         let result = self.probe_acp_health(agent_id).await?;
         self.reload().await?;
         Ok(result)
     }
 
-    pub(crate) fn refresh_acp_health_blocking(
-        self: Arc<Self>,
-        agent_id: String,
-    ) -> Result<AgentModelsResult, String> {
-        run_process_capable_runtime(
-            "aiw-acp-health",
-            "The ACP health refresh did not complete.",
-            async move { self.refresh_acp_health(&agent_id).await },
-        )
-    }
-
-    async fn probe_acp_health(&self, agent_id: &str) -> Result<AgentModelsResult, String> {
+    async fn probe_acp_health(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentModelsResult, AgentMarketError> {
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
-        let mut installation = self
-            .repository
-            .get(agent_id)
-            .await?
-            .ok_or_else(|| "The Agent is not installed.".to_string())?;
+        let mut installation = self.repository.get(agent_id).await?.ok_or_else(|| {
+            AgentMarketError::InstallationNotFound {
+                agent_id: agent_id.to_string(),
+            }
+        })?;
         if installation.protocol != AgentMarketProtocol::Acp {
-            return Err("The installed Agent does not use ACP.".to_string());
+            return Err(AgentMarketError::new(
+                "protocol_mismatch",
+                "The installed Agent does not use ACP.",
+                false,
+            ));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -583,7 +568,7 @@ impl AgentRuntimeManager {
                 installation.installation_status = InstallationStatus::Broken;
                 installation.runtime_status = RuntimeStatus::Failed;
                 installation.runtime_error_code = Some("definition_invalid".to_string());
-                installation.runtime_error_message = Some(error);
+                installation.runtime_error_message = Some(error.to_string());
                 installation.runtime_checked_at = Some(now.clone());
                 installation.protocol_status = ProtocolStatus::Failed;
                 installation.protocol_error_code = Some("definition_invalid".to_string());
@@ -653,28 +638,6 @@ impl AgentRuntimeManager {
         self.repository.update_health(&installation).await?;
         Ok(result)
     }
-}
-
-fn run_process_capable_runtime<T, F>(
-    thread_name: &str,
-    join_error: &str,
-    future: F,
-) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: Future<Output = Result<T, String>> + Send + 'static,
-{
-    let handle = std::thread::Builder::new()
-        .name(thread_name.to_string())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?;
-            runtime.block_on(future)
-        })
-        .map_err(|error| error.to_string())?;
-    handle.join().map_err(|_| join_error.to_string())?
 }
 
 fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
@@ -811,21 +774,36 @@ pub(crate) fn definition_json(
 
 pub(crate) fn definition_from_installation(
     installation: &AgentInstallation,
-) -> Result<AgentDefinition, String> {
+) -> Result<AgentDefinition, AgentMarketError> {
     let package_manifest = installation.package_manifest()?;
     let resolved: ResolvedDefinition = serde_json::from_value(installation.definition_json.clone())
-        .map_err(|error| error.to_string())?;
+        .map_err(AgentMarketError::Serialization)?;
     if package_manifest.identity.package_id != resolved.id {
-        return Err("resolved definition id does not match package identity".to_string());
+        return Err(AgentMarketError::new(
+            "definition_id_mismatch",
+            "resolved definition id does not match package identity",
+            false,
+        ));
     }
     if package_manifest.compatibility.protocol_version != 1 {
-        return Err("unsupported Agent package protocol version".to_string());
+        return Err(AgentMarketError::new(
+            "unsupported_protocol_version",
+            "unsupported Agent package protocol version",
+            false,
+        ));
     }
-    let id = AgentId::parse(resolved.id).map_err(|error| error.to_string())?;
+    let id = AgentId::parse(resolved.id)
+        .map_err(|error| AgentMarketError::new("invalid_agent_id", &error.to_string(), false))?;
     let protocol = match resolved.protocol.as_str() {
         "acp" => AgentProtocol::Acp,
         "native" => AgentProtocol::Native,
-        other => return Err(format!("unsupported agent protocol: {other}")),
+        other => {
+            return Err(AgentMarketError::new(
+                "unsupported_agent_protocol",
+                &format!("unsupported agent protocol: {other}"),
+                false,
+            ))
+        }
     };
     let invocation = package_manifest.invocation;
     let availability_probe = package_manifest.availability_probe;
@@ -833,22 +811,41 @@ pub(crate) fn definition_from_installation(
     let program = invocation.entry.clone();
     let expected_program = installation.resolved_program.to_string_lossy();
     if program != expected_program {
-        return Err("resolved definition program does not match installation record".to_string());
+        return Err(AgentMarketError::new(
+            "definition_program_mismatch",
+            "resolved definition program does not match installation record",
+            false,
+        ));
     }
     let program_path = std::path::PathBuf::from(&program);
     if !program_path.is_file() {
-        return Err("resolved Agent program is missing".to_string());
+        return Err(AgentMarketError::new(
+            "agent_program_missing",
+            "resolved Agent program is missing",
+            false,
+        ));
     }
     if installation.ownership == super::types::Ownership::Managed {
-        let install_dir = installation
-            .install_dir
-            .as_ref()
-            .ok_or_else(|| "managed Agent is missing install directory".to_string())?;
+        let install_dir = installation.install_dir.as_ref().ok_or_else(|| {
+            AgentMarketError::new(
+                "missing_install_dir",
+                "managed Agent is missing install directory",
+                false,
+            )
+        })?;
         if !program_path.starts_with(install_dir) {
-            return Err("resolved Agent program escapes its managed installation".to_string());
+            return Err(AgentMarketError::new(
+                "program_escapes_install_dir",
+                "resolved Agent program escapes its managed installation",
+                false,
+            ));
         }
     } else if installation.install_dir.is_some() {
-        return Err("system Agent must not have a managed installation directory".to_string());
+        return Err(AgentMarketError::new(
+            "invalid_system_install_dir",
+            "system Agent must not have a managed installation directory",
+            false,
+        ));
     }
     if invocation
         .args
@@ -858,9 +855,13 @@ pub(crate) fn definition_from_installation(
             .file_name()
             .is_some_and(|name| matches!(name.to_string_lossy().as_ref(), "npx" | "uvx"))
     {
-        return Err("runtime definition may not invoke a package manager".to_string());
+        return Err(AgentMarketError::new(
+            "package_manager_invocation_forbidden",
+            "runtime definition may not invoke a package manager",
+            false,
+        ));
     }
-    let mut definition = AgentDefinition {
+    let definition = AgentDefinition {
         id,
         installation_id: Some(installation.installation_id.clone()),
         display_name: resolved.display_name,
@@ -889,7 +890,9 @@ pub(crate) fn definition_from_installation(
             .map(AgentCommandDefinition::new),
         session_cleanup_not_found_markers: resolved.session_cleanup_not_found_markers,
     };
-    definition.validate().map_err(|error| error.to_string())?;
+    definition
+        .validate()
+        .map_err(|error| AgentMarketError::new("definition_invalid", &error.to_string(), false))?;
     Ok(definition)
 }
 

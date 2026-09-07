@@ -1,5 +1,12 @@
 import clsx from "clsx";
-import { useCallback, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useI18n } from "../../../i18n/I18nProvider";
 import { subNavLabel } from "../../../i18n/navigation";
 import type { SubNavItem } from "../../../router/types";
@@ -50,7 +57,10 @@ export function SubNavigation({
     if (!viewport) return;
 
     window.addEventListener("resize", updateIndicator);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateIndicator);
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(updateIndicator);
     observer?.observe(viewport);
     return () => {
       window.removeEventListener("resize", updateIndicator);
@@ -69,9 +79,16 @@ export function SubNavigation({
       className="aurora-subnav sticky top-[var(--app-window-titlebar-height)] z-10 flex shrink-0 items-center gap-3 border-b border-theme-card-border/45 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur-xl"
       aria-label={t("nav.aria.subNav")}
     >
-      <div className="aurora-pill-tabs-viewport flex min-w-0 flex-1 gap-1.5 overflow-x-auto" ref={tabsViewportRef}>
+      <div
+        className="aurora-pill-tabs-viewport flex min-w-0 flex-1 gap-1.5 overflow-x-auto"
+        ref={tabsViewportRef}
+      >
         <div className="relative flex min-w-max gap-1.5">
-          <span aria-hidden="true" className="aurora-pill-indicator" style={indicatorStyle} />
+          <span
+            aria-hidden="true"
+            className="aurora-pill-indicator"
+            style={indicatorStyle}
+          />
           {enabledItems.map((item) => (
             <button
               className={clsx(
@@ -94,7 +111,11 @@ export function SubNavigation({
           ))}
         </div>
       </div>
-      {actions ? <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div> : null}
+      {actions ? (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {actions}
+        </div>
+      ) : null}
     </section>
   );
 }

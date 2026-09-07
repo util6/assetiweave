@@ -11,7 +11,8 @@ use std::{
 
 use crate::backend::extension_kernel::RegistrySnapshot;
 use crate::backend::host_process::{
-    resolve_host_executable, run_command_with_timeout, HostProcessError, HostProcessOutput,
+    resolve_host_executable, run_host_command_async, HostCommandSpec, HostInput, HostProcessError,
+    HostProcessOutput,
 };
 
 use super::types::{AgentCatalogEntry, AgentDefinition, AgentDefinitionError, AgentId};
@@ -85,16 +86,20 @@ impl AgentRegistryHandle {
         self.snapshot().catalog()
     }
 
-    pub(crate) fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
-        self.snapshot().check_availability(agent_id)
+    pub(crate) async fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+        self.snapshot().check_availability(agent_id).await
     }
 
-    pub(crate) fn discover_models(
+    pub(crate) fn cached_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+        self.snapshot().cached_availability(agent_id)
+    }
+
+    pub(crate) async fn discover_models(
         &self,
         agent_id: &AgentId,
         timeout: Duration,
     ) -> Result<Vec<u8>, AgentProbeError> {
-        self.snapshot().discover_models(agent_id, timeout)
+        self.snapshot().discover_models(agent_id, timeout).await
     }
 }
 
@@ -110,30 +115,26 @@ pub(crate) struct AgentAvailability {
     pub(crate) error: Option<AgentProbeError>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum AgentProbeError {
-    AgentNotFound {
-        agent_id: AgentId,
-    },
+    #[error("agent '{agent_id}' was not found")]
+    AgentNotFound { agent_id: AgentId },
+    #[error("agent '{agent_id}' has no {kind} probe")]
     ProbeNotConfigured {
         agent_id: AgentId,
         kind: &'static str,
     },
-    ExecutableNotFound {
-        command_name: String,
-    },
-    Timeout {
-        kind: &'static str,
-    },
-    SpawnFailed {
-        kind: &'static str,
-    },
-    OutputFailed {
-        kind: &'static str,
-    },
-    OutputLimit {
-        kind: &'static str,
-    },
+    #[error("{command_name} was not found on this host")]
+    ExecutableNotFound { command_name: String },
+    #[error("agent {kind} probe timed out")]
+    Timeout { kind: &'static str },
+    #[error("agent {kind} probe could not start")]
+    SpawnFailed { kind: &'static str },
+    #[error("agent {kind} probe output could not be read")]
+    OutputFailed { kind: &'static str },
+    #[error("agent {kind} probe exceeded its output limit")]
+    OutputLimit { kind: &'static str },
+    #[error("{}", match code { Some(c) => format!("agent {kind} probe exited with code {c}"), None => format!("agent {kind} probe exited unsuccessfully") })]
     ProbeFailed {
         kind: &'static str,
         code: Option<i32>,
@@ -272,8 +273,8 @@ impl AgentRegistry {
         catalog
     }
 
-    pub(crate) fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
-        let availability = match self.probe(agent_id, ProbeKind::Availability) {
+    pub(crate) async fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+        let availability = match self.probe(agent_id, ProbeKind::Availability).await {
             Ok(output) => AgentAvailability {
                 available: true,
                 installed: true,
@@ -294,32 +295,45 @@ impl AgentRegistry {
         availability
     }
 
-    pub(crate) fn discover_models(
+    pub(crate) async fn discover_models(
         &self,
         agent_id: &AgentId,
         timeout: Duration,
     ) -> Result<Vec<u8>, AgentProbeError> {
         self.execute_probe(agent_id, ProbeKind::ModelDiscovery, timeout)
+            .await
             .map(|output| output.stdout)
     }
 
-    #[cfg(test)]
-    fn observation(&self, agent_id: &AgentId) -> Option<AgentAvailability> {
+    pub(crate) fn observation(&self, agent_id: &AgentId) -> Option<AgentAvailability> {
         self.observations
             .read()
             .ok()
             .and_then(|observations| observations.get(agent_id).cloned())
     }
 
-    fn probe(
+    pub(crate) fn cached_availability(&self, agent_id: &AgentId) -> AgentAvailability {
+        self.observation(agent_id).unwrap_or(AgentAvailability {
+            available: false,
+            installed: false,
+            version: None,
+            error: Some(AgentProbeError::ProbeNotConfigured {
+                agent_id: agent_id.clone(),
+                kind: "availability",
+            }),
+        })
+    }
+
+    async fn probe(
         &self,
         agent_id: &AgentId,
         kind: ProbeKind,
     ) -> Result<HostProcessOutput, AgentProbeError> {
         self.execute_probe(agent_id, kind, AVAILABILITY_TIMEOUT)
+            .await
     }
 
-    fn execute_probe(
+    async fn execute_probe(
         &self,
         agent_id: &AgentId,
         kind: ProbeKind,
@@ -349,16 +363,23 @@ impl AgentRegistry {
                 command_name: command_name.to_string(),
             }
         })?;
-        let mut command = Command::new(program);
-        command.args(&probe.args).envs(
-            definition
+        let spec = HostCommandSpec {
+            program,
+            args: probe.args.clone(),
+            env: definition
                 .env
                 .iter()
-                .map(|entry| (&entry.name, &entry.value)),
-        );
-        let output =
-            run_command_with_timeout(&mut command, timeout, PROBE_STDOUT_CAP, PROBE_STDERR_CAP)
-                .map_err(|error| map_host_process_error(kind, error))?;
+                .map(|entry| (entry.name.clone(), entry.value.clone()))
+                .collect(),
+            working_dir: None,
+            stdin: HostInput::Null,
+            timeout,
+            stdout_limit: PROBE_STDOUT_CAP,
+            stderr_limit: PROBE_STDERR_CAP,
+        };
+        let output = run_host_command_async(spec, None)
+            .await
+            .map_err(|error| map_host_process_error(kind, error))?;
         if output.stdout_truncated || output.stderr_truncated {
             return Err(AgentProbeError::OutputLimit {
                 kind: kind.as_str(),
@@ -370,7 +391,13 @@ impl AgentRegistry {
                 code: output.status.code(),
             });
         }
-        Ok(output)
+        Ok(HostProcessOutput {
+            status: output.status,
+            stdout: output.stdout,
+            stderr: output.stderr,
+            stdout_truncated: output.stdout_truncated,
+            stderr_truncated: output.stderr_truncated,
+        })
     }
 }
 
@@ -450,41 +477,6 @@ fn first_nonempty_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
-impl fmt::Display for AgentProbeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AgentNotFound { agent_id } => {
-                write!(formatter, "agent '{agent_id}' was not found")
-            }
-            Self::ProbeNotConfigured { agent_id, kind } => {
-                write!(formatter, "agent '{agent_id}' has no {kind} probe")
-            }
-            Self::ExecutableNotFound { command_name } => {
-                write!(formatter, "{command_name} was not found on this host")
-            }
-            Self::Timeout { kind } => write!(formatter, "agent {kind} probe timed out"),
-            Self::SpawnFailed { kind } => write!(formatter, "agent {kind} probe could not start"),
-            Self::OutputFailed { kind } => {
-                write!(formatter, "agent {kind} probe output could not be read")
-            }
-            Self::OutputLimit { kind } => {
-                write!(formatter, "agent {kind} probe exceeded its output limit")
-            }
-            Self::ProbeFailed {
-                kind,
-                code: Some(code),
-            } => {
-                write!(formatter, "agent {kind} probe exited with code {code}")
-            }
-            Self::ProbeFailed { kind, code: None } => {
-                write!(formatter, "agent {kind} probe exited unsuccessfully")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentProbeError {}
-
 impl AgentProbeError {
     pub(crate) fn code(&self) -> &'static str {
         match self {
@@ -500,40 +492,16 @@ impl AgentProbeError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum AgentRegistryError {
+    #[error("invalid definition for agent '{agent_id}': {source}")]
     InvalidDefinition {
         agent_id: AgentId,
+        #[source]
         source: AgentDefinitionError,
     },
-    DuplicateId {
-        agent_id: AgentId,
-    },
-}
-
-impl fmt::Display for AgentRegistryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidDefinition { agent_id, source } => {
-                write!(
-                    formatter,
-                    "invalid definition for agent '{agent_id}': {source}"
-                )
-            }
-            Self::DuplicateId { agent_id } => {
-                write!(formatter, "duplicate agent id '{agent_id}'")
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentRegistryError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidDefinition { source, .. } => Some(source),
-            Self::DuplicateId { .. } => None,
-        }
-    }
+    #[error("duplicate agent id '{agent_id}'")]
+    DuplicateId { agent_id: AgentId },
 }
 
 #[cfg(test)]
@@ -648,8 +616,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reg_08_missing_executable_is_classified_as_not_found_and_observed() {
+    #[tokio::test]
+    async fn reg_08_missing_executable_is_classified_as_not_found_and_observed() {
         let definition = probe_definition(
             "missing",
             "assetiweave-command-that-does-not-exist-019ff902",
@@ -659,7 +627,7 @@ mod tests {
         let registry = AgentRegistry::from_definitions([definition]).unwrap();
         let agent_id = AgentId::parse("missing").unwrap();
 
-        let availability = registry.check_availability(&agent_id);
+        let availability = registry.check_availability(&agent_id).await;
 
         assert!(!availability.available);
         assert!(!availability.installed);
@@ -670,9 +638,9 @@ mod tests {
         assert_eq!(registry.observation(&agent_id), Some(availability));
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn reg_09_probe_timeout_and_failure_have_distinct_classifications() {
+    async fn reg_09_probe_timeout_and_failure_have_distinct_classifications() {
         let timeout = probe_definition(
             "timeout",
             "/bin/sh",
@@ -687,8 +655,11 @@ mod tests {
                 &AgentId::parse("timeout").unwrap(),
                 Duration::from_millis(25),
             )
+            .await
             .unwrap_err();
-        let failure = registry.check_availability(&AgentId::parse("failed").unwrap());
+        let failure = registry
+            .check_availability(&AgentId::parse("failed").unwrap())
+            .await;
 
         assert!(matches!(timeout_error, AgentProbeError::Timeout { .. }));
         assert!(matches!(
@@ -698,9 +669,9 @@ mod tests {
         assert!(failure.installed);
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn reg_10_model_discovery_executes_definition_arguments() {
+    async fn reg_10_model_discovery_executes_definition_arguments() {
         let definition = probe_definition(
             "discovery",
             "/bin/sh",
@@ -714,6 +685,7 @@ mod tests {
                 &AgentId::parse("discovery").unwrap(),
                 Duration::from_secs(1),
             )
+            .await
             .unwrap();
 
         assert_eq!(String::from_utf8(output).unwrap(), "model/z\nmodel/a\n");

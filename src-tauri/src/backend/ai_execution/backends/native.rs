@@ -21,7 +21,6 @@ use crate::backend::{
         RuntimeProgramKind,
     },
     host_process::resolve_host_executable,
-    operation_log::log_info,
 };
 
 use super::antigravity;
@@ -94,18 +93,15 @@ impl NativeExecutionBackend {
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
 
-        let cleanup_fields = vec![
-            ("execution_id", request.execution_id.clone()),
-            ("agent_id", definition.id.to_string()),
-            ("protocol", "native".to_string()),
-            ("phase", "cleaning_up".to_string()),
-            ("process_reaped", cleanup.process_reaped.to_string()),
-            ("workspace_removed", cleanup.workspace_removed.to_string()),
-        ];
-        log_info(
-            "ai_execution.cleanup",
-            "Native execution cleanup completed",
-            &cleanup_fields,
+        tracing::info!(
+            action = "ai_execution.cleanup",
+            execution_id = %request.execution_id,
+            agent_id = %definition.id,
+            protocol = "native",
+            phase = "cleaning_up",
+            process_reaped = %cleanup.process_reaped,
+            workspace_removed = %cleanup.workspace_removed,
+            "Native execution cleanup completed"
         );
 
         if (!cleanup.process_reaped || (!cleanup.workspace_removed && !guard.preserve_workspace))
@@ -759,10 +755,13 @@ mod tests {
             installation_id: Some("fixture-installation".to_string()),
             display_name: "Fake Native".to_string(),
             protocol: AgentProtocol::Native,
-            command: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("test-fixtures/fake-native-agent")
-                .to_string_lossy()
-                .into_owned(),
+            command: {
+                let base =
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-native-agent");
+                #[cfg(windows)]
+                let base = base.with_extension("cmd");
+                base.to_string_lossy().into_owned()
+            },
             args: vec!["unused-launch-arg-is-replaced-by-the-native-invocation".to_string()],
             env: vec![AgentEnvEntry::new(
                 "ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH",

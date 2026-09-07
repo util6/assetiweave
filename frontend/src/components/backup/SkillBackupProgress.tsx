@@ -25,7 +25,9 @@ export function SkillBackupBackgroundTaskIndicator({
           <RefreshCw className="animate-spin" size={17} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-body-sm font-semibold">{t("backup.background.title")}</span>
+          <span className="block text-body-sm font-semibold">
+            {t("backup.background.title")}
+          </span>
           <span className="mt-0.5 block text-code-sm text-on-surface-variant">
             {t("backup.background.description", {
               completed: task.completed_count,
@@ -33,7 +35,9 @@ export function SkillBackupBackgroundTaskIndicator({
             })}
           </span>
         </span>
-        <span className="shrink-0 text-code-sm font-semibold text-status-update">{progress}%</span>
+        <span className="shrink-0 text-code-sm font-semibold text-status-update">
+          {progress}%
+        </span>
       </div>
       <div
         aria-label={t("backup.background.title")}
@@ -75,7 +79,12 @@ export function SkillBackupInlineProgress({
     <div className="mt-2 min-w-48" role="status">
       <div className="flex items-center justify-between gap-3 text-code-sm text-on-surface-variant">
         <span>{t("backup.action.running")}</span>
-        <span>{t("backup.action.runningCount", { completed: task.completed_count, total: task.total_count })}</span>
+        <span>
+          {t("backup.action.runningCount", {
+            completed: task.completed_count,
+            total: task.total_count,
+          })}
+        </span>
       </div>
       <div
         aria-label={t("backup.action.running")}
@@ -145,5 +154,8 @@ function taskProgress(task: SkillBackupTaskSnapshot) {
   if (task.total_count === 0) {
     return 0;
   }
-  return Math.min(100, Math.round((task.completed_count / task.total_count) * 100));
+  return Math.min(
+    100,
+    Math.round((task.completed_count / task.total_count) * 100),
+  );
 }

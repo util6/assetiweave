@@ -6,7 +6,9 @@ const MANAGED_SKILL_SOURCE_IDS = new Set([
 ]);
 
 export function isManagedSkillSource(source: Source) {
-  return MANAGED_SKILL_SOURCE_IDS.has(source.id)
-    || source.source_origin === "assetiweave_library"
-    || source.source_origin === "assetiweave_system";
+  return (
+    MANAGED_SKILL_SOURCE_IDS.has(source.id) ||
+    source.source_origin === "assetiweave_library" ||
+    source.source_origin === "assetiweave_system"
+  );
 }

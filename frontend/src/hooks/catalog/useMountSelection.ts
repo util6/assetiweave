@@ -1,4 +1,8 @@
-import { mountAssetMount, startBatchMount, unmountAssetMount } from "../../services/catalog";
+import {
+  mountAssetMount,
+  startBatchMount,
+  unmountAssetMount,
+} from "../../services/catalog";
 import type { BatchMountTaskSnapshot } from "../../services/catalog";
 import type { AssetMountStatus } from "../../types";
 import { getMountDisplayState } from "../../utils/mountState";
@@ -6,11 +10,14 @@ import { getMountDisplayState } from "../../utils/mountState";
 export function useMountSelection(
   assetMountStatuses: AssetMountStatus[],
   applyAssetMountStatus: (status: AssetMountStatus) => void,
-  startBackgroundBatchMount?: (params: Parameters<typeof startBatchMount>[0]) => Promise<BatchMountTaskSnapshot>,
+  startBackgroundBatchMount?: (
+    params: Parameters<typeof startBatchMount>[0],
+  ) => Promise<BatchMountTaskSnapshot>,
 ) {
   async function toggleMountProfile(assetId: string, profileId: string) {
     const physicalStatus = assetMountStatuses.find(
-      (status) => status.asset_id === assetId && status.profile_id === profileId,
+      (status) =>
+        status.asset_id === assetId && status.profile_id === profileId,
     );
     const displayState = getMountDisplayState(physicalStatus);
     if (displayState === "mounted") {
@@ -21,9 +28,14 @@ export function useMountSelection(
     await setMountProfile(assetId, profileId, true);
   }
 
-  async function setMountProfile(assetId: string, profileId: string, enabled: boolean) {
+  async function setMountProfile(
+    assetId: string,
+    profileId: string,
+    enabled: boolean,
+  ) {
     const physicalStatus = assetMountStatuses.find(
-      (status) => status.asset_id === assetId && status.profile_id === profileId,
+      (status) =>
+        status.asset_id === assetId && status.profile_id === profileId,
     );
 
     try {
@@ -42,7 +54,9 @@ export function useMountSelection(
       if (isTauriRuntime()) {
         throw error;
       }
-      applyAssetMountStatus(fallbackMountStatus(assetId, profileId, enabled, physicalStatus));
+      applyAssetMountStatus(
+        fallbackMountStatus(assetId, profileId, enabled, physicalStatus),
+      );
     }
   }
 

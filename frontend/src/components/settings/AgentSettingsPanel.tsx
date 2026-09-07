@@ -6,7 +6,14 @@ import {
   RefreshCw,
   Search,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { useI18n, type Translator } from "../../i18n/I18nProvider";
 import {
   isActiveAgentLifecycleTask,
@@ -58,11 +65,19 @@ export function AgentSettingsPanel({
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<AgentFilter>("all");
-  const [connectionStates, setConnectionStates] = useState(() => ({ ...initialConnectionStates }));
-  const [marketCatalog, setMarketCatalog] = useState<AgentCatalogItem[] | null>(null);
-  const [connectionMessages, setConnectionMessages] = useState<Record<string, string>>({});
+  const [connectionStates, setConnectionStates] = useState(() => ({
+    ...initialConnectionStates,
+  }));
+  const [marketCatalog, setMarketCatalog] = useState<AgentCatalogItem[] | null>(
+    null,
+  );
+  const [connectionMessages, setConnectionMessages] = useState<
+    Record<string, string>
+  >({});
   const [testingAgentId, setTestingAgentId] = useState<AgentId | null>(null);
-  const [marketBusyAgentIds, setMarketBusyAgentIds] = useState<Set<AgentId>>(() => new Set());
+  const [marketBusyAgentIds, setMarketBusyAgentIds] = useState<Set<AgentId>>(
+    () => new Set(),
+  );
   const [marketRefreshBusy, setMarketRefreshBusy] = useState(false);
   const [pendingLifecycle, setPendingLifecycle] = useState<{
     agent: AgentCatalogItem;
@@ -75,21 +90,34 @@ export function AgentSettingsPanel({
   } | null>(null);
   const [infoAgent, setInfoAgent] = useState<AgentCatalogItem | null>(null);
   const [modelAgent, setModelAgent] = useState<AgentCatalogItem | null>(null);
-  const [modelResult, setModelResult] = useState<AgentModelsResult | null>(null);
+  const [modelResult, setModelResult] = useState<AgentModelsResult | null>(
+    null,
+  );
   const [modelQuery, setModelQuery] = useState("");
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState("");
   const modelRequestId = useRef(0);
   const agentRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const lifecycleTasks = useOptionalAgentLifecycleTasks();
-  const activeLifecycleAgentIds = useMemo(() => new Set(
-    lifecycleTasks?.tasks
-      .filter(isActiveAgentLifecycleTask)
-      .map((task) => task.agentId) ?? [],
-  ), [lifecycleTasks?.tasks]);
-  const canRefreshAgentMarket = Object.prototype.hasOwnProperty.call(agentRuntime, "refreshAgentMarket");
-  const canPreviewAgentUninstall = Object.prototype.hasOwnProperty.call(agentRuntime, "previewAgentUninstall");
-  const canManageAgentLifecycle = typeof agentRuntime.listAgentMarket === "function";
+  const activeLifecycleAgentIds = useMemo(
+    () =>
+      new Set(
+        lifecycleTasks?.tasks
+          .filter(isActiveAgentLifecycleTask)
+          .map((task) => task.agentId) ?? [],
+      ),
+    [lifecycleTasks?.tasks],
+  );
+  const canRefreshAgentMarket = Object.prototype.hasOwnProperty.call(
+    agentRuntime,
+    "refreshAgentMarket",
+  );
+  const canPreviewAgentUninstall = Object.prototype.hasOwnProperty.call(
+    agentRuntime,
+    "previewAgentUninstall",
+  );
+  const canManageAgentLifecycle =
+    typeof agentRuntime.listAgentMarket === "function";
   const settingsOnly = view === "settings";
 
   function setAgentManaging(agentId: AgentId, managing: boolean) {
@@ -102,22 +130,26 @@ export function AgentSettingsPanel({
   }
 
   function isAgentManaging(agentId: AgentId) {
-    return marketBusyAgentIds.has(agentId) || activeLifecycleAgentIds.has(agentId);
+    return (
+      marketBusyAgentIds.has(agentId) || activeLifecycleAgentIds.has(agentId)
+    );
   }
 
   useEffect(() => {
     let disposed = false;
     if (typeof agentRuntime.listAgentMarket === "function") {
-      void agentRuntime.listAgentMarket()
+      void agentRuntime
+        .listAgentMarket()
         .then(async (items) => {
           if (disposed) return;
           if (items.length === 0) return;
           const dynamicCatalog = items.map(marketItemToCatalogItem);
           setMarketCatalog(dynamicCatalog);
-          setConnectionStates(Object.fromEntries(items.map((item) => [
-            item.id,
-            marketConnectionState(item),
-          ])));
+          setConnectionStates(
+            Object.fromEntries(
+              items.map((item) => [item.id, marketConnectionState(item)]),
+            ),
+          );
           await checkInstalledMarketAgents(
             items,
             t,
@@ -138,7 +170,9 @@ export function AgentSettingsPanel({
         const runtimeCatalog = await listAgentCatalog();
         const runtimeIds = runtimeCatalog
           .map((entry) => entry.id)
-          .filter((id): id is AgentId => registryAgentIds.includes(id as AgentId));
+          .filter((id): id is AgentId =>
+            registryAgentIds.includes(id as AgentId),
+          );
         if (runtimeIds.length > 0) {
           ids = runtimeIds;
         }
@@ -153,17 +187,29 @@ export function AgentSettingsPanel({
         ...Object.fromEntries(ids.map((id) => [id, "checking"])),
       }));
 
-      await Promise.all(ids.map(async (id) => {
-        try {
-          const result = await checkAgentConnection(id, "installation");
-          if (disposed) return;
-          applyConnectionResult(id, result, "installation", t, setConnectionStates, setConnectionMessages);
-        } catch (error) {
-          if (disposed) return;
-          setConnectionStates((current) => ({ ...current, [id]: "failed" }));
-          setConnectionMessages((current) => ({ ...current, [id]: errorMessage(error) }));
-        }
-      }));
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const result = await checkAgentConnection(id, "installation");
+            if (disposed) return;
+            applyConnectionResult(
+              id,
+              result,
+              "installation",
+              t,
+              setConnectionStates,
+              setConnectionMessages,
+            );
+          } catch (error) {
+            if (disposed) return;
+            setConnectionStates((current) => ({ ...current, [id]: "failed" }));
+            setConnectionMessages((current) => ({
+              ...current,
+              [id]: errorMessage(error),
+            }));
+          }
+        }),
+      );
     }
 
     void checkInstalledAgents();
@@ -173,18 +219,25 @@ export function AgentSettingsPanel({
     };
   }, [t]);
 
-  const displayedCatalog = (marketCatalog ?? agentCatalog).filter((agent) =>
-    view === "market" || Boolean(agent.installed));
+  const displayedCatalog = (marketCatalog ?? agentCatalog).filter(
+    (agent) => view === "market" || Boolean(agent.installed),
+  );
 
   const filteredAgents = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return displayedCatalog.filter((agent) => {
       const state = connectionStates[agent.id];
-      const matchesFilter = filter === "all"
-        || (filter === "available" && state === "available")
-        || (filter === "unavailable" && state !== "available" && state !== "checking");
-      const matchesQuery = !normalizedQuery
-        || `${agent.name} ${agent.command} ${agent.protocol} ${agent.description}`.toLowerCase().includes(normalizedQuery);
+      const matchesFilter =
+        filter === "all" ||
+        (filter === "available" && state === "available") ||
+        (filter === "unavailable" &&
+          state !== "available" &&
+          state !== "checking");
+      const matchesQuery =
+        !normalizedQuery ||
+        `${agent.name} ${agent.command} ${agent.protocol} ${agent.description}`
+          .toLowerCase()
+          .includes(normalizedQuery);
       return matchesFilter && matchesQuery;
     });
   }, [connectionStates, displayedCatalog, filter, query]);
@@ -194,7 +247,10 @@ export function AgentSettingsPanel({
     ([id, state]) => displayedAgentIds.has(id) && state === "available",
   ).length;
   const unavailableCount = Object.entries(connectionStates).filter(
-    ([id, state]) => displayedAgentIds.has(id) && state !== "available" && state !== "checking",
+    ([id, state]) =>
+      displayedAgentIds.has(id) &&
+      state !== "available" &&
+      state !== "checking",
   ).length;
 
   useEffect(() => {
@@ -214,10 +270,20 @@ export function AgentSettingsPanel({
     setConnectionMessages((current) => ({ ...current, [agent.id]: "" }));
     try {
       const result = await checkAgentConnection(agent.id, "connection");
-      applyConnectionResult(agent.id, result, "connection", t, setConnectionStates, setConnectionMessages);
+      applyConnectionResult(
+        agent.id,
+        result,
+        "connection",
+        t,
+        setConnectionStates,
+        setConnectionMessages,
+      );
     } catch (error) {
       setConnectionStates((current) => ({ ...current, [agent.id]: "failed" }));
-      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [agent.id]: errorMessage(error),
+      }));
     } finally {
       setTestingAgentId(null);
     }
@@ -226,11 +292,17 @@ export function AgentSettingsPanel({
   async function reloadMarketCatalog() {
     const items = await agentRuntime.listAgentMarket();
     setMarketCatalog(items.map(marketItemToCatalogItem));
-    setConnectionStates(Object.fromEntries(items.map((item) => [
-      item.id,
-      marketConnectionState(item),
-    ])));
-    await checkInstalledMarketAgents(items, t, setConnectionStates, setConnectionMessages);
+    setConnectionStates(
+      Object.fromEntries(
+        items.map((item) => [item.id, marketConnectionState(item)]),
+      ),
+    );
+    await checkInstalledMarketAgents(
+      items,
+      t,
+      setConnectionStates,
+      setConnectionMessages,
+    );
   }
 
   async function refreshMarketCatalog() {
@@ -243,18 +315,28 @@ export function AgentSettingsPanel({
         snapshot = await agentRuntime.getAgentMarketRefreshTask(snapshot.id);
       }
       if (snapshot.state === "failed") {
-        setConnectionMessages((current) => ({ ...current, _market: snapshot.error?.message || t("settings.agents.refreshFailed") }));
+        setConnectionMessages((current) => ({
+          ...current,
+          _market:
+            snapshot.error?.message || t("settings.agents.refreshFailed"),
+        }));
         return;
       }
       await reloadMarketCatalog();
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, _market: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        _market: errorMessage(error),
+      }));
     } finally {
       setMarketRefreshBusy(false);
     }
   }
 
-  async function runMarketLifecycle(agent: AgentCatalogItem, action: "install" | "update" | "reinstall") {
+  async function runMarketLifecycle(
+    agent: AgentCatalogItem,
+    action: "install" | "update" | "reinstall",
+  ) {
     if (typeof agentRuntime.listAgentMarket !== "function") return;
     setAgentManaging(agent.id, true);
     try {
@@ -266,27 +348,50 @@ export function AgentSettingsPanel({
           ...current,
           [agent.id]: result.executionReady ? "available" : "failed",
         }));
-        setMarketCatalog((current) => current?.map((item) => item.id === agent.id
-          ? { ...item, installed: result, updateAvailable: result.updateAvailable }
-          : item) ?? current);
+        setMarketCatalog(
+          (current) =>
+            current?.map((item) =>
+              item.id === agent.id
+                ? {
+                    ...item,
+                    installed: result,
+                    updateAvailable: result.updateAvailable,
+                  }
+                : item,
+            ) ?? current,
+        );
         return;
       }
 
-      const preview = await agentRuntime.previewAgentInstallation({ agentId: agent.id, action });
+      const preview = await agentRuntime.previewAgentInstallation({
+        agentId: agent.id,
+        action,
+      });
       if (preview.conflicts.length > 0) {
-        setConnectionMessages((current) => ({ ...current, [agent.id]: preview.conflicts.join(", ") }));
+        setConnectionMessages((current) => ({
+          ...current,
+          [agent.id]: preview.conflicts.join(", "),
+        }));
         return;
       }
       setPendingLifecycle({ agent, action, preview });
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [agent.id]: errorMessage(error),
+      }));
     } finally {
       setAgentManaging(agent.id, false);
     }
   }
 
   async function selectLifecycleDistribution(distributionId: string) {
-    if (!pendingLifecycle || distributionId === pendingLifecycle.preview.selectedDistribution.distributionId) return;
+    if (
+      !pendingLifecycle ||
+      distributionId ===
+        pendingLifecycle.preview.selectedDistribution.distributionId
+    )
+      return;
     setAgentManaging(pendingLifecycle.agent.id, true);
     try {
       const preview = await agentRuntime.previewAgentInstallation({
@@ -294,9 +399,14 @@ export function AgentSettingsPanel({
         action: pendingLifecycle.action,
         distributionId,
       });
-      setPendingLifecycle((current) => current ? { ...current, preview } : current);
+      setPendingLifecycle((current) =>
+        current ? { ...current, preview } : current,
+      );
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, [pendingLifecycle.agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [pendingLifecycle.agent.id]: errorMessage(error),
+      }));
     } finally {
       setAgentManaging(pendingLifecycle.agent.id, false);
     }
@@ -316,11 +426,12 @@ export function AgentSettingsPanel({
         distributionId: preview.selectedDistribution.distributionId,
         previewToken: preview.previewToken,
       };
-      const task = action === "update"
-        ? await agentRuntime.startAgentUpdate(request)
-        : action === "reinstall"
-          ? await agentRuntime.startAgentReinstallation(request)
-          : await agentRuntime.startAgentInstallation(request);
+      const task =
+        action === "update"
+          ? await agentRuntime.startAgentUpdate(request)
+          : action === "reinstall"
+            ? await agentRuntime.startAgentReinstallation(request)
+            : await agentRuntime.startAgentInstallation(request);
       let snapshot = task;
       lifecycleTasks?.mergeSnapshot(snapshot);
       while (snapshot.state === "queued" || snapshot.state === "running") {
@@ -329,11 +440,17 @@ export function AgentSettingsPanel({
         lifecycleTasks?.mergeSnapshot(snapshot);
       }
       if (snapshot.state === "failed") {
-        setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || "安装失败" }));
+        setConnectionMessages((current) => ({
+          ...current,
+          [agent.id]: snapshot.error?.message || "安装失败",
+        }));
       }
       await reloadMarketCatalog();
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [agent.id]: errorMessage(error),
+      }));
     } finally {
       setAgentManaging(agent.id, false);
     }
@@ -346,7 +463,10 @@ export function AgentSettingsPanel({
       const preview = await agentRuntime.previewAgentUninstall(agent.id);
       setPendingUninstall({ agent, preview });
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [agent.id]: errorMessage(error),
+      }));
     } finally {
       setAgentManaging(agent.id, false);
     }
@@ -371,11 +491,18 @@ export function AgentSettingsPanel({
         lifecycleTasks?.mergeSnapshot(snapshot);
       }
       if (snapshot.state === "failed") {
-        setConnectionMessages((current) => ({ ...current, [agent.id]: snapshot.error?.message || t("settings.agents.uninstallFailed") }));
+        setConnectionMessages((current) => ({
+          ...current,
+          [agent.id]:
+            snapshot.error?.message || t("settings.agents.uninstallFailed"),
+        }));
       }
       await reloadMarketCatalog();
     } catch (error) {
-      setConnectionMessages((current) => ({ ...current, [agent.id]: errorMessage(error) }));
+      setConnectionMessages((current) => ({
+        ...current,
+        [agent.id]: errorMessage(error),
+      }));
     } finally {
       setAgentManaging(agent.id, false);
     }
@@ -408,7 +535,10 @@ export function AgentSettingsPanel({
           return current;
         });
         if (!result.available && result.error) {
-          setConnectionMessages((current) => ({ ...current, [agent.id]: result.error || "" }));
+          setConnectionMessages((current) => ({
+            ...current,
+            [agent.id]: result.error || "",
+          }));
         }
       })
       .catch((error: unknown) => {
@@ -432,28 +562,42 @@ export function AgentSettingsPanel({
   }
 
   const allModelOptions = modelResult?.models || [];
-  const modelOptions = allModelOptions.filter((model) => {
-    const normalizedQuery = modelQuery.trim().toLowerCase();
-    return !normalizedQuery || `${model.label} ${model.id} ${model.description || ""}`.toLowerCase().includes(normalizedQuery);
-  }) || [];
+  const modelOptions =
+    allModelOptions.filter((model) => {
+      const normalizedQuery = modelQuery.trim().toLowerCase();
+      return (
+        !normalizedQuery ||
+        `${model.label} ${model.id} ${model.description || ""}`
+          .toLowerCase()
+          .includes(normalizedQuery)
+      );
+    }) || [];
   const selectedModel = modelAgent
     ? selectedModels[modelAgent.id] || modelResult?.current_model_id || ""
     : "";
-  const selectedModelOption = allModelOptions.find((model) => model.id === selectedModel);
-  const unselectedModelOptions = modelOptions.filter((model) => model.id !== selectedModel);
+  const selectedModelOption = allModelOptions.find(
+    (model) => model.id === selectedModel,
+  );
+  const unselectedModelOptions = modelOptions.filter(
+    (model) => model.id !== selectedModel,
+  );
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 pb-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
-            <h1 className="text-h1 text-on-surface">{t("settings.agents.title")}</h1>
+            <h1 className="text-h1 text-on-surface">
+              {t("settings.agents.title")}
+            </h1>
             <Badge tone="primary">ACP</Badge>
           </div>
           <p className="mt-2 max-w-3xl text-body-md leading-6 text-on-surface-variant">
             {t("settings.agents.description")}
           </p>
-          <p className="mt-1 text-body-sm text-outline">{t("settings.agents.registryHint")}</p>
+          <p className="mt-1 text-body-sm text-outline">
+            {t("settings.agents.registryHint")}
+          </p>
         </div>
       </div>
 
@@ -468,7 +612,10 @@ export function AgentSettingsPanel({
             type="button"
             variant="ghost"
           >
-            <RefreshCw className={marketRefreshBusy ? "animate-spin" : undefined} size={16} />
+            <RefreshCw
+              className={marketRefreshBusy ? "animate-spin" : undefined}
+              size={16}
+            />
           </Button>
         </div>
       ) : null}
@@ -481,7 +628,11 @@ export function AgentSettingsPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <label className="relative min-w-48 max-w-md flex-1">
-            <Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-outline" size={17} />
+            <Search
+              aria-hidden="true"
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-outline"
+              size={17}
+            />
             <Input
               aria-label={t("settings.agents.search")}
               className="h-10 pl-10"
@@ -492,18 +643,45 @@ export function AgentSettingsPanel({
             />
           </label>
         </div>
-        <div className="flex shrink-0 items-center gap-1 rounded-xl border border-theme-card-border bg-theme-card/55 p-1" role="tablist">
-          <AgentFilterButton count={displayedCatalog.length} filter="all" onChange={setFilter} selected={filter} t={t} />
-          <AgentFilterButton count={availableCount} filter="available" onChange={setFilter} selected={filter} t={t} />
-          <AgentFilterButton count={unavailableCount} filter="unavailable" onChange={setFilter} selected={filter} t={t} />
+        <div
+          className="flex shrink-0 items-center gap-1 rounded-xl border border-theme-card-border bg-theme-card/55 p-1"
+          role="tablist"
+        >
+          <AgentFilterButton
+            count={displayedCatalog.length}
+            filter="all"
+            onChange={setFilter}
+            selected={filter}
+            t={t}
+          />
+          <AgentFilterButton
+            count={availableCount}
+            filter="available"
+            onChange={setFilter}
+            selected={filter}
+            t={t}
+          />
+          <AgentFilterButton
+            count={unavailableCount}
+            filter="unavailable"
+            onChange={setFilter}
+            selected={filter}
+            t={t}
+          />
         </div>
       </div>
 
-      <section aria-label={t("settings.agents.listLabel")} className="rounded-2xl border border-theme-card-border bg-theme-card/65 p-2.5 shadow-[var(--theme-shadow-card)]">
+      <section
+        aria-label={t("settings.agents.listLabel")}
+        className="rounded-2xl border border-theme-card-border bg-theme-card/65 p-2.5 shadow-[var(--theme-shadow-card)]"
+      >
         <div className="space-y-2">
           {filteredAgents.map((agent) => (
             <div
-              className={clsx(focusAgentId === agent.id && "rounded-xl ring-2 ring-theme-nav-active-border/70 ring-offset-2 ring-offset-theme-card")}
+              className={clsx(
+                focusAgentId === agent.id &&
+                  "rounded-xl ring-2 ring-theme-nav-active-border/70 ring-offset-2 ring-offset-theme-card",
+              )}
               key={agent.id}
               ref={(element) => {
                 agentRowRefs.current[agent.id] = element;
@@ -516,13 +694,33 @@ export function AgentSettingsPanel({
                 connectionState={connectionStates[agent.id]}
                 isTesting={testingAgentId === agent.id}
                 isManaging={isAgentManaging(agent.id)}
-                onInstall={!settingsOnly && canManageAgentLifecycle ? () => void manageMarketAgent(agent) : undefined}
-                onUpdate={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "update") : undefined}
-                onReinstall={!settingsOnly && canManageAgentLifecycle ? () => void runMarketLifecycle(agent, "reinstall") : undefined}
-                onUninstall={!settingsOnly && canPreviewAgentUninstall ? () => void previewUninstall(agent) : undefined}
+                onInstall={
+                  !settingsOnly && canManageAgentLifecycle
+                    ? () => void manageMarketAgent(agent)
+                    : undefined
+                }
+                onUpdate={
+                  !settingsOnly && canManageAgentLifecycle
+                    ? () => void runMarketLifecycle(agent, "update")
+                    : undefined
+                }
+                onReinstall={
+                  !settingsOnly && canManageAgentLifecycle
+                    ? () => void runMarketLifecycle(agent, "reinstall")
+                    : undefined
+                }
+                onUninstall={
+                  !settingsOnly && canPreviewAgentUninstall
+                    ? () => void previewUninstall(agent)
+                    : undefined
+                }
                 onEdit={settingsOnly ? () => setInfoAgent(agent) : undefined}
-                onSelectModel={settingsOnly ? () => openModelDialog(agent) : undefined}
-                onTest={settingsOnly ? () => void testConnection(agent) : undefined}
+                onSelectModel={
+                  settingsOnly ? () => openModelDialog(agent) : undefined
+                }
+                onTest={
+                  settingsOnly ? () => void testConnection(agent) : undefined
+                }
                 selectedModel={selectedModels[agent.id]}
                 t={t}
                 view={view}
@@ -533,8 +731,12 @@ export function AgentSettingsPanel({
             <div className="grid min-h-40 place-items-center rounded-xl border border-dashed border-theme-card-border px-4 text-center">
               <div>
                 <CircleHelp className="mx-auto text-outline" size={22} />
-                <p className="mt-2 text-body-sm font-semibold text-on-surface">{t("settings.agents.emptyTitle")}</p>
-                <p className="mt-1 text-body-sm text-on-surface-variant">{t("settings.agents.emptyDescription")}</p>
+                <p className="mt-2 text-body-sm font-semibold text-on-surface">
+                  {t("settings.agents.emptyTitle")}
+                </p>
+                <p className="mt-1 text-body-sm text-on-surface-variant">
+                  {t("settings.agents.emptyDescription")}
+                </p>
               </div>
             </div>
           ) : null}
@@ -589,24 +791,32 @@ export function AgentSettingsPanel({
                     </div>
                   </section>
                 ) : null}
-                <section aria-label={t("settings.agents.modelAvailableSection")} className="grid gap-2" role="radiogroup">
+                <section
+                  aria-label={t("settings.agents.modelAvailableSection")}
+                  className="grid gap-2"
+                  role="radiogroup"
+                >
                   <p className="px-1 text-label-caps uppercase text-outline">
                     {t("settings.agents.modelAvailableSection")}
                   </p>
-                  {unselectedModelOptions.length > 0 ? unselectedModelOptions.map((model) => (
-                    <ModelOptionButton
-                      key={model.id}
-                      model={model}
-                      onSelect={() => {
-                        onModelChange(modelAgent.id, model.id);
-                        setModelResult((current) => current
-                          ? { ...current, current_model_id: model.id }
-                          : current);
-                      }}
-                      selected={false}
-                      t={t}
-                    />
-                  )) : (
+                  {unselectedModelOptions.length > 0 ? (
+                    unselectedModelOptions.map((model) => (
+                      <ModelOptionButton
+                        key={model.id}
+                        model={model}
+                        onSelect={() => {
+                          onModelChange(modelAgent.id, model.id);
+                          setModelResult((current) =>
+                            current
+                              ? { ...current, current_model_id: model.id }
+                              : current,
+                          );
+                        }}
+                        selected={false}
+                        t={t}
+                      />
+                    ))
+                  ) : (
                     <p className="rounded-xl border border-dashed border-theme-card-border px-3 py-4 text-center text-body-sm text-on-surface-variant">
                       {t("settings.agents.modelNoMatches")}
                     </p>
@@ -617,7 +827,9 @@ export function AgentSettingsPanel({
               <div className="rounded-xl border border-dashed border-theme-card-border px-4 py-8 text-center text-body-sm text-on-surface-variant">
                 <p>{modelError || t("settings.agents.modelEmpty")}</p>
                 {modelResult?.available && modelResult.models.length === 0 ? (
-                  <p className="mt-1 text-code-sm text-outline">{t("settings.agents.modelEmptyHint")}</p>
+                  <p className="mt-1 text-code-sm text-outline">
+                    {t("settings.agents.modelEmptyHint")}
+                  </p>
                 ) : null}
               </div>
             )}
@@ -634,7 +846,9 @@ export function AgentSettingsPanel({
           busy={isAgentManaging(pendingLifecycle.agent.id)}
           onClose={() => setPendingLifecycle(null)}
           onConfirm={() => void confirmLifecycle()}
-          onSelectDistribution={(distributionId) => void selectLifecycleDistribution(distributionId)}
+          onSelectDistribution={(distributionId) =>
+            void selectLifecycleDistribution(distributionId)
+          }
           preview={pendingLifecycle.preview}
         />
       ) : null}
@@ -655,7 +869,11 @@ export function AgentSettingsPanel({
           contentClassName="grid gap-4"
           description={t("settings.agents.definitionDialogDescription")}
           footer={
-            <Button onClick={() => setInfoAgent(null)} type="button" variant="outline">
+            <Button
+              onClick={() => setInfoAgent(null)}
+              type="button"
+              variant="outline"
+            >
               {t("common.close")}
             </Button>
           }
@@ -665,15 +883,20 @@ export function AgentSettingsPanel({
           title={infoAgent.name}
         >
           <div className="grid gap-3 text-body-sm">
-            <DefinitionValue label={t("settings.agents.command")} value={infoAgent.command} />
-            <DefinitionValue label={t("settings.agents.protocol")} value={infoAgent.protocol} />
+            <DefinitionValue
+              label={t("settings.agents.command")}
+              value={infoAgent.command}
+            />
+            <DefinitionValue
+              label={t("settings.agents.protocol")}
+              value={infoAgent.protocol}
+            />
             <p className="rounded-xl border border-status-update/25 bg-status-update/10 px-3 py-3 leading-6 text-on-surface-variant">
               {t("settings.agents.definitionEditingHint")}
             </p>
           </div>
         </DialogFrame>
       ) : null}
-
     </div>
   );
 }
@@ -681,7 +904,9 @@ export function AgentSettingsPanel({
 async function checkInstalledMarketAgents(
   items: agentRuntime.AgentMarketItem[],
   t: Translator,
-  setConnectionStates: Dispatch<SetStateAction<Record<AgentId, AgentConnectionState>>>,
+  setConnectionStates: Dispatch<
+    SetStateAction<Record<AgentId, AgentConnectionState>>
+  >,
   setConnectionMessages: Dispatch<SetStateAction<Record<string, string>>>,
   isDisposed: () => boolean = () => false,
 ) {
@@ -691,20 +916,34 @@ async function checkInstalledMarketAgents(
     ...current,
     ...Object.fromEntries(installedAgents.map((item) => [item.id, "checking"])),
   }));
-  await Promise.all(installedAgents.map(async (item) => {
-    try {
-      const result = await checkAgentConnection(item.id, "connection");
-      if (isDisposed()) return;
-      applyConnectionResult(item.id, result, "connection", t, setConnectionStates, setConnectionMessages);
-    } catch (error) {
-      if (isDisposed()) return;
-      setConnectionStates((current) => ({ ...current, [item.id]: "failed" }));
-      setConnectionMessages((current) => ({ ...current, [item.id]: errorMessage(error) }));
-    }
-  }));
+  await Promise.all(
+    installedAgents.map(async (item) => {
+      try {
+        const result = await checkAgentConnection(item.id, "connection");
+        if (isDisposed()) return;
+        applyConnectionResult(
+          item.id,
+          result,
+          "connection",
+          t,
+          setConnectionStates,
+          setConnectionMessages,
+        );
+      } catch (error) {
+        if (isDisposed()) return;
+        setConnectionStates((current) => ({ ...current, [item.id]: "failed" }));
+        setConnectionMessages((current) => ({
+          ...current,
+          [item.id]: errorMessage(error),
+        }));
+      }
+    }),
+  );
 }
 
-function marketConnectionState(item: agentRuntime.AgentMarketItem): AgentConnectionState {
+function marketConnectionState(
+  item: agentRuntime.AgentMarketItem,
+): AgentConnectionState {
   if (!item.installed) return "not-installed";
   if (item.installed.healthStale) return "not-tested";
   return item.installed.executionReady ? "available" : "failed";
@@ -735,15 +974,25 @@ function ModelOptionButton({
       type="button"
     >
       <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border border-theme-control-border">
-        {selected ? <span className="size-2.5 rounded-full bg-primary" /> : null}
+        {selected ? (
+          <span className="size-2.5 rounded-full bg-primary" />
+        ) : null}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex flex-wrap items-center gap-2 text-body-sm font-semibold text-on-surface">
           <span className="truncate">{model.label}</span>
-          {selected ? <Badge tone="primary">{t("settings.agents.modelSelected")}</Badge> : null}
+          {selected ? (
+            <Badge tone="primary">{t("settings.agents.modelSelected")}</Badge>
+          ) : null}
         </span>
-        <span className="mt-1 block truncate font-mono text-code-sm text-outline">{model.id}</span>
-        {model.description ? <span className="mt-1 block text-body-sm text-on-surface-variant">{model.description}</span> : null}
+        <span className="mt-1 block truncate font-mono text-code-sm text-outline">
+          {model.id}
+        </span>
+        {model.description ? (
+          <span className="mt-1 block text-body-sm text-on-surface-variant">
+            {model.description}
+          </span>
+        ) : null}
       </span>
     </button>
   );
@@ -762,11 +1011,12 @@ function AgentFilterButton({
   selected: AgentFilter;
   t: Translator;
 }) {
-  const label = filter === "all"
-    ? t("settings.agents.filterAll")
-    : filter === "available"
-      ? t("settings.agents.filterAvailable")
-      : t("settings.agents.filterUnavailable");
+  const label =
+    filter === "all"
+      ? t("settings.agents.filterAll")
+      : filter === "available"
+        ? t("settings.agents.filterAvailable")
+        : t("settings.agents.filterUnavailable");
   return (
     <button
       aria-selected={selected === filter}
@@ -781,7 +1031,9 @@ function AgentFilterButton({
       type="button"
     >
       {label}
-      <span className="rounded-full bg-theme-control/80 px-1.5 py-0.5 text-code-sm">{count}</span>
+      <span className="rounded-full bg-theme-control/80 px-1.5 py-0.5 text-code-sm">
+        {count}
+      </span>
     </button>
   );
 }
@@ -790,7 +1042,9 @@ function DefinitionValue({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid gap-1">
       <span className="text-label-caps uppercase text-outline">{label}</span>
-      <code className="rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-sm text-on-surface">{value}</code>
+      <code className="rounded-lg border border-theme-control-border bg-theme-control px-3 py-2 text-code-sm text-on-surface">
+        {value}
+      </code>
     </div>
   );
 }
@@ -809,17 +1063,20 @@ function applyConnectionResult(
   result: AgentConnectionResult,
   mode: "installation" | "connection",
   t: Translator,
-  setConnectionStates: Dispatch<SetStateAction<Record<AgentId, AgentConnectionState>>>,
+  setConnectionStates: Dispatch<
+    SetStateAction<Record<AgentId, AgentConnectionState>>
+  >,
   setConnectionMessages: Dispatch<SetStateAction<Record<string, string>>>,
 ) {
   const state: AgentConnectionState = result.available
     ? "available"
-    : !result.installed || (mode === "installation" && result.error_code === "command_not_found")
+    : !result.installed ||
+        (mode === "installation" && result.error_code === "command_not_found")
       ? "not-installed"
       : "failed";
   const message = result.available
-      ? result.version || t("settings.agents.connectionAvailable")
-      : result.error || t("settings.agents.connectionFailed");
+    ? result.version || t("settings.agents.connectionAvailable")
+    : result.error || t("settings.agents.connectionFailed");
   setConnectionStates((current) => ({ ...current, [agentId]: state }));
   setConnectionMessages((current) => ({ ...current, [agentId]: message }));
 }

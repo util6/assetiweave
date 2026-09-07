@@ -134,48 +134,47 @@ mod tests {
         assert_eq!(decoded.target_provider_id, "codex");
     }
 
-    #[test]
-    fn sqlx_profile_repo_round_trips_and_deletes_related_rows() {
+    #[tokio::test]
+    async fn sqlx_profile_repo_round_trips_and_deletes_related_rows() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-profile-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let profile = test_profile("profile-a");
 
-        let (profiles, loaded_profile, missing_profile, remaining_profiles, shortcut_count) =
-            database
-                .block_on(async {
-                    upsert_profile_sqlx(database.pool(), "default", &profile).await?;
-                    sqlx::query(
-                        "INSERT INTO app_shortcut_items (
-                        profile_id, display_icon, accent_color, enabled, sort_order
-                    ) VALUES (?1, 'C', '#000000', 1, 0)",
-                    )
-                    .bind(&profile.id)
-                    .execute(database.pool())
-                    .await?;
-                    let profiles = load_profiles_sqlx(database.pool(), "default").await?;
-                    let loaded_profile =
-                        load_profile_sqlx(database.pool(), "default", &profile.id).await?;
-                    let missing_profile =
-                        load_profile_sqlx(database.pool(), "default", "missing").await?;
-                    delete_profile_sqlx(database.pool(), "default", &profile.id).await?;
-                    let remaining_profiles = load_profiles_sqlx(database.pool(), "default").await?;
-                    let shortcut_count: i64 =
-                        sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
-                            .fetch_one(database.pool())
-                            .await
-                            .map_err(AppError::external)?;
-                    AppResult::Ok((
-                        profiles,
-                        loaded_profile,
-                        missing_profile,
-                        remaining_profiles,
-                        shortcut_count,
-                    ))
-                })
-                .expect("query SQLx profile repo");
+        upsert_profile_sqlx(database.pool(), "default", &profile)
+            .await
+            .expect("upsert profile");
+        sqlx::query(
+            "INSERT INTO app_shortcut_items (
+            profile_id, display_icon, accent_color, enabled, sort_order
+        ) VALUES (?1, 'C', '#000000', 1, 0)",
+        )
+        .bind(&profile.id)
+        .execute(database.pool())
+        .await
+        .expect("insert shortcut");
+        let profiles = load_profiles_sqlx(database.pool(), "default")
+            .await
+            .expect("load profiles");
+        let loaded_profile = load_profile_sqlx(database.pool(), "default", &profile.id)
+            .await
+            .expect("load profile");
+        let missing_profile = load_profile_sqlx(database.pool(), "default", "missing")
+            .await
+            .expect("load missing profile");
+        delete_profile_sqlx(database.pool(), "default", &profile.id)
+            .await
+            .expect("delete profile");
+        let remaining_profiles = load_profiles_sqlx(database.pool(), "default")
+            .await
+            .expect("load remaining profiles");
+        let shortcut_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM app_shortcut_items")
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)
+            .expect("count shortcuts");
 
         assert_eq!(profiles, vec![profile.clone()]);
         assert_eq!(loaded_profile.expect("load profile by id").id, profile.id);
@@ -186,29 +185,30 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_profile_repo_isolates_same_id_by_tenant() {
+    #[tokio::test]
+    async fn sqlx_profile_repo_isolates_same_id_by_tenant() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-profile-tenant-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut default_profile = test_profile("profile-a");
         default_profile.name = "Default profile".to_string();
         let mut tenant_profile = test_profile("profile-a");
         tenant_profile.name = "Tenant profile".to_string();
 
-        let (default_loaded, tenant_loaded) = database
-            .block_on(async {
-                upsert_profile_sqlx(database.pool(), "default", &default_profile).await?;
-                upsert_profile_sqlx(database.pool(), "tenant-a", &tenant_profile).await?;
-                let default_loaded =
-                    load_profile_sqlx(database.pool(), "default", "profile-a").await?;
-                let tenant_loaded =
-                    load_profile_sqlx(database.pool(), "tenant-a", "profile-a").await?;
-                AppResult::Ok((default_loaded, tenant_loaded))
-            })
-            .expect("query tenant-scoped profiles");
+        upsert_profile_sqlx(database.pool(), "default", &default_profile)
+            .await
+            .expect("upsert default profile");
+        upsert_profile_sqlx(database.pool(), "tenant-a", &tenant_profile)
+            .await
+            .expect("upsert tenant profile");
+        let default_loaded = load_profile_sqlx(database.pool(), "default", "profile-a")
+            .await
+            .expect("load default profile");
+        let tenant_loaded = load_profile_sqlx(database.pool(), "tenant-a", "profile-a")
+            .await
+            .expect("load tenant profile");
 
         assert_eq!(
             default_loaded.expect("load default profile").name,
@@ -222,13 +222,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_profile_repo_normalizes_home_target_paths_for_storage_and_loading() {
+    #[tokio::test]
+    async fn sqlx_profile_repo_normalizes_home_target_paths_for_storage_and_loading() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-profile-home-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut profile = test_profile("profile-home");
         profile.target_paths = vec![dirs::home_dir()
             .expect("home directory")
@@ -237,11 +237,11 @@ mod tests {
             .to_string_lossy()
             .to_string()];
 
-        let loaded = database
-            .block_on(async {
-                upsert_profile_sqlx(database.pool(), "default", &profile).await?;
-                load_profile_sqlx(database.pool(), "default", &profile.id).await
-            })
+        upsert_profile_sqlx(database.pool(), "default", &profile)
+            .await
+            .expect("upsert profile");
+        let loaded = load_profile_sqlx(database.pool(), "default", &profile.id)
+            .await
             .expect("round trip profile")
             .expect("stored profile");
 

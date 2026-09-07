@@ -21,51 +21,77 @@ import type {
   TeamRuntimeTaskSnapshot,
 } from "../types/team";
 
-const DESKTOP_REQUIRED = "Team workflows require the desktop application runtime.";
-export const TEAM_MEMBER_SESSION_UPDATED_EVENT = "team-member-session://updated";
+const DESKTOP_REQUIRED =
+  "Team workflows require the desktop application runtime.";
+export const TEAM_MEMBER_SESSION_UPDATED_EVENT =
+  "team-member-session://updated";
 
 function requireDesktop() {
   if (!isTauriRuntime()) throw new Error(DESKTOP_REQUIRED);
 }
 
-export async function teamLeaderChat(input: TeamLeaderChatInput): Promise<TeamLeaderChatResult> {
+export async function teamLeaderChat(
+  input: TeamLeaderChatInput,
+): Promise<TeamLeaderChatResult> {
   requireDesktop();
-  return teamLeaderChatResultSchema.parse(await invoke("team_leader_chat", { input }));
+  return teamLeaderChatResultSchema.parse(
+    await invoke("team_leader_chat", { input }),
+  );
 }
 
-export async function draftTeam(input: TeamDraftInput): Promise<TeamRunSnapshot> {
+export async function draftTeam(
+  input: TeamDraftInput,
+): Promise<TeamRunSnapshot> {
   requireDesktop();
   return teamRunSnapshotSchema.parse(await invoke("team_run_draft", { input }));
 }
 
-export async function getTeamRun(runId: string): Promise<TeamRunSnapshot | null> {
+export async function getTeamRun(
+  runId: string,
+): Promise<TeamRunSnapshot | null> {
   requireDesktop();
   const value = await invoke("team_run_get", { runId });
   return value == null ? null : teamRunSnapshotSchema.parse(value);
 }
 
-export async function getLatestTeamRun(teamId: string): Promise<TeamRunSnapshot | null> {
+export async function getLatestTeamRun(
+  teamId: string,
+): Promise<TeamRunSnapshot | null> {
   if (!isTauriRuntime()) return null;
   const value = await invoke("team_run_latest", { teamId });
   return value == null ? null : teamRunSnapshotSchema.parse(value);
 }
 
-export async function reviewTeamRun(input: TeamReviewInput): Promise<TeamRunSnapshot> {
+export async function reviewTeamRun(
+  input: TeamReviewInput,
+): Promise<TeamRunSnapshot> {
   requireDesktop();
-  return teamRunSnapshotSchema.parse(await invoke("team_run_review", { input }));
+  return teamRunSnapshotSchema.parse(
+    await invoke("team_run_review", { input }),
+  );
 }
 
-export async function confirmTeamRun(input: TeamConfirmInput): Promise<TeamRunSnapshot> {
+export async function confirmTeamRun(
+  input: TeamConfirmInput,
+): Promise<TeamRunSnapshot> {
   requireDesktop();
-  return teamRunSnapshotSchema.parse(await invoke("team_run_confirm", { input }));
+  return teamRunSnapshotSchema.parse(
+    await invoke("team_run_confirm", { input }),
+  );
 }
 
-export async function cancelTeamRun(runId: string): Promise<TeamRuntimeTaskSnapshot> {
+export async function cancelTeamRun(
+  runId: string,
+): Promise<TeamRuntimeTaskSnapshot> {
   requireDesktop();
-  return teamRuntimeTaskSnapshotSchema.parse(await invoke("team_run_cancel", { runId }));
+  return teamRuntimeTaskSnapshotSchema.parse(
+    await invoke("team_run_cancel", { runId }),
+  );
 }
 
-export async function getTeamRunTask(taskId: string): Promise<TeamRuntimeTaskSnapshot | null> {
+export async function getTeamRunTask(
+  taskId: string,
+): Promise<TeamRuntimeTaskSnapshot | null> {
   requireDesktop();
   const value = await invoke("team_run_task", { taskId });
   return value == null ? null : teamRuntimeTaskSnapshotSchema.parse(value);
@@ -73,20 +99,31 @@ export async function getTeamRunTask(taskId: string): Promise<TeamRuntimeTaskSna
 
 export async function listTeamRunTasks(): Promise<TeamRuntimeTaskSnapshot[]> {
   if (!isTauriRuntime()) return [];
-  return teamRuntimeTaskSnapshotSchema.array().parse(await invoke("list_team_run_tasks"));
+  return teamRuntimeTaskSnapshotSchema
+    .array()
+    .parse(await invoke("list_team_run_tasks"));
 }
 
-export async function startTeamMemberTurn(input: TeamMemberTurnInput): Promise<TeamMemberStreamSnapshot> {
+export async function startTeamMemberTurn(
+  input: TeamMemberTurnInput,
+): Promise<TeamMemberStreamSnapshot> {
   requireDesktop();
-  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_turn_start", { input }));
+  return teamMemberStreamSnapshotSchema.parse(
+    await invoke("team_member_turn_start", { input }),
+  );
 }
 
-export async function startTeamMemberReplay(teamId: string, memberId: string): Promise<TeamMemberStreamSnapshot> {
+export async function startTeamMemberReplay(
+  teamId: string,
+  memberId: string,
+): Promise<TeamMemberStreamSnapshot> {
   requireDesktop();
-  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_replay_start", {
-    teamId: teamId.trim(),
-    memberId: memberId.trim(),
-  }));
+  return teamMemberStreamSnapshotSchema.parse(
+    await invoke("team_member_replay_start", {
+      teamId: teamId.trim(),
+      memberId: memberId.trim(),
+    }),
+  );
 }
 
 export async function getTeamMemberStreamSnapshot(
@@ -103,7 +140,9 @@ export async function getTeamMemberStreamSnapshot(
   return value == null ? null : teamMemberStreamSnapshotSchema.parse(value);
 }
 
-export async function getTeamMemberTask(taskId: string): Promise<TeamMemberTaskSnapshot | null> {
+export async function getTeamMemberTask(
+  taskId: string,
+): Promise<TeamMemberTaskSnapshot | null> {
   if (!isTauriRuntime()) return null;
   const value = await invoke("team_member_task_get", { taskId: taskId.trim() });
   return value == null ? null : teamMemberTaskSnapshotSchema.parse(value);
@@ -111,7 +150,9 @@ export async function getTeamMemberTask(taskId: string): Promise<TeamMemberTaskS
 
 export async function listTeamMemberTasks(): Promise<TeamMemberTaskSnapshot[]> {
   if (!isTauriRuntime()) return [];
-  return teamMemberTaskSnapshotSchema.array().parse(await invoke("team_member_tasks_list"));
+  return teamMemberTaskSnapshotSchema
+    .array()
+    .parse(await invoke("team_member_tasks_list"));
 }
 
 export async function cancelTeamMemberTurn(
@@ -120,14 +161,18 @@ export async function cancelTeamMemberTurn(
   executionId: string,
 ): Promise<TeamMemberStreamSnapshot> {
   requireDesktop();
-  return teamMemberStreamSnapshotSchema.parse(await invoke("team_member_turn_cancel", {
-    teamId: teamId.trim(),
-    memberId: memberId.trim(),
-    executionId: executionId.trim(),
-  }));
+  return teamMemberStreamSnapshotSchema.parse(
+    await invoke("team_member_turn_cancel", {
+      teamId: teamId.trim(),
+      memberId: memberId.trim(),
+      executionId: executionId.trim(),
+    }),
+  );
 }
 
-export function subscribeTeamMemberSessions(listener: (snapshot: TeamMemberStreamSnapshot) => void) {
+export function subscribeTeamMemberSessions(
+  listener: (snapshot: TeamMemberStreamSnapshot) => void,
+) {
   if (!isTauriRuntime()) return Promise.resolve(() => undefined);
   return listen<unknown>(TEAM_MEMBER_SESSION_UPDATED_EVENT, (event) => {
     const parsed = teamMemberStreamSnapshotSchema.safeParse(event.payload);

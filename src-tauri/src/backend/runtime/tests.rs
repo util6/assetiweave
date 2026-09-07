@@ -5,7 +5,7 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[test]
@@ -19,7 +19,7 @@ fn task_runtime_deduplicates_and_cancels_cooperatively() {
                 while !context.is_cancelled() {
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                Err(AppError::Canceled("cancelled".to_string()))
+                Err(AppError::Cancelled("cancelled".to_string()))
             }),
         )
         .expect("spawn");
@@ -318,8 +318,8 @@ fn external_task_runtime_starts_a_registered_task_only_once() {
     assert_eq!(executions.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
+#[tokio::test]
+async fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     let tasks = tasks::TaskRuntime::new();
     let outcome = tasks
         .spawn(
@@ -337,11 +337,11 @@ fn task_runtime_shutdown_is_bounded_and_reports_unfinished_tasks() {
     };
 
     let started = std::time::Instant::now();
-    let report = tasks.shutdown_with_grace(Duration::from_millis(20));
+    let report = tasks.shutdown_with_grace(Duration::from_millis(20)).await;
     assert!(started.elapsed() < Duration::from_millis(100));
     assert_eq!(report.unfinished_task_ids, vec![task_id]);
 
-    // Let the detached test task converge before the registry is dropped.
+    // Let the untracked test task converge before the registry is dropped.
     std::thread::sleep(Duration::from_millis(180));
     assert!(tasks
         .list(tasks::TaskFilter::default())
@@ -364,4 +364,221 @@ fn shutdown_report_without_resident_services_is_clean() {
     assert_eq!(report.dispatcher_remaining_events, 0);
     assert!(!report.dispatcher_timed_out);
     assert!(report.unfinished_task_ids.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_config_db_path_matches_injected_path() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-config-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot)
+        .await
+        .expect("bootstrap test runtime");
+    assert_eq!(runtime.config().db_path, temp_db);
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[test]
+fn task_runtime_uses_tracker_instead_of_condvar_accounting() {
+    let source = include_str!("tasks.rs");
+    assert!(source.contains("TaskTracker"));
+    assert!(!source.contains(concat!("Cond", "var")));
+    assert!(!source.contains(concat!("fn release_active_", "slot(")));
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_external_task_completion() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec =
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("external-still-running");
+    tasks.register_external(spec).unwrap();
+    let report = tasks.shutdown_with_grace(Duration::from_millis(5)).await;
+    assert_eq!(report.unfinished_task_ids, vec!["external-still-running"]);
+    assert!(tasks
+        .spawn(
+            tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+            Box::new(|_| Ok(serde_json::Value::Null)),
+        )
+        .is_err());
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_external_task_finish_and_recovers_token_on_panic() {
+    let tasks = tasks::TaskRuntime::new();
+    let spec = tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("ext-completed");
+    tasks.register_external(spec).unwrap();
+    tasks
+        .complete_external("ext-completed", Ok(serde_json::Value::Null))
+        .unwrap();
+
+    let report = tasks.shutdown_with_grace(Duration::from_millis(50)).await;
+    assert!(report.unfinished_task_ids.is_empty());
+}
+
+#[tokio::test]
+async fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_resident_services() {
+    let temp_db =
+        std::env::temp_dir().join(format!("assetiweave-test-role-{}.db", uuid::Uuid::new_v4()));
+
+    // 1. Bootstrap OneShot
+    let oneshot_runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::OneShot)
+        .await
+        .expect("bootstrap OneShot");
+    assert_eq!(oneshot_runtime.config().db_path, temp_db);
+
+    // OneShot does not register background startup refresh tasks
+    let oneshot_tasks = oneshot_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+    });
+    assert!(!oneshot_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe persistent data through the initialized database
+    let settings_oneshot = oneshot_runtime.app_settings_value();
+    assert!(settings_oneshot.is_object());
+
+    // Cleanly shutdown OneShot
+    let oneshot_report = oneshot_runtime
+        .shutdown_with_grace(Duration::from_millis(200))
+        .await;
+    assert!(oneshot_report.unfinished_task_ids.is_empty());
+
+    // 2. Bootstrap ResidentHost on the exact same database file
+    let resident_runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
+        .expect("bootstrap ResidentHost");
+    assert_eq!(resident_runtime.config().db_path, temp_db);
+
+    // ResidentHost registers resident startup services in task runtime
+    let resident_tasks = resident_runtime.task_runtime().list(tasks::TaskFilter {
+        kind: None,
+        active_only: false,
+    });
+    assert!(resident_tasks
+        .iter()
+        .any(|t| t.detail["operation"] == "startup_health_refresh"));
+
+    // Observe identical persistent settings through the shared database
+    let settings_resident = resident_runtime.app_settings_value();
+    assert_eq!(settings_oneshot, settings_resident);
+
+    // Cleanly shutdown ResidentHost
+    let resident_report = resident_runtime
+        .shutdown_with_grace(Duration::from_secs(1))
+        .await;
+    assert!(resident_report.unfinished_task_ids.is_empty());
+    assert!(resident_report.dispatcher_drained);
+
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[tokio::test]
+async fn shutdown_is_idempotent_when_called_twice() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-idempotent-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
+        .expect("bootstrap ResidentHost");
+
+    let first_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
+    assert!(first_report.is_clean());
+    assert!(first_report.dispatcher_drained);
+    assert!(first_report.unfinished_task_ids.is_empty());
+    assert!(first_report.unfinished_stages.is_empty());
+
+    // Second call to shutdown_with_grace must be idempotent and cleanly return identical stable report
+    let second_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
+    assert!(second_report.is_clean());
+    assert!(second_report.dispatcher_drained);
+    assert!(second_report.unfinished_task_ids.is_empty());
+    assert_eq!(second_report.dispatcher_remaining_events, 0);
+    assert_eq!(
+        second_report.unfinished_stages,
+        first_report.unfinished_stages
+    );
+
+    // Task runtime rejects new tasks once stopped
+    let spawn_res = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None),
+        Box::new(|_| Ok(serde_json::Value::Null)),
+    );
+    assert!(spawn_res.is_err());
+
+    let _ = std::fs::remove_file(&temp_db);
+}
+
+#[tokio::test]
+async fn shutdown_deadline_bounds_total_wall_time_across_all_stages() {
+    let temp_db = std::env::temp_dir().join(format!(
+        "assetiweave-test-shutdown-deadline-{}.db",
+        uuid::Uuid::new_v4()
+    ));
+    let runtime = AppRuntime::bootstrap(temp_db.clone(), RuntimeRole::ResidentHost)
+        .await
+        .expect("bootstrap ResidentHost");
+
+    // 1. Non-cooperative task: sleeps without observing cancellation
+    let _ = runtime.task_runtime().spawn(
+        tasks::TaskSpec::new(tasks::TaskKind::Other, None).with_task_id("uncooperative-task"),
+        Box::new(|_| {
+            std::thread::sleep(Duration::from_millis(800));
+            Ok(serde_json::Value::Null)
+        }),
+    );
+
+    // 2. Slow coordinator: install a slow coordinator that sleeps for 800ms
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let join = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(800)).await;
+    });
+    runtime.set_test_session_memory_coordinator(cancel, join);
+
+    // 3. Delayed pool close: hold a connection checkout so pool.close() would block
+    let _held_connection = runtime.pool().acquire().await.expect("acquire connection");
+
+    // Total grace = 150ms.
+    // If each of the 4 stages received a fresh 150ms (or blocked indefinitely),
+    // wall time would be >= 4 * 150ms = 600ms.
+    // With one absolute deadline, wall time is bounded by 150ms + CI tolerance (< 450ms).
+    let grace = Duration::from_millis(150);
+    let start = Instant::now();
+    let report = runtime.shutdown_with_grace(grace).await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        elapsed < Duration::from_millis(450),
+        "shutdown took {:?}, which exceeds one grace plus tolerance",
+        elapsed
+    );
+    assert!(!report.is_clean());
+    assert!(
+        report.unfinished_stages.contains(&"tasks".to_string())
+            || report
+                .unfinished_task_ids
+                .contains(&"uncooperative-task".to_string())
+    );
+    assert!(report
+        .unfinished_stages
+        .contains(&"session_memory_coordinator".to_string()));
+    assert!(report
+        .unfinished_stages
+        .contains(&"database_pool".to_string()));
+
+    // Idempotency: calling shutdown again immediately returns the same stable report
+    let second_report = runtime
+        .shutdown_with_grace(Duration::from_millis(100))
+        .await;
+    assert_eq!(second_report.unfinished_stages, report.unfinished_stages);
+    assert_eq!(
+        second_report.unfinished_task_ids,
+        report.unfinished_task_ids
+    );
+
+    drop(_held_connection);
+    let _ = std::fs::remove_file(&temp_db);
 }

@@ -22,7 +22,7 @@ impl StagingDirectoryGuard {
     }
 }
 
-fn report_skill_acquire_phase(phase_sink: Option<&dyn Fn(&str)>, phase: &str) {
+fn report_skill_acquire_phase(phase_sink: Option<&(dyn Fn(&str) + Send + Sync)>, phase: &str) {
     if let Some(phase_sink) = phase_sink {
         phase_sink(phase);
     }
@@ -68,23 +68,24 @@ impl AppService {
         })
     }
 
-    pub(crate) fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
-        self.acquire_skill_with_cancellation(params, None)
+    pub(crate) async fn acquire_skill(&self, params: SkillAcquireParams) -> AppResult<Value> {
+        self.acquire_skill_with_cancellation(params, None).await
     }
 
-    pub(crate) fn acquire_skill_with_cancellation(
+    pub(crate) async fn acquire_skill_with_cancellation(
         &self,
         params: SkillAcquireParams,
         cancellation: Option<&CancellationToken>,
     ) -> AppResult<Value> {
         self.acquire_skill_with_cancellation_and_progress(params, cancellation, None)
+            .await
     }
 
-    pub(crate) fn acquire_skill_with_cancellation_and_progress(
+    pub(crate) async fn acquire_skill_with_cancellation_and_progress(
         &self,
         params: SkillAcquireParams,
         cancellation: Option<&CancellationToken>,
-        phase_sink: Option<&dyn Fn(&str)>,
+        phase_sink: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
@@ -102,8 +103,9 @@ impl AppService {
             .or_else(|| location.skill_name_hint())
             .unwrap_or_else(|| location.repo.clone());
         let name = slug_path_segment(&raw_name);
-        let staging_dir = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?
-            .join("staging")
+        let staging_dir = capabilities::skill_backup_root_sqlx(self.db.pool(), self.tenant_id())
+            .await?
+            .join(".staging")
             .join(format!("{}-{}", slug_path_segment(&name), short_uuid()));
         let skill_path_hint = location.skill_path_hint(&staging_dir);
 
@@ -128,24 +130,27 @@ impl AppService {
         let mut staging_guard = StagingDirectoryGuard {
             path: staging_dir.clone(),
         };
-        clone_github_skill(&location, &staging_dir, cancellation)?;
+        clone_github_skill(&location, &staging_dir, cancellation).await?;
         ensure_not_cancelled(cancellation)?;
         let skill_dir = resolve_cloned_skill_dir(&staging_dir, location.path.as_deref())?;
-        let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref());
-        let acquired_branch = location
-            .branch
-            .clone()
-            .or_else(|| git_current_branch(&staging_dir))
-            .unwrap_or_else(|| "HEAD".to_string());
+        let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref()).await;
+        let acquired_branch = match location.branch.clone() {
+            Some(branch) => branch,
+            None => git_current_branch(&staging_dir)
+                .await
+                .unwrap_or_else(|| "HEAD".to_string()),
+        };
         report_skill_acquire_phase(phase_sink, "importing");
-        let import_result = self.import_skill_with_progress(
-            ImportSkillParams {
-                from: skill_dir.to_string_lossy().to_string(),
-                name: Some(name.clone()),
-                dry_run: false,
-            },
-            phase_sink,
-        )?;
+        let import_result = self
+            .import_skill_with_progress(
+                ImportSkillParams {
+                    from: skill_dir.to_string_lossy().to_string(),
+                    name: Some(name.clone()),
+                    dry_run: false,
+                },
+                phase_sink,
+            )
+            .await?;
         ensure_not_cancelled(cancellation)?;
         let imported_asset = import_result
             .get("asset")
@@ -175,19 +180,13 @@ impl AppService {
                 "Remote source recorded; run skill remote check to detect drift".to_string(),
             ),
         };
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let remote_source_to_save = remote_source.clone();
-        self.db
-            .block_on(async move {
-                crate::backend::store::upsert_skill_remote_source_sqlx(
-                    &pool,
-                    &tenant_id,
-                    &remote_source_to_save,
-                )
-                .await
-            })
-            .map_err(AppError::external)?;
+        crate::backend::store::upsert_skill_remote_source_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &remote_source,
+        )
+        .await
+        .map_err(AppError::external)?;
         let staging_cleaned = staging_guard.cleanup();
         if !staging_cleaned {
             return Err(AppError::Storage(
@@ -211,20 +210,18 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self
-            .db
-            .block_on(async move {
-                crate::backend::store::delete_orphan_skill_remote_sources_sqlx(&pool, &tenant_id)
-                    .await?;
-                crate::backend::store::list_skill_remote_sources_sqlx(&pool, &tenant_id).await
-            })
-            .map_err(AppError::external)?)
+    pub(crate) async fn list_skill_remote_sources(&self) -> AppResult<Vec<SkillRemoteSource>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        crate::backend::store::delete_orphan_skill_remote_sources_sqlx(pool, tenant_id)
+            .await
+            .map_err(AppError::external)?;
+        crate::backend::store::list_skill_remote_sources_sqlx(pool, tenant_id)
+            .await
+            .map_err(AppError::external)
     }
 
-    pub(crate) fn check_skill_remote_sources(
+    pub(crate) async fn check_skill_remote_sources(
         &self,
         params: SkillRemoteCheckParams,
     ) -> AppResult<Vec<SkillRemoteSource>> {
@@ -234,44 +231,33 @@ impl AppService {
             .map(str::trim)
             .filter(|id| !id.is_empty())
         {
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            vec![self
-                .db
-                .block_on(async move {
-                    crate::backend::store::delete_orphan_skill_remote_sources_sqlx(
-                        &pool, &tenant_id,
-                    )
-                    .await?;
-                    crate::backend::store::load_skill_remote_source_sqlx(
-                        &pool, &tenant_id, asset_id,
-                    )
+            let pool = self.db.pool();
+            let tenant_id = self.tenant_id();
+            crate::backend::store::delete_orphan_skill_remote_sources_sqlx(pool, tenant_id)
+                .await
+                .map_err(AppError::external)?;
+            vec![
+                crate::backend::store::load_skill_remote_source_sqlx(pool, tenant_id, asset_id)
                     .await
-                })
-                .map_err(AppError::external)?
-                .ok_or_else(|| {
-                    AppError::NotFound(format!("skill remote source not found: {asset_id}"))
-                })?]
+                    .map_err(AppError::external)?
+                    .ok_or_else(|| {
+                        AppError::NotFound(format!("skill remote source not found: {asset_id}"))
+                    })?,
+            ]
         } else {
-            self.list_skill_remote_sources()?
+            self.list_skill_remote_sources().await?
         };
 
         let mut checked = Vec::with_capacity(sources.len());
         for source in sources {
             let source = check_skill_remote_source(source);
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let source_to_save = source.clone();
-            self.db
-                .block_on(async move {
-                    crate::backend::store::update_skill_remote_check_result_sqlx(
-                        &pool,
-                        &tenant_id,
-                        &source_to_save,
-                    )
-                    .await
-                })
-                .map_err(AppError::external)?;
+            crate::backend::store::update_skill_remote_check_result_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                &source,
+            )
+            .await
+            .map_err(AppError::external)?;
             checked.push(source);
         }
         Ok(checked)
@@ -612,18 +598,35 @@ fn github_skill_tree_url(repo_url: &str, branch: &str, path: &str) -> String {
 }
 
 fn github_get_json(url: &str, context: &str) -> AppResult<Value> {
-    let mut request = ureq::get(url)
-        .set("User-Agent", "AssetIWeave/0.1 skill-search")
-        .set("Accept", "application/vnd.github+json");
-    let authorization = github_api_token().map(|token| format!("Bearer {token}"));
-    if let Some(authorization) = authorization.as_deref() {
-        request = request.set("Authorization", authorization);
+    let client = crate::backend::http_client::shared_http_client()?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static("AssetIWeave/0.1 skill-search"),
+    );
+    headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("application/vnd.github+json"),
+    );
+    if let Some(token) = github_api_token() {
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+                .map_err(AppError::external)?,
+        );
     }
-    let response = request
-        .call()
+    let response = crate::backend::http_client::get_with_redirects(
+        &client,
+        url,
+        headers,
+        std::time::Duration::from_secs(15),
+    )
+    .map_err(|error| AppError::External(format!("{context} request failed: {error}")))?;
+    let response = response
+        .error_for_status()
         .map_err(|error| AppError::External(format!("{context} request failed: {error}")))?;
     response
-        .into_json()
+        .json()
         .map_err(|error| AppError::External(format!("{context} response was not JSON: {error}")))
 }
 
@@ -845,25 +848,25 @@ fn clean_skill_subpath(value: &str) -> Option<String> {
 
 fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> AppResult<()> {
     if cancellation.is_some_and(CancellationToken::is_cancelled) {
-        Err(AppError::Canceled("skill acquire cancelled".to_string()))
+        Err(AppError::Cancelled("skill acquire cancelled".to_string()))
     } else {
         Ok(())
     }
 }
 
-fn clone_github_skill(
+async fn clone_github_skill(
     location: &GitHubSkillLocation,
     target: &Path,
     cancellation: Option<&CancellationToken>,
 ) -> AppResult<()> {
     if target.exists() {
         return Err(AppError::Conflict(format!(
-            "skill acquire staging path already exists: {}",
+            "skill staging path already exists: {}",
             target.display()
         )));
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|error| AppError::Storage(error.to_string()))?;
     }
 
     let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -874,21 +877,24 @@ fn clone_github_skill(
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_cancellation(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(120),
-        1024 * 1024,
-        256 * 1024,
-        cancellation,
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled => {
-            AppError::Canceled("skill acquire cancelled".to_string())
-        }
-        error => AppError::Process(format!("failed to run git clone: {error:?}")),
-    })?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(120),
+        stdout_limit: 1024 * 1024,
+        stderr_limit: 256 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, cancellation)
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::Cancelled => {
+                AppError::Cancelled("skill acquire cancelled".to_string())
+            }
+            error => AppError::Process(format!("failed to run git clone: {error:?}")),
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::Process(format!("git clone failed: {stderr}")));
@@ -896,30 +902,36 @@ fn clone_github_skill(
     Ok(())
 }
 
-fn git_current_branch(repo: &Path) -> Option<String> {
-    git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|branch| branch != "HEAD")
+async fn git_current_branch(repo: &Path) -> Option<String> {
+    git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .filter(|branch| branch != "HEAD")
 }
 
-fn git_skill_tree_sha(repo: &Path, skill_path: Option<&str>) -> Option<String> {
+async fn git_skill_tree_sha(repo: &Path, skill_path: Option<&str>) -> Option<String> {
     let revision = skill_path
         .and_then(clean_skill_subpath)
         .map(|path| format!("HEAD:{path}"))
         .unwrap_or_else(|| "HEAD^{tree}".to_string());
-    git_output(repo, &["rev-parse", &revision])
+    git_output(repo, &["rev-parse", &revision]).await
 }
 
-fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
+async fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     let mut command_args = vec!["-C".to_string(), repo.to_string_lossy().to_string()];
     command_args.extend(args.iter().map(|arg| (*arg).to_string()));
-    let output = crate::backend::host_process::run_program_with_timeout(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(30),
-        64 * 1024,
-        64 * 1024,
-    )
-    .ok()?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(30),
+        stdout_limit: 64 * 1024,
+        stderr_limit: 64 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -978,4 +990,43 @@ fn resolve_cloned_skill_dir(staging_dir: &Path, skill_path: Option<&str>) -> App
 
 fn short_uuid() -> String {
     Uuid::new_v4().to_string()[..8].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_remote_uses_reqwest_not_ureq() {
+        let source = include_str!("skill_remote.rs");
+        assert!(!source.contains(concat!("ur", "eq::")));
+    }
+
+    #[test]
+    fn skill_remote_github_get_json_loopback() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+            thread,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let body = r#"{"name":"test-skill","tag_name":"v1.0.0"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        let result =
+            github_get_json(&format!("http://{address}/repos/test"), "test context").unwrap();
+        assert_eq!(result["name"], "test-skill");
+        assert_eq!(result["tag_name"], "v1.0.0");
+        server.join().unwrap();
+    }
 }

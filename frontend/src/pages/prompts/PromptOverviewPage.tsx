@@ -19,7 +19,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { EmptyState } from "../../components/foundation/EmptyState";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { PageHeader } from "../../components/foundation/PageHeader";
@@ -49,9 +57,12 @@ import {
   type PromptOptimizationResult,
 } from "../../services/promptOptimization";
 import { selectTargetDirectory } from "../../services/catalog";
-import { copyPromptImagesToClipboard, copyPromptTextToClipboard } from "../../services/promptClipboard";
+import {
+  copyPromptImagesToClipboard,
+  copyPromptTextToClipboard,
+} from "../../services/promptClipboard";
 import { useI18n } from "../../i18n/I18nProvider";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import {
   normalizeConversationTranslationTargetLanguage,
   resolveAgentCapability,
@@ -88,8 +99,12 @@ type PromptCopyStep = "images" | "text";
 type PromptSortMode = "updated" | "copy-count" | "created" | "title";
 type PromptSwitchDirection = "next" | "previous";
 type PromptTagGroupId = string;
-type TranslationAvailabilityStatus = "idle" | "checking" | "available" | "unavailable";
-type PromptNoteDraft = Pick<PromptNote, "attachments" | "content" | "projectPath" | "sessionName" | "tags" | "title">;
+type TranslationAvailabilityStatus =
+  "idle" | "checking" | "available" | "unavailable";
+type PromptNoteDraft = Pick<
+  PromptNote,
+  "attachments" | "content" | "projectPath" | "sessionName" | "tags" | "title"
+>;
 type PromptNoteDraftCache = Pick<PromptNoteDraft, "attachments" | "content">;
 
 const STORAGE_KEY = "assetiweave.promptNotes";
@@ -105,32 +120,41 @@ const PROMPT_TAG_GROUP_COLOR_PALETTE = [
     swatchClassName: "border-primary/65 bg-primary",
   },
   {
-    pillClassName: "border-primary-strong/45 bg-primary-strong/10 text-primary-strong",
+    pillClassName:
+      "border-primary-strong/45 bg-primary-strong/10 text-primary-strong",
     swatchClassName: "border-primary-strong/65 bg-primary-strong",
   },
   {
-    pillClassName: "border-status-create/35 bg-status-create/15 text-status-create",
+    pillClassName:
+      "border-status-create/35 bg-status-create/15 text-status-create",
     swatchClassName: "border-status-create/65 bg-status-create",
   },
   {
-    pillClassName: "border-status-update/35 bg-status-update/15 text-status-update",
+    pillClassName:
+      "border-status-update/35 bg-status-update/15 text-status-update",
     swatchClassName: "border-status-update/65 bg-status-update",
   },
   {
-    pillClassName: "border-status-conflict/35 bg-status-conflict/12 text-status-conflict",
+    pillClassName:
+      "border-status-conflict/35 bg-status-conflict/12 text-status-conflict",
     swatchClassName: "border-status-conflict/65 bg-status-conflict",
   },
   {
-    pillClassName: "border-status-remove/40 bg-status-remove/12 text-status-remove",
+    pillClassName:
+      "border-status-remove/40 bg-status-remove/12 text-status-remove",
     swatchClassName: "border-status-remove/65 bg-status-remove",
   },
   {
-    pillClassName: "border-theme-nav-active-border/45 bg-theme-nav-active-border/12 text-theme-nav-active-border",
-    swatchClassName: "border-theme-nav-active-border/65 bg-theme-nav-active-border",
+    pillClassName:
+      "border-theme-nav-active-border/45 bg-theme-nav-active-border/12 text-theme-nav-active-border",
+    swatchClassName:
+      "border-theme-nav-active-border/65 bg-theme-nav-active-border",
   },
   {
-    pillClassName: "border-theme-button-primary-hover/45 bg-theme-button-primary-hover/12 text-theme-button-primary-hover",
-    swatchClassName: "border-theme-button-primary-hover/65 bg-theme-button-primary-hover",
+    pillClassName:
+      "border-theme-button-primary-hover/45 bg-theme-button-primary-hover/12 text-theme-button-primary-hover",
+    swatchClassName:
+      "border-theme-button-primary-hover/65 bg-theme-button-primary-hover",
   },
 ] as const;
 const PROMPT_SEARCH_COMMIT_DELAY_MS = 700;
@@ -143,32 +167,57 @@ export function PromptOverviewPage({
   optimizer = optimizePromptContent,
   translator = translateConversationCardContent,
 }: {
-  availabilityChecker?: (request: ConversationTranslationAvailabilityRequest) => Promise<OpencodeTranslationAvailability>;
+  availabilityChecker?: (
+    request: ConversationTranslationAvailabilityRequest,
+  ) => Promise<OpencodeTranslationAvailability>;
   onManualOpen: () => void;
   onNotifyError?: (message: string) => void;
   onReady?: () => void;
-  optimizer?: (request: PromptOptimizationRequest) => Promise<PromptOptimizationResult>;
-  translator?: (request: ConversationCardTranslationRequest) => Promise<OpencodeTranslationResult>;
+  optimizer?: (
+    request: PromptOptimizationRequest,
+  ) => Promise<PromptOptimizationResult>;
+  translator?: (
+    request: ConversationCardTranslationRequest,
+  ) => Promise<OpencodeTranslationResult>;
 }) {
   const { t } = useI18n();
   const { settings } = useAppSettings();
   const [notes, setNotes] = useState<PromptNote[]>(() => readPromptNotes());
-  const [newDraft, setNewDraft] = useState<PromptNoteDraftCache>(() => readPromptNoteDraft());
-  const [creatingNew, setCreatingNew] = useState(() => hasPromptNoteDraftContent(newDraft));
+  const [newDraft, setNewDraft] = useState<PromptNoteDraftCache>(() =>
+    readPromptNoteDraft(),
+  );
+  const [creatingNew, setCreatingNew] = useState(() =>
+    hasPromptNoteDraftContent(newDraft),
+  );
   const [query, setQuery] = useState("");
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [sortMode, setSortMode] = useState<PromptSortMode>("updated");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-  const [selectedTagGroups, setSelectedTagGroups] = useState<PromptTagGroupId[]>([]);
-  const [copiedState, setCopiedState] = useState<{ noteId: string; step: PromptCopyStep } | null>(null);
-  const [busyActions, setBusyActions] = useState<Record<string, PromptAction | undefined>>({});
-  const [availability, setAvailability] = useState<Record<PromptAction, TranslationAvailabilityStatus>>({
+  const [selectedTagGroups, setSelectedTagGroups] = useState<
+    PromptTagGroupId[]
+  >([]);
+  const [copiedState, setCopiedState] = useState<{
+    noteId: string;
+    step: PromptCopyStep;
+  } | null>(null);
+  const [busyActions, setBusyActions] = useState<
+    Record<string, PromptAction | undefined>
+  >({});
+  const [availability, setAvailability] = useState<
+    Record<PromptAction, TranslationAvailabilityStatus>
+  >({
     optimize: "idle",
     translate: "idle",
   });
   const copiedResetTimerRef = useRef<number | null>(null);
-  const promptOptimizationAgent = resolveAgentCapability(settings, "promptOptimization");
-  const cardTranslationAgent = resolveAgentCapability(settings, "cardTranslation");
+  const promptOptimizationAgent = resolveAgentCapability(
+    settings,
+    "promptOptimization",
+  );
+  const cardTranslationAgent = resolveAgentCapability(
+    settings,
+    "cardTranslation",
+  );
 
   useEffect(() => {
     onReady?.();
@@ -190,23 +239,34 @@ export function PromptOverviewPage({
   useEffect(() => {
     let cancelled = false;
     setAvailability({ optimize: "checking", translate: "checking" });
-    const checks: Array<[
-      PromptAction,
-      ConversationTranslationAvailabilityRequest,
-      () => Promise<OpencodeTranslationAvailability>,
-    ]> = [
+    const checks: Array<
+      [
+        PromptAction,
+        ConversationTranslationAvailabilityRequest,
+        () => Promise<OpencodeTranslationAvailability>,
+      ]
+    > = [
       [
         "translate",
-        { agentId: cardTranslationAgent.agentId, model: cardTranslationAgent.model, provider: "cli" },
-        () => checkConversationTranslationAvailability({
+        {
           agentId: cardTranslationAgent.agentId,
           model: cardTranslationAgent.model,
           provider: "cli",
-        }),
+        },
+        () =>
+          checkConversationTranslationAvailability({
+            agentId: cardTranslationAgent.agentId,
+            model: cardTranslationAgent.model,
+            provider: "cli",
+          }),
       ],
       [
         "optimize",
-        { agentId: promptOptimizationAgent.agentId, model: promptOptimizationAgent.model, provider: "cli" },
+        {
+          agentId: promptOptimizationAgent.agentId,
+          model: promptOptimizationAgent.model,
+          provider: "cli",
+        },
         checkPromptOptimizationAvailability,
       ],
     ];
@@ -221,7 +281,10 @@ export function PromptOverviewPage({
         })
         .catch(() => {
           if (cancelled) return;
-          setAvailability((current) => ({ ...current, [action]: "unavailable" }));
+          setAvailability((current) => ({
+            ...current,
+            [action]: "unavailable",
+          }));
         });
     }
 
@@ -244,7 +307,9 @@ export function PromptOverviewPage({
   );
 
   useEffect(() => {
-    const availableTagGroups = new Set(tagGroupOptions.map((option) => option.value));
+    const availableTagGroups = new Set(
+      tagGroupOptions.map((option) => option.value),
+    );
     setSelectedTagGroups((current) => {
       const next = current.filter((groupId) => availableTagGroups.has(groupId));
       return next.length === current.length ? current : next;
@@ -255,7 +320,12 @@ export function PromptOverviewPage({
     const normalizedQuery = query.trim().toLowerCase();
     const selectedTagGroupSet = new Set(selectedTagGroups);
     const filtered = notes.filter((note) => {
-      if (selectedTagGroupSet.size > 0 && !getPromptNoteTagGroupIds(note).some((groupId) => selectedTagGroupSet.has(groupId))) {
+      if (
+        selectedTagGroupSet.size > 0 &&
+        !getPromptNoteTagGroupIds(note).some((groupId) =>
+          selectedTagGroupSet.has(groupId),
+        )
+      ) {
         return false;
       }
 
@@ -269,24 +339,44 @@ export function PromptOverviewPage({
         note.projectPath,
         note.sessionName,
         note.translatedText ?? "",
-        getPromptNoteTagGroupIds(note).map((groupId) => getPromptTagGroupLabel(groupId, defaultTagGroupLabel)).join(" "),
+        getPromptNoteTagGroupIds(note)
+          .map((groupId) =>
+            getPromptTagGroupLabel(groupId, defaultTagGroupLabel),
+          )
+          .join(" "),
       ]
         .join(" ")
         .toLowerCase()
         .includes(normalizedQuery);
     });
     return sortPromptNotes(filtered, sortMode, sortDirection);
-  }, [defaultTagGroupLabel, notes, query, selectedTagGroups, sortDirection, sortMode]);
+  }, [
+    defaultTagGroupLabel,
+    notes,
+    query,
+    selectedTagGroups,
+    sortDirection,
+    sortMode,
+  ]);
   const translationTarget = normalizeConversationTranslationTargetLanguage(
     settings.conversationTranslation.targetLanguage,
   );
   const optimizeDisabled = availability.optimize !== "available";
   const translateDisabled = availability.translate !== "available";
-  const activeNote = creatingNew ? null : filteredNotes.find((note) => note.id === selectedNoteId) ?? filteredNotes[0] ?? null;
-  const activeNoteIndex = activeNote ? filteredNotes.findIndex((note) => note.id === activeNote.id) : -1;
+  const activeNote = creatingNew
+    ? null
+    : (filteredNotes.find((note) => note.id === selectedNoteId) ??
+      filteredNotes[0] ??
+      null);
+  const activeNoteIndex = activeNote
+    ? filteredNotes.findIndex((note) => note.id === activeNote.id)
+    : -1;
   const newNoteTags = getPromptNewNoteTags(selectedTagGroups);
 
-  function handleSaveNote(values: PromptNoteDraft, targetFace: PromptCardFace = "front") {
+  function handleSaveNote(
+    values: PromptNoteDraft,
+    targetFace: PromptCardFace = "front",
+  ) {
     const normalizedContent = values.content.trim();
     const attachments = normalizePromptImageAttachments(values.attachments);
     if (!normalizedContent && attachments.length === 0) {
@@ -300,9 +390,14 @@ export function PromptOverviewPage({
           note.id === activeNote.id
             ? {
                 ...note,
-                attachments: targetFace === "front" ? attachments : note.attachments,
-                content: targetFace === "front" ? normalizedContent : note.content,
-                optimizedText: targetFace === "back" ? normalizedContent : note.optimizedText,
+                attachments:
+                  targetFace === "front" ? attachments : note.attachments,
+                content:
+                  targetFace === "front" ? normalizedContent : note.content,
+                optimizedText:
+                  targetFace === "back"
+                    ? normalizedContent
+                    : note.optimizedText,
                 projectPath: values.projectPath.trim(),
                 sessionName: values.sessionName.trim(),
                 tags: values.tags,
@@ -339,7 +434,12 @@ export function PromptOverviewPage({
     setSelectedNoteId((current) => (current === noteId ? null : current));
   }
 
-  async function handleCopyNoteStep(note: PromptNote, step: PromptCopyStep, text: string, attachments: PromptImageAttachment[]) {
+  async function handleCopyNoteStep(
+    note: PromptNote,
+    step: PromptCopyStep,
+    text: string,
+    attachments: PromptImageAttachment[],
+  ) {
     try {
       if (step === "images") {
         await copyPromptImagesToClipboard(attachments);
@@ -362,11 +462,15 @@ export function PromptOverviewPage({
       }
       setCopiedState({ noteId: note.id, step });
       copiedResetTimerRef.current = window.setTimeout(() => {
-        setCopiedState((current) => (current?.noteId === note.id && current.step === step ? null : current));
+        setCopiedState((current) =>
+          current?.noteId === note.id && current.step === step ? null : current,
+        );
         copiedResetTimerRef.current = null;
       }, COPIED_RESET_MS);
     } catch (error) {
-      onNotifyError(t("prompt.action.copyFailed", { message: errorMessage(error) }));
+      onNotifyError(
+        t("prompt.action.copyFailed", { message: errorMessage(error) }),
+      );
     }
   }
 
@@ -391,7 +495,8 @@ export function PromptOverviewPage({
 
     setCreatingNew(false);
     const currentIndex = activeNoteIndex >= 0 ? activeNoteIndex : 0;
-    const nextIndex = (currentIndex + offset + filteredNotes.length) % filteredNotes.length;
+    const nextIndex =
+      (currentIndex + offset + filteredNotes.length) % filteredNotes.length;
     setSelectedNoteId(filteredNotes[nextIndex].id);
   }
 
@@ -413,7 +518,11 @@ export function PromptOverviewPage({
   async function runPromptAction(
     note: PromptNote,
     action: PromptAction,
-    request: { promptTemplate?: string; targetLanguage?: string; text?: string },
+    request: {
+      promptTemplate?: string;
+      targetLanguage?: string;
+      text?: string;
+    },
   ) {
     if (action === "optimize" ? optimizeDisabled : translateDisabled) {
       return false;
@@ -421,22 +530,29 @@ export function PromptOverviewPage({
 
     setBusyActions((current) => ({ ...current, [note.id]: action }));
     try {
-      const output = action === "optimize"
-        ? (await optimizer({
-            agentId: promptOptimizationAgent.agentId,
-            model: promptOptimizationAgent.model,
-            provider: "cli",
-            promptTemplate: request.promptTemplate,
-            text: request.text ?? note.content,
-          })).optimized_text
-        : (await translator({
-            agentId: cardTranslationAgent.agentId,
-            model: cardTranslationAgent.model,
-            provider: "cli",
-            promptTemplate: request.promptTemplate,
-            targetLanguage: request.targetLanguage ?? settings.conversationTranslation.targetLanguage,
-            text: request.text ?? note.content,
-          })).translated_text;
+      const output =
+        action === "optimize"
+          ? (
+              await optimizer({
+                agentId: promptOptimizationAgent.agentId,
+                model: promptOptimizationAgent.model,
+                provider: "cli",
+                promptTemplate: request.promptTemplate,
+                text: request.text ?? note.content,
+              })
+            ).optimized_text
+          : (
+              await translator({
+                agentId: cardTranslationAgent.agentId,
+                model: cardTranslationAgent.model,
+                provider: "cli",
+                promptTemplate: request.promptTemplate,
+                targetLanguage:
+                  request.targetLanguage ??
+                  settings.conversationTranslation.targetLanguage,
+                text: request.text ?? note.content,
+              })
+            ).translated_text;
       setNotes((current) =>
         current.map((candidate) => {
           if (candidate.id !== note.id) {
@@ -445,8 +561,10 @@ export function PromptOverviewPage({
 
           return {
             ...candidate,
-            optimizedText: action === "optimize" ? output : candidate.optimizedText,
-            translatedText: action === "translate" ? output : candidate.translatedText,
+            optimizedText:
+              action === "optimize" ? output : candidate.optimizedText,
+            translatedText:
+              action === "translate" ? output : candidate.translatedText,
             updatedAt: new Date().toISOString(),
           };
         }),
@@ -483,7 +601,11 @@ export function PromptOverviewPage({
         onSortDirectionChange={setSortDirection}
         onSortModeChange={setSortMode}
         onTagGroupClear={() => setSelectedTagGroups([])}
-        onTagGroupToggle={(groupId) => setSelectedTagGroups((current) => togglePromptTagGroupFilter(current, groupId))}
+        onTagGroupToggle={(groupId) =>
+          setSelectedTagGroups((current) =>
+            togglePromptTagGroupFilter(current, groupId),
+          )
+        }
         query={query}
         selectedTagGroups={selectedTagGroups}
         sortDirection={sortDirection}
@@ -498,7 +620,11 @@ export function PromptOverviewPage({
           activeIndex={activeNoteIndex}
           activeNote={activeNote}
           busyAction={activeNote ? busyActions[activeNote.id] : undefined}
-          copiedStep={activeNote && copiedState?.noteId === activeNote.id ? copiedState.step : null}
+          copiedStep={
+            activeNote && copiedState?.noteId === activeNote.id
+              ? copiedState.step
+              : null
+          }
           filteredCount={filteredNotes.length}
           newDraft={newDraft}
           newNoteTags={newNoteTags}
@@ -535,9 +661,17 @@ export function PromptOverviewPage({
 
         {filteredNotes.length === 0 ? (
           <EmptyState
-            description={notes.length === 0 ? t("prompt.empty.description") : t("prompt.empty.filteredDescription")}
+            description={
+              notes.length === 0
+                ? t("prompt.empty.description")
+                : t("prompt.empty.filteredDescription")
+            }
             icon={<Lightbulb size={20} />}
-            title={notes.length === 0 ? t("prompt.empty.title") : t("prompt.empty.filteredTitle")}
+            title={
+              notes.length === 0
+                ? t("prompt.empty.title")
+                : t("prompt.empty.filteredTitle")
+            }
           />
         ) : null}
       </div>
@@ -617,15 +751,24 @@ function PromptOverviewToolbar({
               { label: t("toolbar.sort.updatedAt"), value: "updated" },
               { label: t("toolbar.sort.createdAt"), value: "created" },
               { label: t("toolbar.sort.name"), value: "title" },
-              { label: t("prompt.toolbar.sort.copyCount"), value: "copy-count" },
+              {
+                label: t("prompt.toolbar.sort.copyCount"),
+                value: "copy-count",
+              },
             ]}
             value={sortMode}
           />
           <ToolbarSortDirectionButton
             direction={sortDirection}
             label={t("toolbar.sort.direction.label")}
-            onClick={() => onSortDirectionChange(sortDirection === "desc" ? "asc" : "desc")}
-            title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+            onClick={() =>
+              onSortDirectionChange(sortDirection === "desc" ? "asc" : "desc")
+            }
+            title={t(
+              sortDirection === "desc"
+                ? "toolbar.sort.direction.descTitle"
+                : "toolbar.sort.direction.ascTitle",
+            )}
           />
         </>
       }
@@ -666,7 +809,11 @@ function PromptStageCard({
   newDraft: PromptNoteDraftCache;
   newNoteTags: string[];
   notes: PromptNote[];
-  onCopyActive: (step: PromptCopyStep, text: string, attachments: PromptImageAttachment[]) => void;
+  onCopyActive: (
+    step: PromptCopyStep,
+    text: string,
+    attachments: PromptImageAttachment[],
+  ) => void;
   onDeleteActive: () => void;
   onNextNote: () => void;
   onNewDraftChange: (value: PromptNoteDraftCache) => void;
@@ -683,31 +830,45 @@ function PromptStageCard({
   const { t } = useI18n();
   const [infoOpen, setInfoOpen] = useState(false);
   const [editable, setEditable] = useState(() => !activeNote);
-  const [draftContent, setDraftContent] = useState(() => activeNote?.content ?? newDraft.content);
-  const [draftAttachments, setDraftAttachments] = useState<PromptImageAttachment[]>(() => activeNote?.attachments ?? newDraft.attachments);
+  const [draftContent, setDraftContent] = useState(
+    () => activeNote?.content ?? newDraft.content,
+  );
+  const [draftAttachments, setDraftAttachments] = useState<
+    PromptImageAttachment[]
+  >(() => activeNote?.attachments ?? newDraft.attachments);
   const [cardFace, setCardFace] = useState<PromptCardFace>("front");
-  const [switchDirection, setSwitchDirection] = useState<PromptSwitchDirection>("next");
+  const [switchDirection, setSwitchDirection] =
+    useState<PromptSwitchDirection>("next");
   const draftContentRef = useRef(draftContent);
   const activeBusy = Boolean(busyAction);
   const optimizedText = activeNote?.optimizedText?.trim() ?? "";
   const hasOptimizedText = optimizedText.length > 0;
-  const visibleContent = cardFace === "back" ? optimizedText : activeNote?.content ?? "";
+  const visibleContent =
+    cardFace === "back" ? optimizedText : (activeNote?.content ?? "");
   const translated = Boolean(activeNote?.translatedText);
   const updatedAt = activeNote?.updatedAt ?? new Date().toISOString();
   const displayContent = editable ? draftContent : visibleContent;
   const characterCount = displayContent.length;
   const lineCount = displayContent ? displayContent.split("\n").length : 0;
   const canSave = draftContent.trim().length > 0 || draftAttachments.length > 0;
-  const copyTextLabel = copiedStep === "text" ? t("prompt.action.copiedText") : t("prompt.action.copyText");
-  const copyImagesLabel = copiedStep === "images" ? t("prompt.action.copiedImages") : t("prompt.action.copyImages");
-  const translateLabel = activeNote && translated
-    ? t("prompt.action.retranslate", { language: translationTarget })
-    : t("prompt.action.translate", { language: translationTarget });
-  const optimizeLabel = cardFace === "front" && hasOptimizedText
-    ? t("prompt.action.showOptimized")
-    : cardFace === "back"
-      ? t("prompt.action.reoptimize")
-      : t("prompt.action.optimize");
+  const copyTextLabel =
+    copiedStep === "text"
+      ? t("prompt.action.copiedText")
+      : t("prompt.action.copyText");
+  const copyImagesLabel =
+    copiedStep === "images"
+      ? t("prompt.action.copiedImages")
+      : t("prompt.action.copyImages");
+  const translateLabel =
+    activeNote && translated
+      ? t("prompt.action.retranslate", { language: translationTarget })
+      : t("prompt.action.translate", { language: translationTarget });
+  const optimizeLabel =
+    cardFace === "front" && hasOptimizedText
+      ? t("prompt.action.showOptimized")
+      : cardFace === "back"
+        ? t("prompt.action.reoptimize")
+        : t("prompt.action.optimize");
   const saveLabel = editable
     ? activeNote
       ? t("prompt.editDialog.submit")
@@ -715,21 +876,34 @@ function PromptStageCard({
     : t("prompt.action.edit");
   const canSwitchNotes = notes.length > 1;
 
-  const sideCards = useMemo(() => buildPromptSwitcherCards(notes, activeIndex), [activeIndex, notes]);
+  const sideCards = useMemo(
+    () => buildPromptSwitcherCards(notes, activeIndex),
+    [activeIndex, notes],
+  );
 
   useEffect(() => {
     const nextDraftContent = activeNote
-      ? cardFace === "back" ? activeNote.optimizedText ?? "" : activeNote.content
+      ? cardFace === "back"
+        ? (activeNote.optimizedText ?? "")
+        : activeNote.content
       : newDraft.content;
-    const nextDraftAttachments = activeNote && cardFace === "front"
-      ? activeNote.attachments
-      : !activeNote && cardFace === "front"
-        ? newDraft.attachments
-        : [];
+    const nextDraftAttachments =
+      activeNote && cardFace === "front"
+        ? activeNote.attachments
+        : !activeNote && cardFace === "front"
+          ? newDraft.attachments
+          : [];
     setDraftContent(nextDraftContent);
     setDraftAttachments(nextDraftAttachments);
     setEditable(!activeNote);
-  }, [activeNote?.attachments, activeNote?.content, activeNote?.id, activeNote?.optimizedText, cardFace, newDraft]);
+  }, [
+    activeNote?.attachments,
+    activeNote?.content,
+    activeNote?.id,
+    activeNote?.optimizedText,
+    cardFace,
+    newDraft,
+  ]);
 
   useEffect(() => {
     draftContentRef.current = draftContent;
@@ -747,14 +921,17 @@ function PromptStageCard({
     if (!canSave) {
       return;
     }
-    onSaveActive({
-      content: draftContent,
-      attachments: draftAttachments,
-      projectPath: activeNote?.projectPath ?? "",
-      sessionName: activeNote?.sessionName ?? "",
-      tags: activeNote?.tags ?? newNoteTags,
-      title: activeNote?.title ?? "",
-    }, cardFace);
+    onSaveActive(
+      {
+        content: draftContent,
+        attachments: draftAttachments,
+        projectPath: activeNote?.projectPath ?? "",
+        sessionName: activeNote?.sessionName ?? "",
+        tags: activeNote?.tags ?? newNoteTags,
+        title: activeNote?.title ?? "",
+      },
+      cardFace,
+    );
     setEditable(false);
   }
 
@@ -769,7 +946,9 @@ function PromptStageCard({
     }
   }
 
-  function updateDraftAttachments(updater: (current: PromptImageAttachment[]) => PromptImageAttachment[]) {
+  function updateDraftAttachments(
+    updater: (current: PromptImageAttachment[]) => PromptImageAttachment[],
+  ) {
     setDraftAttachments((current) => {
       const next = normalizePromptImageAttachments(updater(current));
       if (!activeNote && cardFace === "front") {
@@ -782,7 +961,9 @@ function PromptStageCard({
     });
   }
 
-  async function handlePromptImagePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+  async function handlePromptImagePaste(
+    event: ClipboardEvent<HTMLTextAreaElement>,
+  ) {
     if (cardFace !== "front") {
       return;
     }
@@ -792,19 +973,26 @@ function PromptStageCard({
       return;
     }
 
-    const availableSlots = Math.max(PROMPT_IMAGE_ATTACHMENT_LIMIT - draftAttachments.length, 0);
+    const availableSlots = Math.max(
+      PROMPT_IMAGE_ATTACHMENT_LIMIT - draftAttachments.length,
+      0,
+    );
     if (availableSlots === 0) {
       return;
     }
 
     const nextAttachments = await Promise.all(
-      imageFiles.slice(0, availableSlots).map((file) => readPromptImageAttachment(file)),
+      imageFiles
+        .slice(0, availableSlots)
+        .map((file) => readPromptImageAttachment(file)),
     );
     updateDraftAttachments((current) => [...current, ...nextAttachments]);
   }
 
   function handleRemoveDraftAttachment(attachmentId: string) {
-    updateDraftAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    updateDraftAttachments((current) =>
+      current.filter((attachment) => attachment.id !== attachmentId),
+    );
   }
 
   async function handleOptimizeVisibleFace() {
@@ -817,7 +1005,9 @@ function PromptStageCard({
       return;
     }
 
-    const sourceText = (cardFace === "back" ? optimizedText : activeNote.content).trim();
+    const sourceText = (
+      cardFace === "back" ? optimizedText : activeNote.content
+    ).trim();
     if (!sourceText) {
       return;
     }
@@ -844,18 +1034,27 @@ function PromptStageCard({
     onSelectNote(noteId);
   }
 
-  function renderActiveCardFace(face: PromptCardFace, faceContent: string, faceLabel: string) {
+  function renderActiveCardFace(
+    face: PromptCardFace,
+    faceContent: string,
+    faceLabel: string,
+  ) {
     const activeSurface = face === cardFace;
     const faceDisplayContent = activeSurface ? displayContent : faceContent;
-    const faceAttachments = face === "front"
-      ? activeSurface
-        ? draftAttachments
-        : activeNote?.attachments ?? []
-      : [];
+    const faceAttachments =
+      face === "front"
+        ? activeSurface
+          ? draftAttachments
+          : (activeNote?.attachments ?? [])
+        : [];
     const faceCharacterCount = faceDisplayContent.length;
-    const faceLineCount = faceDisplayContent ? faceDisplayContent.split("\n").length : 0;
+    const faceLineCount = faceDisplayContent
+      ? faceDisplayContent.split("\n").length
+      : 0;
     const emptyBackFace = face === "back" && !faceContent;
-    const tagGroupIds = activeNote ? getPromptNoteTagGroupIds(activeNote) : getPromptNoteTagGroupIds({ tags: newNoteTags });
+    const tagGroupIds = activeNote
+      ? getPromptNoteTagGroupIds(activeNote)
+      : getPromptNoteTagGroupIds({ tags: newNoteTags });
 
     return (
       <article
@@ -879,9 +1078,7 @@ function PromptStageCard({
             </div>
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-code-sm text-on-surface-muted">
               <Clock size={13} />
-              <span className="truncate">
-                {formatDateTime(updatedAt)}
-              </span>
+              <span className="truncate">{formatDateTime(updatedAt)}</span>
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
@@ -897,8 +1094,20 @@ function PromptStageCard({
                   }}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || optimizeDisabled || activeBusy || emptyBackFace}
-                  icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : <Sparkles size={15} />}
+                  disabled={
+                    !activeSurface ||
+                    !activeNote ||
+                    optimizeDisabled ||
+                    activeBusy ||
+                    emptyBackFace
+                  }
+                  icon={
+                    busyAction === "optimize" ? (
+                      <RefreshCw className="animate-spin" size={15} />
+                    ) : (
+                      <Sparkles size={15} />
+                    )
+                  }
                   label={t("prompt.action.reoptimize")}
                   onClick={() => {
                     void handleOptimizeVisibleFace();
@@ -915,14 +1124,39 @@ function PromptStageCard({
                   onClick={() => setInfoOpen(true)}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || translateDisabled || activeBusy}
-                  icon={<Languages className={busyAction === "translate" ? "animate-pulse" : undefined} size={15} />}
+                  disabled={
+                    !activeSurface ||
+                    !activeNote ||
+                    translateDisabled ||
+                    activeBusy
+                  }
+                  icon={
+                    <Languages
+                      className={
+                        busyAction === "translate" ? "animate-pulse" : undefined
+                      }
+                      size={15}
+                    />
+                  }
                   label={translateLabel}
                   onClick={onTranslateActive}
                 />
                 <PromptCardActionButton
-                  disabled={!activeSurface || !activeNote || optimizeDisabled || activeBusy}
-                  icon={busyAction === "optimize" ? <RefreshCw className="animate-spin" size={15} /> : hasOptimizedText ? <RotateCw size={15} /> : <Sparkles size={15} />}
+                  disabled={
+                    !activeSurface ||
+                    !activeNote ||
+                    optimizeDisabled ||
+                    activeBusy
+                  }
+                  icon={
+                    busyAction === "optimize" ? (
+                      <RefreshCw className="animate-spin" size={15} />
+                    ) : hasOptimizedText ? (
+                      <RotateCw size={15} />
+                    ) : (
+                      <Sparkles size={15} />
+                    )
+                  }
                   label={optimizeLabel}
                   onClick={() => {
                     void handleOptimizeVisibleFace();
@@ -943,13 +1177,23 @@ function PromptStageCard({
         <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden px-5 py-4">
           {editable && activeSurface ? (
             <textarea
-              aria-label={face === "back" ? t("prompt.optimized.label") : t("prompt.composer.eyebrow")}
+              aria-label={
+                face === "back"
+                  ? t("prompt.optimized.label")
+                  : t("prompt.composer.eyebrow")
+              }
               className="min-h-0 flex-1 resize-none rounded-xl border border-theme-control-border bg-theme-control/45 px-3 py-2 font-mono text-[0.95rem] leading-7 text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
-              onChange={(event) => handleDraftContentChange(event.currentTarget.value)}
+              onChange={(event) =>
+                handleDraftContentChange(event.currentTarget.value)
+              }
               onPaste={(event) => {
                 void handlePromptImagePaste(event);
               }}
-              placeholder={face === "back" ? t("prompt.optimized.empty") : t("prompt.composer.contentPlaceholder")}
+              placeholder={
+                face === "back"
+                  ? t("prompt.optimized.empty")
+                  : t("prompt.composer.contentPlaceholder")
+              }
               value={draftContent}
             />
           ) : faceDisplayContent ? (
@@ -963,7 +1207,9 @@ function PromptStageCard({
               onClick={() => setEditable(true)}
               type="button"
             >
-              {face === "back" ? t("prompt.optimized.empty") : t("prompt.empty.description")}
+              {face === "back"
+                ? t("prompt.optimized.empty")
+                : t("prompt.empty.description")}
             </button>
           )}
           {faceAttachments.length > 0 ? (
@@ -978,7 +1224,9 @@ function PromptStageCard({
           {face === "front" && activeNote?.translatedText ? (
             <div className="max-h-24 overflow-auto rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-2">
               <div className="mb-1 text-label-caps uppercase text-outline">
-                {t("prompt.translation.result", { language: translationTarget })}
+                {t("prompt.translation.result", {
+                  language: translationTarget,
+                })}
               </div>
               <pre className="whitespace-pre-wrap break-words text-code-sm leading-5 text-on-surface">
                 <code>{activeNote.translatedText}</code>
@@ -989,24 +1237,37 @@ function PromptStageCard({
 
         <div className="relative z-10 flex min-h-11 items-center justify-between gap-3 border-t border-theme-card-border bg-theme-card-header/45 px-5 py-3 text-code-sm text-on-surface-muted">
           <span className="min-w-0 truncate">
-            {faceCharacterCount} chars · {faceLineCount} lines{faceAttachments.length > 0 ? ` · ${t("prompt.attachments.count", { count: faceAttachments.length })}` : ""}
+            {faceCharacterCount} chars · {faceLineCount} lines
+            {faceAttachments.length > 0
+              ? ` · ${t("prompt.attachments.count", { count: faceAttachments.length })}`
+              : ""}
           </span>
-          <span className="shrink-0">{t("prompt.copy.count", { count: activeNote?.copyCount ?? 0 })}</span>
+          <span className="shrink-0">
+            {t("prompt.copy.count", { count: activeNote?.copyCount ?? 0 })}
+          </span>
         </div>
 
-        <footer className={clsx(
-          "relative z-10 grid border-t border-theme-card-border bg-theme-toolbar/95",
-          faceAttachments.length > 0 ? "grid-cols-3" : "grid-cols-2",
-        )}>
+        <footer
+          className={clsx(
+            "relative z-10 grid border-t border-theme-card-border bg-theme-toolbar/95",
+            faceAttachments.length > 0 ? "grid-cols-3" : "grid-cols-2",
+          )}
+        >
           {faceAttachments.length > 0 ? (
             <button
               aria-label={copyImagesLabel}
               className="inline-flex h-12 min-w-0 items-center justify-center gap-2 border-r border-theme-card-border px-2 text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!activeSurface || !activeNote}
-              onClick={() => onCopyActive("images", faceDisplayContent, faceAttachments)}
+              onClick={() =>
+                onCopyActive("images", faceDisplayContent, faceAttachments)
+              }
               type="button"
             >
-              {copiedStep === "images" ? <Check size={16} /> : <ImageIcon size={16} />}
+              {copiedStep === "images" ? (
+                <Check size={16} />
+              ) : (
+                <ImageIcon size={16} />
+              )}
               <span className="grid size-5 shrink-0 place-items-center rounded-full border border-theme-card-border text-[0.7rem] leading-none text-on-surface-muted">
                 1
               </span>
@@ -1017,7 +1278,9 @@ function PromptStageCard({
             aria-label={copyTextLabel}
             className="inline-flex h-12 items-center justify-center gap-2 border-r border-theme-card-border text-body-sm font-semibold text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-on-surface disabled:cursor-not-allowed disabled:opacity-45"
             disabled={!activeSurface || !activeNote || !faceDisplayContent}
-            onClick={() => onCopyActive("text", faceDisplayContent, faceAttachments)}
+            onClick={() =>
+              onCopyActive("text", faceDisplayContent, faceAttachments)
+            }
             type="button"
           >
             {copiedStep === "text" ? <Check size={16} /> : <Copy size={16} />}
@@ -1036,7 +1299,11 @@ function PromptStageCard({
             onClick={handleSaveToggle}
             type="button"
           >
-            {editable && activeSurface ? <Check size={16} /> : <Pencil size={16} />}
+            {editable && activeSurface ? (
+              <Check size={16} />
+            ) : (
+              <Pencil size={16} />
+            )}
             <span>{saveLabel}</span>
           </button>
         </footer>
@@ -1066,7 +1333,11 @@ function PromptStageCard({
       <div className="group/stage absolute inset-x-0 top-5 h-[33.5rem] overflow-visible [perspective:1400px] [transform-style:preserve-3d] max-[1359px]:h-[28rem] max-lg:h-[26rem]">
         {sideCards.map(({ note, offset }) => (
           <button
-            aria-label={promptSwitcherCardAriaLabel(note, t("prompt.tags.default"), t("prompt.list.empty"))}
+            aria-label={promptSwitcherCardAriaLabel(
+              note,
+              t("prompt.tags.default"),
+              t("prompt.list.empty"),
+            )}
             className={clsx(
               "prompt-side-card-in pointer-events-auto absolute left-1/2 top-[5rem] hidden h-[20rem] w-[14rem] overflow-hidden rounded-[1.5rem] border border-theme-card-border/60 bg-theme-card/65 px-3 py-3 text-left text-on-surface-variant shadow-[0_18px_48px_rgb(var(--theme-panel-shadow)/0.28)] backdrop-blur-sm transition-[transform,opacity,border-color,background-color,box-shadow,filter] duration-500 ease-[cubic-bezier(.16,.84,.22,1)] hover:!translate-y-[-8px] hover:!scale-[0.92] hover:border-primary/55 hover:bg-theme-card/92 hover:text-on-surface hover:!opacity-100 hover:![filter:brightness(1)] hover:shadow-[0_28px_64px_rgb(var(--theme-panel-shadow)/0.42),0_0_24px_rgb(var(--theme-glow)/0.12)] lg:h-[22rem] lg:w-[15rem] min-[1360px]:top-[3.5rem] min-[1360px]:h-[26rem] min-[1360px]:w-[18rem] min-[1360px]:rounded-[1.75rem] min-[1360px]:px-4 min-[1360px]:py-4",
               Math.abs(offset) === 1 ? "min-[680px]:grid" : "min-[1360px]:grid",
@@ -1090,7 +1361,9 @@ function PromptStageCard({
                   {formatDateTime(note.updatedAt)}
                 </span>
               </span>
-              <span className="line-clamp-6 min-h-0 font-mono text-code-sm leading-[1.45] min-[1360px]:line-clamp-8 min-[1360px]:text-body-sm min-[1360px]:leading-relaxed">{note.content || t("prompt.list.empty")}</span>
+              <span className="line-clamp-6 min-h-0 font-mono text-code-sm leading-[1.45] min-[1360px]:line-clamp-8 min-[1360px]:text-body-sm min-[1360px]:leading-relaxed">
+                {note.content || t("prompt.list.empty")}
+              </span>
               <span className="flex min-w-0 items-center gap-1 text-code-sm text-on-surface-muted">
                 {note.projectPath ? (
                   <>
@@ -1098,7 +1371,9 @@ function PromptStageCard({
                     <span className="truncate">{note.projectPath}</span>
                   </>
                 ) : (
-                  <span className="truncate">{t("prompt.copy.count", { count: note.copyCount })}</span>
+                  <span className="truncate">
+                    {t("prompt.copy.count", { count: note.copyCount })}
+                  </span>
                 )}
               </span>
             </span>
@@ -1141,7 +1416,9 @@ function PromptStageCard({
                 <ChevronLeft size={15} />
               </button>
               <span className="min-w-12 px-1 text-center">
-                {filteredCount === 0 ? "0 / 0" : `${Math.max(activeIndex + 1, 1)} / ${filteredCount}`}
+                {filteredCount === 0
+                  ? "0 / 0"
+                  : `${Math.max(activeIndex + 1, 1)} / ${filteredCount}`}
               </span>
               <button
                 aria-label="Next prompt card"
@@ -1166,8 +1443,16 @@ function PromptStageCard({
               className="relative h-full w-full transition-transform duration-700 ease-[cubic-bezier(.2,.8,.2,1)]"
               style={promptCardRotatorStyle(cardFace)}
             >
-              {renderActiveCardFace("front", activeNote?.content ?? "", t("prompt.original.label"))}
-              {renderActiveCardFace("back", activeNote?.optimizedText ?? "", t("prompt.optimized.label"))}
+              {renderActiveCardFace(
+                "front",
+                activeNote?.content ?? "",
+                t("prompt.original.label"),
+              )}
+              {renderActiveCardFace(
+                "back",
+                activeNote?.optimizedText ?? "",
+                t("prompt.optimized.label"),
+              )}
             </div>
           </div>
         </div>
@@ -1208,12 +1493,21 @@ function PromptInfoDialog({
   }));
   const [tagInput, setTagInput] = useState("");
   const [pickingProjectPath, setPickingProjectPath] = useState(false);
-  const tagLibrary = useMemo(() => normalizePromptTagLibrary([...availableTags, ...draft.tags]), [availableTags, draft.tags]);
+  const tagLibrary = useMemo(
+    () => normalizePromptTagLibrary([...availableTags, ...draft.tags]),
+    [availableTags, draft.tags],
+  );
   const remainingTagCount = Math.max(PROMPT_TAG_LIMIT - draft.tags.length, 0);
   const normalizedTagInput = normalizeEditablePromptTag(tagInput);
-  const canAddTag = remainingTagCount > 0 && normalizedTagInput.length > 0 && !draft.tags.includes(normalizedTagInput);
+  const canAddTag =
+    remainingTagCount > 0 &&
+    normalizedTagInput.length > 0 &&
+    !draft.tags.includes(normalizedTagInput);
 
-  function updateDraft<Key extends keyof typeof draft>(key: Key, value: (typeof draft)[Key]) {
+  function updateDraft<Key extends keyof typeof draft>(
+    key: Key,
+    value: (typeof draft)[Key],
+  ) {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
@@ -1225,7 +1519,10 @@ function PromptInfoDialog({
   }
 
   function removeDraftTag(tag: string) {
-    updateDraft("tags", draft.tags.filter((candidate) => candidate !== tag));
+    updateDraft(
+      "tags",
+      draft.tags.filter((candidate) => candidate !== tag),
+    );
   }
 
   function editDraftTag(tag: string) {
@@ -1244,14 +1541,19 @@ function PromptInfoDialog({
   function addDraftTag() {
     if (!canAddTag) return;
 
-    updateDraft("tags", normalizeEditablePromptTags([...draft.tags, normalizedTagInput]));
+    updateDraft(
+      "tags",
+      normalizeEditablePromptTags([...draft.tags, normalizedTagInput]),
+    );
     setTagInput("");
   }
 
   async function handlePickProjectPath() {
     setPickingProjectPath(true);
     try {
-      const selected = await selectTargetDirectory(t("prompt.project.pickDirectory"));
+      const selected = await selectTargetDirectory(
+        t("prompt.project.pickDirectory"),
+      );
       if (selected) {
         updateDraft("projectPath", selected);
       }
@@ -1289,11 +1591,15 @@ function PromptInfoDialog({
       <div className="grid gap-4">
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid min-w-0 gap-1.5">
-            <span className="text-label-caps uppercase text-outline">{t("prompt.field.projectPath")}</span>
+            <span className="text-label-caps uppercase text-outline">
+              {t("prompt.field.projectPath")}
+            </span>
             <PathPickerInput
               aria-label={t("prompt.field.projectPath")}
               inputClassName="h-9 bg-theme-control/70 text-code-sm focus:border-primary/60"
-              onChange={(event) => updateDraft("projectPath", event.currentTarget.value)}
+              onChange={(event) =>
+                updateDraft("projectPath", event.currentTarget.value)
+              }
               onPick={() => {
                 void handlePickProjectPath();
               }}
@@ -1304,10 +1610,14 @@ function PromptInfoDialog({
             />
           </label>
           <label className="grid min-w-0 gap-1.5">
-            <span className="text-label-caps uppercase text-outline">{t("prompt.field.session")}</span>
+            <span className="text-label-caps uppercase text-outline">
+              {t("prompt.field.session")}
+            </span>
             <input
               className="h-9 min-w-0 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 text-code-sm text-on-surface outline-none placeholder:text-outline focus:border-primary/60"
-              onChange={(event) => updateDraft("sessionName", event.currentTarget.value)}
+              onChange={(event) =>
+                updateDraft("sessionName", event.currentTarget.value)
+              }
               placeholder={t("prompt.composer.sessionPlaceholder")}
               value={draft.sessionName}
             />
@@ -1315,10 +1625,15 @@ function PromptInfoDialog({
         </div>
         <div className="grid gap-4">
           <p className="text-body-sm text-on-surface-muted">
-            {t("prompt.tags.rule", { count: PROMPT_TAG_LIMIT, length: PROMPT_TAG_MAX_LENGTH })}
+            {t("prompt.tags.rule", {
+              count: PROMPT_TAG_LIMIT,
+              length: PROMPT_TAG_MAX_LENGTH,
+            })}
           </p>
           <div className="grid gap-2" aria-label={t("prompt.tags.library")}>
-            <span className="text-label-caps uppercase text-outline">{t("prompt.tags.library")}</span>
+            <span className="text-label-caps uppercase text-outline">
+              {t("prompt.tags.library")}
+            </span>
             {tagLibrary.length > 0 ? (
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {tagLibrary.map((tag) => {
@@ -1343,7 +1658,9 @@ function PromptInfoDialog({
             )}
           </div>
           <div className="grid gap-2" aria-label={t("prompt.tags.current")}>
-            <span className="text-label-caps uppercase text-outline">{t("prompt.tags.current")}</span>
+            <span className="text-label-caps uppercase text-outline">
+              {t("prompt.tags.current")}
+            </span>
             {draft.tags.length > 0 ? (
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 {draft.tags.map((tag) => (
@@ -1369,14 +1686,20 @@ function PromptInfoDialog({
               className="h-11 min-w-0 rounded-xl border border-theme-control-border bg-theme-control/45 px-4 text-body-sm text-on-surface outline-none placeholder:text-outline transition-[border-color,box-shadow,background-color] focus:border-primary/75 focus:bg-theme-control/65 focus:shadow-[0_0_0_4px_rgb(var(--color-primary)/0.16)] disabled:cursor-not-allowed disabled:opacity-55"
               disabled={remainingTagCount === 0}
               maxLength={PROMPT_TAG_MAX_LENGTH}
-              onChange={(event) => setTagInput(event.currentTarget.value.slice(0, PROMPT_TAG_MAX_LENGTH))}
+              onChange={(event) =>
+                setTagInput(
+                  event.currentTarget.value.slice(0, PROMPT_TAG_MAX_LENGTH),
+                )
+              }
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
                   event.preventDefault();
                   addDraftTag();
                 }
               }}
-              placeholder={t("prompt.tags.addPlaceholder", { count: remainingTagCount })}
+              placeholder={t("prompt.tags.addPlaceholder", {
+                count: remainingTagCount,
+              })}
               ref={tagInputRef}
               value={tagInput}
             />
@@ -1508,7 +1831,9 @@ function PromptLibraryTagChip({
       className={clsx(
         "inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-code-sm font-semibold shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.32)] transition-[background-color,border-color,opacity,transform] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55",
         getPromptTagGroupColorClass(label),
-        bound ? "cursor-default ring-1 ring-current/20" : "hover:scale-[1.02] hover:opacity-95",
+        bound
+          ? "cursor-default ring-1 ring-current/20"
+          : "hover:scale-[1.02] hover:opacity-95",
         disabled ? "cursor-not-allowed opacity-45" : undefined,
       )}
       disabled={disabled}
@@ -1520,7 +1845,11 @@ function PromptLibraryTagChip({
       title={label}
       type="button"
     >
-      {bound ? <Check className="shrink-0 opacity-75" size={13} /> : <Plus className="shrink-0 opacity-75" size={13} />}
+      {bound ? (
+        <Check className="shrink-0 opacity-75" size={13} />
+      ) : (
+        <Plus className="shrink-0 opacity-75" size={13} />
+      )}
       <span className="min-w-0 truncate">{label}</span>
     </button>
   );
@@ -1536,7 +1865,11 @@ function buildPromptSwitcherCards(notes: PromptNote[], activeIndex: number) {
   for (const offset of [-2, -1, 1, 2]) {
     const index = (activeIndex + offset + notes.length) % notes.length;
     const note = notes[index];
-    if (!note || note.id === notes[activeIndex]?.id || seenNoteIds.has(note.id)) {
+    if (
+      !note ||
+      note.id === notes[activeIndex]?.id ||
+      seenNoteIds.has(note.id)
+    ) {
       continue;
     }
 
@@ -1550,11 +1883,12 @@ function buildPromptSwitcherCards(notes: PromptNote[], activeIndex: number) {
 function promptSideCardStyle(offset: number) {
   const direction = Math.sign(offset);
   const distance = Math.abs(offset);
-  const offsetX = direction < 0
-    ? `calc(-1 * ${distance === 1 ? "clamp(20rem, 36vw, 27rem)" : "clamp(26rem, 48vw, 38rem)"})`
-    : distance === 1
-      ? "clamp(20rem, 36vw, 27rem)"
-      : "clamp(26rem, 48vw, 38rem)";
+  const offsetX =
+    direction < 0
+      ? `calc(-1 * ${distance === 1 ? "clamp(20rem, 36vw, 27rem)" : "clamp(26rem, 48vw, 38rem)"})`
+      : distance === 1
+        ? "clamp(20rem, 36vw, 27rem)"
+        : "clamp(26rem, 48vw, 38rem)";
   const offsetY = distance === 1 ? 18 : 28;
   const rotateZ = direction * (distance === 1 ? -2 : -3.5);
   const scale = distance === 1 ? "0.88" : "0.78";
@@ -1672,7 +2006,9 @@ function PromptTagGroupPills({
         <span
           className={clsx(
             "inline-flex shrink-0 items-center rounded-md border border-theme-control-border bg-theme-control/70 text-theme-control-fg",
-            compact ? "px-1.5 py-0.5 text-code-sm" : "px-2 py-1 text-label-caps uppercase",
+            compact
+              ? "px-1.5 py-0.5 text-code-sm"
+              : "px-2 py-1 text-label-caps uppercase",
           )}
         >
           +{hiddenCount}
@@ -1698,7 +2034,9 @@ function PromptTagGroupPill({
       className={clsx(
         "inline-flex min-w-0 max-w-full items-center rounded-md border font-semibold",
         getPromptTagGroupColorClass(groupId),
-        compact ? "px-1.5 py-0.5 text-code-sm" : "px-2 py-1 text-label-caps uppercase",
+        compact
+          ? "px-1.5 py-0.5 text-code-sm"
+          : "px-2 py-1 text-label-caps uppercase",
       )}
       title={label}
     >
@@ -1707,7 +2045,11 @@ function PromptTagGroupPill({
   );
 }
 
-function sortPromptNotes(notes: PromptNote[], sortMode: PromptSortMode, sortDirection: "asc" | "desc") {
+function sortPromptNotes(
+  notes: PromptNote[],
+  sortMode: PromptSortMode,
+  sortDirection: "asc" | "desc",
+) {
   return [...notes].sort((first, second) => {
     const direction = sortDirection === "asc" ? 1 : -1;
     let primary = 0;
@@ -1726,11 +2068,17 @@ function sortPromptNotes(notes: PromptNote[], sortMode: PromptSortMode, sortDire
       return primary * direction;
     }
 
-    return first.title.localeCompare(second.title) || first.id.localeCompare(second.id);
+    return (
+      first.title.localeCompare(second.title) ||
+      first.id.localeCompare(second.id)
+    );
   });
 }
 
-function buildPromptTagGroupOptions(notes: PromptNote[], defaultLabel: string): ToolbarSelectOption<PromptTagGroupId>[] {
+function buildPromptTagGroupOptions(
+  notes: PromptNote[],
+  defaultLabel: string,
+): ToolbarSelectOption<PromptTagGroupId>[] {
   const groupCounts = new Map<PromptTagGroupId, number>();
   for (const note of notes) {
     for (const groupId of getPromptNoteTagGroupIds(note)) {
@@ -1742,7 +2090,9 @@ function buildPromptTagGroupOptions(notes: PromptNote[], defaultLabel: string): 
     .sort((first, second) => {
       if (first === DEFAULT_PROMPT_TAG_GROUP_ID) return -1;
       if (second === DEFAULT_PROMPT_TAG_GROUP_ID) return 1;
-      return getPromptTagGroupLabel(first, defaultLabel).localeCompare(getPromptTagGroupLabel(second, defaultLabel));
+      return getPromptTagGroupLabel(first, defaultLabel).localeCompare(
+        getPromptTagGroupLabel(second, defaultLabel),
+      );
     })
     .map((groupId) => ({
       label: getPromptTagGroupLabel(groupId, defaultLabel),
@@ -1757,11 +2107,15 @@ function buildPromptTagLibrary(notes: PromptNote[]) {
 
 function getPromptNewNoteTags(selectedTagGroups: PromptTagGroupId[]) {
   return normalizeEditablePromptTags(
-    selectedTagGroups.filter((groupId) => groupId !== DEFAULT_PROMPT_TAG_GROUP_ID),
+    selectedTagGroups.filter(
+      (groupId) => groupId !== DEFAULT_PROMPT_TAG_GROUP_ID,
+    ),
   );
 }
 
-function getPromptNoteTagGroupIds(note: Pick<PromptNote, "tags">): PromptTagGroupId[] {
+function getPromptNoteTagGroupIds(
+  note: Pick<PromptNote, "tags">,
+): PromptTagGroupId[] {
   const tags = parsePromptTagGroupIds(note.tags);
   return tags.length > 0 ? tags : [DEFAULT_PROMPT_TAG_GROUP_ID];
 }
@@ -1778,15 +2132,21 @@ function normalizeEditablePromptTags(tags: string[]) {
 }
 
 function normalizePromptTagLibrary(tags: string[]) {
-  return [...new Set(tags.map((tag) => normalizeEditablePromptTag(tag)).filter(Boolean))]
-    .sort((first, second) => first.localeCompare(second));
+  return [
+    ...new Set(
+      tags.map((tag) => normalizeEditablePromptTag(tag)).filter(Boolean),
+    ),
+  ].sort((first, second) => first.localeCompare(second));
 }
 
 function normalizeEditablePromptTag(value: string) {
   return value.trim().slice(0, PROMPT_TAG_MAX_LENGTH);
 }
 
-function getPromptTagGroupLabel(groupId: PromptTagGroupId, defaultLabel: string) {
+function getPromptTagGroupLabel(
+  groupId: PromptTagGroupId,
+  defaultLabel: string,
+) {
   return groupId === DEFAULT_PROMPT_TAG_GROUP_ID ? defaultLabel : groupId;
 }
 
@@ -1807,7 +2167,9 @@ function getPromptTagGroupSwatchClass(groupId: PromptTagGroupId) {
 }
 
 function getPromptTagGroupPalette(groupId: PromptTagGroupId) {
-  return PROMPT_TAG_GROUP_COLOR_PALETTE[hashPromptTagGroup(groupId) % PROMPT_TAG_GROUP_COLOR_PALETTE.length];
+  return PROMPT_TAG_GROUP_COLOR_PALETTE[
+    hashPromptTagGroup(groupId) % PROMPT_TAG_GROUP_COLOR_PALETTE.length
+  ];
 }
 
 function hashPromptTagGroup(value: string) {
@@ -1818,7 +2180,10 @@ function hashPromptTagGroup(value: string) {
   return hash;
 }
 
-function togglePromptTagGroupFilter(current: PromptTagGroupId[], groupId: PromptTagGroupId) {
+function togglePromptTagGroupFilter(
+  current: PromptTagGroupId[],
+  groupId: PromptTagGroupId,
+) {
   return current.includes(groupId)
     ? current.filter((candidate) => candidate !== groupId)
     : [...current, groupId];
@@ -1840,7 +2205,11 @@ export function readPromptNotes(): PromptNote[] {
     }
 
     const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) ? parsed.map(normalizePromptNote).filter((note): note is PromptNote => Boolean(note)) : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .map(normalizePromptNote)
+          .filter((note): note is PromptNote => Boolean(note))
+      : [];
   } catch {
     return [];
   }
@@ -1888,7 +2257,9 @@ function readPromptNoteDraft(): PromptNoteDraftCache {
       attachments: normalizePromptImageAttachments(candidate.attachments),
       content: typeof candidate.content === "string" ? candidate.content : "",
     };
-    return hasPromptNoteDraftContent(draft) ? draft : createEmptyPromptNoteDraft();
+    return hasPromptNoteDraftContent(draft)
+      ? draft
+      : createEmptyPromptNoteDraft();
   } catch {
     return createEmptyPromptNoteDraft();
   }
@@ -1909,10 +2280,13 @@ function writePromptNoteDraft(draft: PromptNoteDraftCache) {
       return;
     }
 
-    localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
-      ...normalizedDraft,
-      updatedAt: new Date().toISOString(),
-    }));
+    localStorage.setItem(
+      DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        ...normalizedDraft,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
   } catch {
     // Prompt draft caching is opportunistic and should not block typing.
   }
@@ -1928,42 +2302,68 @@ function clearPromptNoteDraft() {
   }
 }
 
-function normalizePromptImageAttachments(value: unknown): PromptImageAttachment[] {
+function normalizePromptImageAttachments(
+  value: unknown,
+): PromptImageAttachment[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
     .map(normalizePromptImageAttachment)
-    .filter((attachment): attachment is PromptImageAttachment => Boolean(attachment))
+    .filter((attachment): attachment is PromptImageAttachment =>
+      Boolean(attachment),
+    )
     .slice(0, PROMPT_IMAGE_ATTACHMENT_LIMIT);
 }
 
-function normalizePromptImageAttachment(value: unknown): PromptImageAttachment | null {
+function normalizePromptImageAttachment(
+  value: unknown,
+): PromptImageAttachment | null {
   if (!value || typeof value !== "object") {
     return null;
   }
 
   const candidate = value as Partial<PromptImageAttachment>;
-  if (typeof candidate.dataUrl !== "string" || !candidate.dataUrl.startsWith("data:image/")) {
+  if (
+    typeof candidate.dataUrl !== "string" ||
+    !candidate.dataUrl.startsWith("data:image/")
+  ) {
     return null;
   }
 
-  const inferredMimeType = candidate.dataUrl.slice(5, candidate.dataUrl.indexOf(";"));
-  const mimeType = typeof candidate.mimeType === "string" && candidate.mimeType.startsWith("image/")
-    ? candidate.mimeType
-    : inferredMimeType.startsWith("image/")
-      ? inferredMimeType
-      : "image/png";
+  const inferredMimeType = candidate.dataUrl.slice(
+    5,
+    candidate.dataUrl.indexOf(";"),
+  );
+  const mimeType =
+    typeof candidate.mimeType === "string" &&
+    candidate.mimeType.startsWith("image/")
+      ? candidate.mimeType
+      : inferredMimeType.startsWith("image/")
+        ? inferredMimeType
+        : "image/png";
   const now = new Date().toISOString();
 
   return {
-    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : now,
+    createdAt:
+      typeof candidate.createdAt === "string" ? candidate.createdAt : now,
     dataUrl: candidate.dataUrl,
-    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : createPromptImageAttachmentId(),
+    id:
+      typeof candidate.id === "string" && candidate.id.trim()
+        ? candidate.id
+        : createPromptImageAttachmentId(),
     mimeType,
-    name: typeof candidate.name === "string" && candidate.name.trim() ? candidate.name : "pasted-image",
-    size: typeof candidate.size === "number" && Number.isFinite(candidate.size) && candidate.size > 0 ? Math.floor(candidate.size) : 0,
+    name:
+      typeof candidate.name === "string" && candidate.name.trim()
+        ? candidate.name
+        : "pasted-image",
+    size:
+      typeof candidate.size === "number" &&
+      Number.isFinite(candidate.size) &&
+      candidate.size > 0
+        ? Math.floor(candidate.size)
+        : 0,
   };
 }
 
@@ -1973,7 +2373,10 @@ function normalizePromptNote(value: unknown): PromptNote | null {
   }
 
   const candidate = value as Partial<PromptNote>;
-  if (typeof candidate.id !== "string" || typeof candidate.content !== "string") {
+  if (
+    typeof candidate.id !== "string" ||
+    typeof candidate.content !== "string"
+  ) {
     return null;
   }
 
@@ -1982,25 +2385,52 @@ function normalizePromptNote(value: unknown): PromptNote | null {
     attachments: normalizePromptImageAttachments(candidate.attachments),
     content: candidate.content,
     copyCount: normalizeCopyCount(candidate.copyCount),
-    createdAt: typeof candidate.createdAt === "string" ? candidate.createdAt : now,
+    createdAt:
+      typeof candidate.createdAt === "string" ? candidate.createdAt : now,
     id: candidate.id,
-    lastCopiedAt: typeof candidate.lastCopiedAt === "string" ? candidate.lastCopiedAt : undefined,
-    optimizedText: typeof candidate.optimizedText === "string" ? candidate.optimizedText : undefined,
-    projectPath: typeof candidate.projectPath === "string" ? candidate.projectPath : "",
-    sessionName: typeof candidate.sessionName === "string" ? candidate.sessionName : "",
-    tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === "string") : [],
-    title: typeof candidate.title === "string" && candidate.title.trim() ? candidate.title : "Untitled prompt",
-    translatedText: typeof candidate.translatedText === "string" ? candidate.translatedText : undefined,
-    updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : now,
+    lastCopiedAt:
+      typeof candidate.lastCopiedAt === "string"
+        ? candidate.lastCopiedAt
+        : undefined,
+    optimizedText:
+      typeof candidate.optimizedText === "string"
+        ? candidate.optimizedText
+        : undefined,
+    projectPath:
+      typeof candidate.projectPath === "string" ? candidate.projectPath : "",
+    sessionName:
+      typeof candidate.sessionName === "string" ? candidate.sessionName : "",
+    tags: Array.isArray(candidate.tags)
+      ? candidate.tags.filter((tag): tag is string => typeof tag === "string")
+      : [],
+    title:
+      typeof candidate.title === "string" && candidate.title.trim()
+        ? candidate.title
+        : "Untitled prompt",
+    translatedText:
+      typeof candidate.translatedText === "string"
+        ? candidate.translatedText
+        : undefined,
+    updatedAt:
+      typeof candidate.updatedAt === "string" ? candidate.updatedAt : now,
   };
 }
 
 function normalizeCopyCount(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0;
 }
 
 export function parseTags(value: string): string[] {
-  return [...new Set(value.split(/[,，\s]+/).map((tag) => tag.trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      value
+        .split(/[,，\s]+/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function createPromptNoteId() {
@@ -2043,7 +2473,11 @@ function getClipboardImageFiles(clipboardData: DataTransfer) {
   return files;
 }
 
-function addUniquePromptImageFile(files: File[], seen: Set<string>, file: File) {
+function addUniquePromptImageFile(
+  files: File[],
+  seen: Set<string>,
+  file: File,
+) {
   const key = `${file.name}:${file.type}:${file.size}:${file.lastModified}`;
   if (seen.has(key)) {
     return;
@@ -2060,9 +2494,13 @@ function isPromptImageFile(file: File) {
 function readPromptImageAttachment(file: File): Promise<PromptImageAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read pasted image."));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("Failed to read pasted image."));
     reader.onload = () => {
-      if (typeof reader.result !== "string" || !reader.result.startsWith("data:image/")) {
+      if (
+        typeof reader.result !== "string" ||
+        !reader.result.startsWith("data:image/")
+      ) {
         reject(new Error("Pasted file is not a readable image."));
         return;
       }
@@ -2071,7 +2509,10 @@ function readPromptImageAttachment(file: File): Promise<PromptImageAttachment> {
         createdAt: new Date().toISOString(),
         dataUrl: reader.result,
         id: createPromptImageAttachmentId(),
-        mimeType: file.type || reader.result.slice(5, reader.result.indexOf(";")) || "image/png",
+        mimeType:
+          file.type ||
+          reader.result.slice(5, reader.result.indexOf(";")) ||
+          "image/png",
         name: file.name || "pasted-image",
         size: file.size,
       });
@@ -2082,12 +2523,18 @@ function readPromptImageAttachment(file: File): Promise<PromptImageAttachment> {
 
 function previewText(value: string) {
   const normalized = value.replace(/\s+/g, " ").trim();
-  const preview = normalized.length > 88 ? `${normalized.slice(0, 88)}...` : normalized;
+  const preview =
+    normalized.length > 88 ? `${normalized.slice(0, 88)}...` : normalized;
   return `"${preview}"`;
 }
 
-function promptSwitcherCardAriaLabel(note: PromptNote, defaultLabel: string, emptyLabel: string) {
-  const primaryGroupId = getPromptNoteTagGroupIds(note)[0] ?? DEFAULT_PROMPT_TAG_GROUP_ID;
+function promptSwitcherCardAriaLabel(
+  note: PromptNote,
+  defaultLabel: string,
+  emptyLabel: string,
+) {
+  const primaryGroupId =
+    getPromptNoteTagGroupIds(note)[0] ?? DEFAULT_PROMPT_TAG_GROUP_ID;
   const groupLabel = getPromptTagGroupLabel(primaryGroupId, defaultLabel);
   const preview = note.content.trim() ? previewText(note.content) : emptyLabel;
   return `${groupLabel} · ${preview}`;

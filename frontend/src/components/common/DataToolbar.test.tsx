@@ -61,7 +61,7 @@ describe("DataToolbar", () => {
       />,
     );
 
-    expect(html).toContain('data-toolbar-root');
+    expect(html).toContain("data-toolbar-root");
     expect(html).toContain("w-full");
     expect(html).toContain("sticky");
     expect(html).toContain("toolbar-bleed");
@@ -88,14 +88,22 @@ describe("DataToolbar", () => {
       <DataToolbar
         actions={
           <>
-            <ToolbarActionButton icon={<Download size={17} />} label="批量导出" text="批量导出" />
+            <ToolbarActionButton
+              icon={<Download size={17} />}
+              label="批量导出"
+              text="批量导出"
+            />
             <ToolbarTextButton icon={<Download size={17} />} label="设置" />
           </>
         }
         ariaLabel="Conversation toolbar"
         leading={
           <>
-            <ToolbarSearch onChange={() => undefined} placeholder="搜索当前 Session 的问题..." value="" />
+            <ToolbarSearch
+              onChange={() => undefined}
+              placeholder="搜索当前 Session 的问题..."
+              value=""
+            />
           </>
         }
       />,
@@ -124,13 +132,17 @@ describe("DataToolbar", () => {
       />,
     );
 
-    const searchInput = screen.getByPlaceholderText("Search assets...") as HTMLInputElement;
+    const searchInput = screen.getByPlaceholderText(
+      "Search assets...",
+    ) as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "s" } });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
     fireEvent.change(searchInput, { target: { value: "sk" } });
-    expect(screen.getByRole("button", { name: "Search assets" }).innerHTML).toContain("animate-spin");
+    expect(
+      screen.getByRole("button", { name: "Search assets" }).innerHTML,
+    ).toContain("animate-spin");
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(699);
@@ -143,7 +155,9 @@ describe("DataToolbar", () => {
     });
 
     expect(onChange).toHaveBeenCalledWith("sk");
-    expect(screen.getByRole("button", { name: "Search assets" }).innerHTML).not.toContain("animate-spin");
+    expect(
+      screen.getByRole("button", { name: "Search assets" }).innerHTML,
+    ).not.toContain("animate-spin");
     onChange.mockClear();
 
     fireEvent.change(searchInput, { target: { value: "skill" } });
@@ -226,7 +240,11 @@ describe("DataToolbar", () => {
       <DataToolbar
         actions={
           <>
-            <ToolbarActionButton icon={<Download size={17} />} label="批量导出" text="导出" />
+            <ToolbarActionButton
+              icon={<Download size={17} />}
+              label="批量导出"
+              text="导出"
+            />
             <ToolbarTextButton icon={<Download size={17} />} label="设置" />
           </>
         }
@@ -277,7 +295,12 @@ describe("DataToolbar", () => {
           onClick={() => undefined}
           title="当前：降序"
         />
-        <ToolbarActionButton icon={<Download size={17} />} label="导出" primary text="导出" />
+        <ToolbarActionButton
+          icon={<Download size={17} />}
+          label="导出"
+          primary
+          text="导出"
+        />
         <ToolbarTextButton icon={<Download size={17} />} label="设置" />
         <ToolbarButton icon={<Download size={17} />} label="下载" />
       </>,
@@ -296,6 +319,8 @@ describe("DataToolbar", () => {
       expect(button.className).toContain("whitespace-nowrap");
     }
 
-    expect(screen.getByRole("button", { name: "导出" }).className).toContain("gap-1.5");
+    expect(screen.getByRole("button", { name: "导出" }).className).toContain(
+      "gap-1.5",
+    );
   });
 });

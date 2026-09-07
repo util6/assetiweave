@@ -11,7 +11,7 @@ pub(crate) struct SystemInstaller {
 }
 
 impl Installer for SystemInstaller {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
@@ -38,7 +38,7 @@ impl Installer for SystemInstaller {
             .ok_or_else(|| {
                 InstallError::RuntimeMissing("system executable is not installed".to_string())
             })?;
-        let version = probe_version(&program, version_args, context)?;
+        let version = probe_version(&program, version_args, context).await?;
         if version.trim().is_empty() {
             return Err(InstallError::Failed(
                 "system version probe returned no version".to_string(),
@@ -57,14 +57,14 @@ impl Installer for SystemInstaller {
     }
 }
 
-fn probe_version(
+async fn probe_version(
     program: &PathBuf,
     args: &[String],
     context: &InstallContext,
 ) -> Result<String, InstallError> {
     let mut command = Command::new(program);
     command.args(args);
-    let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024)?;
+    let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024).await?;
     if !output.status.success() {
         return Err(InstallError::Failed(
             "system version probe failed".to_string(),
@@ -77,9 +77,9 @@ fn probe_version(
 mod tests {
     use super::*;
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn system_materialization_never_claims_an_owned_directory() {
+    async fn system_materialization_never_claims_an_owned_directory() {
         let directory = tempfile_dir();
         let executable = directory.join("agent");
         std::fs::write(&executable, b"#!/bin/sh\necho agent 1.0.0\n").unwrap();
@@ -103,7 +103,10 @@ mod tests {
             session_cleanup_args: None,
             session_cleanup_not_found_markers: Vec::new(),
         };
-        let runtime = installer.materialize(&distribution, &context).unwrap();
+        let runtime = installer
+            .materialize(&distribution, &context)
+            .await
+            .unwrap();
         assert_eq!(runtime.ownership, Ownership::System);
         assert!(runtime.install_dir.is_none());
         assert_eq!(runtime.resolved_program, executable);

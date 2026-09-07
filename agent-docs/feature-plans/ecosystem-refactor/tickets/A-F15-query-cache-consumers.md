@@ -1,6 +1,6 @@
 # A-F15：迁移剩余共享缓存消费者并删除 asyncCache
 
-> **Status: PLANNED**。使用 `superpowers:executing-plans`，一轮只做本卡；按四个消费者逐个验证。
+> **Status: COMPLETED**。使用 `superpowers:executing-plans`，一轮只做本卡；按四个消费者逐个验证。
 
 **Goal:** 移除 `lib/asyncCache.ts` 的第二套请求缓存，所有真实消费者复用 Query。
 **Depends:** A-F14、A-F05、A-F08。

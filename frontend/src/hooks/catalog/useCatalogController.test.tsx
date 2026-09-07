@@ -19,10 +19,23 @@ vi.mock("../../app/backgroundTasks/CatalogTaskProvider", () => ({
     startSourceScan: vi.fn(),
   }),
 }));
-vi.mock("../../store/settings/AppSettingsProvider", () => ({
-  useAppSettings: () => ({ settings: { showStartupNotification: false } }),
+vi.mock("../../store/settings/useAppSettings", () => ({
+  useAppSettings: () => ({
+    settings: { showStartupNotification: false },
+    settingsError: null,
+    settingsLoaded: true,
+    storageInfo: {},
+    updateSetting: vi.fn(),
+    resetSettings: vi.fn(),
+    retrySave: vi.fn(),
+    setColumnLayout: vi.fn(),
+    setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
-vi.mock("../tenants/useTenantController", () => ({ useTenantController: () => ({}) }));
+
+vi.mock("../tenants/useTenantController", () => ({
+  useTenantController: () => ({}),
+}));
 vi.mock("./useAssetFilter", () => ({ useAssetFilter: () => [] }));
 vi.mock("./useCatalogData", () => ({
   useCatalogData: () => ({
@@ -39,7 +52,9 @@ vi.mock("./useCatalogData", () => ({
   }),
 }));
 vi.mock("./useCatalogOperations", () => ({
-  useCatalogOperations: () => ({ clearDeploymentPlan: fixtures.clearDeploymentPlan }),
+  useCatalogOperations: () => ({
+    clearDeploymentPlan: fixtures.clearDeploymentPlan,
+  }),
 }));
 vi.mock("./useExpandedAssets", () => ({
   useExpandedAssets: () => ({ expandedIds: new Set(), toggleAsset: vi.fn() }),
@@ -74,14 +89,23 @@ describe("useCatalogController background mounts", () => {
     fixtures.batchMount = {
       ...runningBatchTask(),
       status: "completed",
-      progress: { phase: "completed", completed: 1, total: 1, current_id: null },
+      progress: {
+        phase: "completed",
+        completed: 1,
+        total: 1,
+        current_id: null,
+      },
       finished_at: "2026-08-23T00:00:01Z",
       result: {},
     };
     rerender();
 
-    await waitFor(() => expect(fixtures.refreshMountState).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(result.current.notification?.tone).toBe("success"));
+    await waitFor(() =>
+      expect(fixtures.refreshMountState).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(result.current.notification?.tone).toBe("success"),
+    );
     expect(fixtures.clearDeploymentPlan).toHaveBeenCalledTimes(1);
   });
 
@@ -98,7 +122,9 @@ describe("useCatalogController background mounts", () => {
       await result.current.setMountProfiles(["asset-1"], "profile-1", true);
     });
 
-    await waitFor(() => expect(fixtures.refreshMountState).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(fixtures.refreshMountState).toHaveBeenCalledTimes(1),
+    );
     expect(result.current.notification?.tone).toBe("success");
   });
 });

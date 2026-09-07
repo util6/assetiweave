@@ -74,17 +74,13 @@ use crate::{
         AppOverview, AppShortcut, AssetGroupInput, AssetMountStatus, AssetMountUpdateResult,
         CatalogAsset, ConversationSearchIndexStatus, ExecutionResult, MemoryContextResult,
         MemoryProjectView, MemoryRebuildResult, MemoryTaskView, NavigationModel,
-        SkillBackupSettings, SkillGroupExclusiveMountInput, SkillGroupExclusiveMountPreview,
-        SkillRemoteSource, SourceInput, TargetProfileInput,
+        PhysicalMountStateDto, SkillBackupSettings, SkillGroupExclusiveMountInput,
+        SkillGroupExclusiveMountPreview, SkillRemoteSource, SourceInput, TargetProfileInput,
     },
     backend::models::{
         Asset, AssetGroup, AssetGroupDetail, AssetKind, AssetMount, ConversationAdapter,
         ConversationSource, DeploymentPlan, DeploymentStrategy, Source, TargetProfile,
         TargetProfileDescriptor, Tenant,
-    },
-    backend::operation_log::{
-        asset_log_fields, log_error, log_info, log_warn, profile_log_fields,
-        source_input_log_fields, source_log_fields, status_summary_fields,
     },
     backend::runtime::{
         tasks::{TaskContext, TaskFilter, TaskKind},
@@ -109,69 +105,100 @@ pub(crate) async fn set_app_window_icon(app: AppHandle, icon: Vec<u8>) -> Runtim
 }
 
 #[tauri::command]
-pub(crate) fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
-    AppService::from_runtime(&state.runtime).overview()
+pub(crate) async fn get_app_overview(state: State<'_, AppState>) -> RuntimeAppResult<AppOverview> {
+    AppService::from_runtime(&state.runtime).overview().await
 }
 
 #[tauri::command]
-pub(crate) fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
-    AppService::from_runtime(&state.runtime).list_tenants()
+pub(crate) async fn list_tenants(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Tenant>> {
+    AppService::from_runtime(&state.runtime)
+        .list_tenants()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
-    AppService::from_runtime(&state.runtime).active_tenant()
+pub(crate) async fn get_active_tenant(state: State<'_, AppState>) -> RuntimeAppResult<Tenant> {
+    AppService::from_runtime(&state.runtime)
+        .active_tenant()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_tenant(
+pub(crate) async fn create_tenant(
     state: State<'_, AppState>,
     params: TenantCreateParams,
 ) -> RuntimeAppResult<Tenant> {
-    let fields = vec![("name", params.name.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).create_tenant(params))();
+    let tenant_name = params.name.clone();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_tenant(params)
+        .await;
     match &result {
-        Ok(tenant) => log_info(
-            "tenant.create",
-            "创建租户成功",
-            &[("tenant_id", tenant.id.clone())],
+        Ok(tenant) => tracing::info!(
+            action = "tenant.create",
+            tenant_id = %tenant.id,
+            "创建租户成功"
         ),
-        Err(error) => log_error("tenant.create", "创建租户失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "tenant.create",
+            name = %tenant_name,
+            error = %error,
+            "创建租户失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn switch_tenant(
+pub(crate) async fn switch_tenant(
     state: State<'_, AppState>,
     tenant_id: String,
 ) -> RuntimeAppResult<Tenant> {
-    let fields = vec![("tenant_id", tenant_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).switch_tenant(tenant_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .switch_tenant(tenant_id.clone())
+        .await;
     match &result {
-        Ok(tenant) => log_info(
-            "tenant.switch",
-            "切换租户成功",
-            &[("tenant_id", tenant.id.clone())],
+        Ok(tenant) => tracing::info!(
+            action = "tenant.switch",
+            tenant_id = %tenant.id,
+            "切换租户成功"
         ),
-        Err(error) => log_error("tenant.switch", "切换租户失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "tenant.switch",
+            tenant_id = %tenant_id,
+            error = %error,
+            "切换租户失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn get_app_settings(
+pub(crate) async fn get_app_settings(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime).get_app_settings()
+    AppService::from_runtime(&state.runtime)
+        .get_app_settings()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn save_app_settings(
+pub(crate) async fn save_app_settings(
     state: State<'_, AppState>,
     settings: serde_json::Value,
 ) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
-    AppService::from_runtime(&state.runtime).save_app_settings(settings)
+    AppService::from_runtime(&state.runtime)
+        .save_app_settings(settings)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn initialize_app_locale_if_unset(
+    state: State<'_, AppState>,
+    locale: crate::backend::app_settings::AppLocale,
+) -> RuntimeAppResult<crate::backend::app_settings::AppSettingsFile> {
+    AppService::from_runtime(&state.runtime)
+        .initialize_app_locale_if_unset(locale)
+        .await
 }
 
 #[tauri::command]
@@ -198,55 +225,30 @@ pub(crate) async fn complete_app_close(
 
     crate::converge_ai_executions_before_close(background_tasks).await;
 
-    let task_runtime = runtime.clone();
-    let unfinished_tasks = tauri::async_runtime::spawn_blocking(move || {
-        task_runtime.stop_tasks_with_grace(std::time::Duration::from_secs(5))
-    })
-    .await
-    .map_err(AppError::external)?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+
+    let unfinished_tasks = runtime.stop_tasks_until(deadline).await;
     if !unfinished_tasks.is_empty() {
-        log_warn(
-            "app.close.tasks",
-            "关闭前仍有后台任务未收敛",
-            &[("unfinished_tasks", unfinished_tasks.len().to_string())],
+        tracing::warn!(
+            action = "app.close.tasks",
+            unfinished_tasks = unfinished_tasks.len(),
+            "关闭前仍有后台任务未收敛"
         );
     }
 
     if !shutdown_sync_done.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        let sync_runtime = runtime.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            crate::sync_before_close_with_runtime(&sync_runtime, &db_path, backup_database);
-        })
-        .await
-        .map_err(AppError::external)?;
+        crate::sync_before_close_with_runtime(&runtime, &db_path, backup_database).await;
     }
 
-    let shutdown_report = tauri::async_runtime::spawn_blocking(move || {
-        runtime.shutdown_with_grace(std::time::Duration::from_secs(5))
-    })
-    .await
-    .map_err(AppError::external)?;
-    if !shutdown_report.dispatcher_drained
-        || !shutdown_report.unfinished_task_ids.is_empty()
-        || shutdown_report.dispatcher_timed_out
-    {
-        log_warn(
-            "app.close.runtime",
-            "应用运行时在关闭期限内未完全收敛",
-            &[
-                (
-                    "unfinished_tasks",
-                    shutdown_report.unfinished_task_ids.len().to_string(),
-                ),
-                (
-                    "dispatcher_remaining_events",
-                    shutdown_report.dispatcher_remaining_events.to_string(),
-                ),
-                (
-                    "dispatcher_timed_out",
-                    shutdown_report.dispatcher_timed_out.to_string(),
-                ),
-            ],
+    let shutdown_report = runtime.shutdown_until(deadline).await;
+    if !shutdown_report.is_clean() {
+        tracing::warn!(
+            action = "app.close.runtime",
+            unfinished_tasks = shutdown_report.unfinished_task_ids.len(),
+            dispatcher_remaining_events = shutdown_report.dispatcher_remaining_events,
+            dispatcher_timed_out = shutdown_report.dispatcher_timed_out,
+            unfinished_stages = %shutdown_report.unfinished_stages.join(","),
+            "应用运行时在关闭期限内未完全收敛"
         );
     }
 
@@ -258,67 +260,89 @@ pub(crate) async fn complete_app_close(
 }
 
 #[tauri::command]
-pub(crate) fn list_assets(
+pub(crate) async fn list_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    AppService::from_runtime(&state.runtime).list_assets(ListAssetsParams { kind })
+    AppService::from_runtime(&state.runtime)
+        .list_assets(ListAssetsParams { kind })
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_source_assets(
+pub(crate) async fn list_source_assets(
     state: State<'_, AppState>,
     kind: Option<AssetKind>,
 ) -> RuntimeAppResult<Vec<CatalogAsset>> {
-    AppService::from_runtime(&state.runtime).list_source_assets(kind)
+    AppService::from_runtime(&state.runtime)
+        .list_source_assets(kind)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_memory_recent(
+pub(crate) async fn list_memory_recent(
     state: State<'_, AppState>,
     params: RecentConversationSessionListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::application::RecentConversationSession>> {
-    AppService::from_runtime(&state.runtime).list_recent_conversation_sessions(params)
+    AppService::from_runtime(&state.runtime)
+        .list_recent_conversation_sessions(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_recent_event_target(
+pub(crate) async fn get_memory_recent_event_target(
     state: State<'_, AppState>,
     event_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
-    AppService::from_runtime(&state.runtime).get_recent_memory_event_target(event_id)
+    AppService::from_runtime(&state.runtime)
+        .get_recent_memory_event_target(event_id)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn search_memory_recall(
+pub(crate) async fn search_memory_recall(
     state: State<'_, AppState>,
     params: MemoryRecallSearchParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSearchResult> {
-    AppService::from_runtime(&state.runtime).search_memory_recall(params)
+    AppService::from_runtime(&state.runtime)
+        .search_memory_recall(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn resolve_memory_context(
+pub(crate) async fn resolve_memory_context(
     state: State<'_, AppState>,
     params: MemoryContextResolveParams,
 ) -> RuntimeAppResult<MemoryContextResult> {
-    AppService::from_runtime(&state.runtime).resolve_memory_context(params)
+    AppService::from_runtime(&state.runtime)
+        .resolve_memory_context(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_project(
+pub(crate) async fn get_memory_project(
     state: State<'_, AppState>,
     params: MemoryProjectGetParams,
 ) -> RuntimeAppResult<Option<MemoryProjectView>> {
-    AppService::from_runtime(&state.runtime).get_memory_project(params)
+    AppService::from_runtime(&state.runtime)
+        .get_memory_project(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn rebuild_memory_scope(
+pub(crate) async fn rebuild_memory_scope(
     state: State<'_, AppState>,
     params: MemoryScopeRebuildParams,
 ) -> RuntimeAppResult<MemoryRebuildResult> {
-    AppService::from_runtime(&state.runtime).rebuild_memory_scope(params)
+    AppService::from_runtime(&state.runtime)
+        .rebuild_memory_scope(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
@@ -346,105 +370,124 @@ pub(crate) fn cancel_memory_public_task(
 }
 
 #[tauri::command]
-pub(crate) fn retry_memory_public_task(
+pub(crate) async fn retry_memory_public_task(
     state: State<'_, AppState>,
     params: MemoryTaskRetryParams,
 ) -> RuntimeAppResult<MemoryTaskView> {
-    AppService::from_runtime(&state.runtime).retry_memory_task(params)
+    AppService::from_runtime(&state.runtime)
+        .retry_memory_task(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn create_memory_recall_session(
+pub(crate) async fn create_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionCreateParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).create_memory_recall_session(params)
+    AppService::from_runtime(&state.runtime)
+        .create_memory_recall_session(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_memory_recall_session(
+pub(crate) async fn get_memory_recall_session(
     state: State<'_, AppState>,
     params: MemoryRecallSessionGetParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).get_memory_recall_session(params)
+    AppService::from_runtime(&state.runtime)
+        .get_memory_recall_session(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn send_memory_recall_turn(
+pub(crate) async fn send_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnSendParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).send_memory_recall_turn(params)
+    AppService::from_runtime(&state.runtime)
+        .send_memory_recall_turn(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn cancel_memory_recall_turn(
+pub(crate) async fn cancel_memory_recall_turn(
     state: State<'_, AppState>,
     params: MemoryRecallTurnCancelParams,
 ) -> RuntimeAppResult<crate::backend::models::MemoryRecallSession> {
-    AppService::from_runtime(&state.runtime).cancel_memory_recall_turn(params)
+    AppService::from_runtime(&state.runtime)
+        .cancel_memory_recall_turn(params)
+        .await
+        .into()
 }
 
 #[tauri::command]
-pub(crate) fn get_skill_backup_settings(
+pub(crate) async fn get_skill_backup_settings(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<SkillBackupSettings> {
-    AppService::from_runtime(&state.runtime).get_skill_backup_settings()
+    AppService::from_runtime(&state.runtime)
+        .get_skill_backup_settings()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_skill_backup_settings(
+pub(crate) async fn update_skill_backup_settings(
     state: State<'_, AppState>,
     root_path: String,
     migrate: Option<bool>,
 ) -> RuntimeAppResult<SkillBackupSettings> {
-    let fields = vec![
-        ("root_path", root_path.clone()),
-        ("migrate", migrate.unwrap_or(true).to_string()),
-    ];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).update_skill_backup_settings(
-            UpdateSkillBackupSettingsParams {
-                root_path,
-                migrate: migrate.unwrap_or(true),
-            },
-        )
-    })();
+    let root_path_input = root_path.clone();
+    let migrate_input = migrate.unwrap_or(true);
+    let result = AppService::from_runtime(&state.runtime)
+        .update_skill_backup_settings(UpdateSkillBackupSettingsParams {
+            root_path,
+            migrate: migrate.unwrap_or(true),
+        })
+        .await;
 
     match &result {
-        Ok(settings) => log_info(
-            "skill.backup.settings.update",
-            "更新 Skill 备份目录成功",
-            &[
-                ("root_path", settings.root_path.clone()),
-                ("expanded_root_path", settings.expanded_root_path.clone()),
-            ],
+        Ok(_) => tracing::info!(
+            action = "skill.backup.settings.update",
+            resource = "skill_backup",
+            "更新 Skill 备份目录成功"
         ),
-        Err(error) => log_error(
-            "skill.backup.settings.update",
-            "更新 Skill 备份目录失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill.backup.settings.update",
+            resource = "skill_backup",
+            migrate = migrate_input,
+            error_code = %error.code(),
+            "更新 Skill 备份目录失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn backup_skill(
+pub(crate) async fn backup_skill(
     state: State<'_, AppState>,
     asset_id: String,
 ) -> RuntimeAppResult<CatalogAsset> {
-    let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).backup_skill(asset_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .backup_skill(asset_id.clone())
+        .await;
 
     match &result {
-        Ok(asset) => log_info(
-            "skill.backup",
-            "备份 Skill 成功",
-            &asset_log_fields(&asset.asset),
+        Ok(asset) => tracing::info!(
+            action = "skill.backup",
+            asset_id = %asset.asset.id,
+            asset_name = %asset.asset.name,
+            asset_kind = ?asset.asset.kind,
+            "备份 Skill 成功"
         ),
-        Err(error) => log_error("skill.backup", "备份 Skill 失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "skill.backup",
+            asset_id = %asset_id,
+            error = %error,
+            "备份 Skill 失败"
+        ),
     }
     result
 }
@@ -467,52 +510,48 @@ pub(crate) fn backup_skills(
     let background_tasks = state.background_tasks.clone();
     let task_id = snapshot.id.clone();
     let task_asset_ids = snapshot.asset_ids.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn(async move {
         let progress_app = app.clone();
         let progress_tasks = background_tasks.clone();
         let progress_task_id = task_id.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            AppService::from_runtime(&runtime).backup_skills_with_progress(
-                task_asset_ids,
-                |completed_count, next_asset_id| match progress_tasks.update_skill_backup_progress(
+        let result = AppService::from_runtime(&runtime)
+            .backup_skills_with_progress(task_asset_ids, |completed_count, next_asset_id| {
+                match progress_tasks.update_skill_backup_progress(
                     &progress_task_id,
                     completed_count,
                     next_asset_id.map(str::to_string),
                 ) {
                     Ok(snapshot) => emit_skill_backup_task(&progress_app, &snapshot),
-                    Err(error) => log_error(
-                        "skill.backup.background",
-                        "更新 Skill 后台备份进度失败",
-                        &error,
-                        &[("task_id", progress_task_id.clone())],
+                    Err(error) => tracing::error!(
+                        action = "skill.backup.background",
+                        task_id = %progress_task_id,
+                        error = %error,
+                        "更新 Skill 后台备份进度失败"
                     ),
-                },
-            )
-        }))
-        .unwrap_or_else(|_| Err(AppError::Process("skill backup task panicked".to_string())));
+                }
+            })
+            .await;
         match &result {
-            Ok(assets) => log_info(
-                "skill.backup.background",
-                "后台备份 Skill 成功",
-                &[
-                    ("task_id", task_id.clone()),
-                    ("asset_count", assets.len().to_string()),
-                ],
+            Ok(assets) => tracing::info!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                asset_count = assets.len(),
+                "后台备份 Skill 成功"
             ),
-            Err(error) => log_error(
-                "skill.backup.background",
-                "后台备份 Skill 失败",
-                error,
-                &[("task_id", task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                error = %error,
+                "后台备份 Skill 失败"
             ),
         }
         match background_tasks.finish_skill_backup(&task_id, result) {
             Ok(snapshot) => emit_skill_backup_task(&app, &snapshot),
-            Err(error) => log_error(
-                "skill.backup.background",
-                "更新 Skill 后台备份任务状态失败",
-                &error,
-                &[("task_id", task_id)],
+            Err(error) => tracing::error!(
+                action = "skill.backup.background",
+                task_id = %task_id,
+                error = %error,
+                "更新 Skill 后台备份任务状态失败"
             ),
         }
     });
@@ -532,11 +571,11 @@ pub(crate) fn get_skill_backup_task(
 
 fn emit_skill_backup_task(app: &AppHandle, snapshot: &SkillBackupTaskSnapshot) {
     if let Err(error) = app.emit("skill-backup-task-updated", snapshot) {
-        log_error(
-            "skill.backup.background",
-            "推送 Skill 后台备份任务状态失败",
-            &error.to_string(),
-            &[("task_id", snapshot.id.clone())],
+        tracing::error!(
+            action = "skill.backup.background",
+            task_id = %snapshot.id,
+            error = %error,
+            "推送 Skill 后台备份任务状态失败"
         );
     }
 }
@@ -546,11 +585,11 @@ fn emit_conversation_script_install_task(
     snapshot: &ConversationScriptInstallTaskSnapshot,
 ) {
     if let Err(error) = app.emit("conversation-script-install-task-updated", snapshot) {
-        log_error(
-            "conversation.script.install",
-            "推送对话脚本后台安装任务状态失败",
-            &error.to_string(),
-            &[("task_id", snapshot.id.clone())],
+        tracing::error!(
+            action = "conversation.script.install",
+            task_id = %snapshot.id,
+            error = %error,
+            "推送对话脚本后台安装任务状态失败"
         );
     }
 }
@@ -571,7 +610,7 @@ where
     let operation_for_runtime = operation;
     let task = Box::new(move |context: TaskContext| {
         let result = if context.is_cancelled() {
-            Err(AppError::Canceled(format!(
+            Err(AppError::Cancelled(format!(
                 "{operation_for_runtime} task cancelled"
             )))
         } else {
@@ -582,19 +621,17 @@ where
             })
         };
         match &result {
-            Ok(value) => log_info(
-                operation_for_runtime,
-                "扩展生命周期任务成功",
-                &[
-                    ("task_id", task_id_for_runtime.clone()),
-                    ("result", value.to_string()),
-                ],
+            Ok(value) => tracing::info!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                result = %value,
+                "扩展生命周期任务成功"
             ),
-            Err(error) => log_error(
-                operation_for_runtime,
-                "扩展生命周期任务失败",
-                error,
-                &[("task_id", task_id_for_runtime.clone())],
+            Err(error) => tracing::error!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                error = %error,
+                "扩展生命周期任务失败"
             ),
         }
         let projection_result = match &result {
@@ -605,11 +642,11 @@ where
             .finish_conversation_script_install(&task_id_for_runtime, projection_result)
         {
             Ok(snapshot) => emit_conversation_script_install_task(&app_for_runtime, &snapshot),
-            Err(error) => log_error(
-                operation_for_runtime,
-                "更新扩展生命周期任务状态失败",
-                &error,
-                &[("task_id", task_id_for_runtime.clone())],
+            Err(error) => tracing::error!(
+                action = operation_for_runtime,
+                task_id = %task_id_for_runtime,
+                error = %error,
+                "更新扩展生命周期任务状态失败"
             ),
         }
         result
@@ -628,19 +665,22 @@ pub(crate) fn search_skills(
     state: State<'_, AppState>,
     params: SkillSearchParams,
 ) -> RuntimeAppResult<SkillSearchResult> {
-    let fields = vec![("query", params.query.clone())];
+    let query_input = params.query.clone();
     let result = (|| AppService::from_runtime(&state.runtime).search_skills(params))();
 
     match &result {
-        Ok(result) => log_info(
-            "skill.search",
-            "搜索 Skill 成功",
-            &[
-                ("query", result.query.clone()),
-                ("candidate_count", result.candidates.len().to_string()),
-            ],
+        Ok(result) => tracing::info!(
+            action = "skill.search",
+            query = %result.query,
+            candidate_count = result.candidates.len(),
+            "搜索 Skill 成功"
         ),
-        Err(error) => log_error("skill.search", "搜索 Skill 失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "skill.search",
+            query = %query_input,
+            error = %error,
+            "搜索 Skill 失败"
+        ),
     }
     result
 }
@@ -667,7 +707,7 @@ pub(crate) fn start_skill_acquire(
         .task_runtime()
         .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?
         .cancellation_token(&task_id)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn(async move {
         let emit_app = app.clone();
         let emit_tasks = tasks.clone();
         let update_phase = |phase: &str| {
@@ -680,13 +720,14 @@ pub(crate) fn start_skill_acquire(
                 params,
                 Some(&cancellation),
                 Some(&update_phase),
-            );
+            )
+            .await;
         if let Err(error) = &result {
-            log_error(
-                "skill.acquire",
-                "获取 Skill 失败",
-                error,
-                &[("task_id", task_id.clone())],
+            tracing::error!(
+                action = "skill.acquire",
+                task_id = %task_id,
+                error = %error,
+                "获取 Skill 失败"
             );
         }
         let snapshot = emit_tasks.finish_remote_skill_acquire(&task_id, result);
@@ -751,176 +792,226 @@ pub(crate) fn cancel_skill_acquire_task(
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_remote_sources(
+pub(crate) async fn list_skill_remote_sources(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
-    let result = (|| AppService::from_runtime(&state.runtime).list_skill_remote_sources())();
+    let result = AppService::from_runtime(&state.runtime)
+        .list_skill_remote_sources()
+        .await;
 
     match &result {
-        Ok(sources) => log_info(
-            "skill.remote.list",
-            "读取远程 Skill 来源成功",
-            &[("source_count", sources.len().to_string())],
+        Ok(sources) => tracing::info!(
+            action = "skill.remote.list",
+            source_count = sources.len(),
+            "读取远程 Skill 来源成功"
         ),
-        Err(error) => log_error("skill.remote.list", "读取远程 Skill 来源失败", error, &[]),
+        Err(error) => tracing::error!(
+            action = "skill.remote.list",
+            error = %error,
+            "读取远程 Skill 来源失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn check_skill_remote_sources(
+pub(crate) async fn check_skill_remote_sources(
     state: State<'_, AppState>,
     params: SkillRemoteCheckParams,
 ) -> RuntimeAppResult<Vec<SkillRemoteSource>> {
-    let fields = params
-        .asset_id
-        .as_ref()
-        .map(|asset_id| vec![("asset_id", asset_id.clone())])
-        .unwrap_or_default();
-    let result = (|| AppService::from_runtime(&state.runtime).check_skill_remote_sources(params))();
+    let asset_id_filter = params.asset_id.clone();
+    let result = AppService::from_runtime(&state.runtime)
+        .check_skill_remote_sources(params)
+        .await;
 
     match &result {
-        Ok(sources) => log_info(
-            "skill.remote.check",
-            "检查远程 Skill 来源成功",
-            &[
-                ("checked_count", sources.len().to_string()),
-                (
-                    "changed_count",
-                    sources
-                        .iter()
-                        .filter(|source| source.status == "changed")
-                        .count()
-                        .to_string(),
-                ),
-            ],
+        Ok(sources) => tracing::info!(
+            action = "skill.remote.check",
+            checked_count = sources.len(),
+            changed_count = sources
+                .iter()
+                .filter(|source| source.status == "changed")
+                .count(),
+            "检查远程 Skill 来源成功"
         ),
-        Err(error) => log_error(
-            "skill.remote.check",
-            "检查远程 Skill 来源失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill.remote.check",
+            asset_id = ?asset_id_filter,
+            error = %error,
+            "检查远程 Skill 来源失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn update_asset_description(
+pub(crate) async fn update_asset_description(
     state: State<'_, AppState>,
     asset_id: String,
     description: Option<String>,
 ) -> RuntimeAppResult<Asset> {
-    let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).update_asset_description(asset_id, description)
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_asset_description(asset_id.clone(), description)
+        .await;
 
     match &result {
-        Ok(asset) => log_info(
-            "asset.update_description",
-            "更新资产说明成功",
-            &asset_log_fields(asset),
+        Ok(asset) => tracing::info!(
+            action = "asset.update_description",
+            asset_id = %asset.id,
+            asset_name = %asset.name,
+            asset_kind = ?asset.kind,
+            "更新资产说明成功"
         ),
-        Err(error) => log_error(
-            "asset.update_description",
-            "更新资产说明失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "asset.update_description",
+            asset_id = %asset_id,
+            error = %error,
+            "更新资产说明失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn delete_asset(
+pub(crate) async fn delete_asset(
     state: State<'_, AppState>,
     asset_id: String,
     unmount: Option<bool>,
 ) -> RuntimeAppResult<Asset> {
-    let fields = vec![("asset_id", asset_id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).delete_asset(asset_id, unmount.unwrap_or(false))
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_asset(asset_id.clone(), unmount.unwrap_or(false))
+        .await;
 
     match &result {
-        Ok(asset) => log_info("asset.delete", "删除资产成功", &asset_log_fields(asset)),
-        Err(error) => log_error("asset.delete", "删除资产失败", error, &fields),
+        Ok(asset) => tracing::info!(
+            action = "asset.delete",
+            asset_id = %asset.id,
+            asset_name = %asset.name,
+            asset_kind = ?asset.kind,
+            "删除资产成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "asset.delete",
+            asset_id = %asset_id,
+            error = %error,
+            "删除资产失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn list_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
-    AppService::from_runtime(&state.runtime).list_sources()
+pub(crate) async fn list_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
+    AppService::from_runtime(&state.runtime)
+        .list_sources()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_sources(state: State<'_, AppState>) -> RuntimeAppResult<Vec<Source>> {
-    AppService::from_runtime(&state.runtime).list_skill_sources()
+pub(crate) async fn list_skill_sources(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<Source>> {
+    AppService::from_runtime(&state.runtime)
+        .list_skill_sources()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_source(
+pub(crate) async fn create_source(
     state: State<'_, AppState>,
     source: SourceInput,
 ) -> RuntimeAppResult<Source> {
-    let input_fields = source_input_log_fields(&source);
-    let result = (|| AppService::from_runtime(&state.runtime).add_source(source))();
+    let source_name = source.name.clone();
+    let source_kind = format!("{:?}", source.kind);
+    let result = AppService::from_runtime(&state.runtime)
+        .add_source(source)
+        .await;
 
     match &result {
-        Ok(source) => log_info(
-            "source.create",
-            "添加数据来源成功",
-            &source_log_fields(source),
+        Ok(source) => tracing::info!(
+            action = "source.create",
+            source_id = %source.id,
+            source_name = %source.name,
+            source_kind = ?source.kind,
+            "添加数据来源成功"
         ),
-        Err(error) => log_error("source.create", "添加数据来源失败", error, &input_fields),
+        Err(error) => tracing::error!(
+            action = "source.create",
+            source_name = %source_name,
+            source_kind = %source_kind,
+            error = %error,
+            "添加数据来源失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn update_source(
+pub(crate) async fn update_source(
     state: State<'_, AppState>,
     source: Source,
 ) -> RuntimeAppResult<Source> {
-    let input_fields = source_log_fields(&source);
-    let result = (|| AppService::from_runtime(&state.runtime).update_source(source))();
+    let source_id = source.id.clone();
+    let source_name = source.name.clone();
+    let source_kind = format!("{:?}", source.kind);
+    let result = AppService::from_runtime(&state.runtime)
+        .update_source(source)
+        .await;
 
     match &result {
-        Ok(source) => log_info(
-            "source.update",
-            "更新数据来源成功",
-            &source_log_fields(source),
+        Ok(source) => tracing::info!(
+            action = "source.update",
+            source_id = %source.id,
+            source_name = %source.name,
+            source_kind = ?source.kind,
+            "更新数据来源成功"
         ),
-        Err(error) => log_error("source.update", "更新数据来源失败", error, &input_fields),
+        Err(error) => tracing::error!(
+            action = "source.update",
+            source_id = %source_id,
+            source_name = %source_name,
+            source_kind = %source_kind,
+            error = %error,
+            "更新数据来源失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
-    let fields = vec![("source_id", id.clone())];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime)
-            .remove_source(SourceRemoveParams {
-                id: id.clone(),
-                dry_run: false,
-                yes: true,
-            })
-            .map(|_| ())
-    })();
+pub(crate) async fn delete_source(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
+    let result = AppService::from_runtime(&state.runtime)
+        .remove_source(SourceRemoveParams {
+            id: id.clone(),
+            dry_run: false,
+            yes: true,
+        })
+        .await
+        .map(|_| ());
 
     match &result {
-        Ok(()) => log_info("source.delete", "删除数据来源成功", &fields),
-        Err(error) => log_error("source.delete", "删除数据来源失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "source.delete",
+            source_id = %id,
+            "删除数据来源成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "source.delete",
+            source_id = %id,
+            error = %error,
+            "删除数据来源失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn list_profiles(state: State<'_, AppState>) -> RuntimeAppResult<Vec<TargetProfile>> {
-    AppService::from_runtime(&state.runtime).list_profiles()
+pub(crate) async fn list_profiles(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<TargetProfile>> {
+    AppService::from_runtime(&state.runtime)
+        .list_profiles()
+        .await
 }
 
 #[tauri::command]
@@ -931,436 +1022,509 @@ pub(crate) fn list_target_profile_descriptors(
 }
 
 #[tauri::command]
-pub(crate) fn refresh_target_profile_descriptors(
+pub(crate) async fn refresh_target_profile_descriptors(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<TargetProfileDescriptor>> {
-    AppService::from_runtime(&state.runtime).refresh_target_profile_descriptors()
+    AppService::from_runtime(&state.runtime)
+        .refresh_target_profile_descriptors()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_profile(
+pub(crate) async fn create_profile(
     state: State<'_, AppState>,
     input: TargetProfileInput,
 ) -> RuntimeAppResult<TargetProfile> {
-    let mut input_fields = vec![("profile_name", input.name.clone())];
-    if let Some(target_paths) = &input.target_paths {
-        input_fields.push(("target_paths", target_paths.join(",")));
-    }
-    if let Some(app_kind) = input.app_kind {
-        input_fields.push(("app_kind", format!("{app_kind:?}")));
-    }
-    let result = (|| AppService::from_runtime(&state.runtime).create_profile(input))();
+    let profile_name = input.name.clone();
+    let target_path_count = input
+        .target_paths
+        .as_ref()
+        .map(|paths| paths.len())
+        .unwrap_or(0);
+    let app_kind = input.app_kind.map(|k| format!("{k:?}"));
+    let result = AppService::from_runtime(&state.runtime)
+        .create_profile(input)
+        .await;
 
     match &result {
-        Ok(profile) => log_info(
-            "profile.create",
-            "添加目标 APP 配置成功",
-            &profile_log_fields(profile),
+        Ok(profile) => tracing::info!(
+            action = "profile.create",
+            profile_id = %profile.id,
+            profile_name = %profile.name,
+            target_path_count = profile.target_paths.len(),
+            "添加目标 APP 配置成功"
         ),
-        Err(error) => log_error(
-            "profile.create",
-            "添加目标 APP 配置失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "profile.create",
+            profile_name = %profile_name,
+            target_path_count = target_path_count,
+            app_kind = ?app_kind,
+            error = %error,
+            "添加目标 APP 配置失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn update_profile(
+pub(crate) async fn update_profile(
     state: State<'_, AppState>,
     profile: TargetProfile,
 ) -> RuntimeAppResult<TargetProfile> {
-    let input_fields = profile_log_fields(&profile);
-    let result = (|| AppService::from_runtime(&state.runtime).update_profile(profile))();
+    let profile_id = profile.id.clone();
+    let profile_name = profile.name.clone();
+    let target_path_count = profile.target_paths.len();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_profile(profile)
+        .await;
 
     match &result {
-        Ok(profile) => log_info(
-            "profile.update",
-            "更新目标 APP 配置成功",
-            &profile_log_fields(profile),
+        Ok(profile) => tracing::info!(
+            action = "profile.update",
+            profile_id = %profile.id,
+            profile_name = %profile.name,
+            target_path_count = profile.target_paths.len(),
+            "更新目标 APP 配置成功"
         ),
-        Err(error) => log_error(
-            "profile.update",
-            "更新目标 APP 配置失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "profile.update",
+            profile_id = %profile_id,
+            profile_name = %profile_name,
+            target_path_count = target_path_count,
+            error = %error,
+            "更新目标 APP 配置失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
-    let fields = vec![("profile_id", id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).delete_profile(id))();
+pub(crate) async fn delete_profile(state: State<'_, AppState>, id: String) -> RuntimeAppResult<()> {
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_profile(id.clone())
+        .await;
 
     match &result {
-        Ok(()) => log_info("profile.delete", "删除目标 APP 配置成功", &fields),
-        Err(error) => log_error("profile.delete", "删除目标 APP 配置失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "profile.delete",
+            profile_id = %id,
+            "删除目标 APP 配置成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "profile.delete",
+            profile_id = %id,
+            error = %error,
+            "删除目标 APP 配置失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn get_navigation_model(
+pub(crate) async fn get_navigation_model(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<NavigationModel> {
-    AppService::from_runtime(&state.runtime).navigation_model()
+    AppService::from_runtime(&state.runtime)
+        .navigation_model()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_navigation_model(
+pub(crate) async fn update_navigation_model(
     state: State<'_, AppState>,
     model: NavigationModel,
 ) -> RuntimeAppResult<NavigationModel> {
-    let fields = vec![
-        ("active_rail_id", model.active_rail_id.clone()),
-        ("active_header_tab_id", model.active_header_tab_id.clone()),
-        ("active_sub_nav_id", model.active_sub_nav_id.clone()),
-        ("rail_count", model.rail_items.len().to_string()),
-    ];
-    let result = (|| AppService::from_runtime(&state.runtime).update_navigation_model(model))();
+    let active_rail_id = model.active_rail_id.clone();
+    let active_header_tab_id = model.active_header_tab_id.clone();
+    let active_sub_nav_id = model.active_sub_nav_id.clone();
+    let rail_count = model.rail_items.len();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_navigation_model(model)
+        .await;
 
     match &result {
-        Ok(_) => log_info("navigation.update", "更新导航配置成功", &fields),
-        Err(error) => log_error("navigation.update", "更新导航配置失败", error, &fields),
+        Ok(_) => tracing::info!(
+            action = "navigation.update",
+            active_rail_id = %active_rail_id,
+            active_header_tab_id = %active_header_tab_id,
+            active_sub_nav_id = %active_sub_nav_id,
+            rail_count = rail_count,
+            "更新导航配置成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "navigation.update",
+            active_rail_id = %active_rail_id,
+            active_header_tab_id = %active_header_tab_id,
+            active_sub_nav_id = %active_sub_nav_id,
+            rail_count = rail_count,
+            error = %error,
+            "更新导航配置失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn list_app_shortcuts(state: State<'_, AppState>) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime).list_app_shortcuts()
-}
-
-#[tauri::command]
-pub(crate) fn list_app_shortcut_settings(
+pub(crate) async fn list_app_shortcuts(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<AppShortcut>> {
-    AppService::from_runtime(&state.runtime).list_app_shortcut_settings()
+    AppService::from_runtime(&state.runtime)
+        .list_app_shortcuts()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_app_shortcuts(
+pub(crate) async fn list_app_shortcut_settings(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<Vec<AppShortcut>> {
+    AppService::from_runtime(&state.runtime)
+        .list_app_shortcut_settings()
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn update_app_shortcuts(
     state: State<'_, AppState>,
     shortcuts: Vec<AppShortcut>,
 ) -> RuntimeAppResult<Vec<AppShortcut>> {
-    let fields = vec![("shortcut_count", shortcuts.len().to_string())];
-    let result = (|| AppService::from_runtime(&state.runtime).update_app_shortcuts(shortcuts))();
+    let shortcut_count = shortcuts.len();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_app_shortcuts(shortcuts)
+        .await;
 
     match &result {
-        Ok(shortcuts) => log_info(
-            "settings.app_shortcuts.update",
-            "更新 APP 快捷入口配置成功",
-            &[("shortcut_count", shortcuts.len().to_string())],
+        Ok(shortcuts) => tracing::info!(
+            action = "settings.app_shortcuts.update",
+            shortcut_count = shortcuts.len(),
+            "更新 APP 快捷入口配置成功"
         ),
-        Err(error) => log_error(
-            "settings.app_shortcuts.update",
-            "更新 APP 快捷入口配置失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "settings.app_shortcuts.update",
+            shortcut_count = shortcut_count,
+            error = %error,
+            "更新 APP 快捷入口配置失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn list_asset_mounts(
+pub(crate) async fn list_asset_mounts(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMount>> {
-    AppService::from_runtime(&state.runtime).list_asset_mounts(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime)
+        .list_asset_mounts(asset_id.as_deref())
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_asset_mount_statuses(
+pub(crate) async fn list_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMountStatus>> {
-    AppService::from_runtime(&state.runtime).list_asset_mount_statuses(asset_id.as_deref())
+    AppService::from_runtime(&state.runtime)
+        .list_asset_mount_statuses(asset_id.as_deref())
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn refresh_asset_mount_statuses(
+pub(crate) async fn refresh_asset_mount_statuses(
     state: State<'_, AppState>,
     asset_id: Option<String>,
 ) -> RuntimeAppResult<Vec<AssetMountStatus>> {
-    let fields = asset_id
-        .as_ref()
-        .map(|asset_id| vec![("asset_id", asset_id.clone())])
-        .unwrap_or_default();
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).refresh_asset_mount_statuses(asset_id.as_deref())
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .refresh_asset_mount_statuses(asset_id.as_deref())
+        .await;
 
     match &result {
         Ok(statuses) => {
-            let mut fields = fields.clone();
-            fields.extend(status_summary_fields(statuses));
-            log_info("mount_status.refresh", "刷新挂载状态成功", &fields);
+            let mounted = statuses
+                .iter()
+                .filter(|status| status.state == PhysicalMountStateDto::Mounted)
+                .count();
+            let issues = statuses
+                .iter()
+                .filter(|status| {
+                    matches!(
+                        status.state,
+                        PhysicalMountStateDto::Conflict | PhysicalMountStateDto::Broken
+                    )
+                })
+                .count();
+            tracing::info!(
+                action = "mount_status.refresh",
+                asset_id = ?asset_id,
+                count = statuses.len(),
+                mounted = mounted,
+                issues = issues,
+                "刷新挂载状态成功"
+            );
         }
-        Err(error) => log_error("mount_status.refresh", "刷新挂载状态失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "mount_status.refresh",
+            asset_id = ?asset_id,
+            error = %error,
+            "刷新挂载状态失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn list_skill_groups(
+pub(crate) async fn list_skill_groups(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<AssetGroupDetail>> {
-    AppService::from_runtime(&state.runtime).list_skill_groups()
+    AppService::from_runtime(&state.runtime)
+        .list_skill_groups()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_skill_group(
+pub(crate) async fn create_skill_group(
     state: State<'_, AppState>,
     input: AssetGroupInput,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let input_fields = vec![("group_name", input.name.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).create_skill_group(input))();
+    let group_name = input.name.clone();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_skill_group(input)
+        .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.create",
-            "添加 skill 分组成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.create",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "添加 skill 分组成功"
         ),
-        Err(error) => log_error(
-            "skill_group.create",
-            "添加 skill 分组失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.create",
+            group_name = %group_name,
+            error = %error,
+            "添加 skill 分组失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn update_skill_group(
+pub(crate) async fn update_skill_group(
     state: State<'_, AppState>,
     group: AssetGroup,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let input_fields = vec![
-        ("group_id", group.id.clone()),
-        ("group_name", group.name.clone()),
-    ];
-    let result = (|| AppService::from_runtime(&state.runtime).update_skill_group(group))();
+    let group_id = group.id.clone();
+    let group_name = group.name.clone();
+    let result = AppService::from_runtime(&state.runtime)
+        .update_skill_group(group)
+        .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.update",
-            "更新 skill 分组成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.update",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "更新 skill 分组成功"
         ),
-        Err(error) => log_error(
-            "skill_group.update",
-            "更新 skill 分组失败",
-            error,
-            &input_fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.update",
+            group_id = %group_id,
+            group_name = %group_name,
+            error = %error,
+            "更新 skill 分组失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn delete_skill_group(
+pub(crate) async fn delete_skill_group(
     state: State<'_, AppState>,
     group_id: String,
 ) -> RuntimeAppResult<()> {
-    let fields = vec![("group_id", group_id.clone())];
-    let result = (|| AppService::from_runtime(&state.runtime).delete_skill_group(group_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .delete_skill_group(group_id.clone())
+        .await;
 
     match &result {
-        Ok(()) => log_info("skill_group.delete", "删除 skill 分组成功", &fields),
-        Err(error) => log_error("skill_group.delete", "删除 skill 分组失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "skill_group.delete",
+            group_id = %group_id,
+            "删除 skill 分组成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "skill_group.delete",
+            group_id = %group_id,
+            error = %error,
+            "删除 skill 分组失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn set_skill_group_manual_members(
+pub(crate) async fn set_skill_group_manual_members(
     state: State<'_, AppState>,
     group_id: String,
     asset_ids: Vec<String>,
 ) -> RuntimeAppResult<AssetGroupDetail> {
-    let fields = vec![
-        ("group_id", group_id.clone()),
-        ("asset_count", asset_ids.len().to_string()),
-    ];
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).set_skill_group_manual_members(group_id, asset_ids)
-    })();
+    let asset_count = asset_ids.len();
+    let result = AppService::from_runtime(&state.runtime)
+        .set_skill_group_manual_members(group_id.clone(), asset_ids)
+        .await;
 
     match &result {
-        Ok(detail) => log_info(
-            "skill_group.members.update",
-            "更新 skill 分组成员成功",
-            &[
-                ("group_id", detail.group.id.clone()),
-                ("group_name", detail.group.name.clone()),
-                ("member_count", detail.members.len().to_string()),
-            ],
+        Ok(detail) => tracing::info!(
+            action = "skill_group.members.update",
+            group_id = %detail.group.id,
+            group_name = %detail.group.name,
+            member_count = detail.members.len(),
+            "更新 skill 分组成员成功"
         ),
-        Err(error) => log_error(
-            "skill_group.members.update",
-            "更新 skill 分组成员失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.members.update",
+            group_id = %group_id,
+            asset_count = asset_count,
+            error = %error,
+            "更新 skill 分组成员失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn preview_skill_group_exclusive_mount(
+pub(crate) async fn preview_skill_group_exclusive_mount(
     state: State<'_, AppState>,
     input: SkillGroupExclusiveMountInput,
 ) -> RuntimeAppResult<SkillGroupExclusiveMountPreview> {
-    let fields = vec![
-        ("profile_id", input.profile_id.clone()),
-        ("group_count", input.group_ids.len().to_string()),
-    ];
-    let result =
-        (|| AppService::from_runtime(&state.runtime).preview_skill_group_exclusive_mount(input))();
+    let profile_id = input.profile_id.clone();
+    let group_count = input.group_ids.len();
+    let result = AppService::from_runtime(&state.runtime)
+        .preview_skill_group_exclusive_mount(input)
+        .await;
 
     match &result {
         Ok(preview) => {
-            log_info(
-                "skill_group.exclusive.preview",
-                "预览 skill 分组独占挂载成功",
-                &[
-                    ("profile_id", preview.profile_id.clone()),
-                    ("group_count", preview.group_ids.len().to_string()),
-                    (
-                        "selected_count",
-                        preview.selected_skill_ids.len().to_string(),
-                    ),
-                    ("keep_count", preview.keep_count.to_string()),
-                    ("mount_count", preview.mount_count.to_string()),
-                    ("unmount_count", preview.unmount_count.to_string()),
-                    ("skipped_count", preview.skipped_count.to_string()),
-                ],
+            tracing::info!(
+                action = "skill_group.exclusive.preview",
+                profile_id = %preview.profile_id,
+                group_count = preview.group_ids.len(),
+                selected_count = preview.selected_skill_ids.len(),
+                keep_count = preview.keep_count,
+                mount_count = preview.mount_count,
+                unmount_count = preview.unmount_count,
+                skipped_count = preview.skipped_count,
+                "预览 skill 分组独占挂载成功"
             );
             for item in &preview.skipped {
-                log_warn(
-                    "skill_group.exclusive.skipped",
-                    "skill 独占挂载预览跳过",
-                    &[
-                        ("profile_id", preview.profile_id.clone()),
-                        ("asset_id", item.asset_id.clone()),
-                        ("skill_name", item.name.clone()),
-                        ("reason", item.reason.clone()),
-                    ],
+                tracing::warn!(
+                    action = "skill_group.exclusive.skipped",
+                    profile_id = %preview.profile_id,
+                    asset_id = %item.asset_id,
+                    skill_name = %item.name,
+                    reason = %item.reason,
+                    "skill 独占挂载预览跳过"
                 );
             }
         }
-        Err(error) => log_error(
-            "skill_group.exclusive.preview",
-            "预览 skill 分组独占挂载失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "skill_group.exclusive.preview",
+            profile_id = %profile_id,
+            group_count = group_count,
+            error = %error,
+            "预览 skill 分组独占挂载失败"
         ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn toggle_asset_mount(
+pub(crate) async fn toggle_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMount> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).toggle_asset_mount(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .toggle_asset_mount(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.toggle",
-            "切换 skill 挂载失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.mount.toggle",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "切换 skill 挂载失败"
         );
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn unmount_asset_mount(
+pub(crate) async fn unmount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMountUpdateResult> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).unmount_asset_by_id(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .unmount_asset_by_id(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.unmount.command",
-            "卸载 skill 命令失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.unmount.command",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "卸载 skill 命令失败"
         );
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn mount_asset_mount(
+pub(crate) async fn mount_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
 ) -> RuntimeAppResult<AssetMountUpdateResult> {
-    let result =
-        (|| AppService::from_runtime(&state.runtime).mount_asset_by_id(&asset_id, &profile_id))();
+    let result = AppService::from_runtime(&state.runtime)
+        .mount_asset_by_id(&asset_id, &profile_id)
+        .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.command",
-            "挂载 skill 命令失败",
-            error,
-            &[("asset_id", asset_id), ("profile_id", profile_id)],
+        tracing::error!(
+            action = "skill.mount.command",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            error = %error,
+            "挂载 skill 命令失败"
         );
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn set_asset_mount(
+pub(crate) async fn set_asset_mount(
     state: State<'_, AppState>,
     asset_id: String,
     profile_id: String,
     enabled: bool,
     strategy: Option<DeploymentStrategy>,
 ) -> RuntimeAppResult<AssetMount> {
-    let result = (|| {
-        AppService::from_runtime(&state.runtime).set_asset_mount(
-            &asset_id,
-            &profile_id,
-            enabled,
-            strategy,
-        )
-    })();
+    let result = AppService::from_runtime(&state.runtime)
+        .set_asset_mount(&asset_id, &profile_id, enabled, strategy)
+        .await;
 
     if let Err(error) = &result {
-        log_error(
-            "skill.mount.set",
-            "设置 skill 挂载关系失败",
-            error,
-            &[
-                ("asset_id", asset_id),
-                ("profile_id", profile_id),
-                ("enabled", enabled.to_string()),
-            ],
+        tracing::error!(
+            action = "skill.mount.set",
+            asset_id = %asset_id,
+            profile_id = %profile_id,
+            enabled = enabled,
+            error = %error,
+            "设置 skill 挂载关系失败"
         );
     }
     result
@@ -1402,33 +1566,26 @@ pub(crate) fn start_source_scan(
     let skill_sources_only = scope == SourceScanScope::Skills;
     let worker_app = app.clone();
     let worker_task_id = task_id.clone();
-    let spawn_result = std::thread::Builder::new()
-        .name(format!("aiw-source-scan-{}", &task_id[..8]))
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let service = AppService::from_runtime(&runtime);
-                crate::backend::application::SourceScanWorkflow::run(
-                    &service,
-                    params,
-                    &task_context,
-                    skill_sources_only,
-                )
-            }))
-            .unwrap_or_else(|_| Err(AppError::Process("source scan worker panicked".to_string())));
-            if let Ok(snapshot) = tasks.finish_source_scan(&worker_task_id, result) {
-                let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
-            }
-        });
-    if let Err(error) = spawn_result {
-        let failure = state.background_tasks.finish_source_scan(
-            &task_id,
-            Err(AppError::Process(format!(
-                "启动 source scan worker 失败: {error}"
-            ))),
-        )?;
-        let _ = app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &failure);
-        return Ok(failure);
-    }
+    tauri::async_runtime::spawn(async move {
+        let result = match tokio::spawn(async move {
+            let service = AppService::from_runtime(&runtime);
+            crate::backend::application::SourceScanWorkflow::run(
+                &service,
+                params,
+                &task_context,
+                skill_sources_only,
+            )
+            .await
+        })
+        .await
+        {
+            Ok(inner_result) => inner_result,
+            Err(_) => Err(AppError::Process("source scan worker panicked".to_string())),
+        };
+        if let Ok(snapshot) = tasks.finish_source_scan(&worker_task_id, result) {
+            let _ = worker_app.emit(SOURCE_SCAN_TASK_UPDATED_EVENT, &snapshot);
+        }
+    });
     Ok(snapshot)
 }
 
@@ -1578,29 +1735,32 @@ pub(crate) fn start_batch_mount(
                         "batch mount cancelled before execution".to_string(),
                     ));
                 }
-                service
-                    .run_batch_mount_workflow_with_progress(
-                        worker_input,
-                        |completed, total, current_id| {
-                            if task_context.is_cancelled() {
-                                return Err(AppError::Cancelled(
-                                    "batch mount cancelled".to_string(),
-                                ));
-                            }
-                            tasks
-                                .update_batch_mount_progress(
-                                    &worker_task_id,
-                                    completed as u64,
-                                    Some(total as u64),
-                                    Some(current_id),
-                                )
-                                .map(|_| ())
-                        },
-                    )
-                    .and_then(|value| {
-                        serde_json::to_value(value)
-                            .map_err(|error| AppError::External(error.to_string()))
-                    })
+                tauri::async_runtime::block_on(async {
+                    service
+                        .run_batch_mount_workflow_with_progress(
+                            worker_input,
+                            |completed, total, current_id| {
+                                if task_context.is_cancelled() {
+                                    return Err(AppError::Cancelled(
+                                        "batch mount cancelled".to_string(),
+                                    ));
+                                }
+                                tasks
+                                    .update_batch_mount_progress(
+                                        &worker_task_id,
+                                        completed as u64,
+                                        Some(total as u64),
+                                        Some(current_id),
+                                    )
+                                    .map(|_| ())
+                            },
+                        )
+                        .await
+                })
+                .and_then(|value| {
+                    serde_json::to_value(value)
+                        .map_err(|error| AppError::External(error.to_string()))
+                })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::External(
@@ -1735,10 +1895,12 @@ pub(crate) fn validate_conversation_adapter(
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_adapter_runtime_statuses(
+pub(crate) async fn list_conversation_adapter_runtime_statuses(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<crate::backend::conversations::ConversationAdapterRuntimeStatus>> {
-    AppService::from_runtime(&state.runtime).list_conversation_adapter_runtime_statuses()
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_adapter_runtime_statuses()
+        .await
 }
 
 #[tauri::command]
@@ -1758,12 +1920,9 @@ pub(crate) async fn check_agent_connection(
     state: State<'_, AppState>,
     params: AgentConnectionCheckRequest,
 ) -> RuntimeAppResult<AgentConnectionResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_agent_connection(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .check_agent_connection(params)
+        .await
 }
 
 #[tauri::command]
@@ -1771,36 +1930,23 @@ pub(crate) async fn list_agent_models(
     state: State<'_, AppState>,
     params: AgentModelsRequest,
 ) -> RuntimeAppResult<AgentModelsResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_agent_models(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_agent_models(params)
+        .await
 }
 
 #[tauri::command]
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<OpencodeTranslationAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_opencode_translation_availability()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).check_opencode_translation_availability()
 }
 
 #[tauri::command]
 pub(crate) async fn check_prompt_optimization_availability(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_prompt_optimization_availability()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).check_prompt_optimization_availability()
 }
 
 #[tauri::command]
@@ -1808,12 +1954,9 @@ pub(crate) async fn translate_conversation_card_with_opencode(
     state: State<'_, AppState>,
     params: OpencodeTranslationRequest,
 ) -> RuntimeAppResult<OpencodeTranslationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).translate_conversation_card_with_opencode(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .translate_conversation_card_with_opencode(params)
+        .await
 }
 
 #[tauri::command]
@@ -1821,12 +1964,9 @@ pub(crate) async fn translate_conversation_card(
     state: State<'_, AppState>,
     params: ConversationTranslationRequest,
 ) -> RuntimeAppResult<OpencodeTranslationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).translate_conversation_card(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .translate_conversation_card(params)
+        .await
 }
 
 #[tauri::command]
@@ -1834,12 +1974,9 @@ pub(crate) async fn optimize_prompt(
     state: State<'_, AppState>,
     params: PromptOptimizationRequest,
 ) -> RuntimeAppResult<PromptOptimizationResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).optimize_prompt(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .optimize_prompt(params)
+        .await
 }
 
 #[tauri::command]
@@ -1847,12 +1984,9 @@ pub(crate) async fn test_conversation_translation_connection(
     state: State<'_, AppState>,
     params: ConversationTranslationConnectionRequest,
 ) -> RuntimeAppResult<OpencodeTranslationAvailability> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).test_conversation_translation_connection(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .test_conversation_translation_connection(params)
+        .await
 }
 
 #[tauri::command]
@@ -1860,12 +1994,7 @@ pub(crate) async fn list_conversation_translation_models(
     state: State<'_, AppState>,
     params: ConversationTranslationModelsRequest,
 ) -> RuntimeAppResult<ConversationTranslationModelsResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_conversation_translation_models(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime).list_conversation_translation_models(params)
 }
 
 trait AiExecutionTaskEmitter: Send + Sync {
@@ -1879,11 +2008,11 @@ struct TauriAiExecutionTaskEmitter {
 impl AiExecutionTaskEmitter for TauriAiExecutionTaskEmitter {
     fn emit(&self, snapshot: &AiExecutionTaskSnapshot) {
         if let Err(error) = self.app.emit(AI_EXECUTION_TASK_UPDATED_EVENT, snapshot) {
-            log_error(
-                "ai_execution.task",
-                "推送 AI 执行任务状态失败",
-                &error.to_string(),
-                &[("task_id", snapshot.id.clone())],
+            tracing::error!(
+                action = "ai_execution.task",
+                task_id = %snapshot.id,
+                error = %error,
+                "推送 AI 执行任务状态失败"
             );
         }
     }
@@ -1908,11 +2037,11 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
         }
         match self.tasks.update_ai_execution_phase(&self.task_id, phase) {
             Ok(snapshot) => self.emitter.emit(&snapshot),
-            Err(error) => log_error(
-                "ai_execution.task",
-                "更新 AI 执行任务阶段失败",
-                &error,
-                &[("task_id", self.task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "ai_execution.task",
+                task_id = %self.task_id,
+                error = %error,
+                "更新 AI 执行任务阶段失败"
             ),
         }
     }
@@ -1930,11 +2059,11 @@ impl AiExecutionProgressSink for RegistryAiExecutionProgressSink {
             .update_ai_execution_cleanup(&self.task_id, report)
         {
             Ok(snapshot) => self.emitter.emit(&snapshot),
-            Err(error) => log_error(
-                "ai_execution.task",
-                "更新 AI 执行清理报告失败",
-                &error,
-                &[("task_id", self.task_id.clone())],
+            Err(error) => tracing::error!(
+                action = "ai_execution.task",
+                task_id = %self.task_id,
+                error = %error,
+                "更新 AI 执行清理报告失败"
             ),
         }
     }
@@ -2009,11 +2138,11 @@ async fn run_ai_execution_task(
         .and_then(|progress| progress.failure_phase());
     match tasks.finish_ai_execution_with_phase(&task_id, result, failure_phase) {
         Ok(snapshot) => emitter.emit(&snapshot),
-        Err(error) => log_error(
-            "ai_execution.task",
-            "收敛 AI 执行任务状态失败",
-            &error,
-            &[("task_id", task_id)],
+        Err(error) => tracing::error!(
+            action = "ai_execution.task",
+            task_id = %task_id,
+            error = %error,
+            "收敛 AI 执行任务状态失败"
         ),
     }
 }
@@ -2073,27 +2202,33 @@ pub(crate) fn cancel_ai_execution_task(
 }
 
 #[tauri::command]
-pub(crate) fn register_conversation_adapter(
+pub(crate) async fn register_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterRegisterParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).register_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime)
+        .register_conversation_adapter(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn unregister_conversation_adapter(
+pub(crate) async fn unregister_conversation_adapter(
     state: State<'_, AppState>,
     params: ConversationAdapterUnregisterParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).unregister_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime)
+        .unregister_conversation_adapter(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn try_run_conversation_adapter(
+pub(crate) async fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
 ) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-    AppService::from_runtime(&state.runtime).try_run_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime)
+        .try_run_conversation_adapter(params)
+        .await
 }
 
 #[tauri::command]
@@ -2101,51 +2236,58 @@ pub(crate) async fn project_conversation_command_parts(
     state: State<'_, AppState>,
     params: ConversationCommandProjectionParams,
 ) -> RuntimeAppResult<Vec<ConversationCommandProjection>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).project_conversation_command_parts(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .project_conversation_command_parts(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_sources(
+pub(crate) async fn list_conversation_sources(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<ConversationSource>> {
-    AppService::from_runtime(&state.runtime).list_conversation_sources()
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_sources()
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn upsert_conversation_source(
+pub(crate) async fn upsert_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceUpsertParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).upsert_conversation_source(params)
+    AppService::from_runtime(&state.runtime)
+        .upsert_conversation_source(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn disable_conversation_source(
+pub(crate) async fn disable_conversation_source(
     state: State<'_, AppState>,
     params: ConversationSourceDisableParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).disable_conversation_source(params)
+    AppService::from_runtime(&state.runtime)
+        .disable_conversation_source(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_script_catalog(
+pub(crate) async fn list_conversation_script_catalog(
     state: State<'_, AppState>,
     params: ConversationScriptCatalogParams,
 ) -> RuntimeAppResult<Vec<crate::backend::application::ConversationScriptCatalogEntry>> {
-    AppService::from_runtime(&state.runtime).list_conversation_script_catalog(params)
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_script_catalog(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn register_conversation_adapter_local(
+pub(crate) async fn register_conversation_adapter_local(
     state: State<'_, AppState>,
     params: ConversationAdapterLocalRegisterParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).register_conversation_adapter_local(params)
+    AppService::from_runtime(&state.runtime)
+        .register_conversation_adapter_local(params)
+        .await
 }
 
 #[tauri::command]
@@ -2153,12 +2295,9 @@ pub(crate) async fn inspect_conversation_adapter_package(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageInspectParams,
 ) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageInspection> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).inspect_conversation_adapter_package(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .inspect_conversation_adapter_package(params)
+        .await
 }
 
 #[tauri::command]
@@ -2166,12 +2305,9 @@ pub(crate) async fn prepare_conversation_adapter_package_change(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageChangeParams,
 ) -> RuntimeAppResult<crate::backend::application::ConversationAdapterPackageChangePreflight> {
-    let runtime = state.runtime.clone();
-    let mut preflight = tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).prepare_conversation_adapter_package_change(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))??;
+    let mut preflight = AppService::from_runtime(&state.runtime)
+        .prepare_conversation_adapter_package_change(params)
+        .await?;
     if state
         .background_tasks
         .conversation_script_install_snapshot()?
@@ -2187,12 +2323,9 @@ pub(crate) async fn list_conversation_adapter_packages(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageCatalogParams,
 ) -> RuntimeAppResult<Vec<crate::backend::application::ConversationAdapterPackageCatalogEntry>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_conversation_adapter_packages(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_adapter_packages(params)
+        .await
 }
 
 #[tauri::command]
@@ -2200,12 +2333,9 @@ pub(crate) async fn list_conversation_adapter_package_releases(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageReleaseListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_conversation_adapter_package_releases(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_adapter_package_releases(params)
+        .await
 }
 
 #[tauri::command]
@@ -2213,13 +2343,9 @@ pub(crate) async fn list_installed_conversation_adapter_package_versions(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterPackageVersion>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime)
-            .list_installed_conversation_adapter_package_versions(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_installed_conversation_adapter_package_versions(params)
+        .await
 }
 
 #[tauri::command]
@@ -2227,12 +2353,9 @@ pub(crate) async fn switch_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).switch_conversation_adapter_package_version(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .switch_conversation_adapter_package_version(params)
+        .await
 }
 
 #[tauri::command]
@@ -2240,12 +2363,9 @@ pub(crate) async fn rollback_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).rollback_conversation_adapter_package_version(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .rollback_conversation_adapter_package_version(params)
+        .await
 }
 
 #[tauri::command]
@@ -2253,12 +2373,9 @@ pub(crate) async fn delete_conversation_adapter_package_version(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageVersionChangeParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).delete_conversation_adapter_package_version(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .delete_conversation_adapter_package_version(params)
+        .await
 }
 
 #[tauri::command]
@@ -2266,12 +2383,9 @@ pub(crate) async fn refresh_conversation_adapter_catalogs(
     state: State<'_, AppState>,
     params: ConversationAdapterCatalogRefreshParams,
 ) -> RuntimeAppResult<Vec<crate::backend::models::ConversationAdapterCatalogRelease>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).refresh_conversation_adapter_catalogs(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .refresh_conversation_adapter_catalogs(params)
+        .await
 }
 
 #[tauri::command]
@@ -2279,12 +2393,9 @@ pub(crate) async fn check_conversation_adapter_package_updates(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdateCheckParams,
 ) -> RuntimeAppResult<Vec<crate::backend::application::ConversationAdapterPackageUpdateStatus>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_conversation_adapter_package_updates(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .check_conversation_adapter_package_updates(params)
+        .await
 }
 
 #[tauri::command]
@@ -2292,12 +2403,9 @@ pub(crate) async fn set_conversation_adapter_package_update_policy(
     state: State<'_, AppState>,
     params: ConversationAdapterPackageUpdatePolicyParams,
 ) -> RuntimeAppResult<crate::backend::models::ConversationAdapterPackage> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).set_conversation_adapter_package_update_policy(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .set_conversation_adapter_package_update_policy(params)
+        .await
 }
 
 #[tauri::command]
@@ -2320,7 +2428,13 @@ pub(crate) fn install_conversation_adapter_package(
         state.background_tasks.clone(),
         task_id,
         "conversation.adapter_package.install",
-        move || AppService::from_runtime(&runtime).install_conversation_adapter_package(params),
+        move || {
+            tauri::async_runtime::block_on(async {
+                AppService::from_runtime(&runtime)
+                    .install_conversation_adapter_package(params)
+                    .await
+            })
+        },
     )?;
 
     Ok(snapshot)
@@ -2346,7 +2460,13 @@ pub(crate) fn update_conversation_adapter_package(
         state.background_tasks.clone(),
         task_id,
         "conversation.adapter_package.update",
-        move || AppService::from_runtime(&runtime).update_conversation_adapter_package(params),
+        move || {
+            tauri::async_runtime::block_on(async {
+                AppService::from_runtime(&runtime)
+                    .update_conversation_adapter_package(params)
+                    .await
+            })
+        },
     )?;
 
     Ok(snapshot)
@@ -2371,7 +2491,13 @@ pub(crate) fn uninstall_conversation_adapter_package(
         state.background_tasks.clone(),
         task_id,
         "conversation.adapter_package.uninstall",
-        move || AppService::from_runtime(&runtime).uninstall_conversation_adapter_package(params),
+        move || {
+            tauri::async_runtime::block_on(async {
+                AppService::from_runtime(&runtime)
+                    .uninstall_conversation_adapter_package(params)
+                    .await
+            })
+        },
     )?;
     Ok(snapshot)
 }
@@ -2405,7 +2531,13 @@ pub(crate) fn install_conversation_script(
         state.background_tasks.clone(),
         task_id,
         "conversation.script.install",
-        move || AppService::from_runtime(&runtime).install_conversation_script(params),
+        move || {
+            tauri::async_runtime::block_on(async {
+                AppService::from_runtime(&runtime)
+                    .install_conversation_script(params)
+                    .await
+            })
+        },
     )?;
 
     Ok(snapshot)
@@ -2482,34 +2614,37 @@ pub(crate) fn start_conversation_sync_background(
                                 if let Err(error) =
                                     progress_app.emit("conversation-sync-task-updated", &snapshot)
                                 {
-                                    log_error(
-                                        "conversation.sync",
-                                        "推送后台同步进度失败",
-                                        &error.to_string(),
-                                        &[("task_id", progress_task_id.clone())],
+                                    tracing::error!(
+                                        action = "conversation.sync",
+                                        task_id = %progress_task_id,
+                                        error = %error,
+                                        "推送后台同步进度失败"
                                     );
                                 }
                             }
-                            Err(error) => log_error(
-                                "conversation.sync",
-                                "更新后台同步进度失败",
-                                &error,
-                                &[("task_id", progress_task_id.clone())],
+                            Err(error) => tracing::error!(
+                                action = "conversation.sync",
+                                task_id = %progress_task_id,
+                                error = %error,
+                                "更新后台同步进度失败"
                             ),
                         }
                     };
                 let cancellation = context.cancellation();
                 if context.is_cancelled() {
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "conversation sync cancelled".to_string(),
                     ));
                 }
-                AppService::from_runtime(&runtime)
-                    .sync_conversations_with_progress_and_cancellation(
-                        params,
-                        Some(&cancellation),
-                        &mut on_progress,
-                    )
+                tauri::async_runtime::block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .sync_conversations_with_progress_and_cancellation(
+                            params,
+                            Some(&cancellation),
+                            &mut on_progress,
+                        )
+                        .await
+                })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::Process(
@@ -2517,29 +2652,27 @@ pub(crate) fn start_conversation_sync_background(
                 ))
             });
             match &result {
-                Ok(value) => log_info(
-                    "conversation.sync",
-                    "后台同步对话记录成功",
-                    &[
-                        ("task_id", task_id_for_runtime.clone()),
-                        ("result", value.to_string()),
-                    ],
+                Ok(value) => tracing::info!(
+                    action = "conversation.sync",
+                    task_id = %task_id_for_runtime,
+                    result = %value,
+                    "后台同步对话记录成功"
                 ),
-                Err(error) => log_error(
-                    "conversation.sync",
-                    "后台同步对话记录失败",
-                    error,
-                    &[("task_id", task_id_for_runtime.clone())],
+                Err(error) => tracing::error!(
+                    action = "conversation.sync",
+                    task_id = %task_id_for_runtime,
+                    error = %error,
+                    "后台同步对话记录失败"
                 ),
             }
             match task_background_tasks.finish_conversation_sync(&task_id_for_runtime, result) {
                 Ok(snapshot) => {
                     if let Err(error) = task_app.emit("conversation-sync-task-updated", &snapshot) {
-                        log_error(
-                            "conversation.sync",
-                            "推送后台同步任务状态失败",
-                            &error.to_string(),
-                            &[("task_id", task_id_for_runtime.clone())],
+                        tracing::error!(
+                            action = "conversation.sync",
+                            task_id = %task_id_for_runtime,
+                            error = %error,
+                            "推送后台同步任务状态失败"
                         );
                     }
                     Ok(Value::Null)
@@ -2681,34 +2814,40 @@ fn start_conversation_data_maintenance_background(
                             if let Err(error) = progress_app
                                 .emit("conversation-data-maintenance-task-updated", &snapshot)
                             {
-                                log_error(
-                                    "conversation.data.maintenance",
-                                    "推送对话数据维护进度失败",
-                                    &error.to_string(),
-                                    &[("task_id", progress_task_id.clone())],
+                                tracing::error!(
+                                    action = "conversation.data.maintenance",
+                                    task_id = %progress_task_id,
+                                    error = %error,
+                                    "推送对话数据维护进度失败"
                                 );
                             }
                         }
                     };
                 let cancellation = context.cancellation();
                 if context.is_cancelled() {
-                    return Err(AppError::Canceled(
+                    return Err(AppError::Cancelled(
                         "conversation data maintenance cancelled".to_string(),
                     ));
                 }
-                if let Some(params) = repair_params {
-                    service.repair_conversation_data_with_progress_and_cancellation(
-                        params,
-                        Some(&cancellation),
-                        &mut on_progress,
-                    )
-                } else {
-                    service.audit_conversation_data_with_progress_and_cancellation(
-                        audit_params,
-                        Some(&cancellation),
-                        &mut on_progress,
-                    )
-                }
+                tauri::async_runtime::block_on(async {
+                    if let Some(params) = repair_params {
+                        service
+                            .repair_conversation_data_with_progress_and_cancellation(
+                                params,
+                                Some(&cancellation),
+                                &mut on_progress,
+                            )
+                            .await
+                    } else {
+                        service
+                            .audit_conversation_data_with_progress_and_cancellation(
+                                audit_params,
+                                Some(&cancellation),
+                                &mut on_progress,
+                            )
+                            .await
+                    }
+                })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::Process(
@@ -2764,11 +2903,13 @@ pub(crate) fn cancel_conversation_data_maintenance(
 }
 
 #[tauri::command]
-pub(crate) fn rollback_conversation_data(
+pub(crate) async fn rollback_conversation_data(
     state: State<'_, AppState>,
     params: ConversationDataRollbackParams,
 ) -> RuntimeAppResult<Value> {
-    AppService::from_runtime(&state.runtime).rollback_conversation_data(params)
+    AppService::from_runtime(&state.runtime)
+        .rollback_conversation_data(params)
+        .await
 }
 
 #[tauri::command]
@@ -2776,12 +2917,9 @@ pub(crate) async fn list_conversation_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_conversation_sessions(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_sessions(params)
+        .await
 }
 
 #[tauri::command]
@@ -2789,20 +2927,19 @@ pub(crate) async fn get_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).get_conversation_session(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_session(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn export_conversation_session(
+pub(crate) async fn export_conversation_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).export_conversation_session(params)
+    AppService::from_runtime(&state.runtime)
+        .export_conversation_session(params)
+        .await
 }
 
 #[tauri::command]
@@ -2810,12 +2947,9 @@ pub(crate) async fn list_web_record_sessions(
     state: State<'_, AppState>,
     params: ConversationSessionListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationSessionListItem>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_web_record_sessions(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_web_record_sessions(params)
+        .await
 }
 
 #[tauri::command]
@@ -2823,12 +2957,9 @@ pub(crate) async fn get_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionGetParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationSessionDetail> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).get_web_record_session(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .get_web_record_session(params)
+        .await
 }
 
 #[tauri::command]
@@ -2836,12 +2967,9 @@ pub(crate) async fn search_conversation_records(
     state: State<'_, AppState>,
     params: ConversationSearchParams,
 ) -> RuntimeAppResult<ConversationSearchResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).search_conversation_records(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .search_conversation_records(params)
+        .await
 }
 
 /// 检索最近增量同步变动的会话卡片记录
@@ -2850,24 +2978,18 @@ pub(crate) async fn search_recent_incremental_conversation_records(
     state: State<'_, AppState>,
     params: crate::backend::application::ConversationIncrementalSearchParams,
 ) -> RuntimeAppResult<ConversationSearchResult> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).search_recent_incremental_conversation_records(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .search_recent_incremental_conversation_records(params)
+        .await
 }
 
 #[tauri::command]
 pub(crate) async fn get_conversation_search_index_status(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<ConversationSearchIndexStatus> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).get_conversation_search_index_status()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_search_index_status()
+        .await
 }
 
 #[tauri::command]
@@ -2901,15 +3023,18 @@ pub(crate) fn start_conversation_search_index_rebuild(
         task_detail,
         Box::new(move |_context| {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                AppService::from_runtime(&runtime)
-                    .rebuild_conversation_search_index()
-                    .and_then(|report| {
-                        serde_json::to_value(report).map_err(|error| {
-                            AppError::External(format!(
-                                "serialize conversation search index report: {error}"
-                            ))
+                tauri::async_runtime::block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .rebuild_conversation_search_index()
+                        .await
+                        .and_then(|report| {
+                            serde_json::to_value(report).map_err(|error| {
+                                AppError::External(format!(
+                                    "serialize conversation search index report: {error}"
+                                ))
+                            })
                         })
-                    })
+                })
             }))
             .unwrap_or_else(|_| {
                 Err(AppError::Process(
@@ -2927,19 +3052,19 @@ pub(crate) fn start_conversation_search_index_rebuild(
                     if let Err(error) =
                         app.emit("conversation-search-index-task-updated", &snapshot)
                     {
-                        log_error(
-                            "conversation.search.index.rebuild",
-                            "推送对话搜索索引任务状态失败",
-                            &error.to_string(),
-                            &[("task_id", task_id_for_runtime.clone())],
+                        tracing::error!(
+                            action = "conversation.search.index.rebuild",
+                            task_id = %task_id_for_runtime,
+                            error = %error,
+                            "推送对话搜索索引任务状态失败"
                         );
                     }
                 }
-                Err(error) => log_error(
-                    "conversation.search.index.rebuild",
-                    "更新对话搜索索引任务状态失败",
-                    &error,
-                    &[("task_id", task_id_for_runtime.clone())],
+                Err(error) => tracing::error!(
+                    action = "conversation.search.index.rebuild",
+                    task_id = %task_id_for_runtime,
+                    error = %error,
+                    "更新对话搜索索引任务状态失败"
                 ),
             }
             result
@@ -2965,137 +3090,165 @@ pub(crate) fn get_conversation_search_index_task(
 }
 
 #[tauri::command]
-pub(crate) fn export_web_record_session(
+pub(crate) async fn export_web_record_session(
     state: State<'_, AppState>,
     params: ConversationSessionExportParams,
 ) -> RuntimeAppResult<serde_json::Value> {
-    AppService::from_runtime(&state.runtime).export_web_record_session(params)
+    AppService::from_runtime(&state.runtime)
+        .export_web_record_session(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_questions(
+pub(crate) async fn list_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationQuestionDetail>> {
-    AppService::from_runtime(&state.runtime).list_conversation_questions(params)
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_questions(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn get_conversation_question(
+pub(crate) async fn get_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionGetParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationQuestionDetail> {
-    AppService::from_runtime(&state.runtime).get_conversation_question(params)
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_question(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_conversation_blocks(
+pub(crate) async fn list_conversation_blocks(
     state: State<'_, AppState>,
     params: ConversationBlockListParams,
 ) -> RuntimeAppResult<Vec<crate::backend::dto::ConversationBlockLocator>> {
-    AppService::from_runtime(&state.runtime).list_conversation_blocks(params)
+    AppService::from_runtime(&state.runtime)
+        .list_conversation_blocks(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn get_conversation_block(
+pub(crate) async fn get_conversation_block(
     state: State<'_, AppState>,
     params: ConversationBlockGetParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationBlockDetail> {
-    AppService::from_runtime(&state.runtime).get_conversation_block(params)
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_block(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn merge_conversation_questions(
+pub(crate) async fn merge_conversation_questions(
     state: State<'_, AppState>,
     params: ConversationQuestionMergeParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
-    AppService::from_runtime(&state.runtime).merge_conversation_questions(params)
+    AppService::from_runtime(&state.runtime)
+        .merge_conversation_questions(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn split_conversation_question(
+pub(crate) async fn split_conversation_question(
     state: State<'_, AppState>,
     params: ConversationQuestionSplitParams,
 ) -> RuntimeAppResult<crate::backend::dto::ConversationMutationResult> {
-    AppService::from_runtime(&state.runtime).split_conversation_question(params)
+    AppService::from_runtime(&state.runtime)
+        .split_conversation_question(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn update_conversation_part_translation(
+pub(crate) async fn update_conversation_part_translation(
     state: State<'_, AppState>,
     params: ConversationPartTranslationUpdateParams,
 ) -> RuntimeAppResult<()> {
-    AppService::from_runtime(&state.runtime).update_conversation_part_translation(params)
+    AppService::from_runtime(&state.runtime)
+        .update_conversation_part_translation(params)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn create_plan(
+pub(crate) async fn create_plan(
     state: State<'_, AppState>,
     profile_id: Option<String>,
 ) -> RuntimeAppResult<DeploymentPlan> {
-    let fields = profile_id
-        .as_ref()
-        .map(|profile_id| vec![("profile_id", profile_id.clone())])
-        .unwrap_or_default();
-    let result = (|| AppService::from_runtime(&state.runtime).create_plan(profile_id.as_deref()))();
+    let result = AppService::from_runtime(&state.runtime)
+        .create_plan(profile_id.as_deref())
+        .await;
 
     match &result {
         Ok(plan) => {
-            let mut fields = fields.clone();
-            fields.extend([
-                ("plan_id", plan.id.clone()),
-                ("action_count", plan.actions.len().to_string()),
-                ("create_count", plan.summary.create_count.to_string()),
-                ("skip_count", plan.summary.skip_count.to_string()),
-                ("conflict_count", plan.summary.conflict_count.to_string()),
-            ]);
-            log_info("deployment_plan.create", "创建部署计划成功", &fields);
+            tracing::info!(
+                action = "deployment_plan.create",
+                profile_id = ?profile_id,
+                plan_id = %plan.id,
+                action_count = plan.actions.len(),
+                create_count = plan.summary.create_count,
+                skip_count = plan.summary.skip_count,
+                conflict_count = plan.summary.conflict_count,
+                "创建部署计划成功"
+            );
         }
-        Err(error) => log_error("deployment_plan.create", "创建部署计划失败", error, &fields),
+        Err(error) => tracing::error!(
+            action = "deployment_plan.create",
+            profile_id = ?profile_id,
+            error = %error,
+            "创建部署计划失败"
+        ),
     }
     result
 }
 
 #[tauri::command]
-pub(crate) fn execute_plan(
+pub(crate) async fn execute_plan(
     state: State<'_, AppState>,
     plan: DeploymentPlan,
     action_ids: Option<Vec<String>>,
 ) -> RuntimeAppResult<ExecutionResult> {
-    let fields = vec![
-        ("plan_id", plan.id.clone()),
-        ("action_count", plan.actions.len().to_string()),
-        (
-            "requested_action_count",
-            action_ids.as_ref().map(Vec::len).unwrap_or(0).to_string(),
-        ),
-    ];
-    let result = (|| AppService::from_runtime(&state.runtime).execute_plan(plan, action_ids))();
+    let plan_id = plan.id.clone();
+    let action_count = plan.actions.len();
+    let requested_action_count = action_ids.as_ref().map(Vec::len).unwrap_or(0);
+    let result = AppService::from_runtime(&state.runtime)
+        .execute_plan(plan, action_ids)
+        .await;
 
     match &result {
         Ok(result) => {
-            let mut fields = fields.clone();
-            fields.extend([
-                ("executed_count", result.executed_count.to_string()),
-                ("skipped_count", result.skipped_count.to_string()),
-                ("conflict_count", result.conflict_count.to_string()),
-                ("error_count", result.errors.len().to_string()),
-            ]);
             if result.conflict_count > 0 || !result.errors.is_empty() {
-                log_warn(
-                    "deployment_plan.execute",
-                    "执行部署计划完成但存在冲突或失败",
-                    &fields,
+                tracing::warn!(
+                    action = "deployment_plan.execute",
+                    plan_id = %plan_id,
+                    action_count = action_count,
+                    requested_action_count = requested_action_count,
+                    executed_count = result.executed_count,
+                    skipped_count = result.skipped_count,
+                    conflict_count = result.conflict_count,
+                    error_count = result.errors.len(),
+                    "执行部署计划完成但存在冲突或失败"
                 );
             } else {
-                log_info("deployment_plan.execute", "执行部署计划成功", &fields);
+                tracing::info!(
+                    action = "deployment_plan.execute",
+                    plan_id = %plan_id,
+                    action_count = action_count,
+                    requested_action_count = requested_action_count,
+                    executed_count = result.executed_count,
+                    skipped_count = result.skipped_count,
+                    conflict_count = result.conflict_count,
+                    error_count = result.errors.len(),
+                    "执行部署计划成功"
+                );
             }
         }
-        Err(error) => log_error(
-            "deployment_plan.execute",
-            "执行部署计划失败",
-            error,
-            &fields,
+        Err(error) => tracing::error!(
+            action = "deployment_plan.execute",
+            plan_id = %plan_id,
+            action_count = action_count,
+            requested_action_count = requested_action_count,
+            error = %error,
+            "执行部署计划失败"
         ),
     }
     result
@@ -3103,11 +3256,19 @@ pub(crate) fn execute_plan(
 
 #[tauri::command]
 pub(crate) fn reveal_path(path: String) -> RuntimeAppResult<()> {
-    let fields = vec![("path", path.clone())];
-    let result = crate::adapters::platform::reveal_path(path);
+    let result = crate::adapters::platform::reveal_path(path.clone());
     match &result {
-        Ok(()) => log_info("path.reveal", "打开路径成功", &fields),
-        Err(error) => log_error("path.reveal", "打开路径失败", error, &fields),
+        Ok(()) => tracing::info!(
+            action = "path.reveal",
+            resource = "filesystem_path",
+            "打开路径成功"
+        ),
+        Err(error) => tracing::error!(
+            action = "path.reveal",
+            resource = "filesystem_path",
+            error_code = %error.code(),
+            "打开路径失败"
+        ),
     }
     result
 }
@@ -3125,15 +3286,17 @@ pub(crate) fn install_cli_tools(
 ) -> RuntimeAppResult<crate::adapters::cli_tools::CliToolsStatus> {
     let result = crate::adapters::cli_tools::install(&app);
     match &result {
-        Ok(status) => log_info(
-            "cli.install",
-            "安装命令行工具成功",
-            &[
-                ("install_dir", status.install_dir.clone()),
-                ("path_configured", status.path_configured.to_string()),
-            ],
+        Ok(status) => tracing::info!(
+            action = "cli.install",
+            install_dir = %status.install_dir,
+            path_configured = status.path_configured,
+            "安装命令行工具成功"
         ),
-        Err(error) => log_error("cli.install", "安装命令行工具失败", error, &[]),
+        Err(error) => tracing::error!(
+            action = "cli.install",
+            error = %error,
+            "安装命令行工具失败"
+        ),
     }
     result
 }
@@ -3143,12 +3306,12 @@ pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
 ) -> RuntimeAppResult<crate::backend::logs::LogSnapshot> {
-    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::External)
+    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::from)
 }
 
 #[tauri::command]
 pub(crate) fn logs_open_log_directory() -> RuntimeAppResult<()> {
-    crate::backend::logs::logs_open_log_directory().map_err(AppError::External)
+    crate::backend::logs::logs_open_log_directory().map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -3159,7 +3322,7 @@ pub(crate) fn logs_write_operation(
     fields: Option<BTreeMap<String, String>>,
 ) -> RuntimeAppResult<()> {
     crate::backend::logs::logs_write_operation(level, operation, message, fields)
-        .map_err(AppError::External)
+        .map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -3351,66 +3514,83 @@ pub(crate) async fn disable_agent(
 }
 
 #[tauri::command]
-pub(crate) fn create_team(
+pub(crate) async fn create_team(
     state: State<'_, AppState>,
     input: crate::backend::models::CreateTeamInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamDetail> {
-    AppService::from_runtime(&state.runtime).create_team(input)
+    AppService::from_runtime(&state.runtime)
+        .create_team(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn get_team(
+pub(crate) async fn get_team(
     state: State<'_, AppState>,
     team_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::models::TeamDetail>> {
-    AppService::from_runtime(&state.runtime).get_team(&team_id)
+    AppService::from_runtime(&state.runtime)
+        .get_team(&team_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn list_teams(
+pub(crate) async fn list_teams(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<crate::backend::models::TeamDetail>> {
-    AppService::from_runtime(&state.runtime).list_teams()
+    AppService::from_runtime(&state.runtime).list_teams().await
 }
 
 #[tauri::command]
-pub(crate) fn update_team(
+pub(crate) async fn update_team(
     state: State<'_, AppState>,
     input: crate::backend::models::UpdateTeamInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamDetail> {
-    AppService::from_runtime(&state.runtime).update_team(input)
+    AppService::from_runtime(&state.runtime)
+        .update_team(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn delete_team(state: State<'_, AppState>, team_id: String) -> RuntimeAppResult<()> {
-    AppService::from_runtime(&state.runtime).delete_team(&team_id)
+pub(crate) async fn delete_team(
+    state: State<'_, AppState>,
+    team_id: String,
+) -> RuntimeAppResult<()> {
+    AppService::from_runtime(&state.runtime)
+        .delete_team(&team_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_member_turn_start(
+pub(crate) async fn team_member_turn_start(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamMemberTurnInput,
 ) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
-    AppService::from_runtime(&state.runtime).start_team_member_turn(input)
+    AppService::from_runtime(&state.runtime)
+        .start_team_member_turn(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_member_replay_start(
+pub(crate) async fn team_member_replay_start(
     state: State<'_, AppState>,
     team_id: String,
     member_id: String,
 ) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
-    AppService::from_runtime(&state.runtime).start_member_replay(&team_id, &member_id)
+    AppService::from_runtime(&state.runtime)
+        .start_member_replay(&team_id, &member_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_member_stream_snapshot(
+pub(crate) async fn team_member_stream_snapshot(
     state: State<'_, AppState>,
     team_id: String,
     member_id: String,
     execution_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::application::TeamMemberStreamSnapshot>> {
-    AppService::from_runtime(&state.runtime).get_member_stream(&team_id, &member_id, &execution_id)
+    AppService::from_runtime(&state.runtime)
+        .get_member_stream(&team_id, &member_id, &execution_id)
+        .await
 }
 
 #[tauri::command]
@@ -3429,53 +3609,65 @@ pub(crate) fn team_member_tasks_list(
 }
 
 #[tauri::command]
-pub(crate) fn team_member_turn_cancel(
+pub(crate) async fn team_member_turn_cancel(
     state: State<'_, AppState>,
     team_id: String,
     member_id: String,
     execution_id: String,
 ) -> RuntimeAppResult<crate::backend::application::TeamMemberStreamSnapshot> {
-    AppService::from_runtime(&state.runtime).cancel_member_turn(&team_id, &member_id, &execution_id)
+    AppService::from_runtime(&state.runtime)
+        .cancel_member_turn(&team_id, &member_id, &execution_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_leader_chat(
+pub(crate) async fn team_leader_chat(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamLeaderChatInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamLeaderChatResult> {
-    AppService::from_runtime(&state.runtime).leader_chat(input)
+    AppService::from_runtime(&state.runtime)
+        .leader_chat(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_run_draft(
+pub(crate) async fn team_run_draft(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamDraftInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
-    AppService::from_runtime(&state.runtime).draft_team(input)
+    AppService::from_runtime(&state.runtime)
+        .draft_team(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_run_get(
+pub(crate) async fn team_run_get(
     state: State<'_, AppState>,
     run_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::models::TeamRunSnapshot>> {
-    AppService::from_runtime(&state.runtime).get_team_run(&run_id)
+    AppService::from_runtime(&state.runtime)
+        .get_team_run(&run_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_run_latest(
+pub(crate) async fn team_run_latest(
     state: State<'_, AppState>,
     team_id: String,
 ) -> RuntimeAppResult<Option<crate::backend::models::TeamRunSnapshot>> {
-    AppService::from_runtime(&state.runtime).latest_team_run(&team_id)
+    AppService::from_runtime(&state.runtime)
+        .latest_team_run(&team_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_run_restore(
+pub(crate) async fn team_run_restore(
     state: State<'_, AppState>,
     run_id: String,
 ) -> RuntimeAppResult<crate::backend::runtime::tasks::TaskSnapshot> {
-    AppService::from_runtime(&state.runtime).restore_team_run(&run_id)
+    AppService::from_runtime(&state.runtime)
+        .restore_team_run(&run_id)
+        .await
 }
 
 #[tauri::command]
@@ -3514,88 +3706,108 @@ pub(crate) fn list_team_run_tasks(
 }
 
 #[tauri::command]
-pub(crate) fn team_run_review(
+pub(crate) async fn team_run_review(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamReviewInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
-    AppService::from_runtime(&state.runtime).review_team_run(input)
+    AppService::from_runtime(&state.runtime)
+        .review_team_run(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_run_confirm(
+pub(crate) async fn team_run_confirm(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamConfirmInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamRunSnapshot> {
-    AppService::from_runtime(&state.runtime).confirm_team_run(input)
+    AppService::from_runtime(&state.runtime)
+        .confirm_team_run(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_task_update(
+pub(crate) async fn team_task_update(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamTaskUpdateInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamTask> {
-    AppService::from_runtime(&state.runtime).update_team_task(input)
+    AppService::from_runtime(&state.runtime)
+        .update_team_task(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_mailbox_send(
+pub(crate) async fn team_mailbox_send(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamMailboxSendInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamMailboxMessage> {
-    AppService::from_runtime(&state.runtime).send_team_mailbox(input)
+    AppService::from_runtime(&state.runtime)
+        .send_team_mailbox(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_mailbox_read(
+pub(crate) async fn team_mailbox_read(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamMailboxReadInput,
 ) -> RuntimeAppResult<Vec<crate::backend::models::TeamMailboxMessage>> {
-    AppService::from_runtime(&state.runtime).read_team_mailbox(input)
+    AppService::from_runtime(&state.runtime)
+        .read_team_mailbox(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_tool_credential_issue(
+pub(crate) async fn team_tool_credential_issue(
     state: State<'_, AppState>,
     input: crate::backend::models::TeamToolCredentialInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamToolCredential> {
-    AppService::from_runtime(&state.runtime).issue_team_tool_credential(input)
+    AppService::from_runtime(&state.runtime)
+        .issue_team_tool_credential(input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_tool_tasks(
+pub(crate) async fn team_tool_tasks(
     state: State<'_, AppState>,
     credential: String,
     input: crate::backend::models::TeamToolTaskListInput,
     member_id: String,
 ) -> RuntimeAppResult<Vec<crate::backend::models::TeamTask>> {
-    AppService::from_runtime(&state.runtime).team_tool_list_tasks(&credential, input, &member_id)
+    AppService::from_runtime(&state.runtime)
+        .team_tool_list_tasks(&credential, input, &member_id)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_tool_task_update(
+pub(crate) async fn team_tool_task_update(
     state: State<'_, AppState>,
     credential: String,
     input: crate::backend::models::TeamTaskUpdateInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamTask> {
-    AppService::from_runtime(&state.runtime).team_tool_update_task(&credential, input)
+    AppService::from_runtime(&state.runtime)
+        .team_tool_update_task(&credential, input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_tool_mailbox_send(
+pub(crate) async fn team_tool_mailbox_send(
     state: State<'_, AppState>,
     credential: String,
     input: crate::backend::models::TeamMailboxSendInput,
 ) -> RuntimeAppResult<crate::backend::models::TeamMailboxMessage> {
-    AppService::from_runtime(&state.runtime).team_tool_send_mailbox(&credential, input)
+    AppService::from_runtime(&state.runtime)
+        .team_tool_send_mailbox(&credential, input)
+        .await
 }
 
 #[tauri::command]
-pub(crate) fn team_tool_mailbox_read(
+pub(crate) async fn team_tool_mailbox_read(
     state: State<'_, AppState>,
     credential: String,
     input: crate::backend::models::TeamMailboxReadInput,
 ) -> RuntimeAppResult<Vec<crate::backend::models::TeamMailboxMessage>> {
-    AppService::from_runtime(&state.runtime).team_tool_read_mailbox(&credential, input)
+    AppService::from_runtime(&state.runtime)
+        .team_tool_read_mailbox(&credential, input)
+        .await
 }
 
 pub(crate) fn command_handler(
@@ -3609,6 +3821,7 @@ pub(crate) fn command_handler(
         switch_tenant,
         get_app_settings,
         save_app_settings,
+        initialize_app_locale_if_unset,
         cancel_app_close_prompt,
         complete_app_close,
         list_assets,
@@ -4033,185 +4246,173 @@ mod tests {
         }
     }
 
-    fn open_test_database(db_path: &Path) -> crate::backend::store::Database {
-        crate::backend::store::Database::open_initialized(db_path).expect("open initialized db")
+    async fn open_test_database_async(db_path: &Path) -> crate::backend::store::Database {
+        crate::backend::store::Database::open_initialized_async(db_path)
+            .await
+            .expect("open initialized db")
     }
 
-    fn upsert_test_source(db: &crate::backend::store::Database, source: &Source) {
-        db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(db.pool(), "default", source).await
-        })
-        .expect("insert source");
+    async fn upsert_test_source_async(db: &crate::backend::store::Database, source: &Source) {
+        crate::backend::store::upsert_source_sqlx(db.pool(), "default", source)
+            .await
+            .expect("insert source");
     }
 
-    fn upsert_test_profile(db: &crate::backend::store::Database, profile: &TargetProfile) {
-        db.block_on(async move {
-            crate::backend::store::upsert_profile_sqlx(db.pool(), "default", profile).await
-        })
-        .expect("insert profile");
+    async fn load_test_sources_async(db: &crate::backend::store::Database) -> Vec<Source> {
+        crate::backend::store::load_sources_sqlx(db.pool(), "default")
+            .await
+            .expect("load sources")
     }
 
-    fn delete_test_profile(db: &crate::backend::store::Database, profile_id: &str) {
-        db.block_on(async move {
-            crate::backend::store::delete_profile_sqlx(db.pool(), "default", profile_id).await
-        })
-        .expect("delete profile");
+    async fn upsert_test_profile_async(
+        db: &crate::backend::store::Database,
+        profile: &TargetProfile,
+    ) {
+        crate::backend::store::upsert_profile_sqlx(db.pool(), "default", profile)
+            .await
+            .expect("insert profile");
     }
 
-    fn replace_test_source_assets(
+    async fn delete_test_profile_async(db: &crate::backend::store::Database, profile_id: &str) {
+        crate::backend::store::delete_profile_sqlx(db.pool(), "default", profile_id)
+            .await
+            .expect("delete profile");
+    }
+
+    async fn load_test_profiles_async(db: &crate::backend::store::Database) -> Vec<TargetProfile> {
+        crate::backend::store::load_profiles_sqlx(db.pool(), "default")
+            .await
+            .expect("load profiles")
+    }
+
+    async fn replace_test_source_assets_async(
         db: &crate::backend::store::Database,
         source_id: &str,
         assets: &[Asset],
     ) {
-        db.block_on(async move {
-            crate::backend::store::replace_source_assets_sqlx(
-                db.pool(),
-                "default",
-                source_id,
-                assets,
-            )
+        crate::backend::store::replace_source_assets_sqlx(db.pool(), "default", source_id, assets)
             .await
-        })
-        .expect("insert assets");
+            .expect("insert assets");
     }
 
-    fn set_test_asset_mount(
+    async fn set_test_asset_mount_async(
         db: &crate::backend::store::Database,
         asset_id: &str,
         profile_id: &str,
         enabled: bool,
         strategy: DeploymentStrategy,
     ) -> AssetMount {
-        db.block_on(async move {
-            crate::backend::store::set_asset_mount_sqlx(
-                db.pool(),
-                "default",
-                asset_id,
-                profile_id,
-                enabled,
-                strategy,
-            )
-            .await
-        })
+        crate::backend::store::set_asset_mount_sqlx(
+            db.pool(),
+            "default",
+            asset_id,
+            profile_id,
+            enabled,
+            strategy,
+        )
+        .await
         .expect("insert mount")
     }
 
-    fn upsert_test_group(db: &crate::backend::store::Database, group: &AssetGroup) {
-        db.block_on(async move {
-            crate::backend::store::upsert_asset_group_sqlx(db.pool(), "default", group).await
-        })
-        .expect("insert group");
+    async fn load_test_assets_async(db: &crate::backend::store::Database) -> Vec<Asset> {
+        crate::backend::store::load_assets_sqlx(db.pool(), "default", None)
+            .await
+            .expect("load assets")
     }
 
-    fn replace_test_group_members(
+    async fn load_test_mounts_async(
+        db: &crate::backend::store::Database,
+        asset_id: Option<&str>,
+    ) -> Vec<AssetMount> {
+        crate::backend::store::load_asset_mounts_sqlx(db.pool(), "default", asset_id)
+            .await
+            .expect("load mounts")
+    }
+
+    async fn upsert_test_group_async(db: &crate::backend::store::Database, group: &AssetGroup) {
+        crate::backend::store::upsert_asset_group_sqlx(db.pool(), "default", group)
+            .await
+            .expect("insert group");
+    }
+
+    async fn replace_test_group_members_async(
         db: &crate::backend::store::Database,
         group_id: &str,
         asset_ids: &[String],
         assets: &[Asset],
     ) {
-        db.block_on(async move {
-            crate::backend::store::replace_asset_group_members_sqlx(
-                db.pool(),
-                "default",
-                group_id,
-                asset_ids,
-                assets,
-            )
-            .await
-        })
+        crate::backend::store::replace_asset_group_members_sqlx(
+            db.pool(),
+            "default",
+            group_id,
+            asset_ids,
+            assets,
+        )
+        .await
         .expect("insert group members");
     }
 
-    fn load_test_sources(db: &crate::backend::store::Database) -> Vec<Source> {
-        db.block_on(
-            async move { crate::backend::store::load_sources_sqlx(db.pool(), "default").await },
-        )
-        .expect("load sources")
-    }
-
-    fn load_test_profiles(db: &crate::backend::store::Database) -> Vec<TargetProfile> {
-        db.block_on(
-            async move { crate::backend::store::load_profiles_sqlx(db.pool(), "default").await },
-        )
-        .expect("load profiles")
-    }
-
-    fn load_test_assets(db: &crate::backend::store::Database) -> Vec<Asset> {
-        db.block_on(async move {
-            crate::backend::store::load_assets_sqlx(db.pool(), "default", None).await
-        })
-        .expect("load assets")
-    }
-
-    fn load_test_mounts(
-        db: &crate::backend::store::Database,
-        asset_id: Option<&str>,
-    ) -> Vec<AssetMount> {
-        db.block_on(async move {
-            crate::backend::store::load_asset_mounts_sqlx(db.pool(), "default", asset_id).await
-        })
-        .expect("load mounts")
-    }
-
-    fn load_test_mount_observations(
+    async fn load_test_mount_observations_async(
         db: &crate::backend::store::Database,
     ) -> Vec<crate::backend::dto::AssetMountObservation> {
-        db.block_on(async move {
-            crate::backend::store::load_asset_mount_observations_sqlx(db.pool(), "default").await
-        })
-        .expect("load observations")
+        crate::backend::store::load_asset_mount_observations_sqlx(db.pool(), "default")
+            .await
+            .expect("load observations")
     }
 
-    fn is_test_managed_deployment(
+    async fn is_test_managed_deployment_async(
         db: &crate::backend::store::Database,
         profile_id: &str,
         asset_id: &str,
         target_path: &str,
     ) -> bool {
-        db.block_on(async move {
-            crate::backend::store::is_managed_deployment_sqlx(
-                db.pool(),
-                "default",
-                profile_id,
-                asset_id,
-                target_path,
-            )
-            .await
-        })
+        crate::backend::store::is_managed_deployment_sqlx(
+            db.pool(),
+            "default",
+            profile_id,
+            asset_id,
+            target_path,
+        )
+        .await
         .expect("deployment state")
     }
 
-    #[test]
-    fn refresh_recorded_assets_prunes_missing_sources() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_recorded_assets_prunes_missing_sources() {
         let db_path = unique_temp_path("assetiweave-refresh-recorded");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_missing_source("missing-recorded-source");
-        upsert_test_source(&database, &source);
+        upsert_test_source_async(&database, &source).await;
 
-        refresh_recorded_assets(&database, "default").expect("refresh recorded assets");
+        refresh_recorded_assets(database.pool(), "default")
+            .await
+            .expect("refresh recorded assets");
 
-        assert!(!load_test_sources(&database)
+        assert!(!load_test_sources_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn source_scan_prunes_missing_sources_without_error_row() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn source_scan_prunes_missing_sources_without_error_row() {
         let db_path = unique_temp_path("assetiweave-scan-missing-source");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_missing_source("missing-scan-source");
-        upsert_test_source(&database, &source);
+        upsert_test_source_async(&database, &source).await;
 
         scan_selected_sources(
-            &database,
+            database.pool(),
             "default",
             vec![source.clone()],
             crate::backend::capabilities::scan_source,
         )
+        .await
         .expect("scan selected sources");
 
-        assert!(!load_test_sources(&database)
+        assert!(!load_test_sources_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == source.id));
         std::fs::remove_file(db_path).ok();
@@ -4245,10 +4446,10 @@ mod tests {
         assert!(!profile.safety.allow_overwrite);
     }
 
-    #[test]
-    fn target_profile_can_be_persisted_updated_and_deleted() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn target_profile_can_be_persisted_updated_and_deleted() {
         let db_path = unique_temp_path("assetiweave-profile-crud-db");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let mut profile = target_profile_from_input(TargetProfileInput {
             id: Some("team-app".to_string()),
             name: "Team App".to_string(),
@@ -4264,29 +4465,33 @@ mod tests {
         })
         .expect("build profile");
 
-        upsert_test_profile(&database, &profile);
+        upsert_test_profile_async(&database, &profile).await;
         profile.name = "Team App Edited".to_string();
-        upsert_test_profile(&database, &profile);
+        upsert_test_profile_async(&database, &profile).await;
 
-        assert!(load_test_profiles(&database)
+        assert!(load_test_profiles_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == profile.id && candidate.name == "Team App Edited"));
 
-        ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+        ensure_profile_can_be_deleted_sqlx(database.pool(), "default", &profile.id)
+            .await
             .expect("profile delete guard");
-        delete_test_profile(&database, &profile.id);
-        assert!(!load_test_profiles(&database)
+        delete_test_profile_async(&database, &profile.id).await;
+        assert!(!load_test_profiles_async(&database)
+            .await
             .iter()
             .any(|candidate| candidate.id == profile.id));
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn default_app_profile_delete_is_blocked() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn default_app_profile_delete_is_blocked() {
         let db_path = unique_temp_path("assetiweave-default-profile-delete-db");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
 
-        let error = ensure_profile_can_be_deleted_sqlx(&database, "default", "codex")
+        let error = ensure_profile_can_be_deleted_sqlx(database.pool(), "default", "codex")
+            .await
             .expect_err("delete blocked");
 
         assert!(error.to_string().contains("default app cannot be deleted"));
@@ -4294,8 +4499,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn target_profile_delete_is_blocked_when_mount_exists() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn target_profile_delete_is_blocked_when_mount_exists() {
         let db_path = unique_temp_path("assetiweave-profile-delete-block-db");
         let source_root = unique_temp_path("assetiweave-profile-delete-block-source");
         let target_root = unique_temp_path("assetiweave-profile-delete-block-target");
@@ -4303,17 +4508,19 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("profile-delete-source", source_root.clone());
         let profile = test_profile("team-app", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        mount_asset_mount_record(&database, "default", &asset.id, &profile.id)
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
             .expect("mount asset");
 
-        let error = ensure_profile_can_be_deleted_sqlx(&database, "default", &profile.id)
+        let error = ensure_profile_can_be_deleted_sqlx(database.pool(), "default", &profile.id)
+            .await
             .expect_err("delete blocked");
 
         assert!(
@@ -4325,37 +4532,43 @@ mod tests {
         std::fs::remove_file(db_path).ok();
     }
 
-    #[test]
-    fn refresh_recorded_assets_removes_mounts_for_deleted_assets() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refresh_recorded_assets_removes_mounts_for_deleted_assets() {
         let db_path = unique_temp_path("assetiweave-refresh-deleted-mount");
         let source_root = unique_temp_path("assetiweave-existing-source");
         std::fs::create_dir_all(&source_root).expect("create source root");
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-deleted-asset", source_root.clone());
         let asset = test_asset(&source, "deleted-asset", source_root.join("deleted-asset"));
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             "codex",
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        refresh_recorded_assets(&database, "default").expect("refresh recorded assets");
+        refresh_recorded_assets(database.pool(), "default")
+            .await
+            .expect("refresh recorded assets");
 
-        assert!(load_test_assets(&database)
+        assert!(load_test_assets_async(&database)
+            .await
             .iter()
             .all(|candidate| candidate.id != asset.id));
-        assert!(load_test_mounts(&database, Some(&asset.id)).is_empty());
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
+            .is_empty());
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_file(db_path).ok();
     }
 
     #[cfg(unix)]
-    #[test]
-    fn mount_asset_mount_creates_symlink_and_enables_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mount_asset_mount_creates_symlink_and_enables_mount() {
         let db_path = unique_temp_path("assetiweave-mount-db");
         let source_root = unique_temp_path("assetiweave-mount-source");
         let target_root = unique_temp_path("assetiweave-mount-target");
@@ -4364,16 +4577,17 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-unmounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path.clone());
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        let result =
-            mount_asset_mount_record(&database, "default", &asset.id, &profile.id).expect("mount");
+        let result = mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
+            .expect("mount");
 
         let metadata = std::fs::symlink_metadata(&target_path).expect("target metadata");
         assert!(metadata.file_type().is_symlink());
@@ -4383,12 +4597,15 @@ mod tests {
         );
         assert!(result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::Mounted);
-        assert!(is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4396,8 +4613,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn mount_asset_mount_links_to_real_source_directory() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mount_asset_mount_links_to_real_source_directory() {
         let db_path = unique_temp_path("assetiweave-mount-real-source-db");
         let real_root = unique_temp_path("assetiweave-mount-real-source-real");
         let alias_root = unique_temp_path("assetiweave-mount-real-source-alias");
@@ -4411,16 +4628,17 @@ mod tests {
         std::os::unix::fs::symlink(&real_asset_path, &alias_asset_path)
             .expect("create alias asset symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-aliased-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path.clone());
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        let result =
-            mount_asset_mount_record(&database, "default", &asset.id, &profile.id).expect("mount");
+        let result = mount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
+            .expect("mount");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read target symlink"),
@@ -4446,8 +4664,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn set_asset_mount_creates_symlink_before_enabling_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn set_asset_mount_creates_symlink_before_enabling_mount() {
         let db_path = unique_temp_path("assetiweave-set-mount-db");
         let source_root = unique_temp_path("assetiweave-set-mount-source");
         let target_root = unique_temp_path("assetiweave-set-mount-target");
@@ -4456,16 +4674,23 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-set-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        let mount =
-            set_asset_mount_record(&database, "default", &asset.id, &profile.id, true, None)
-                .expect("set mount enabled");
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        let mount = set_asset_mount_record(
+            database.pool(),
+            "default",
+            &asset.id,
+            &profile.id,
+            true,
+            None,
+        )
+        .await
+        .expect("set mount enabled");
 
         assert!(mount.enabled);
         assert!(std::fs::symlink_metadata(&target_path)
@@ -4479,8 +4704,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn apply_skill_group_mount_only_mounts_group_members() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn apply_skill_group_mount_only_mounts_group_members() {
         let db_path = unique_temp_path("assetiweave-group-mount-db");
         let source_root = unique_temp_path("assetiweave-group-mount-source");
         let target_root = unique_temp_path("assetiweave-group-mount-target");
@@ -4492,22 +4717,29 @@ mod tests {
         std::fs::create_dir_all(&asset_path_b).expect("create asset dir b");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-group-assets", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset_a = test_asset(&source, "skill-a", asset_path_a.clone());
         let asset_b = test_asset(&source, "skill-b", asset_path_b);
         let assets = vec![asset_a.clone(), asset_b.clone()];
         let group = test_group("frontend");
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &assets);
-        upsert_test_profile(&database, &profile);
-        upsert_test_group(&database, &group);
-        replace_test_group_members(&database, &group.id, &[asset_a.id.clone()], &assets);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &assets).await;
+        upsert_test_profile_async(&database, &profile).await;
+        upsert_test_group_async(&database, &group).await;
+        replace_test_group_members_async(&database, &group.id, &[asset_a.id.clone()], &assets)
+            .await;
 
-        let result =
-            apply_skill_group_mount_record(&database, "default", &group.id, &profile.id, true)
-                .expect("apply group");
+        let result = apply_skill_group_mount_record(
+            database.pool(),
+            "default",
+            &group.id,
+            &profile.id,
+            true,
+        )
+        .await
+        .expect("apply group");
 
         assert_eq!(result.requested_count, 1);
         assert_eq!(result.updated_count, 1);
@@ -4521,7 +4753,9 @@ mod tests {
             asset_path_a.canonicalize().expect("canonical asset path a")
         );
         assert!(!target_path_b.exists());
-        assert!(load_test_mounts(&database, Some(&asset_b.id)).is_empty());
+        assert!(load_test_mounts_async(&database, Some(&asset_b.id))
+            .await
+            .is_empty());
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4529,8 +4763,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn preview_exclusive_group_mount_uses_enabled_group_union_without_mutation() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preview_exclusive_group_mount_uses_enabled_group_union_without_mutation() {
         let db_path = unique_temp_path("assetiweave-exclusive-preview-db");
         let source_root = unique_temp_path("assetiweave-exclusive-preview-source");
         let codex_target = unique_temp_path("assetiweave-exclusive-preview-codex");
@@ -4544,7 +4778,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-exclusive-preview-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -4556,35 +4790,46 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &skill_assets);
-        upsert_test_profile(&database, &codex);
-        upsert_test_profile(&database, &cursor);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &skill_assets).await;
+        upsert_test_profile_async(&database, &codex).await;
+        upsert_test_profile_async(&database, &cursor).await;
         for group in [&group_a, &group_b, &disabled_group] {
-            upsert_test_group(&database, group);
+            upsert_test_group_async(&database, group).await;
         }
-        replace_test_group_members(
+        replace_test_group_members_async(
             &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        );
-        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
-        replace_test_group_members(
+        )
+        .await;
+        replace_test_group_members_async(
+            &database,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .await;
+        replace_test_group_members_async(
             &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        );
-        mount_asset_mount_record(&database, "default", &asset_a.id, &codex.id)
+        )
+        .await;
+        mount_asset_mount_record(database.pool(), "default", &asset_a.id, &codex.id)
+            .await
             .expect("mount skill a");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &codex.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &codex.id)
+            .await
             .expect("mount skill c");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &cursor.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &cursor.id)
+            .await
             .expect("mount skill c cursor");
 
         let preview = build_skill_group_exclusive_mount_preview_sqlx(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
@@ -4598,6 +4843,7 @@ mod tests {
                 dry_run: true,
             },
         )
+        .await
         .expect("preview exclusive mount");
 
         assert_eq!(
@@ -4614,7 +4860,8 @@ mod tests {
         assert_eq!(preview.skipped_count, 0);
         assert!(codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
-        assert!(load_test_mounts(&database, Some(&asset_c.id))
+        assert!(load_test_mounts_async(&database, Some(&asset_c.id))
+            .await
             .iter()
             .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
@@ -4625,8 +4872,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn apply_exclusive_group_mount_only_changes_target_profile_skill_mounts() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn apply_exclusive_group_mount_only_changes_target_profile_skill_mounts() {
         let db_path = unique_temp_path("assetiweave-exclusive-apply-db");
         let source_root = unique_temp_path("assetiweave-exclusive-apply-source");
         let codex_target = unique_temp_path("assetiweave-exclusive-apply-codex");
@@ -4643,7 +4890,7 @@ mod tests {
         std::fs::create_dir_all(&codex_target).expect("create codex target");
         std::fs::create_dir_all(&cursor_target).expect("create cursor target");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-exclusive-apply-assets", source_root.clone());
         let codex = test_profile("codex", codex_target.clone());
         let cursor = test_profile("cursor", cursor_target.clone());
@@ -4663,43 +4910,55 @@ mod tests {
         let group_b = test_group("automation");
         let mut disabled_group = test_group("disabled");
         disabled_group.enabled = false;
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, &all_assets);
-        upsert_test_profile(&database, &codex);
-        upsert_test_profile(&database, &cursor);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, &all_assets).await;
+        upsert_test_profile_async(&database, &codex).await;
+        upsert_test_profile_async(&database, &cursor).await;
         for group in [&group_a, &group_b, &disabled_group] {
-            upsert_test_group(&database, group);
+            upsert_test_group_async(&database, group).await;
         }
-        replace_test_group_members(
+        replace_test_group_members_async(
             &database,
             &group_a.id,
             &[asset_a.id.clone(), asset_b.id.clone()],
             &skill_assets,
-        );
-        replace_test_group_members(&database, &group_b.id, &[asset_b.id.clone()], &skill_assets);
-        replace_test_group_members(
+        )
+        .await;
+        replace_test_group_members_async(
+            &database,
+            &group_b.id,
+            &[asset_b.id.clone()],
+            &skill_assets,
+        )
+        .await;
+        replace_test_group_members_async(
             &database,
             &disabled_group.id,
             &[asset_c.id.clone()],
             &skill_assets,
-        );
-        mount_asset_mount_record(&database, "default", &asset_a.id, &codex.id)
+        )
+        .await;
+        mount_asset_mount_record(database.pool(), "default", &asset_a.id, &codex.id)
+            .await
             .expect("mount skill a");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &codex.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &codex.id)
+            .await
             .expect("mount skill c");
-        mount_asset_mount_record(&database, "default", &asset_c.id, &cursor.id)
+        mount_asset_mount_record(database.pool(), "default", &asset_c.id, &cursor.id)
+            .await
             .expect("mount skill c cursor");
         std::os::unix::fs::symlink(&prompt_path, &prompt_target).expect("create prompt symlink");
-        set_test_asset_mount(
+        set_test_asset_mount_async(
             &database,
             &prompt.id,
             &codex.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
         let result = apply_skill_group_exclusive_mount_record(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![
@@ -4712,6 +4971,7 @@ mod tests {
                 dry_run: false,
             },
         )
+        .await
         .expect("apply exclusive mount");
 
         assert_eq!(result.preview.keep_count, 1);
@@ -4724,14 +4984,15 @@ mod tests {
         assert!(!codex_target.join("skill-c").exists());
         assert!(cursor_target.join("skill-c").exists());
         assert!(prompt_target.exists());
-        let skill_c_mounts = load_test_mounts(&database, Some(&asset_c.id));
+        let skill_c_mounts = load_test_mounts_async(&database, Some(&asset_c.id)).await;
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == codex.id && !mount.enabled));
         assert!(skill_c_mounts
             .iter()
             .any(|mount| mount.profile_id == cursor.id && mount.enabled));
-        assert!(load_test_mounts(&database, Some(&prompt.id))
+        assert!(load_test_mounts_async(&database, Some(&prompt.id))
+            .await
             .iter()
             .any(|mount| mount.profile_id == codex.id && mount.enabled));
 
@@ -4742,8 +5003,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn preview_exclusive_group_mount_reports_risks_without_forcing_repairs() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preview_exclusive_group_mount_reports_risks_without_forcing_repairs() {
         let db_path = unique_temp_path("assetiweave-exclusive-risk-db");
         let external_root = unique_temp_path("assetiweave-exclusive-risk-external");
         let app_local_root = unique_temp_path("assetiweave-exclusive-risk-local");
@@ -4757,7 +5018,7 @@ mod tests {
         std::os::unix::fs::symlink(&external_asset_path, &external_target)
             .expect("create unmanaged external symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let external_source = test_source("external-source", external_root.clone());
         let app_local_source = test_source_with_origin(
             "app-local-source",
@@ -4770,16 +5031,28 @@ mod tests {
             test_asset(&app_local_source, "app-local-skill", app_local_asset_path);
         let assets = vec![external_asset.clone(), app_local_asset.clone()];
         let group = test_group("selected-app-local");
-        upsert_test_source(&database, &external_source);
-        upsert_test_source(&database, &app_local_source);
-        replace_test_source_assets(&database, &external_source.id, &[external_asset.clone()]);
-        replace_test_source_assets(&database, &app_local_source.id, &[app_local_asset.clone()]);
-        upsert_test_profile(&database, &profile);
-        upsert_test_group(&database, &group);
-        replace_test_group_members(&database, &group.id, &[app_local_asset.id.clone()], &assets);
+        upsert_test_source_async(&database, &external_source).await;
+        upsert_test_source_async(&database, &app_local_source).await;
+        replace_test_source_assets_async(&database, &external_source.id, &[external_asset.clone()])
+            .await;
+        replace_test_source_assets_async(
+            &database,
+            &app_local_source.id,
+            &[app_local_asset.clone()],
+        )
+        .await;
+        upsert_test_profile_async(&database, &profile).await;
+        upsert_test_group_async(&database, &group).await;
+        replace_test_group_members_async(
+            &database,
+            &group.id,
+            &[app_local_asset.id.clone()],
+            &assets,
+        )
+        .await;
 
         let result = apply_skill_group_exclusive_mount_record(
-            &database,
+            database.pool(),
             "default",
             &SkillGroupExclusiveMountInput {
                 group_ids: vec![group.id.clone()],
@@ -4788,6 +5061,7 @@ mod tests {
                 dry_run: false,
             },
         )
+        .await
         .expect("apply exclusive mount");
 
         assert_eq!(result.preview.mount_count, 0);
@@ -4815,8 +5089,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn scan_asset_mount_statuses_does_not_mutate_snapshot() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scan_asset_mount_statuses_does_not_mutate_snapshot() {
         let db_path = unique_temp_path("assetiweave-status-scan-db");
         let source_root = unique_temp_path("assetiweave-status-scan-source");
         let target_root = unique_temp_path("assetiweave-status-scan-target");
@@ -4826,38 +5100,44 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-scanned-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        let statuses =
-            scan_asset_mount_statuses_sqlx(&database, "default", None).expect("scan statuses");
+        let statuses = scan_asset_mount_statuses_sqlx(database.pool(), "default", None)
+            .await
+            .expect("scan statuses");
 
         assert!(statuses.iter().any(|status| {
             status.asset_id == asset.id
                 && status.profile_id == profile.id
                 && status.state == PhysicalMountStateDto::Mounted
         }));
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
-        assert!(!is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            !is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4865,8 +5145,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_records_physical_mount_snapshot() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_records_physical_mount_snapshot() {
         let db_path = unique_temp_path("assetiweave-observation-db");
         let source_root = unique_temp_path("assetiweave-observation-source");
         let target_root = unique_temp_path("assetiweave-observation-target");
@@ -4876,43 +5156,49 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create physical symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        let original_mount = set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        let original_mount = set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             false,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
-        let observations = load_test_mount_observations(&database);
+        let observations = load_test_mount_observations_async(&database).await;
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
             .expect("asset/profile observation");
         assert_eq!(observation.state, PhysicalMountStateDto::Mounted);
         assert!(!observation.observed_at.is_empty());
-        let mounts = load_test_mounts(&database, Some(&asset.id));
+        let mounts = load_test_mounts_async(&database, Some(&asset.id)).await;
         let synced_mount = mounts
             .iter()
             .find(|mount| mount.profile_id == profile.id)
             .expect("synced mount");
         assert!(synced_mount.enabled);
         assert_eq!(synced_mount.created_at, original_mount.created_at);
-        assert!(is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -4920,8 +5206,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_repairs_ghost_alias_symlink() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_repairs_ghost_alias_symlink() {
         let db_path = unique_temp_path("assetiweave-observation-ghost-db");
         let real_root = unique_temp_path("assetiweave-observation-ghost-real");
         let alias_root = unique_temp_path("assetiweave-observation-ghost-alias");
@@ -4937,15 +5223,17 @@ mod tests {
         std::os::unix::fs::symlink(&alias_asset_path, &target_path)
             .expect("create ghost target symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-ghost-asset", alias_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", alias_asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
         assert_eq!(
             std::fs::read_link(&target_path).expect("read repaired target symlink"),
@@ -4953,7 +5241,7 @@ mod tests {
                 .canonicalize()
                 .expect("canonical real asset")
         );
-        let observations = load_test_mount_observations(&database);
+        let observations = load_test_mount_observations_async(&database).await;
         let observation = observations
             .iter()
             .find(|candidate| candidate.asset_id == asset.id && candidate.profile_id == profile.id)
@@ -4976,8 +5264,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn sync_asset_mount_observations_clears_snapshot_when_link_is_missing() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sync_asset_mount_observations_clears_snapshot_when_link_is_missing() {
         let db_path = unique_temp_path("assetiweave-observation-missing-db");
         let source_root = unique_temp_path("assetiweave-observation-missing-source");
         let target_root = unique_temp_path("assetiweave-observation-missing-target");
@@ -4986,32 +5274,39 @@ mod tests {
         std::fs::create_dir_all(&asset_path).expect("create asset dir");
         std::fs::create_dir_all(&target_root).expect("create target dir");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-missing-observed-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        sync_asset_mount_observations(&database, "default", None).expect("sync observations");
+        sync_asset_mount_observations(database.pool(), "default", None)
+            .await
+            .expect("sync observations");
 
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
-        assert!(!is_test_managed_deployment(
-            &database,
-            &profile.id,
-            &asset.id,
-            &target_path.to_string_lossy()
-        ));
+        assert!(
+            !is_test_managed_deployment_async(
+                &database,
+                &profile.id,
+                &asset.id,
+                &target_path.to_string_lossy()
+            )
+            .await
+        );
 
         std::fs::remove_dir_all(source_root).ok();
         std::fs::remove_dir_all(target_root).ok();
@@ -5019,8 +5314,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn unmount_asset_mount_removes_matching_symlink_and_disables_mount() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unmount_asset_mount_removes_matching_symlink_and_disables_mount() {
         let db_path = unique_temp_path("assetiweave-unmount-db");
         let source_root = unique_temp_path("assetiweave-unmount-source");
         let target_root = unique_temp_path("assetiweave-unmount-target");
@@ -5030,29 +5325,32 @@ mod tests {
         std::fs::create_dir_all(&target_root).expect("create target dir");
         std::os::unix::fs::symlink(&asset_path, &target_path).expect("create mounted symlink");
 
-        let database = open_test_database(&db_path);
+        let database = open_test_database_async(&db_path).await;
         let source = test_source("source-with-mounted-asset", source_root.clone());
         let profile = test_profile("codex", target_root.clone());
         let asset = test_asset(&source, "skill-a", asset_path);
-        upsert_test_source(&database, &source);
-        replace_test_source_assets(&database, &source.id, std::slice::from_ref(&asset));
-        upsert_test_profile(&database, &profile);
-        set_test_asset_mount(
+        upsert_test_source_async(&database, &source).await;
+        replace_test_source_assets_async(&database, &source.id, std::slice::from_ref(&asset)).await;
+        upsert_test_profile_async(&database, &profile).await;
+        set_test_asset_mount_async(
             &database,
             &asset.id,
             &profile.id,
             true,
             DeploymentStrategy::SymlinkToSource,
-        );
+        )
+        .await;
 
-        let result = unmount_asset_mount_record(&database, "default", &asset.id, &profile.id)
+        let result = unmount_asset_mount_record(database.pool(), "default", &asset.id, &profile.id)
+            .await
             .expect("unmount");
 
         assert!(!target_path.exists());
         assert!(!std::fs::symlink_metadata(&target_path).is_ok());
         assert!(!result.mount.enabled);
         assert_eq!(result.status.state, PhysicalMountStateDto::NotMounted);
-        assert!(load_test_mounts(&database, Some(&asset.id))
+        assert!(load_test_mounts_async(&database, Some(&asset.id))
+            .await
             .iter()
             .all(|mount| !mount.enabled));
 

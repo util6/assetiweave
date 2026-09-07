@@ -27,9 +27,10 @@ pub(super) fn resolve_adapter_entry_path(
     if let Some(runtime) = manifest.runtime.as_ref() {
         return Ok(resolve_command_path(manifest_dir, &runtime.entry));
     }
-    let command = manifest.command.first().ok_or_else(|| {
-        AppError::external({ "adapter command must include an executable".to_string() })
-    })?;
+    let command = manifest
+        .command
+        .first()
+        .ok_or_else(|| AppError::external("adapter command must include an executable"))?;
     Ok(resolve_command_path(manifest_dir, command))
 }
 
@@ -52,9 +53,10 @@ pub(super) fn build_adapter_invocation_with_settings(
             settings,
         ));
     }
-    let (command, args) = manifest.command.split_first().ok_or_else(|| {
-        AppError::external({ "adapter command must include an executable".to_string() })
-    })?;
+    let (command, args) = manifest
+        .command
+        .split_first()
+        .ok_or_else(|| AppError::external("adapter command must include an executable"))?;
     Ok(build_adapter_command_invocation(
         manifest_dir,
         command,
@@ -131,7 +133,7 @@ pub(super) fn build_adapter_runtime_invocation_with_settings(
     }
 }
 
-pub(super) fn ensure_adapter_runtime_available(
+pub(super) async fn ensure_adapter_runtime_available(
     runtime: &ConversationAdapterRuntime,
     invocation: &AdapterCommandInvocation,
 ) -> AppResult<()> {
@@ -143,7 +145,8 @@ pub(super) fn ensure_adapter_runtime_available(
         &runtime.kind,
         invocation.program.clone(),
         runtime.version.as_deref(),
-    );
+    )
+    .await;
     if status.available {
         Ok(())
     } else {
@@ -153,25 +156,26 @@ pub(super) fn ensure_adapter_runtime_available(
     }
 }
 
-pub(super) fn list_adapter_runtime_statuses_with_settings(
+pub(super) async fn list_adapter_runtime_statuses_with_settings(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
     settings: &Value,
 ) -> Vec<ConversationAdapterRuntimeStatus> {
-    [
+    let mut statuses = Vec::new();
+    for kind in [
         ConversationAdapterRuntimeKind::Node,
         ConversationAdapterRuntimeKind::Python,
         ConversationAdapterRuntimeKind::Bash,
-    ]
-    .into_iter()
-    .map(|kind| {
+    ] {
         let program = configured_runtime_program(&kind, settings);
         let required_version = requirements
             .iter()
             .find(|(requirement_kind, _)| *requirement_kind == kind)
             .map(|(_, version)| version.as_str());
-        probe_adapter_runtime_status_with_requirement(&kind, program, required_version)
-    })
-    .collect()
+        statuses.push(
+            probe_adapter_runtime_status_with_requirement(&kind, program, required_version).await,
+        );
+    }
+    statuses
 }
 
 pub(super) fn adapter_runtime_requirements(
@@ -238,9 +242,9 @@ pub(super) fn upsert_highest_runtime_requirement(
 }
 
 fn runtime_requirement_is_higher(candidate: &str, current: &str) -> AppResult<bool> {
-    let candidate = parse_minimum_version_constraint(candidate)?;
-    let current = parse_minimum_version_constraint(current)?;
-    Ok(compare_versions(&candidate, &current) == std::cmp::Ordering::Greater)
+    let candidate = parse_minimum_runtime_version(candidate)?;
+    let current = parse_minimum_runtime_version(current)?;
+    Ok(candidate > current)
 }
 
 pub(super) fn sort_runtime_requirements(
@@ -261,14 +265,14 @@ pub(super) fn sort_runtime_requirements(
 }
 
 #[cfg(test)]
-pub(super) fn probe_adapter_runtime_status(
+pub(super) async fn probe_adapter_runtime_status(
     kind: &ConversationAdapterRuntimeKind,
     program: PathBuf,
 ) -> ConversationAdapterRuntimeStatus {
-    probe_adapter_runtime_status_with_requirement(kind, program, None)
+    probe_adapter_runtime_status_with_requirement(kind, program, None).await
 }
 
-pub(super) fn probe_adapter_runtime_status_with_requirement(
+pub(super) async fn probe_adapter_runtime_status_with_requirement(
     kind: &ConversationAdapterRuntimeKind,
     program: PathBuf,
     required_version: Option<&str>,
@@ -278,7 +282,9 @@ pub(super) fn probe_adapter_runtime_status_with_requirement(
         program.clone(),
         runtime_version_args(kind),
         Duration::from_millis(ADAPTER_RUNTIME_PROBE_TIMEOUT_MS),
-    ) {
+    )
+    .await
+    {
         Ok((status, stdout, stderr)) if status.success() => {
             runtime_status_from_success(kind, &program, required_version, &stdout, &stderr)
         }
@@ -429,43 +435,49 @@ fn runtime_version_mismatch_error(
     )
 }
 
-fn run_runtime_probe(
+async fn run_runtime_probe(
     program: PathBuf,
     args: Vec<&str>,
     timeout: Duration,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), RuntimeProbeError> {
     let args = args.into_iter().map(str::to_string).collect::<Vec<_>>();
-    let output = crate::backend::host_process::run_program_with_timeout(
-        &program,
-        &args,
-        None,
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program,
+        args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
         timeout,
-        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
-        ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
-            RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
-        }
-        crate::backend::host_process::HostProcessError::Spawn(reason) => {
-            RuntimeProbeError::Spawn(reason)
-        }
-        crate::backend::host_process::HostProcessError::Output(reason) => {
-            RuntimeProbeError::Output(reason)
-        }
-        crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
-            RuntimeProbeError::Timeout { stdout, stderr }
-        }
-        crate::backend::host_process::HostProcessError::Cancelled => {
-            RuntimeProbeError::Output("runtime probe was cancelled".to_string())
-        }
-        crate::backend::host_process::HostProcessError::Cleanup(reason) => {
-            RuntimeProbeError::Output(reason)
-        }
-        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
-            RuntimeProbeError::Output("runtime probe output exceeded configured limit".to_string())
-        }
-    })?;
+        stdout_limit: ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+        stderr_limit: ADAPTER_RUNTIME_PROBE_OUTPUT_CAP,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+                RuntimeProbeError::Spawn(format!("program not found: {}", program.display()))
+            }
+            crate::backend::host_process::HostProcessError::Spawn(reason) => {
+                RuntimeProbeError::Spawn(reason)
+            }
+            crate::backend::host_process::HostProcessError::Output(reason) => {
+                RuntimeProbeError::Output(reason)
+            }
+            crate::backend::host_process::HostProcessError::Timeout { stdout, stderr, .. } => {
+                RuntimeProbeError::Timeout { stdout, stderr }
+            }
+            crate::backend::host_process::HostProcessError::Cancelled => {
+                RuntimeProbeError::Output("runtime probe was cancelled".to_string())
+            }
+            crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+                RuntimeProbeError::Output(reason)
+            }
+            crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                RuntimeProbeError::Output(
+                    "runtime probe output exceeded configured limit".to_string(),
+                )
+            }
+        })?;
     if output.stdout_truncated || output.stderr_truncated {
         return Err(RuntimeProbeError::Output(format!(
             "runtime probe output exceeded cap of {ADAPTER_RUNTIME_PROBE_OUTPUT_CAP} bytes"
@@ -508,49 +520,57 @@ pub(super) fn runtime_version_satisfies_constraint(
     detected_version: &str,
     requirement: &str,
 ) -> AppResult<bool> {
-    let minimum = parse_minimum_version_constraint(requirement)?;
+    let requirement = parse_minimum_version_constraint(requirement)?;
     let detected = parse_detected_runtime_version(detected_version).ok_or_else(|| {
         AppError::external({
             format!("could not parse adapter runtime version from output: {detected_version}")
         })
     })?;
-    Ok(compare_versions(&detected, &minimum) != std::cmp::Ordering::Less)
+    Ok(requirement.matches(&detected))
 }
 
-fn parse_minimum_version_constraint(requirement: &str) -> AppResult<Vec<u64>> {
+fn parse_minimum_version_constraint(requirement: &str) -> AppResult<semver::VersionReq> {
+    let minimum = parse_minimum_runtime_version(requirement)?;
+    semver::VersionReq::parse(&format!(">={minimum}")).map_err(AppError::external)
+}
+
+fn parse_minimum_runtime_version(requirement: &str) -> AppResult<semver::Version> {
     let requirement = requirement.trim();
     let version = requirement.strip_prefix(">=").ok_or_else(|| {
         AppError::external({
             format!("adapter runtime version constraint must use >=x[.y[.z]]: {requirement}")
         })
     })?;
-    parse_exact_runtime_version(version.trim()).ok_or_else(|| {
+    parse_numeric_runtime_version(version.trim()).ok_or_else(|| {
         AppError::Validation(format!(
             "adapter runtime version constraint must use >=x[.y[.z]]: {requirement}"
         ))
     })
 }
 
-fn parse_exact_runtime_version(version: &str) -> Option<Vec<u64>> {
-    if version.is_empty() {
+fn parse_numeric_runtime_version(value: &str) -> Option<semver::Version> {
+    if value.is_empty() {
         return None;
     }
-    let parts = version.split('.').collect::<Vec<_>>();
+    let parts = value.split('.').collect::<Vec<_>>();
     if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
         return None;
     }
-    parts
-        .into_iter()
-        .map(|part| {
-            part.chars()
-                .all(|character| character.is_ascii_digit())
-                .then(|| part.parse::<u64>().ok())
-                .flatten()
-        })
-        .collect()
+    let mut numbers = Vec::with_capacity(parts.len());
+    for part in parts {
+        if !part.chars().all(|character| character.is_ascii_digit()) {
+            return None;
+        }
+        let number = part.parse::<u64>().ok()?;
+        numbers.push(number);
+    }
+    let major = *numbers.first().unwrap_or(&0);
+    let minor = *numbers.get(1).unwrap_or(&0);
+    let patch = *numbers.get(2).unwrap_or(&0);
+    Some(semver::Version::new(major, minor, patch))
 }
 
-fn parse_detected_runtime_version(output: &str) -> Option<Vec<u64>> {
+fn parse_detected_runtime_version(output: &str) -> Option<semver::Version> {
     let start = output
         .char_indices()
         .find(|(_, character)| character.is_ascii_digit())
@@ -559,35 +579,11 @@ fn parse_detected_runtime_version(output: &str) -> Option<Vec<u64>> {
         .chars()
         .take_while(|character| character.is_ascii_digit() || *character == '.')
         .collect::<String>();
-    parse_exact_runtime_version(version.trim_end_matches('.'))
-}
-
-fn compare_versions(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
-    let max_len = left.len().max(right.len());
-    for index in 0..max_len {
-        match left
-            .get(index)
-            .copied()
-            .unwrap_or_default()
-            .cmp(&right.get(index).copied().unwrap_or_default())
-        {
-            std::cmp::Ordering::Equal => {}
-            ordering => return ordering,
-        }
-    }
-    std::cmp::Ordering::Equal
+    parse_numeric_runtime_version(version.trim_end_matches('.'))
 }
 
 fn configured_runtime_program(kind: &ConversationAdapterRuntimeKind, settings: &Value) -> PathBuf {
     runtime_program_from_settings(kind, settings).unwrap_or_else(|| default_runtime_program(kind))
-}
-
-#[cfg(test)]
-pub(super) fn build_adapter_invocation(
-    manifest_dir: &Path,
-    manifest: &ConversationAdapterManifest,
-) -> AppResult<AdapterCommandInvocation> {
-    build_adapter_invocation_with_settings(manifest_dir, manifest, &serde_json::json!({}))
 }
 
 #[cfg(test)]
@@ -605,10 +601,10 @@ pub(super) fn build_adapter_runtime_invocation(
 }
 
 #[cfg(test)]
-pub(super) fn list_adapter_runtime_statuses(
+pub(super) async fn list_adapter_runtime_statuses(
     requirements: &[(ConversationAdapterRuntimeKind, String)],
 ) -> Vec<ConversationAdapterRuntimeStatus> {
-    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({}))
+    list_adapter_runtime_statuses_with_settings(requirements, &serde_json::json!({})).await
 }
 
 pub(super) fn runtime_program_from_settings(
@@ -756,4 +752,26 @@ pub(super) fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_semver_preserves_minimum_language() {
+        assert!(runtime_version_satisfies_constraint("v20.10.0", ">=20.2").unwrap());
+        assert!(runtime_version_satisfies_constraint("Python 3.12.1", ">=3.12").unwrap());
+        assert!(!runtime_version_satisfies_constraint("v18.19.0", ">=20").unwrap());
+        assert!(runtime_version_satisfies_constraint("v20.0.0", ">=020").unwrap());
+        assert!(validate_runtime_version_constraint("^20").is_err());
+        assert!(validate_runtime_version_constraint(">=20.0.0.1").is_err());
+    }
+
+    #[test]
+    fn runtime_semver_uses_semver_and_no_manual_compare() {
+        let source = include_str!("io_utils.rs");
+        assert!(source.contains("semver::VersionReq"));
+        assert!(!source.contains(concat!("fn ", "compare_versions")));
+    }
 }

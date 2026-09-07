@@ -48,43 +48,32 @@ impl InstallContext {
 }
 
 pub(crate) trait Installer: Send + Sync {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
     ) -> Result<MaterializedRuntime, InstallError>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum InstallError {
+    #[error("{0}")]
     Unsupported(String),
+    #[error("{0}")]
     RuntimeMissing(String),
+    #[error("{0}")]
     Spawn(String),
+    #[error("{0}")]
     Failed(String),
+    #[error("installation was cancelled")]
     Cancelled,
+    #[error("installation timed out")]
     Timeout,
+    #[error("artifact integrity verification failed")]
     IntegrityMismatch,
+    #[error("{0}")]
     ArchiveInvalid(String),
 }
-
-impl std::fmt::Display for InstallError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unsupported(message)
-            | Self::RuntimeMissing(message)
-            | Self::Spawn(message)
-            | Self::Failed(message)
-            | Self::ArchiveInvalid(message) => formatter.write_str(message),
-            Self::Cancelled => formatter.write_str("installation was cancelled"),
-            Self::Timeout => formatter.write_str("installation timed out"),
-            Self::IntegrityMismatch => {
-                formatter.write_str("artifact integrity verification failed")
-            }
-        }
-    }
-}
-
-impl std::error::Error for InstallError {}
 
 pub(crate) fn ensure_staging_root(path: &Path) -> Result<(), InstallError> {
     std::fs::create_dir_all(path).map_err(|error| InstallError::Failed(error.to_string()))
@@ -128,36 +117,67 @@ pub(crate) fn is_cancelled(context: &InstallContext) -> bool {
         .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
 }
 
-pub(crate) fn run_host_command(
+pub(crate) async fn run_host_command(
     command: &mut std::process::Command,
     context: &InstallContext,
     stdout_cap: usize,
     stderr_cap: usize,
-) -> Result<crate::backend::host_process::HostProcessOutput, InstallError> {
-    crate::backend::host_process::run_command_with_control(
-        command,
-        crate::backend::host_process::HostProcessControl {
-            timeout: context.timeout,
-            stdout_cap,
-            stderr_cap,
-            cancellation: context.cancellation.as_deref(),
-        },
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
-        crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
-        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
-            InstallError::Spawn(format!("program not found: {}", program.display()))
+) -> Result<crate::backend::host_process::HostCommandOutput, InstallError> {
+    let cancellation_token = if let Some(flag) = context.cancellation.as_ref() {
+        let token = tokio_util::sync::CancellationToken::new();
+        if flag.load(std::sync::atomic::Ordering::Acquire) {
+            token.cancel();
         }
-        crate::backend::host_process::HostProcessError::Spawn(reason)
-        | crate::backend::host_process::HostProcessError::Output(reason)
-        | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
-            InstallError::Spawn(reason)
-        }
-        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
-            InstallError::Spawn("process output exceeded configured limit".to_string())
-        }
-    })
+        Some(token)
+    } else {
+        None
+    };
+    let program = PathBuf::from(command.get_program());
+    let args: Vec<String> = command
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    let env: Vec<(String, String)> = command
+        .get_envs()
+        .filter_map(|(k, v)| {
+            v.map(|val| {
+                (
+                    k.to_string_lossy().to_string(),
+                    val.to_string_lossy().to_string(),
+                )
+            })
+        })
+        .collect();
+    let working_dir = command.get_current_dir().map(PathBuf::from);
+
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program,
+        args,
+        env,
+        working_dir,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: context.timeout,
+        stdout_limit: stdout_cap,
+        stderr_limit: stderr_cap,
+    };
+
+    crate::backend::host_process::run_host_command_async(spec, cancellation_token.as_ref())
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
+            crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
+            crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+                InstallError::Spawn(format!("program not found: {}", program.display()))
+            }
+            crate::backend::host_process::HostProcessError::Spawn(reason)
+            | crate::backend::host_process::HostProcessError::Output(reason)
+            | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+                InstallError::Spawn(reason)
+            }
+            crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                InstallError::Spawn("process output exceeded configured limit".to_string())
+            }
+        })
 }
 
 pub(crate) fn runtime_from_local(

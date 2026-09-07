@@ -26,7 +26,6 @@ use crate::backend::{
         SessionEventIdentity, SessionEventKind, SessionProcessingState, SessionToolState,
     },
     host_process::{run_host_command, HostCommandSpec, HostInput},
-    operation_log::{log_info, log_warn},
 };
 
 use super::acp_aggregator::{
@@ -115,54 +114,37 @@ impl AcpExecutionBackend {
             session_delete_method: cleanup.session_delete_method,
         });
         request.report_phase(AiExecutionPhase::CleaningUp);
-        let mut cleanup_fields = vec![
-            ("execution_id", request.execution_id.clone()),
-            ("agent_id", definition.id.to_string()),
-            ("protocol", "acp".to_string()),
-            ("phase", "cleaning_up".to_string()),
-            ("process_reaped", cleanup.process_reaped.to_string()),
-            ("workspace_removed", cleanup.workspace_removed.to_string()),
-            ("stderr_bytes", cleanup.stderr_bytes.to_string()),
-            ("stderr_truncated", cleanup.stderr_truncated.to_string()),
-            ("failure_count", cleanup.failures.len().to_string()),
-            (
-                "session_closed",
-                optional_bool_label(cleanup.session_closed).to_string(),
-            ),
-            (
-                "session_deleted",
-                optional_bool_label(cleanup.session_deleted).to_string(),
-            ),
-            (
-                "session_delete_method",
-                cleanup
-                    .session_delete_method
-                    .map(|method| match method {
-                        AiExecutionSessionDeleteMethod::Acp => "acp",
-                        AiExecutionSessionDeleteMethod::ProviderFallback => "provider_fallback",
-                    })
-                    .unwrap_or("none")
-                    .to_string(),
-            ),
-        ];
-        if let Some(process_id) = cleanup.process_id {
-            cleanup_fields.push(("pid", process_id.to_string()));
-        }
-        if let Some(exit_code) = cleanup.exit_code {
-            cleanup_fields.push(("exit_code", exit_code.to_string()));
-        }
         if !request.replay {
             if cleanup.failures.is_empty() {
-                log_info(
-                    "ai_execution.cleanup",
-                    "AI execution cleanup completed",
-                    &cleanup_fields,
+                tracing::info!(
+                    action = "ai_execution.cleanup",
+                    execution_id = %request.execution_id,
+                    agent_id = %definition.id,
+                    protocol = "acp",
+                    phase = "cleaning_up",
+                    process_reaped = cleanup.process_reaped,
+                    workspace_removed = cleanup.workspace_removed,
+                    stderr_bytes = cleanup.stderr_bytes,
+                    stderr_truncated = cleanup.stderr_truncated,
+                    pid = ?cleanup.process_id,
+                    exit_code = ?cleanup.exit_code,
+                    "AI execution cleanup completed"
                 );
             } else {
-                log_warn(
-                    "ai_execution.cleanup",
-                    "AI execution cleanup reported failures",
-                    &cleanup_fields,
+                tracing::warn!(
+                    action = "ai_execution.cleanup",
+                    execution_id = %request.execution_id,
+                    agent_id = %definition.id,
+                    protocol = "acp",
+                    phase = "cleaning_up",
+                    process_reaped = cleanup.process_reaped,
+                    workspace_removed = cleanup.workspace_removed,
+                    stderr_bytes = cleanup.stderr_bytes,
+                    stderr_truncated = cleanup.stderr_truncated,
+                    pid = ?cleanup.process_id,
+                    exit_code = ?cleanup.exit_code,
+                    failures = ?cleanup.failures,
+                    "AI execution cleanup reported failures"
                 );
             }
         }
@@ -444,27 +426,21 @@ async fn run_execution(
     .await
     .map_err(|error| map_process_error(definition, error))?;
     if !request.replay {
-        log_info(
-            "ai_execution.process",
-            "AI agent process started",
-            &[
-                ("execution_id", request.execution_id.clone()),
-                ("agent_id", definition.id.to_string()),
-                ("protocol", "acp".to_string()),
-                ("phase", "spawning".to_string()),
-                ("pid", process.process_id().to_string()),
-                ("arg_count", definition.args.len().to_string()),
-                ("env_key_count", definition.env.len().to_string()),
-                (
-                    "cwd_kind",
-                    if matches!(request.session_mode, AgentSessionMode::Persistent) {
-                        "stable"
-                    } else {
-                        "ephemeral"
-                    }
-                    .to_string(),
-                ),
-            ],
+        tracing::info!(
+            action = "ai_execution.process",
+            execution_id = %request.execution_id,
+            agent_id = %definition.id,
+            protocol = "acp",
+            phase = "spawning",
+            pid = %process.process_id(),
+            arg_count = definition.args.len(),
+            env_key_count = definition.env.len(),
+            cwd_kind = if matches!(request.session_mode, AgentSessionMode::Persistent) {
+                "stable"
+            } else {
+                "ephemeral"
+            },
+            "AI agent process started"
         );
     }
     guard.process = Some(process);
@@ -1085,20 +1061,18 @@ async fn run_prompt_and_aggregate(
                         };
                         let text_bytes = outcome.as_ref().map(|text| text.len()).unwrap_or_default();
                         if !request.replay {
-                            log_info(
-                                "ai_execution.output",
-                                "AI execution output aggregated",
-                                &[
-                                    ("execution_id", request.execution_id.clone()),
-                                    ("agent_id", definition.id.to_string()),
-                                    ("protocol", "acp".to_string()),
-                                    ("phase", "prompting".to_string()),
-                                    ("text_bytes", text_bytes.to_string()),
-                                    ("chunk_count", diagnostics.0.to_string()),
-                                    ("thinking_chunk_count", diagnostics.1.to_string()),
-                                    ("ignored_session_event_count", diagnostics.2.to_string()),
-                                    ("stop_reason", format!("{stop_reason:?}").to_ascii_lowercase()),
-                                ],
+                            tracing::info!(
+                                action = "ai_execution.output",
+                                execution_id = %request.execution_id,
+                                agent_id = %definition.id,
+                                protocol = "acp",
+                                phase = "prompting",
+                                text_bytes,
+                                chunk_count = diagnostics.0,
+                                thinking_chunk_count = diagnostics.1,
+                                ignored_session_event_count = diagnostics.2,
+                                stop_reason = ?stop_reason,
+                                "AI execution output aggregated"
                             );
                         }
                         return outcome;
@@ -1476,14 +1450,6 @@ fn matches_declared_not_found(message: &str, markers: &[String]) -> bool {
         let line = line.trim_start();
         markers.iter().any(|marker| line.starts_with(marker))
     })
-}
-
-fn optional_bool_label(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "true",
-        Some(false) => "false",
-        None => "not_applicable",
-    }
 }
 
 #[derive(Default, Debug)]
@@ -1996,14 +1962,21 @@ mod tests {
         assert_eq!(result.text, "translated");
         let records = records(&record);
         assert!(!records.contains("\"event\":\"delete\""));
-        let reaped = records.find("\"event\":\"sigterm\"").expect("reap record");
-        let fallback = records
-            .find("\"event\":\"fallback_delete\"")
-            .expect("fallback record");
-        assert!(
-            reaped < fallback,
-            "fallback must run after ACP process reap"
-        );
+        #[cfg(unix)]
+        {
+            let reaped = records.find("\"event\":\"sigterm\"").expect("reap record");
+            let fallback = records
+                .find("\"event\":\"fallback_delete\"")
+                .expect("fallback record");
+            assert!(
+                reaped < fallback,
+                "fallback must run after ACP process reap"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            assert!(records.contains("\"event\":\"fallback_delete\""));
+        }
         assert!(records.contains("\"sessionId\":\"fixture-session\""));
         assert!(records.contains("\"originalProcessReaped\":true"));
         assert!(records.contains("\"workspaceExists\":true"));

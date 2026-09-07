@@ -2,7 +2,13 @@ import clsx from "clsx";
 import { Pencil, Trash2 } from "lucide-react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
@@ -40,9 +46,13 @@ export function AssetRow({
   onDelete?: () => void;
 }) {
   const { t } = useI18n();
-  const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+  const mountBlockedReason = isDirectMountBlockedSource(source)
+    ? t("mount.blocked")
+    : undefined;
   const mountSummaryState = getAssetMountSummaryState(mountStatuses);
-  const hasVisibleMountShortcuts = appShortcuts.some((shortcut) => shortcut.enabled);
+  const hasVisibleMountShortcuts = appShortcuts.some(
+    (shortcut) => shortcut.enabled,
+  );
   const sourceHref = assetSourceHref(asset);
 
   return (
@@ -51,6 +61,7 @@ export function AssetRow({
         "aurora-list-row group cursor-pointer",
         expanded && "asset-expanded",
       )}
+      data-asset-id={asset.id}
       data-expanded={expanded}
       onClick={onToggleExpanded}
     >
@@ -60,7 +71,14 @@ export function AssetRow({
             <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[14px] font-semibold leading-5 text-on-surface">
               {asset.name}
             </span>
-            <span className={clsx("rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)]", kindBadgeClass(asset.kind))}>{assetKindLabel(asset.kind, t)}</span>
+            <span
+              className={clsx(
+                "rounded-full border px-2.5 py-1 text-label-caps uppercase shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.14)]",
+                kindBadgeClass(asset.kind),
+              )}
+            >
+              {assetKindLabel(asset.kind, t)}
+            </span>
             <SkillBackupBadge asset={asset} />
             <MountStatePill state={mountSummaryState} />
             <span className="rounded-full border border-theme-control-border/65 bg-theme-control-hover/55 px-2.5 py-1 text-[10px] font-bold text-on-surface-variant">
@@ -79,12 +97,20 @@ export function AssetRow({
             {displayAssetPath(asset)}
           </button>
           <div className="mt-3 flex min-w-0 items-start gap-5 max-[980px]:flex-col max-[980px]:gap-2">
-            <InlineMeta label={t("asset.description")} value={asset.description ?? t("asset.noDescription")} />
-            <InlineMeta href={sourceHref} label={t("asset.source")} value={assetSourceLabel(asset, source)} mono />
+            <InlineMeta
+              label={t("asset.description")}
+              value={asset.description ?? t("asset.noDescription")}
+            />
+            <InlineMeta
+              href={sourceHref}
+              label={t("asset.source")}
+              value={assetSourceLabel(asset, source)}
+              mono
+            />
           </div>
         </div>
         <div
-          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-2xl border border-theme-control-border/65 bg-theme-control/48 p-1.5 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md max-[980px]:justify-start"
+          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-2xl border border-theme-control-border/65 bg-theme-control p-1.5 shadow-[var(--theme-shadow-control-inset)] max-[980px]:justify-start"
           onClick={(event) => event.stopPropagation()}
         >
           <QuickMountButtons
@@ -95,7 +121,12 @@ export function AssetRow({
             shortcuts={appShortcuts}
             onToggle={onToggleMount}
           />
-          {hasVisibleMountShortcuts && (onEdit || onDelete) && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
+          {hasVisibleMountShortcuts && (onEdit || onDelete) && (
+            <span
+              className="h-6 w-px bg-theme-control-border/80"
+              aria-hidden="true"
+            />
+          )}
           {onEdit && (
             <button
               className="grid size-8 place-items-center rounded-xl text-theme-control-fg transition-[transform,background-color,border-color,box-shadow,color] duration-200 hover:bg-theme-control-hover hover:text-primary"

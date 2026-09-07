@@ -1,4 +1,4 @@
-use crate::backend::host_process::configure_background_process;
+use crate::backend::path_utils::configure_background_process;
 use chrono::Local;
 use serde::Serialize;
 use std::{
@@ -8,6 +8,60 @@ use std::{
     path::{Path, PathBuf},
     time::UNIX_EPOCH,
 };
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum LogAccessError {
+    #[error("无法获取运行配置: {0}")]
+    RuntimeConfig(String),
+
+    #[error("{action}失败: {source}")]
+    Io {
+        action: &'static str,
+        path: Option<PathBuf>,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("未找到可用日志文件")]
+    NoAvailableLogFiles,
+
+    #[error("未找到指定日志文件: {0}")]
+    FileNotFound(String),
+
+    #[error("不支持的日志级别: {0}")]
+    InvalidLogLevel(String),
+
+    #[error("没有可用的 panic 日志路径: {0}")]
+    PanicLogFailed(String),
+
+    #[error("非法日志路径访问: {0}")]
+    PathEscape(String),
+
+    #[error("打开目录失败: {0}")]
+    OpenDirectory(#[source] std::io::Error),
+
+    #[error("{0}")]
+    Other(String),
+}
+
+impl LogAccessError {
+    pub fn contains(&self, needle: &str) -> bool {
+        self.to_string().contains(needle)
+    }
+}
+
+impl PartialEq<&str> for LogAccessError {
+    fn eq(&self, other: &&str) -> bool {
+        self.to_string() == *other
+    }
+}
+
+impl PartialEq<String> for LogAccessError {
+    fn eq(&self, other: &String) -> bool {
+        self.to_string() == *other
+    }
+}
 
 const APP_LOG_FILE_PREFIX: &str = "app.log";
 const CODEX_API_LOG_FILE_PREFIX: &str = "codex-api.log";
@@ -21,32 +75,6 @@ const DEFAULT_LOG_TAIL_LINES: usize = 200;
 const MIN_LOG_TAIL_LINES: usize = 20;
 const MAX_LOG_TAIL_LINES: usize = 5000;
 const LOG_TAIL_SCAN_CHUNK_BYTES: usize = 8192;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OperationLogLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-impl OperationLogLevel {
-    fn from_str(level: &str) -> Result<Self, String> {
-        match level.trim().to_ascii_uppercase().as_str() {
-            "INFO" => Ok(Self::Info),
-            "WARN" | "WARNING" => Ok(Self::Warn),
-            "ERROR" => Ok(Self::Error),
-            other => Err(format!("不支持的日志级别: {other}")),
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ManagedLogFile {
@@ -68,43 +96,13 @@ pub struct LogSnapshot {
     pub available_files: Vec<ManagedLogFile>,
 }
 
-pub(crate) fn write_startup_log() -> Result<(), String> {
-    write_operation_log(
-        OperationLogLevel::Info,
-        "app.startup",
-        "AssetIWeave 启动",
-        &[],
-    )
-}
-
-pub(crate) fn record_operation(
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) {
-    #[cfg(test)]
-    {
-        let timestamp = Local::now().to_rfc3339();
-        let _ = format_operation_log_line(&timestamp, level, operation, message, fields);
-    }
-
-    #[cfg(not(test))]
-    if let Err(error) = write_operation_log(level, operation, message, fields) {
-        eprintln!("failed to write AssetIWeave operation log: {error}");
-    }
-}
-
-pub(crate) fn record_info(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Info, operation, message, fields);
-}
-
-pub(crate) fn record_warn(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Warn, operation, message, fields);
-}
-
-pub(crate) fn record_error(operation: &str, message: &str, fields: &[(&str, String)]) {
-    record_operation(OperationLogLevel::Error, operation, message, fields);
+pub(crate) fn write_startup_log() -> Result<(), LogAccessError> {
+    tracing::info!(
+        target: "assetiweave.operation",
+        operation = "app.startup",
+        "AssetIWeave 启动"
+    );
+    Ok(())
 }
 
 pub(crate) fn record_fatal_panic(message: &str) {
@@ -126,14 +124,17 @@ pub(crate) fn record_fatal_panic(message: &str) {
 pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
-) -> Result<LogSnapshot, String> {
+) -> Result<LogSnapshot, LogAccessError> {
     let line_limit = clamp_log_tail_lines(line_limit);
     let log_dir = get_log_dir()?;
     ensure_default_log_file()?;
     let log_file = resolve_managed_log_file(file_name.as_deref())?;
     let content = read_log_tail_lines(&log_file, line_limit)?;
-    let metadata =
-        fs::metadata(&log_file).map_err(|error| format!("读取日志文件元数据失败: {error}"))?;
+    let metadata = fs::metadata(&log_file).map_err(|source| LogAccessError::Io {
+        action: "读取日志文件元数据",
+        path: Some(log_file.clone()),
+        source,
+    })?;
     let available_files = build_available_log_files(list_managed_log_files()?)?;
 
     Ok(LogSnapshot {
@@ -152,22 +153,22 @@ pub(crate) fn logs_get_snapshot(
     })
 }
 
-pub(crate) fn logs_open_log_directory() -> Result<(), String> {
+pub(crate) fn logs_open_log_directory() -> Result<(), LogAccessError> {
     let log_dir = get_log_dir()?;
     let result = open_directory(&log_dir);
     match &result {
-        Ok(()) => record_info(
-            "log.open_directory",
-            "打开日志目录成功",
-            &[("path", log_dir.to_string_lossy().to_string())],
+        Ok(()) => tracing::info!(
+            target: "assetiweave.operation",
+            operation = "log.open_directory",
+            path = %log_dir.to_string_lossy(),
+            "打开日志目录成功"
         ),
-        Err(error) => record_error(
-            "log.open_directory",
-            "打开日志目录失败",
-            &[
-                ("path", log_dir.to_string_lossy().to_string()),
-                ("error", error.to_string()),
-            ],
+        Err(error) => tracing::error!(
+            target: "assetiweave.operation",
+            operation = "log.open_directory",
+            path = %log_dir.to_string_lossy(),
+            error = %error,
+            "打开日志目录失败"
         ),
     }
     result
@@ -178,39 +179,69 @@ pub(crate) fn logs_write_operation(
     operation: String,
     message: String,
     fields: Option<BTreeMap<String, String>>,
-) -> Result<(), String> {
-    let level = OperationLogLevel::from_str(&level)?;
-    let field_pairs = fields
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(key, value)| (key, value))
-        .collect::<Vec<_>>();
-    let borrowed_fields = field_pairs
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.clone()))
-        .collect::<Vec<_>>();
+) -> Result<(), LogAccessError> {
+    let level_str = level.trim().to_ascii_uppercase();
+    let operation = sanitize_log_key(&operation);
+    let message = sanitize_log_text(&message);
+    let fields_map = fields.unwrap_or_default();
 
-    write_operation_log(level, &operation, &message, &borrowed_fields)
-}
-
-fn get_log_dir() -> Result<PathBuf, String> {
-    if let Some(log_dir) = std::env::var_os("ASSETIWEAVE_LOG_DIR") {
-        let log_dir = PathBuf::from(log_dir);
-        fs::create_dir_all(&log_dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
-        return Ok(log_dir);
+    match level_str.as_str() {
+        "INFO" => {
+            tracing::info!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        "WARN" | "WARNING" => {
+            tracing::warn!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        "ERROR" => {
+            tracing::error!(
+                target: "assetiweave.operation",
+                operation = %operation,
+                fields = ?fields_map,
+                "{}",
+                message
+            );
+        }
+        other => return Err(LogAccessError::InvalidLogLevel(other.to_string())),
     }
-
-    let mut data_dir = dirs::data_dir().ok_or("无法确定系统数据目录")?;
-    data_dir.push("AssetIWeave");
-    data_dir.push("logs");
-    fs::create_dir_all(&data_dir).map_err(|error| format!("创建日志目录失败: {error}"))?;
-    Ok(data_dir)
+    Ok(())
 }
 
-fn ensure_default_log_file() -> Result<(), String> {
-    if get_log_dir()?.join(APP_LOG_FILE_PREFIX).is_file() {
+fn get_log_dir() -> Result<PathBuf, LogAccessError> {
+    let log_dir = crate::backend::runtime::config::runtime_config()
+        .map_err(|error| LogAccessError::RuntimeConfig(error.to_string()))?
+        .log_dir
+        .clone();
+    fs::create_dir_all(&log_dir).map_err(|source| LogAccessError::Io {
+        action: "创建日志目录",
+        path: Some(log_dir.clone()),
+        source,
+    })?;
+    Ok(log_dir)
+}
+
+fn ensure_default_log_file() -> Result<(), LogAccessError> {
+    let log_dir = get_log_dir()?;
+    let default_log = log_dir.join(APP_LOG_FILE_PREFIX);
+    if default_log.is_file() || !list_managed_log_files()?.is_empty() {
         return Ok(());
     }
+
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&default_log);
 
     write_startup_log()
 }
@@ -223,19 +254,27 @@ fn is_log_file_with_prefix(name: &str, prefix: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn is_managed_log_file_name(name: &str) -> bool {
+pub(crate) fn is_managed_log_file_name(name: &str) -> bool {
     MANAGED_LOG_FILE_PREFIXES
         .iter()
         .any(|prefix| is_log_file_with_prefix(name, prefix))
 }
 
-fn list_managed_log_files() -> Result<Vec<PathBuf>, String> {
+fn list_managed_log_files() -> Result<Vec<PathBuf>, LogAccessError> {
     let log_dir = get_log_dir()?;
-    let entries = fs::read_dir(&log_dir).map_err(|error| format!("读取日志目录失败: {error}"))?;
+    let entries = fs::read_dir(&log_dir).map_err(|source| LogAccessError::Io {
+        action: "读取日志目录",
+        path: Some(log_dir.clone()),
+        source,
+    })?;
 
     let mut paths = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|error| format!("读取日志目录项失败: {error}"))?;
+        let entry = entry.map_err(|source| LogAccessError::Io {
+            action: "读取日志目录项",
+            path: Some(log_dir.clone()),
+            source,
+        })?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
@@ -249,32 +288,42 @@ fn list_managed_log_files() -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-fn resolve_managed_log_file(file_name: Option<&str>) -> Result<PathBuf, String> {
-    let log_files = list_managed_log_files()?;
-    if log_files.is_empty() {
-        return Err("未找到可用日志文件".to_string());
-    }
-
+fn resolve_managed_log_file(file_name: Option<&str>) -> Result<PathBuf, LogAccessError> {
     if let Some(file_name) = file_name.map(str::trim).filter(|name| !name.is_empty()) {
+        if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
+            return Err(LogAccessError::PathEscape(file_name.to_string()));
+        }
+        let log_files = list_managed_log_files()?;
+        if log_files.is_empty() {
+            return Err(LogAccessError::NoAvailableLogFiles);
+        }
         return log_files
             .into_iter()
             .find(|path| path.file_name().and_then(|name| name.to_str()) == Some(file_name))
-            .ok_or_else(|| format!("未找到指定日志文件: {file_name}"));
+            .ok_or_else(|| LogAccessError::FileNotFound(file_name.to_string()));
     }
 
+    let log_files = list_managed_log_files()?;
     log_files
         .into_iter()
         .next()
-        .ok_or_else(|| "未找到可用日志文件".to_string())
+        .ok_or(LogAccessError::NoAvailableLogFiles)
 }
 
-fn read_log_tail_lines(log_file: &Path, line_limit: usize) -> Result<String, String> {
+fn read_log_tail_lines(log_file: &Path, line_limit: usize) -> Result<String, LogAccessError> {
     let line_limit = line_limit.max(1);
-    let mut file =
-        fs::File::open(log_file).map_err(|error| format!("打开日志文件失败: {error}"))?;
+    let mut file = fs::File::open(log_file).map_err(|source| LogAccessError::Io {
+        action: "打开日志文件",
+        path: Some(log_file.to_path_buf()),
+        source,
+    })?;
     let file_len = file
         .metadata()
-        .map_err(|error| format!("读取日志文件元数据失败: {error}"))?
+        .map_err(|source| LogAccessError::Io {
+            action: "读取日志文件元数据",
+            path: Some(log_file.to_path_buf()),
+            source,
+        })?
         .len();
 
     if file_len == 0 {
@@ -291,9 +340,17 @@ fn read_log_tail_lines(log_file: &Path, line_limit: usize) -> Result<String, Str
         pos -= read_size as u64;
 
         file.seek(SeekFrom::Start(pos))
-            .map_err(|error| format!("读取日志定位失败: {error}"))?;
+            .map_err(|source| LogAccessError::Io {
+                action: "读取日志定位",
+                path: Some(log_file.to_path_buf()),
+                source,
+            })?;
         file.read_exact(&mut buffer[..read_size])
-            .map_err(|error| format!("读取日志内容失败: {error}"))?;
+            .map_err(|source| LogAccessError::Io {
+                action: "读取日志内容",
+                path: Some(log_file.to_path_buf()),
+                source,
+            })?;
 
         for idx in (0..read_size).rev() {
             if buffer[idx] != b'\n' {
@@ -309,10 +366,18 @@ fn read_log_tail_lines(log_file: &Path, line_limit: usize) -> Result<String, Str
     }
 
     file.seek(SeekFrom::Start(start_offset))
-        .map_err(|error| format!("读取日志定位失败: {error}"))?;
+        .map_err(|source| LogAccessError::Io {
+            action: "读取日志定位",
+            path: Some(log_file.to_path_buf()),
+            source,
+        })?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
-        .map_err(|error| format!("读取日志内容失败: {error}"))?;
+        .map_err(|source| LogAccessError::Io {
+            action: "读取日志内容",
+            path: Some(log_file.to_path_buf()),
+            source,
+        })?;
 
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
@@ -323,9 +388,12 @@ fn clamp_log_tail_lines(line_limit: Option<usize>) -> usize {
         .clamp(MIN_LOG_TAIL_LINES, MAX_LOG_TAIL_LINES)
 }
 
-fn build_managed_log_file(path: &Path) -> Result<ManagedLogFile, String> {
-    let metadata =
-        fs::metadata(path).map_err(|error| format!("读取日志文件元数据失败: {error}"))?;
+fn build_managed_log_file(path: &Path) -> Result<ManagedLogFile, LogAccessError> {
+    let metadata = fs::metadata(path).map_err(|source| LogAccessError::Io {
+        action: "读取日志文件元数据",
+        path: Some(path.to_path_buf()),
+        source,
+    })?;
 
     Ok(ManagedLogFile {
         log_file_path: path.to_string_lossy().to_string(),
@@ -339,7 +407,7 @@ fn build_managed_log_file(path: &Path) -> Result<ManagedLogFile, String> {
     })
 }
 
-fn build_available_log_files(paths: Vec<PathBuf>) -> Result<Vec<ManagedLogFile>, String> {
+fn build_available_log_files(paths: Vec<PathBuf>) -> Result<Vec<ManagedLogFile>, LogAccessError> {
     paths
         .into_iter()
         .map(|path| build_managed_log_file(path.as_path()))
@@ -366,34 +434,7 @@ fn to_unix_millis(time: std::time::SystemTime) -> Option<i64> {
         .and_then(|value| i64::try_from(value).ok())
 }
 
-fn write_operation_log(
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> Result<(), String> {
-    let log_dir = get_log_dir()?;
-    write_operation_log_to_dir(&log_dir, level, operation, message, fields)
-}
-
-fn write_operation_log_to_dir(
-    log_dir: &Path,
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> Result<(), String> {
-    let line = format_operation_log_line(
-        &Local::now().to_rfc3339(),
-        level,
-        operation,
-        message,
-        fields,
-    );
-    append_app_log_line(log_dir, &line)
-}
-
-fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), String> {
+fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), LogAccessError> {
     let mut errors = Vec::new();
     for path in paths {
         let Some(parent) = path.parent() else {
@@ -419,47 +460,12 @@ fn write_fatal_panic_log(paths: &[PathBuf], message: &str) -> Result<(), String>
     }
 
     if errors.is_empty() {
-        Err("没有可用的 panic 日志路径".to_string())
+        Err(LogAccessError::PanicLogFailed(
+            "没有可用的 panic 日志路径".to_string(),
+        ))
     } else {
-        Err(errors.join("; "))
+        Err(LogAccessError::PanicLogFailed(errors.join("; ")))
     }
-}
-
-fn append_app_log_line(log_dir: &Path, line: &str) -> Result<(), String> {
-    let log_file = log_dir.join(APP_LOG_FILE_PREFIX);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .map_err(|error| format!("打开日志文件失败: {error}"))?;
-
-    writeln!(file, "{line}").map_err(|error| format!("写入日志文件失败: {error}"))
-}
-
-fn format_operation_log_line(
-    timestamp: &str,
-    level: OperationLogLevel,
-    operation: &str,
-    message: &str,
-    fields: &[(&str, String)],
-) -> String {
-    let mut line = format!(
-        "{} {} [{}] {}",
-        sanitize_log_text(timestamp),
-        level.as_str(),
-        sanitize_log_key(operation),
-        sanitize_log_text(message)
-    );
-
-    for (key, value) in fields {
-        line.push(' ');
-        line.push_str(&sanitize_log_key(key));
-        line.push_str("=\"");
-        line.push_str(&sanitize_log_value(value));
-        line.push('"');
-    }
-
-    line
 }
 
 fn sanitize_log_key(value: &str) -> String {
@@ -490,19 +496,18 @@ fn sanitize_log_text(value: &str) -> String {
         .replace('\n', "\\n")
 }
 
+#[cfg(test)]
 fn sanitize_log_value(value: &str) -> String {
     sanitize_log_text(value).replace('"', "\\\"")
 }
 
-fn open_directory(path: &Path) -> Result<(), String> {
+fn open_directory(path: &Path) -> Result<(), LogAccessError> {
     #[cfg(target_os = "macos")]
     {
         let mut command = std::process::Command::new("open");
         command.arg(path);
         configure_background_process(&mut command);
-        command
-            .spawn()
-            .map_err(|error| format!("打开目录失败: {error}"))?;
+        command.spawn().map_err(LogAccessError::OpenDirectory)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -510,9 +515,7 @@ fn open_directory(path: &Path) -> Result<(), String> {
         let mut command = std::process::Command::new("explorer");
         command.arg(path);
         configure_background_process(&mut command);
-        command
-            .spawn()
-            .map_err(|error| format!("打开目录失败: {error}"))?;
+        command.spawn().map_err(LogAccessError::OpenDirectory)?;
     }
 
     #[cfg(target_os = "linux")]
@@ -520,9 +523,7 @@ fn open_directory(path: &Path) -> Result<(), String> {
         let mut command = std::process::Command::new("xdg-open");
         command.arg(path);
         configure_background_process(&mut command);
-        command
-            .spawn()
-            .map_err(|error| format!("打开目录失败: {error}"))?;
+        command.spawn().map_err(LogAccessError::OpenDirectory)?;
     }
 
     Ok(())
@@ -531,41 +532,18 @@ fn open_directory(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static LOG_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn operation_log_line_escapes_multiline_fields() {
-        let line = format_operation_log_line(
-            "2026-06-01T15:00:00+08:00",
-            OperationLogLevel::Error,
-            "skill mount!",
-            "挂载失败\n需要查看异常",
-            &[
-                ("skill name", "frontend-ui\nengineering".to_string()),
-                ("error", "path contains \"target\"".to_string()),
-            ],
-        );
-
+    fn sanitize_log_helpers_escape_properly() {
         assert_eq!(
-            line,
-            "2026-06-01T15:00:00+08:00 ERROR [skill_mount] 挂载失败\\n需要查看异常 skill_name=\"frontend-ui\\nengineering\" error=\"path contains \\\"target\\\"\""
+            sanitize_log_text("挂载失败\n需要查看异常"),
+            "挂载失败\\n需要查看异常"
         );
-        assert!(!line.contains('\n'));
-    }
-
-    #[test]
-    fn log_level_parser_accepts_expected_levels() {
+        assert_eq!(sanitize_log_key("skill mount!"), "skill_mount");
         assert_eq!(
-            OperationLogLevel::from_str("info").expect("info level"),
-            OperationLogLevel::Info
+            sanitize_log_value("path contains \"target\""),
+            "path contains \\\"target\\\""
         );
-        assert_eq!(
-            OperationLogLevel::from_str("warning").expect("warning level"),
-            OperationLogLevel::Warn
-        );
-        assert!(OperationLogLevel::from_str("debug").is_err());
     }
 
     #[test]
@@ -599,51 +577,8 @@ mod tests {
     }
 
     #[test]
-    fn operation_log_writer_appends_to_log_viewer_file() {
-        let log_dir = std::env::temp_dir().join(format!(
-            "assetiweave-log-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&log_dir).expect("create log dir");
-
-        write_operation_log_to_dir(
-            &log_dir,
-            OperationLogLevel::Info,
-            "source.create",
-            "添加数据来源成功",
-            &[
-                ("source_id", "source-a".to_string()),
-                ("root_path", "/tmp/skills".to_string()),
-            ],
-        )
-        .expect("write operation log");
-
-        let content =
-            read_log_tail_lines(&log_dir.join(APP_LOG_FILE_PREFIX), 20).expect("read log tail");
-        assert!(content.contains("INFO [source.create] 添加数据来源成功"));
-        assert!(content.contains("source_id=\"source-a\""));
-        assert!(content.contains("root_path=\"/tmp/skills\""));
-
-        fs::remove_dir_all(log_dir).expect("remove log dir");
-    }
-
-    #[test]
-    fn write_operation_command_is_read_by_snapshot_command() {
-        let _guard = LOG_ENV_LOCK.lock().expect("lock log env");
-        let log_dir = std::env::temp_dir().join(format!(
-            "assetiweave-log-command-test-{}",
-            std::time::SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time after epoch")
-                .as_nanos()
-        ));
-        fs::create_dir_all(&log_dir).expect("create log dir");
-        std::env::set_var("ASSETIWEAVE_LOG_DIR", &log_dir);
-
-        logs_write_operation(
+    fn write_operation_command_validates_level_and_accepts_payload() {
+        assert!(logs_write_operation(
             "INFO".to_string(),
             "source.create".to_string(),
             "添加数据来源成功".to_string(),
@@ -652,18 +587,48 @@ mod tests {
                 ("root_path".to_string(), "/tmp/skills".to_string()),
             ])),
         )
-        .expect("write operation command");
-        let snapshot = logs_get_snapshot(Some(APP_LOG_FILE_PREFIX.to_string()), Some(20))
-            .expect("get log snapshot command");
+        .is_ok());
 
-        assert!(snapshot
-            .content
-            .contains("INFO [source.create] 添加数据来源成功"));
-        assert!(snapshot.content.contains("source_id=\"source-a\""));
-        assert!(snapshot.content.contains("root_path=\"/tmp/skills\""));
-        assert_eq!(snapshot.log_file_name, APP_LOG_FILE_PREFIX);
+        assert!(logs_write_operation(
+            "UNKNOWN".to_string(),
+            "source.create".to_string(),
+            "添加数据来源成功".to_string(),
+            None,
+        )
+        .is_err());
+    }
 
-        std::env::remove_var("ASSETIWEAVE_LOG_DIR");
-        fs::remove_dir_all(log_dir).expect("remove log dir");
+    #[test]
+    fn ordinary_logs_no_longer_open_file_for_each_event() {
+        let source = include_str!("logs.rs");
+        assert!(!source.contains(concat!("fn append_app_", "log_line(")));
+        assert!(!source.contains(concat!("fn format_operation_", "log_line(")));
+    }
+
+    #[test]
+    fn resolve_managed_log_file_rejects_path_escape_and_missing_file() {
+        let _ = ensure_default_log_file();
+
+        let escape_err = resolve_managed_log_file(Some("../../etc/passwd")).unwrap_err();
+        assert!(matches!(escape_err, LogAccessError::PathEscape(_)));
+
+        let slash_err = resolve_managed_log_file(Some("foo/bar.log")).unwrap_err();
+        assert!(matches!(slash_err, LogAccessError::PathEscape(_)));
+
+        let not_found_err =
+            resolve_managed_log_file(Some("non_existent_file_xyz.log")).unwrap_err();
+        assert!(matches!(not_found_err, LogAccessError::FileNotFound(_)));
+    }
+
+    #[test]
+    fn write_operation_typed_error_on_invalid_level() {
+        let err = logs_write_operation(
+            "INVALID_LEVEL".to_string(),
+            "op".to_string(),
+            "msg".to_string(),
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LogAccessError::InvalidLogLevel(_)));
     }
 }

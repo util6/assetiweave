@@ -8,22 +8,16 @@ struct SkillBackupCopyTarget {
 }
 
 impl AppService {
-    pub(crate) fn list_skills(&self) -> AppResult<Vec<CatalogAsset>> {
-        Ok(capabilities::catalog_assets_sqlx(
-            &self.db,
-            self.tenant_id(),
-            Some(AssetKind::Skill),
-        )?)
+    pub(crate) async fn list_skills(&self) -> AppResult<Vec<CatalogAsset>> {
+        capabilities::catalog_assets_sqlx(self.db.pool(), self.tenant_id(), Some(AssetKind::Skill))
+            .await
     }
 
-    pub(crate) fn get_skill_backup_settings(&self) -> AppResult<SkillBackupSettings> {
-        Ok(capabilities::skill_backup_settings_sqlx(
-            &self.db,
-            self.tenant_id(),
-        )?)
+    pub(crate) async fn get_skill_backup_settings(&self) -> AppResult<SkillBackupSettings> {
+        capabilities::skill_backup_settings_sqlx(self.db.pool(), self.tenant_id()).await
     }
 
-    pub(crate) fn update_skill_backup_settings(
+    pub(crate) async fn update_skill_backup_settings(
         &self,
         params: UpdateSkillBackupSettingsParams,
     ) -> AppResult<SkillBackupSettings> {
@@ -35,20 +29,16 @@ impl AppService {
         }
         let root_path = crate::backend::path_utils::normalize_path_for_storage(raw_root_path)?;
 
-        let current = capabilities::skill_backup_settings_sqlx(&self.db, self.tenant_id())?;
+        let current =
+            capabilities::skill_backup_settings_sqlx(self.db.pool(), self.tenant_id()).await?;
         let current_root = PathBuf::from(&current.expanded_root_path);
         let next_root = crate::backend::path_utils::expand_path(&root_path)?;
         if capabilities::same_path_or_text(&current_root, &next_root) {
             let source = capabilities::assetiweave_library_source_with_root(root_path);
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            self.db.block_on(async move {
-                crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await
-            })?;
-            return Ok(capabilities::skill_backup_settings_sqlx(
-                &self.db,
-                self.tenant_id(),
-            )?);
+            crate::backend::store::upsert_source_sqlx(self.db.pool(), self.tenant_id(), &source)
+                .await?;
+            return capabilities::skill_backup_settings_sqlx(self.db.pool(), self.tenant_id())
+                .await;
         }
 
         if params.migrate {
@@ -65,25 +55,20 @@ impl AppService {
         }
 
         let source = capabilities::assetiweave_library_source_with_root(root_path);
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &source).await
-        })?;
-        capabilities::refresh_all_sources(&self.db, self.tenant_id())?;
+        crate::backend::store::upsert_source_sqlx(self.db.pool(), self.tenant_id(), &source)
+            .await?;
+        capabilities::refresh_all_sources(self.db.pool(), self.tenant_id()).await?;
 
         if params.migrate && !current.is_default_root && current_root.exists() {
             fs::remove_dir_all(&current_root)?;
         }
 
-        Ok(capabilities::skill_backup_settings_sqlx(
-            &self.db,
-            self.tenant_id(),
-        )?)
+        capabilities::skill_backup_settings_sqlx(self.db.pool(), self.tenant_id()).await
     }
 
-    pub(crate) fn backup_skill(&self, asset_id: String) -> AppResult<CatalogAsset> {
-        self.backup_skills(vec![asset_id])?
+    pub(crate) async fn backup_skill(&self, asset_id: String) -> AppResult<CatalogAsset> {
+        self.backup_skills(vec![asset_id])
+            .await?
             .into_iter()
             .next()
             .ok_or_else(|| {
@@ -93,11 +78,14 @@ impl AppService {
             })
     }
 
-    pub(crate) fn backup_skills(&self, asset_ids: Vec<String>) -> AppResult<Vec<CatalogAsset>> {
-        self.backup_skills_with_progress(asset_ids, |_, _| {})
+    pub(crate) async fn backup_skills(
+        &self,
+        asset_ids: Vec<String>,
+    ) -> AppResult<Vec<CatalogAsset>> {
+        self.backup_skills_with_progress(asset_ids, |_, _| {}).await
     }
 
-    pub(crate) fn backup_skills_with_progress<F>(
+    pub(crate) async fn backup_skills_with_progress<F>(
         &self,
         asset_ids: Vec<String>,
         mut on_progress: F,
@@ -110,13 +98,10 @@ impl AppService {
             return Ok(Vec::new());
         }
 
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let (assets, sources) = self.db.block_on(async move {
-            let assets = crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
-            let sources = crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await?;
-            AppResult::Ok((assets, sources))
-        })?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, None).await?;
+        let sources = crate::backend::store::load_sources_sqlx(pool, tenant_id).await?;
         let assets_by_id = assets
             .iter()
             .map(|asset| (asset.id.as_str(), asset))
@@ -125,7 +110,7 @@ impl AppService {
             .iter()
             .map(|source| (source.id.as_str(), source))
             .collect::<HashMap<_, _>>();
-        let backup_root = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?;
+        let backup_root = capabilities::skill_backup_root_sqlx(pool, tenant_id).await?;
         let mut targets = Vec::with_capacity(asset_ids.len());
 
         for asset_id in asset_ids {
@@ -192,25 +177,23 @@ impl AppService {
         }
 
         let library_source = capabilities::assetiweave_library_source_with_root(
-            capabilities::skill_backup_settings_sqlx(&self.db, self.tenant_id())?.root_path,
+            capabilities::skill_backup_settings_sqlx(pool, tenant_id)
+                .await?
+                .root_path,
         );
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &library_source).await
-        })?;
-        capabilities::refresh_all_sources(&self.db, self.tenant_id())?;
+        crate::backend::store::upsert_source_sqlx(pool, tenant_id, &library_source).await?;
+        capabilities::refresh_all_sources(pool, tenant_id).await?;
 
         let catalog =
-            capabilities::catalog_assets_sqlx(&self.db, self.tenant_id(), Some(AssetKind::Skill))?;
+            capabilities::catalog_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
         let mut backed_up_assets = Vec::with_capacity(targets.len());
         for target in targets {
-            let target_path = target.target_dir.to_string_lossy();
+            let target_dir = target.target_dir.as_path();
             let backed_up_asset = catalog
                 .iter()
                 .find(|candidate| {
                     candidate.asset.id == target.asset.id
-                        || candidate.asset.absolute_path == target_path
+                        || std::path::Path::new(&candidate.asset.absolute_path) == target_dir
                         || (target.asset.content_hash.is_some()
                             && candidate.asset.content_hash.as_deref()
                                 == target.asset.content_hash.as_deref())
@@ -226,14 +209,14 @@ impl AppService {
         Ok(backed_up_assets)
     }
 
-    pub(crate) fn import_skill(&self, params: ImportSkillParams) -> AppResult<Value> {
-        self.import_skill_with_progress(params, None)
+    pub(crate) async fn import_skill(&self, params: ImportSkillParams) -> AppResult<Value> {
+        self.import_skill_with_progress(params, None).await
     }
 
-    pub(crate) fn import_skill_with_progress(
+    pub(crate) async fn import_skill_with_progress(
         &self,
         params: ImportSkillParams,
-        phase_sink: Option<&dyn Fn(&str)>,
+        phase_sink: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> AppResult<Value> {
         let source_dir = crate::backend::path_utils::expand_path(&params.from)?;
         if !source_dir.is_dir() {
@@ -267,7 +250,8 @@ impl AppService {
             })?;
         let name = crate::backend::host_filesystem::HostFilesystem::current()
             .validate_path_segment(&name)?;
-        let target_dir = capabilities::skill_backup_root_sqlx(&self.db, self.tenant_id())?
+        let target_dir = capabilities::skill_backup_root_sqlx(self.db.pool(), self.tenant_id())
+            .await?
             .join("downloaded")
             .join(&name);
         if target_dir.exists() {
@@ -291,33 +275,27 @@ impl AppService {
             phase_sink("scanning");
         }
         let library_source = capabilities::assetiweave_library_source_with_root(
-            capabilities::skill_backup_settings_sqlx(&self.db, self.tenant_id())?.root_path,
+            capabilities::skill_backup_settings_sqlx(self.db.pool(), self.tenant_id())
+                .await?
+                .root_path,
         );
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let library_source_to_save = library_source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx(&pool, &tenant_id, &library_source_to_save)
-                .await
-        })?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        crate::backend::store::upsert_source_sqlx(pool, tenant_id, &library_source).await?;
         let library_assets = crate::backend::scanner::scan_skill_source(&library_source)
             .map_err(AppError::external)?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let library_source_id = library_source.id.clone();
-        let library_assets_to_save = library_assets.clone();
-        self.db.block_on(async move {
-            crate::backend::store::replace_source_assets_sqlx(
-                &pool,
-                &tenant_id,
-                &library_source_id,
-                &library_assets_to_save,
-            )
-            .await
-        })?;
+        crate::backend::store::replace_source_assets_sqlx(
+            pool,
+            tenant_id,
+            &library_source.id,
+            &library_assets,
+        )
+        .await?;
         let asset = library_assets
             .into_iter()
-            .find(|candidate| candidate.absolute_path == target_dir.to_string_lossy())
+            .find(|candidate| {
+                std::path::Path::new(&candidate.absolute_path) == target_dir.as_path()
+            })
             .ok_or_else(|| {
                 AppError::NotFound(
                     "imported skill was copied but not found during rescan".to_string(),
@@ -326,19 +304,17 @@ impl AppService {
         Ok(json!({ "dry_run": false, "asset": asset }))
     }
 
-    pub(crate) fn delete_skill(&self, params: AssetRefParams) -> AppResult<Value> {
+    pub(crate) async fn delete_skill(&self, params: AssetRefParams) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
                 "skill.delete requires --yes".to_string(),
             ));
         }
-        let asset = self.resolve_skill_asset(&params.asset_ref)?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let source_id = asset.source_id.clone();
-        let source = self.db.block_on(async move {
-            crate::backend::store::load_source_sqlx(&pool, &tenant_id, &source_id).await
-        })?;
+        let asset = self.resolve_skill_asset(&params.asset_ref).await?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let source =
+            crate::backend::store::load_source_sqlx(pool, tenant_id, &asset.source_id).await?;
         let source = source
             .ok_or_else(|| AppError::NotFound(format!("source not found: {}", asset.source_id)))?;
         if source.source_origin != SourceOrigin::AssetiweaveLibrary {
@@ -348,18 +324,12 @@ impl AppService {
             ));
         }
 
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let asset_id = asset.id.clone();
-        let enabled_mounts = self
-            .db
-            .block_on(async move {
-                crate::backend::store::load_asset_mounts_sqlx(&pool, &tenant_id, Some(&asset_id))
-                    .await
-            })?
-            .into_iter()
-            .filter(|mount| mount.enabled)
-            .collect::<Vec<_>>();
+        let enabled_mounts =
+            crate::backend::store::load_asset_mounts_sqlx(pool, tenant_id, Some(&asset.id))
+                .await?
+                .into_iter()
+                .filter(|mount| mount.enabled)
+                .collect::<Vec<_>>();
         if !enabled_mounts.is_empty() && !params.unmount {
             return Err(AppError::Conflict(
                 "skill has enabled mounts; pass --unmount to remove managed mounts first"
@@ -376,33 +346,34 @@ impl AppService {
         }
 
         for mount in enabled_mounts {
-            capabilities::unmount_asset_mount_record(
-                &self.db,
-                self.tenant_id(),
-                &asset.id,
-                &mount.profile_id,
-            )?;
+            capabilities::unmount_asset_mount_record(pool, tenant_id, &asset.id, &mount.profile_id)
+                .await?;
         }
         let asset_path = PathBuf::from(&asset.absolute_path);
         if asset_path.exists() {
             crate::backend::host_filesystem::HostFilesystem::current().remove_path(&asset_path)?;
         }
-        capabilities::refresh_recorded_assets(&self.db, self.tenant_id())?;
+        capabilities::refresh_recorded_assets(pool, tenant_id).await?;
         Ok(json!({ "deleted": true, "asset_id": asset.id }))
     }
 
-    pub(crate) fn mount_skill(&self, params: AssetRefParams, enabled: bool) -> AppResult<Value> {
+    pub(crate) async fn mount_skill(
+        &self,
+        params: AssetRefParams,
+        enabled: bool,
+    ) -> AppResult<Value> {
         let profile_id = params
             .profile_id
             .as_deref()
             .ok_or_else(|| AppError::Validation("profile_id is required".to_string()))?;
-        let asset = self.resolve_skill_asset(&params.asset_ref)?;
+        let asset = self.resolve_skill_asset(&params.asset_ref).await?;
         if params.dry_run {
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let profile = self.db.block_on(async move {
-                crate::backend::store::load_profile_sqlx(&pool, &tenant_id, profile_id).await
-            })?;
+            let profile = crate::backend::store::load_profile_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                profile_id,
+            )
+            .await?;
             let profile = profile
                 .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
             let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
@@ -416,112 +387,96 @@ impl AppService {
         }
 
         let update = if enabled {
-            self.mount_asset_by_id(&asset.id, profile_id)?
+            self.mount_asset_by_id(&asset.id, profile_id).await?
         } else {
-            self.unmount_asset_by_id(&asset.id, profile_id)?
+            self.unmount_asset_by_id(&asset.id, profile_id).await?
         };
         Ok(json!(update))
     }
 
-    pub(crate) fn list_skill_groups(&self) -> AppResult<Vec<AssetGroupDetail>> {
-        capabilities::cleanup_orphan_asset_records(&self.db, self.tenant_id())?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::load_skill_group_details_sqlx(&pool, &tenant_id, &assets).await
-        })?)
+    pub(crate) async fn list_skill_groups(&self) -> AppResult<Vec<AssetGroupDetail>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        capabilities::cleanup_orphan_asset_records(pool, tenant_id).await?;
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::load_skill_group_details_sqlx(pool, tenant_id, &assets).await
     }
 
-    pub(crate) fn get_skill_group(&self, group_id: String) -> AppResult<AssetGroupDetail> {
-        capabilities::cleanup_orphan_asset_records(&self.db, self.tenant_id())?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::load_skill_group_detail_sqlx(
-                &pool, &tenant_id, &group_id, &assets,
-            )
+    pub(crate) async fn get_skill_group(&self, group_id: String) -> AppResult<AssetGroupDetail> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        capabilities::cleanup_orphan_asset_records(pool, tenant_id).await?;
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, &group_id, &assets)
             .await
-        })?)
     }
 
-    pub(crate) fn create_skill_group(&self, input: AssetGroupInput) -> AppResult<AssetGroupDetail> {
+    pub(crate) async fn create_skill_group(
+        &self,
+        input: AssetGroupInput,
+    ) -> AppResult<AssetGroupDetail> {
         let now = Utc::now().to_rfc3339();
         let group = capabilities::asset_group_from_input(input, now.clone(), now);
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::upsert_asset_group_sqlx(&pool, &tenant_id, &group).await?;
-            crate::backend::store::load_skill_group_detail_sqlx(
-                &pool, &tenant_id, &group.id, &assets,
-            )
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::upsert_asset_group_sqlx(pool, tenant_id, &group).await?;
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, &group.id, &assets)
             .await
-        })?)
     }
 
-    pub(crate) fn update_skill_group(&self, group: AssetGroup) -> AppResult<AssetGroupDetail> {
+    pub(crate) async fn update_skill_group(
+        &self,
+        group: AssetGroup,
+    ) -> AppResult<AssetGroupDetail> {
         let mut group = group;
         group.updated_at = Utc::now().to_rfc3339();
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::upsert_asset_group_sqlx(&pool, &tenant_id, &group).await?;
-            crate::backend::store::load_skill_group_detail_sqlx(
-                &pool, &tenant_id, &group.id, &assets,
-            )
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::upsert_asset_group_sqlx(pool, tenant_id, &group).await?;
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, &group.id, &assets)
             .await
-        })?)
     }
 
-    pub(crate) fn delete_skill_group(&self, group_id: String) -> AppResult<()> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::load_skill_group_detail_sqlx(
-                &pool, &tenant_id, &group_id, &assets,
-            )
+    pub(crate) async fn delete_skill_group(&self, group_id: String) -> AppResult<()> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, &group_id, &assets)
             .await?;
-            crate::backend::store::delete_asset_group_sqlx(&pool, &tenant_id, &group_id).await
-        })?)
+        crate::backend::store::delete_asset_group_sqlx(pool, tenant_id, &group_id).await
     }
 
-    pub(crate) fn set_skill_group_manual_members(
+    pub(crate) async fn set_skill_group_manual_members(
         &self,
         group_id: String,
         asset_ids: Vec<String>,
     ) -> AppResult<AssetGroupDetail> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            let assets =
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await?;
-            crate::backend::store::replace_asset_group_members_sqlx(
-                &pool, &tenant_id, &group_id, &asset_ids, &assets,
-            )
-            .await?;
-            crate::backend::store::load_skill_group_detail_sqlx(
-                &pool, &tenant_id, &group_id, &assets,
-            )
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let assets =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?;
+        crate::backend::store::replace_asset_group_members_sqlx(
+            pool, tenant_id, &group_id, &asset_ids, &assets,
+        )
+        .await?;
+        crate::backend::store::load_skill_group_detail_sqlx(pool, tenant_id, &group_id, &assets)
             .await
-        })?)
     }
 
-    pub(crate) fn mount_skill_group(
+    pub(crate) async fn mount_skill_group(
         &self,
         params: SkillGroupMountParams,
         enabled: bool,
@@ -532,21 +487,18 @@ impl AppService {
             ));
         }
         if params.dry_run {
-            let pool = self.db.pool().clone();
-            let tenant_id = self.tenant_id().to_string();
-            let group_id = params.group_id.clone();
-            let detail = self.db.block_on(async move {
-                let assets = crate::backend::store::load_assets_sqlx(
-                    &pool,
-                    &tenant_id,
-                    Some(AssetKind::Skill),
-                )
-                .await?;
-                crate::backend::store::load_skill_group_detail_sqlx(
-                    &pool, &tenant_id, &group_id, &assets,
-                )
-                .await
-            })?;
+            let pool = self.db.pool();
+            let tenant_id = self.tenant_id();
+            let assets =
+                crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                    .await?;
+            let detail = crate::backend::store::load_skill_group_detail_sqlx(
+                pool,
+                tenant_id,
+                &params.group_id,
+                &assets,
+            )
+            .await?;
             return Ok(json!({
                 "dry_run": true,
                 "group_id": params.group_id,
@@ -555,20 +507,23 @@ impl AppService {
                 "requested_count": detail.members.len()
             }));
         }
-        let result = self.apply_skill_group_mount(&params.group_id, &params.profile_id, enabled)?;
+        let result = self
+            .apply_skill_group_mount(&params.group_id, &params.profile_id, enabled)
+            .await?;
         Ok(json!(result))
     }
 
-    pub(crate) fn apply_skill_group_mount(
+    pub(crate) async fn apply_skill_group_mount(
         &self,
         group_id: &str,
         profile_id: &str,
         enabled: bool,
     ) -> AppResult<ApplyAssetGroupMountResult> {
         self.apply_skill_group_mount_with_progress(group_id, profile_id, enabled, |_, _, _| Ok(()))
+            .await
     }
 
-    pub(crate) fn apply_skill_group_mount_with_progress<BeforeItem>(
+    pub(crate) async fn apply_skill_group_mount_with_progress<BeforeItem>(
         &self,
         group_id: &str,
         profile_id: &str,
@@ -578,40 +533,43 @@ impl AppService {
     where
         BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
     {
-        match self.run_batch_mount_workflow_with_progress(
-            super::BatchMountWorkflowInput::Group {
-                group_id: group_id.to_string(),
-                profile_id: profile_id.to_string(),
-                enabled,
-            },
-            |index, total, asset_id| before_item(index, total, asset_id),
-        )? {
+        match self
+            .run_batch_mount_workflow_with_progress(
+                super::BatchMountWorkflowInput::Group {
+                    group_id: group_id.to_string(),
+                    profile_id: profile_id.to_string(),
+                    enabled,
+                },
+                |index, total, asset_id| before_item(index, total, asset_id),
+            )
+            .await?
+        {
             super::BatchMountWorkflowOutput::Group(result) => Ok(result),
             _ => unreachable!("group workflow returns a group result"),
         }
     }
 
-    pub(crate) fn preview_skill_group_exclusive_mount(
+    pub(crate) async fn preview_skill_group_exclusive_mount(
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<SkillGroupExclusiveMountPreview> {
-        Ok(
-            capabilities::build_skill_group_exclusive_mount_preview_sqlx(
-                &self.db,
-                self.tenant_id(),
-                &input,
-            )?,
+        capabilities::build_skill_group_exclusive_mount_preview_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &input,
         )
+        .await
     }
 
-    pub(crate) fn apply_skill_group_exclusive_mount(
+    pub(crate) async fn apply_skill_group_exclusive_mount(
         &self,
         input: SkillGroupExclusiveMountInput,
     ) -> AppResult<ApplySkillGroupExclusiveMountResult> {
         self.apply_skill_group_exclusive_mount_with_progress(input, |_, _, _| Ok(()))
+            .await
     }
 
-    pub(crate) fn apply_skill_group_exclusive_mount_with_progress<BeforeItem>(
+    pub(crate) async fn apply_skill_group_exclusive_mount_with_progress<BeforeItem>(
         &self,
         input: SkillGroupExclusiveMountInput,
         mut before_item: BeforeItem,
@@ -619,34 +577,34 @@ impl AppService {
     where
         BeforeItem: FnMut(usize, usize, &str) -> AppResult<()>,
     {
-        match self.run_batch_mount_workflow_with_progress(
-            super::BatchMountWorkflowInput::Exclusive {
-                group_ids: input.group_ids,
-                profile_id: input.profile_id,
-            },
-            |index, total, asset_id| before_item(index, total, asset_id),
-        )? {
+        match self
+            .run_batch_mount_workflow_with_progress(
+                super::BatchMountWorkflowInput::Exclusive {
+                    group_ids: input.group_ids,
+                    profile_id: input.profile_id,
+                },
+                |index, total, asset_id| before_item(index, total, asset_id),
+            )
+            .await?
+        {
             super::BatchMountWorkflowOutput::Exclusive(result) => Ok(result),
             _ => unreachable!("exclusive workflow returns an exclusive result"),
         }
     }
 
-    fn resolve_skill_asset(&self, asset_ref: &str) -> AppResult<Asset> {
+    async fn resolve_skill_asset(&self, asset_ref: &str) -> AppResult<Asset> {
         let needle = asset_ref.trim().to_string();
         if needle.is_empty() {
             return Err(AppError::Validation("asset ref is required".to_string()));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let matches = self
-            .db
-            .block_on(async move {
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, Some(AssetKind::Skill))
-                    .await
-            })?
-            .into_iter()
-            .filter(|asset| asset.id == needle || asset.name == needle)
-            .collect::<Vec<_>>();
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let matches =
+            crate::backend::store::load_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill))
+                .await?
+                .into_iter()
+                .filter(|asset| asset.id == needle || asset.name == needle)
+                .collect::<Vec<_>>();
         match matches.as_slice() {
             [asset] => Ok(asset.clone()),
             [] => Err(AppError::NotFound(format!("skill not found: {needle}"))),

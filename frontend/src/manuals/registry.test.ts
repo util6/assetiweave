@@ -9,13 +9,21 @@ describe("manual registry", () => {
       .filter((item) => item.enabled)
       .map((item) => item.routeKey);
 
-    expect(manualDocuments).toHaveLength(new Set(manualDocuments.map((document) => document.routeKey)).size);
-    expect(routeKeys.filter((routeKey) => !hasManualDocument(routeKey))).toEqual([]);
+    expect(manualDocuments).toHaveLength(
+      new Set(manualDocuments.map((document) => document.routeKey)).size,
+    );
+    expect(
+      routeKeys.filter((routeKey) => !hasManualDocument(routeKey)),
+    ).toEqual([]);
   });
 
   it("uses route-specific manual overviews instead of shared placeholders", () => {
-    const zhOverviews = manualDocuments.map((document) => document.content.zh.overview);
-    const enOverviews = manualDocuments.map((document) => document.content.en.overview);
+    const zhOverviews = manualDocuments.map(
+      (document) => document.content.zh.overview,
+    );
+    const enOverviews = manualDocuments.map(
+      (document) => document.content.en.overview,
+    );
 
     expect(new Set(zhOverviews)).toHaveLength(manualDocuments.length);
     expect(new Set(enOverviews)).toHaveLength(manualDocuments.length);

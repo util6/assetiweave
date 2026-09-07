@@ -22,7 +22,8 @@ export function SkeletonShell({
       aria-busy="true"
       className={cn(
         "app-skeleton-root min-h-0 min-w-0 flex-1",
-        scope === "page" && "flex flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]",
+        scope === "page" &&
+          "flex flex-col gap-[var(--app-section-gap)] overflow-hidden px-[var(--app-page-x)] py-[var(--app-page-y)]",
         scope === "content" && "overflow-hidden",
         className,
       )}

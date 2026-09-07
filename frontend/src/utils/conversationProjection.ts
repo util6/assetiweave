@@ -1,8 +1,19 @@
-import type { ConversationContentNode, ConversationQuestionDetail } from "../types";
+import type {
+  ConversationContentNode,
+  ConversationQuestionDetail,
+} from "../types";
 
-const CONTENT_PREVIEW_ROLES = new Set(["answer", "result", "tool", "command", "code"]);
+const CONTENT_PREVIEW_ROLES = new Set([
+  "answer",
+  "result",
+  "tool",
+  "command",
+  "code",
+]);
 
-export function conversationQuestionTitle(detail: ConversationQuestionDetail): string | null {
+export function conversationQuestionTitle(
+  detail: ConversationQuestionDetail,
+): string | null {
   const title = detail.question.title?.trim();
   if (title) return title;
 
@@ -14,11 +25,18 @@ export function conversationQuestionTitle(detail: ConversationQuestionDetail): s
   return null;
 }
 
-export function conversationQuestionPreview(detail: ConversationQuestionDetail): string | null {
-  const node = detail.projected_content_nodes.find((candidate) => {
-    const role = candidate.semantic_role ?? contentNodeKindSuffix(candidate.node_type);
-    return CONTENT_PREVIEW_ROLES.has(role) && candidate.content.trim();
-  }) ?? detail.projected_content_nodes.find((candidate) => candidate.content.trim());
+export function conversationQuestionPreview(
+  detail: ConversationQuestionDetail,
+): string | null {
+  const node =
+    detail.projected_content_nodes.find((candidate) => {
+      const role =
+        candidate.semantic_role ?? contentNodeKindSuffix(candidate.node_type);
+      return CONTENT_PREVIEW_ROLES.has(role) && candidate.content.trim();
+    }) ??
+    detail.projected_content_nodes.find((candidate) =>
+      candidate.content.trim(),
+    );
 
   if (node) return firstNonEmptyLine(node.content);
   for (const turn of detail.turns) {
@@ -28,7 +46,9 @@ export function conversationQuestionPreview(detail: ConversationQuestionDetail):
   return null;
 }
 
-export function conversationContentNodePresentationKind(node: ConversationContentNode): string {
+export function conversationContentNodePresentationKind(
+  node: ConversationContentNode,
+): string {
   const role = node.semantic_role?.trim();
   if (role && CONTENT_PREVIEW_ROLES.has(role)) return role;
   return contentNodeKindSuffix(node.node_type);
@@ -39,5 +59,10 @@ function contentNodeKindSuffix(kind: string) {
 }
 
 function firstNonEmptyLine(value: string) {
-  return value.split(/\r?\n/).find((line) => line.trim())?.trim() ?? null;
+  return (
+    value
+      .split(/\r?\n/)
+      .find((line) => line.trim())
+      ?.trim() ?? null
+  );
 }

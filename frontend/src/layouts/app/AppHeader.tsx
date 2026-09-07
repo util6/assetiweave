@@ -23,7 +23,11 @@ export function AppHeader({
         <Archive size={22} />
         <span className="truncate">{t("app.title")}</span>
       </div>
-      <HeaderTabs activeId={navigationModel.activeHeaderTabId} onSelect={onHeaderTabSelect} tabs={navigationModel.headerTabs} />
+      <HeaderTabs
+        activeId={navigationModel.activeHeaderTabId}
+        onSelect={onHeaderTabSelect}
+        tabs={navigationModel.headerTabs}
+      />
       <div className="flex min-w-0 items-center justify-end gap-3">
         <AppUpdateButton />
         <LanguageSwitcher />

@@ -3,7 +3,10 @@ import type { RenderVisibilityRegistration } from "./renderingTypes";
 import type { ScrollActivitySnapshot } from "./ScrollActivityController";
 
 export interface RenderVisibilityRegistry {
-  attach(root: HTMLElement, getDirection: () => ScrollActivitySnapshot["direction"]): () => void;
+  attach(
+    root: HTMLElement,
+    getDirection: () => ScrollActivitySnapshot["direction"],
+  ): () => void;
   register(registration: RenderVisibilityRegistration): () => void;
 }
 
@@ -27,19 +30,23 @@ export function createRenderVisibilityRegistry(): RenderVisibilityRegistry {
     if (!root || !entry.isIntersecting) return null;
     const rootRect = root.getBoundingClientRect();
     const rect = entry.boundingClientRect;
-    const isInViewport = rect.top < rootRect.bottom && rect.bottom > rootRect.top;
+    const isInViewport =
+      rect.top < rootRect.bottom && rect.bottom > rootRect.top;
     if (isInViewport) return 0;
 
     const direction = getDirection?.();
-    const isAhead = direction === "backward"
-      ? rect.bottom <= rootRect.top
-      : rect.top >= rootRect.bottom;
+    const isAhead =
+      direction === "backward"
+        ? rect.bottom <= rootRect.top
+        : rect.top >= rootRect.bottom;
     return isAhead ? 1 : 2;
   };
 
   const handleEntries = (entries: IntersectionObserverEntry[]) => {
     entries.forEach((entry) => {
-      const registration = [...registrations.values()].find((candidate) => candidate.element === entry.target);
+      const registration = [...registrations.values()].find(
+        (candidate) => candidate.element === entry.target,
+      );
       if (!registration) return;
       registration.onPriorityChange(priorityForEntry(entry as ObserverEntry));
     });
@@ -53,14 +60,18 @@ export function createRenderVisibilityRegistry(): RenderVisibilityRegistry {
       rootMargin: `${root.clientHeight}px 0px`,
       threshold: 0,
     });
-    registrations.forEach((registration) => observer?.observe(registration.element));
+    registrations.forEach((registration) =>
+      observer?.observe(registration.element),
+    );
   };
 
   const detach = () => {
     disconnectObserver();
     resizeObserver?.disconnect();
     resizeObserver = null;
-    registrations.forEach((registration) => registration.onPriorityChange(null));
+    registrations.forEach((registration) =>
+      registration.onPriorityChange(null),
+    );
     root = null;
     getDirection = null;
   };

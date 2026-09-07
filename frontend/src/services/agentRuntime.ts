@@ -5,7 +5,8 @@ import type { AppErrorView } from "../types";
 
 export type AgentConnectionCheckMode = "installation" | "connection";
 
-const AGENT_LIFECYCLE_TASK_UPDATED_EVENT = "agent-market://lifecycle-task-updated";
+const AGENT_LIFECYCLE_TASK_UPDATED_EVENT =
+  "agent-market://lifecycle-task-updated";
 
 export interface AgentRuntimeCatalogEntry {
   id: string;
@@ -202,13 +203,24 @@ export interface AgentUninstallPreview {
   previewToken: string;
 }
 
-export type AgentLifecycleTaskState = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+export type AgentLifecycleTaskState =
+  "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
 export type AgentLifecycleTaskPhase =
-  | "queued" | "preparing" | "probing_runtime" | "downloading" | "installing"
-  | "validating_integrity" | "validating_layout" | "probing_protocol"
-  | "activating_database" | "reloading_registry" | "cleaning_up"
+  | "queued"
+  | "preparing"
+  | "probing_runtime"
+  | "downloading"
+  | "installing"
+  | "validating_integrity"
+  | "validating_layout"
+  | "probing_protocol"
+  | "activating_database"
+  | "reloading_registry"
+  | "cleaning_up"
   | "cancelling"
-  | "succeeded" | "failed" | "cancelled";
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 
 export interface AgentLifecycleTaskSnapshot {
   id: string;
@@ -295,7 +307,9 @@ export async function checkAgentConnection(
   });
 }
 
-export async function listAgentModels(agentId: string): Promise<AgentModelsResult> {
+export async function listAgentModels(
+  agentId: string,
+): Promise<AgentModelsResult> {
   if (!isTauriRuntime()) {
     return {
       agent_id: agentId,
@@ -312,34 +326,55 @@ export async function listAgentModels(agentId: string): Promise<AgentModelsResul
   });
 }
 
-export async function listAgentMarket(request: AgentMarketListRequest = {}): Promise<AgentMarketItem[]> {
+export async function listAgentMarket(
+  request: AgentMarketListRequest = {},
+): Promise<AgentMarketItem[]> {
   if (!isTauriRuntime()) return [];
   return invoke<AgentMarketItem[]>("list_agent_market", { params: request });
 }
 
-export async function inspectAgentMarketItem(agentId: string): Promise<AgentMarketItem> {
-  if (!isTauriRuntime()) throw new Error("Agent Market requires the desktop app runtime.");
+export async function inspectAgentMarketItem(
+  agentId: string,
+): Promise<AgentMarketItem> {
+  if (!isTauriRuntime())
+    throw new Error("Agent Market requires the desktop app runtime.");
   return invoke<AgentMarketItem>("inspect_agent_market_item", { agentId });
 }
 
 export async function refreshAgentMarket(): Promise<AgentMarketRefreshTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent Market requires the desktop app runtime.");
+  if (!isTauriRuntime())
+    throw new Error("Agent Market requires the desktop app runtime.");
   return invoke<AgentMarketRefreshTaskSnapshot>("refresh_agent_market");
 }
 
-export async function getAgentMarketRefreshTask(taskId: string): Promise<AgentMarketRefreshTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent Market requires the desktop app runtime.");
-  return invoke<AgentMarketRefreshTaskSnapshot>("get_agent_market_refresh_task", { taskId });
+export async function getAgentMarketRefreshTask(
+  taskId: string,
+): Promise<AgentMarketRefreshTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent Market requires the desktop app runtime.");
+  return invoke<AgentMarketRefreshTaskSnapshot>(
+    "get_agent_market_refresh_task",
+    { taskId },
+  );
 }
 
-export async function listAgentMarketRefreshTasks(): Promise<AgentMarketRefreshTaskSnapshot[]> {
+export async function listAgentMarketRefreshTasks(): Promise<
+  AgentMarketRefreshTaskSnapshot[]
+> {
   if (!isTauriRuntime()) return [];
-  return invoke<AgentMarketRefreshTaskSnapshot[]>("list_agent_market_refresh_tasks");
+  return invoke<AgentMarketRefreshTaskSnapshot[]>(
+    "list_agent_market_refresh_tasks",
+  );
 }
 
-export async function previewAgentInstallation(request: AgentInstallPreviewRequest): Promise<AgentInstallPreview> {
-  if (!isTauriRuntime()) throw new Error("Agent installation requires the desktop app runtime.");
-  return invoke<AgentInstallPreview>("preview_agent_installation", { params: request });
+export async function previewAgentInstallation(
+  request: AgentInstallPreviewRequest,
+): Promise<AgentInstallPreview> {
+  if (!isTauriRuntime())
+    throw new Error("Agent installation requires the desktop app runtime.");
+  return invoke<AgentInstallPreview>("preview_agent_installation", {
+    params: request,
+  });
 }
 
 export async function listInstalledAgents(): Promise<AgentInstallationView[]> {
@@ -347,71 +382,123 @@ export async function listInstalledAgents(): Promise<AgentInstallationView[]> {
   return invoke<AgentInstallationView[]>("list_installed_agents");
 }
 
-export async function getInstalledAgent(agentId: string): Promise<AgentInstallationView> {
-  if (!isTauriRuntime()) throw new Error("Agent management requires the desktop app runtime.");
+export async function getInstalledAgent(
+  agentId: string,
+): Promise<AgentInstallationView> {
+  if (!isTauriRuntime())
+    throw new Error("Agent management requires the desktop app runtime.");
   return invoke<AgentInstallationView>("get_installed_agent", { agentId });
 }
 
-export async function checkAgentRuntime(agentId: string): Promise<AgentInstallationView> {
-  if (!isTauriRuntime()) throw new Error("Agent runtime checks require the desktop app runtime.");
+export async function checkAgentRuntime(
+  agentId: string,
+): Promise<AgentInstallationView> {
+  if (!isTauriRuntime())
+    throw new Error("Agent runtime checks require the desktop app runtime.");
   return invoke<AgentInstallationView>("check_agent_runtime", { agentId });
 }
 
-export async function previewAgentUninstall(agentId: string): Promise<AgentUninstallPreview> {
-  if (!isTauriRuntime()) throw new Error("Agent uninstall requires the desktop app runtime.");
+export async function previewAgentUninstall(
+  agentId: string,
+): Promise<AgentUninstallPreview> {
+  if (!isTauriRuntime())
+    throw new Error("Agent uninstall requires the desktop app runtime.");
   return invoke<AgentUninstallPreview>("preview_agent_uninstall", { agentId });
 }
 
-export async function startAgentInstallation(request: AgentInstallStartRequest): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent installation requires the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("start_agent_installation", { params: request });
+export async function startAgentInstallation(
+  request: AgentInstallStartRequest,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent installation requires the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("start_agent_installation", {
+    params: request,
+  });
 }
 
-export async function startAgentUpdate(request: AgentInstallStartRequest): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent update requires the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("start_agent_update", { params: request });
+export async function startAgentUpdate(
+  request: AgentInstallStartRequest,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent update requires the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("start_agent_update", {
+    params: request,
+  });
 }
 
-export async function startAgentReinstallation(request: AgentInstallStartRequest): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent reinstallation requires the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("start_agent_reinstallation", { params: request });
+export async function startAgentReinstallation(
+  request: AgentInstallStartRequest,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent reinstallation requires the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("start_agent_reinstallation", {
+    params: request,
+  });
 }
 
-export async function startAgentUninstall(request: AgentUninstallStartRequest): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent uninstall requires the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("start_agent_uninstall", { params: request });
+export async function startAgentUninstall(
+  request: AgentUninstallStartRequest,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent uninstall requires the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("start_agent_uninstall", {
+    params: request,
+  });
 }
 
-export async function getAgentLifecycleTask(taskId: string): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent lifecycle tasks require the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("get_agent_lifecycle_task", { taskId });
+export async function getAgentLifecycleTask(
+  taskId: string,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent lifecycle tasks require the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("get_agent_lifecycle_task", {
+    taskId,
+  });
 }
 
-export async function listAgentLifecycleTasks(): Promise<AgentLifecycleTaskSnapshot[]> {
+export async function listAgentLifecycleTasks(): Promise<
+  AgentLifecycleTaskSnapshot[]
+> {
   if (!isTauriRuntime()) return [];
   return invoke<AgentLifecycleTaskSnapshot[]>("list_agent_lifecycle_tasks");
 }
 
-export function subscribeAgentLifecycleTasks(listener: (snapshot: AgentLifecycleTaskSnapshot) => void) {
+export function subscribeAgentLifecycleTasks(
+  listener: (snapshot: AgentLifecycleTaskSnapshot) => void,
+) {
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<AgentLifecycleTaskSnapshot>(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
+  return listen<AgentLifecycleTaskSnapshot>(
+    AGENT_LIFECYCLE_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
+}
+
+export async function cancelAgentLifecycleTask(
+  taskId: string,
+): Promise<AgentLifecycleTaskSnapshot> {
+  if (!isTauriRuntime())
+    throw new Error("Agent lifecycle tasks require the desktop app runtime.");
+  return invoke<AgentLifecycleTaskSnapshot>("cancel_agent_lifecycle_task", {
+    taskId,
   });
 }
 
-export async function cancelAgentLifecycleTask(taskId: string): Promise<AgentLifecycleTaskSnapshot> {
-  if (!isTauriRuntime()) throw new Error("Agent lifecycle tasks require the desktop app runtime.");
-  return invoke<AgentLifecycleTaskSnapshot>("cancel_agent_lifecycle_task", { taskId });
-}
-
-export async function enableAgent(agentId: string): Promise<AgentInstallationView> {
-  if (!isTauriRuntime()) throw new Error("Agent management requires the desktop app runtime.");
+export async function enableAgent(
+  agentId: string,
+): Promise<AgentInstallationView> {
+  if (!isTauriRuntime())
+    throw new Error("Agent management requires the desktop app runtime.");
   return invoke<AgentInstallationView>("enable_agent", { agentId });
 }
 
-export async function disableAgent(agentId: string): Promise<AgentInstallationView> {
-  if (!isTauriRuntime()) throw new Error("Agent management requires the desktop app runtime.");
+export async function disableAgent(
+  agentId: string,
+): Promise<AgentInstallationView> {
+  if (!isTauriRuntime())
+    throw new Error("Agent management requires the desktop app runtime.");
   return invoke<AgentInstallationView>("disable_agent", { agentId });
 }

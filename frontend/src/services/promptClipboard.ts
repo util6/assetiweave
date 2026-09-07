@@ -11,7 +11,9 @@ export interface PromptClipboardInput {
   text: string;
 }
 
-export async function copyPromptImagesToClipboard(attachments: PromptClipboardAttachment[]): Promise<void> {
+export async function copyPromptImagesToClipboard(
+  attachments: PromptClipboardAttachment[],
+): Promise<void> {
   if (attachments.length === 0) {
     return;
   }
@@ -41,8 +43,13 @@ export async function copyPromptTextToClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text.trimEnd());
 }
 
-async function copyPromptImagesWithWebClipboard(attachments: PromptClipboardAttachment[]) {
-  if (typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined") {
+async function copyPromptImagesWithWebClipboard(
+  attachments: PromptClipboardAttachment[],
+) {
+  if (
+    typeof navigator.clipboard.write === "function" &&
+    typeof ClipboardItem !== "undefined"
+  ) {
     const imageItems = attachments
       .map(promptImageAttachmentToBlob)
       .filter((blob): blob is Blob => Boolean(blob))
@@ -57,7 +64,9 @@ async function copyPromptImagesWithWebClipboard(attachments: PromptClipboardAtta
     }
   }
 
-  await navigator.clipboard.writeText(attachments.map((attachment) => `[image: ${attachment.name}]`).join("\n"));
+  await navigator.clipboard.writeText(
+    attachments.map((attachment) => `[image: ${attachment.name}]`).join("\n"),
+  );
 }
 
 function promptImageAttachmentToBlob(attachment: PromptClipboardAttachment) {

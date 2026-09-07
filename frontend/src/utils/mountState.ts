@@ -1,6 +1,7 @@
 import type { AssetMountStatus } from "../types";
 
-export type MountDisplayState = "mounted" | "not_mounted" | "conflict" | "broken";
+export type MountDisplayState =
+  "mounted" | "not_mounted" | "conflict" | "broken";
 
 export interface MountStatusRefreshSummary {
   total: number;
@@ -13,23 +14,35 @@ export interface MountStatusRefreshSummary {
 
 export function groupMountStatusesByAssetId(statuses: AssetMountStatus[]) {
   return statuses.reduce<Map<string, AssetMountStatus[]>>((grouped, status) => {
-    grouped.set(status.asset_id, [...(grouped.get(status.asset_id) ?? []), status]);
+    grouped.set(status.asset_id, [
+      ...(grouped.get(status.asset_id) ?? []),
+      status,
+    ]);
     return grouped;
   }, new Map());
 }
 
-export function getMountDisplayState(mountStatus?: AssetMountStatus): MountDisplayState {
+export function getMountDisplayState(
+  mountStatus?: AssetMountStatus,
+): MountDisplayState {
   return mountStatus?.state ?? "not_mounted";
 }
 
-export function getMountDisplayStatesByProfileId(mountStatuses: AssetMountStatus[]) {
-  return mountStatuses.reduce<Record<string, MountDisplayState>>((states, status) => {
-    states[status.profile_id] = getMountDisplayState(status);
-    return states;
-  }, {});
+export function getMountDisplayStatesByProfileId(
+  mountStatuses: AssetMountStatus[],
+) {
+  return mountStatuses.reduce<Record<string, MountDisplayState>>(
+    (states, status) => {
+      states[status.profile_id] = getMountDisplayState(status);
+      return states;
+    },
+    {},
+  );
 }
 
-export function getAssetMountSummaryState(mountStatuses: AssetMountStatus[]): MountDisplayState {
+export function getAssetMountSummaryState(
+  mountStatuses: AssetMountStatus[],
+): MountDisplayState {
   const states = Object.values(getMountDisplayStatesByProfileId(mountStatuses));
   if (states.includes("conflict")) return "conflict";
   if (states.includes("broken")) return "broken";
@@ -43,8 +56,13 @@ export function getMountedProfileIds(mountStatuses: AssetMountStatus[]) {
     .map((status) => status.profile_id);
 }
 
-export function countMountedAssetsForProfile(statuses: AssetMountStatus[], profileId: string) {
-  return statuses.filter((status) => status.profile_id === profileId && status.state === "mounted").length;
+export function countMountedAssetsForProfile(
+  statuses: AssetMountStatus[],
+  profileId: string,
+) {
+  return statuses.filter(
+    (status) => status.profile_id === profileId && status.state === "mounted",
+  ).length;
 }
 
 export function countAssetsForProfileState(
@@ -56,7 +74,10 @@ export function countAssetsForProfileState(
   const uniqueAssetIds = new Set(assetIds);
   let count = 0;
   for (const assetId of uniqueAssetIds) {
-    const status = statuses.find((candidate) => candidate.asset_id === assetId && candidate.profile_id === profileId);
+    const status = statuses.find(
+      (candidate) =>
+        candidate.asset_id === assetId && candidate.profile_id === profileId,
+    );
     if (getMountDisplayState(status) === state) {
       count += 1;
     }
@@ -64,7 +85,9 @@ export function countAssetsForProfileState(
   return count;
 }
 
-export function summarizeMountStatusRefresh(statuses: AssetMountStatus[]): MountStatusRefreshSummary {
+export function summarizeMountStatusRefresh(
+  statuses: AssetMountStatus[],
+): MountStatusRefreshSummary {
   const summary = statuses.reduce(
     (current, status) => {
       current.total += 1;

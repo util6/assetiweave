@@ -5,8 +5,10 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
-export interface PathPickerInputProps
-  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "className" | "disabled"> {
+export interface PathPickerInputProps extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "className" | "disabled"
+> {
   className?: string;
   disabled?: boolean;
   inputClassName?: string;
@@ -15,8 +17,22 @@ export interface PathPickerInputProps
   picking?: boolean;
 }
 
-export const PathPickerInput = React.forwardRef<HTMLInputElement, PathPickerInputProps>(
-  ({ className, disabled = false, inputClassName, onPick, pickLabel, picking = false, ...props }, ref) => {
+export const PathPickerInput = React.forwardRef<
+  HTMLInputElement,
+  PathPickerInputProps
+>(
+  (
+    {
+      className,
+      disabled = false,
+      inputClassName,
+      onPick,
+      pickLabel,
+      picking = false,
+      ...props
+    },
+    ref,
+  ) => {
     const controlDisabled = disabled || picking;
 
     return (

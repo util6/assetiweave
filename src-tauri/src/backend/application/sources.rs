@@ -10,7 +10,7 @@ pub(crate) struct SourceScanResult {
 pub(crate) struct SourceScanWorkflow;
 
 impl SourceScanWorkflow {
-    pub(crate) fn run(
+    pub(crate) async fn run(
         service: &AppService,
         params: SourceScanParams,
         cx: &TaskContext,
@@ -22,22 +22,20 @@ impl SourceScanWorkflow {
         if params.dry_run {
             return Ok(SourceScanResult {
                 assets: capabilities::catalog_assets_sqlx(
-                    &service.db,
+                    service.db.pool(),
                     service.tenant_id(),
                     params.kind,
-                )?,
+                )
+                .await?,
             });
         }
 
-        let pool = service.db.pool().clone();
-        let tenant_id = service.tenant_id().to_string();
-        let sources = service.db.block_on(async move {
-            if skill_sources_only {
-                crate::backend::store::load_skill_sources_sqlx(&pool, &tenant_id).await
-            } else {
-                crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await
-            }
-        })?;
+        let sources = if skill_sources_only {
+            crate::backend::store::load_skill_sources_sqlx(service.db.pool(), service.tenant_id())
+                .await?
+        } else {
+            crate::backend::store::load_sources_sqlx(service.db.pool(), service.tenant_id()).await?
+        };
         let total = sources.len();
         let scan = if skill_sources_only {
             capabilities::scan_skill_source
@@ -45,7 +43,7 @@ impl SourceScanWorkflow {
             capabilities::scan_source
         };
         capabilities::scan_selected_sources_with_progress(
-            &service.db,
+            service.db.pool(),
             service.tenant_id(),
             sources,
             scan,
@@ -60,7 +58,8 @@ impl SourceScanWorkflow {
                 );
                 Ok(())
             },
-        )?;
+        )
+        .await?;
         if cx.is_cancelled() {
             return Err(AppError::Cancelled("source scan cancelled".to_string()));
         }
@@ -68,72 +67,53 @@ impl SourceScanWorkflow {
             .progress(total as u64, Some(total as u64), Some("completed"));
         Ok(SourceScanResult {
             assets: capabilities::catalog_assets_sqlx(
-                &service.db,
+                service.db.pool(),
                 service.tenant_id(),
                 if skill_sources_only {
                     Some(AssetKind::Skill)
                 } else {
                     params.kind
                 },
-            )?,
+            )
+            .await?,
         })
     }
 }
 
 impl AppService {
-    pub(crate) fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
-        Ok(capabilities::refresh_recorded_assets(
-            &self.db,
-            self.tenant_id(),
-        )?)
+    pub(crate) async fn refresh_recorded_assets(&self) -> AppResult<Vec<Asset>> {
+        capabilities::refresh_recorded_assets(self.db.pool(), self.tenant_id()).await
     }
 
-    pub(crate) fn list_sources(&self) -> AppResult<Vec<Source>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::load_sources_sqlx(&pool, &tenant_id).await
-        })?)
+    pub(crate) async fn list_sources(&self) -> AppResult<Vec<Source>> {
+        crate::backend::store::load_sources_sqlx(self.db.pool(), self.tenant_id()).await
     }
 
-    pub(crate) fn list_skill_sources(&self) -> AppResult<Vec<Source>> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::load_skill_sources_sqlx(&pool, &tenant_id).await
-        })?)
+    pub(crate) async fn list_skill_sources(&self) -> AppResult<Vec<Source>> {
+        crate::backend::store::load_skill_sources_sqlx(self.db.pool(), self.tenant_id()).await
     }
 
-    pub(crate) fn list_source_assets(
+    pub(crate) async fn list_source_assets(
         &self,
         kind: Option<AssetKind>,
     ) -> AppResult<Vec<CatalogAsset>> {
-        Ok(capabilities::source_assets_sqlx(
-            &self.db,
-            self.tenant_id(),
-            kind,
-        )?)
+        capabilities::source_assets_sqlx(self.db.pool(), self.tenant_id(), kind).await
     }
 
-    pub(crate) fn add_source(&self, source: SourceInput) -> AppResult<Source> {
+    pub(crate) async fn add_source(&self, source: SourceInput) -> AppResult<Source> {
         let catalog = self.runtime.target_catalog();
         let source = source_from_input(source, catalog.as_ref());
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let source_to_save = source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx_with_catalog(
-                &pool,
-                &tenant_id,
-                &source_to_save,
-                catalog.as_ref(),
-            )
-            .await
-        })?;
+        crate::backend::store::upsert_source_sqlx_with_catalog(
+            self.db.pool(),
+            self.tenant_id(),
+            &source,
+            catalog.as_ref(),
+        )
+        .await?;
         Ok(source)
     }
 
-    pub(crate) fn update_source(&self, source: Source) -> AppResult<Source> {
+    pub(crate) async fn update_source(&self, source: Source) -> AppResult<Source> {
         if is_protected_source(&source) {
             return Err(AppError::Conflict(
                 "AssetIWeave-managed Skill sources cannot be edited".to_string(),
@@ -143,7 +123,8 @@ impl AppService {
         let source =
             crate::backend::store::normalize_source_with_catalog(&source, catalog.as_ref());
         if !self
-            .list_sources()?
+            .list_sources()
+            .await?
             .iter()
             .any(|candidate| candidate.id == source.id)
         {
@@ -152,58 +133,52 @@ impl AppService {
                 source.id
             )));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let source_to_save = source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx_with_catalog(
-                &pool,
-                &tenant_id,
-                &source_to_save,
-                catalog.as_ref(),
-            )
-            .await
-        })?;
+        crate::backend::store::upsert_source_sqlx_with_catalog(
+            self.db.pool(),
+            self.tenant_id(),
+            &source,
+            catalog.as_ref(),
+        )
+        .await?;
         Ok(source)
     }
 
-    pub(crate) fn delete_source(&self, id: String) -> AppResult<()> {
+    pub(crate) async fn delete_source(&self, id: String) -> AppResult<()> {
         self.remove_source(SourceRemoveParams {
             id,
             dry_run: false,
             yes: true,
         })
+        .await
         .map(|_| ())
     }
 
-    pub(crate) fn add_source_with_options(&self, params: SourceAddParams) -> AppResult<Value> {
+    pub(crate) async fn add_source_with_options(
+        &self,
+        params: SourceAddParams,
+    ) -> AppResult<Value> {
         let catalog = self.runtime.target_catalog();
         let source = source_from_input(params.source, catalog.as_ref());
         if params.dry_run {
             return Ok(json!({ "dry_run": true, "source": source }));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let source_to_save = source.clone();
-        self.db.block_on(async move {
-            crate::backend::store::upsert_source_sqlx_with_catalog(
-                &pool,
-                &tenant_id,
-                &source_to_save,
-                catalog.as_ref(),
-            )
-            .await
-        })?;
+        crate::backend::store::upsert_source_sqlx_with_catalog(
+            self.db.pool(),
+            self.tenant_id(),
+            &source,
+            catalog.as_ref(),
+        )
+        .await?;
         Ok(json!({ "dry_run": false, "source": source }))
     }
 
-    pub(crate) fn remove_source(&self, params: SourceRemoveParams) -> AppResult<Value> {
+    pub(crate) async fn remove_source(&self, params: SourceRemoveParams) -> AppResult<Value> {
         if !params.dry_run && !params.yes {
             return Err(AppError::Validation(
                 "source.remove requires --yes".to_string(),
             ));
         }
-        let sources = self.list_sources()?;
+        let sources = self.list_sources().await?;
         let source = sources
             .into_iter()
             .find(|source| source.id == params.id)
@@ -216,30 +191,34 @@ impl AppService {
         if params.dry_run {
             return Ok(json!({ "removed": false, "dry_run": true, "source": source }));
         }
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let source_id = source.id.clone();
-        self.db.block_on(async move {
-            crate::backend::store::delete_source_sqlx(&pool, &tenant_id, &source_id).await
-        })?;
-        capabilities::cleanup_orphan_asset_records(&self.db, self.tenant_id())?;
+        crate::backend::store::delete_source_sqlx(self.db.pool(), self.tenant_id(), &source.id)
+            .await?;
+        capabilities::cleanup_orphan_asset_records(self.db.pool(), self.tenant_id()).await?;
         Ok(json!({ "removed": true, "source_id": source.id }))
     }
 
-    pub(crate) fn scan_sources(&self, params: SourceScanParams) -> AppResult<Vec<CatalogAsset>> {
-        Ok(SourceScanWorkflow::run(self, params, &TaskContext::detached(), false)?.assets)
+    pub(crate) async fn scan_sources(
+        &self,
+        params: SourceScanParams,
+    ) -> AppResult<Vec<CatalogAsset>> {
+        Ok(
+            SourceScanWorkflow::run(self, params, &TaskContext::untracked(), false)
+                .await?
+                .assets,
+        )
     }
 
-    pub(crate) fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
+    pub(crate) async fn scan_skill_sources(&self) -> AppResult<Vec<CatalogAsset>> {
         Ok(SourceScanWorkflow::run(
             self,
             SourceScanParams {
                 kind: Some(AssetKind::Skill),
                 dry_run: false,
             },
-            &TaskContext::detached(),
+            &TaskContext::untracked(),
             true,
-        )?
+        )
+        .await?
         .assets)
     }
 }

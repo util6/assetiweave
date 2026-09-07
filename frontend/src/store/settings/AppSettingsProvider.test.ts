@@ -22,37 +22,58 @@ import {
 
 describe("AppSettingsProvider", () => {
   it("enables startup full conversation sync for older stored settings", () => {
-    expect(defaultSettings.conversations.autoFullSyncOnStartup).toBe(DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP);
-    expect(normalizeStoredSettings({}).conversations.autoFullSyncOnStartup).toBe(true);
+    expect(defaultSettings.conversations.autoFullSyncOnStartup).toBe(
+      DEFAULT_CONVERSATION_FULL_SYNC_ON_STARTUP,
+    );
+    expect(
+      normalizeStoredSettings({}).conversations.autoFullSyncOnStartup,
+    ).toBe(true);
   });
 
   it("preserves an explicit startup full conversation sync preference", () => {
-    expect(normalizeStoredSettings({
-      conversations: { autoFullSyncOnStartup: false },
-    }).conversations.autoFullSyncOnStartup).toBe(false);
+    expect(
+      normalizeStoredSettings({
+        conversations: { autoFullSyncOnStartup: false },
+      }).conversations.autoFullSyncOnStartup,
+    ).toBe(false);
   });
 
   it("uses the default column minimum width for older stored settings", () => {
-    expect(normalizeStoredSettings({ density: "compact" }).columnMinWidth).toBe(DEFAULT_COLUMN_MIN_WIDTH);
+    expect(normalizeStoredSettings({ density: "compact" }).columnMinWidth).toBe(
+      DEFAULT_COLUMN_MIN_WIDTH,
+    );
   });
 
   it("preserves a valid stored column minimum width", () => {
-    expect(normalizeStoredSettings({ columnMinWidth: 360 }).columnMinWidth).toBe(360);
+    expect(
+      normalizeStoredSettings({ columnMinWidth: 360 }).columnMinWidth,
+    ).toBe(360);
   });
 
   it("clamps stored column minimum width to the supported range", () => {
-    expect(normalizeStoredSettings({ columnMinWidth: 120 }).columnMinWidth).toBe(COLUMN_MIN_WIDTH_MIN);
-    expect(normalizeStoredSettings({ columnMinWidth: 900 }).columnMinWidth).toBe(COLUMN_MIN_WIDTH_MAX);
+    expect(
+      normalizeStoredSettings({ columnMinWidth: 120 }).columnMinWidth,
+    ).toBe(COLUMN_MIN_WIDTH_MIN);
+    expect(
+      normalizeStoredSettings({ columnMinWidth: 900 }).columnMinWidth,
+    ).toBe(COLUMN_MIN_WIDTH_MAX);
   });
 
   it("adds typography and conversation defaults when migrating older settings", () => {
-    const settings = normalizeStoredSettings({ density: "compact", theme: "sunlight" });
+    const settings = normalizeStoredSettings({
+      density: "compact",
+      theme: "sunlight",
+    });
 
     expect(settings.typography).toEqual(defaultSettings.typography);
     expect(settings.conversations).toEqual(defaultSettings.conversations);
-    expect(settings.conversationTranslation).toEqual(defaultSettings.conversationTranslation);
+    expect(settings.conversationTranslation).toEqual(
+      defaultSettings.conversationTranslation,
+    );
     expect(settings.dataBackup).toEqual(defaultSettings.dataBackup);
-    expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
+    expect(settings.conversationRuntimeOverrides).toEqual(
+      defaultSettings.conversationRuntimeOverrides,
+    );
   });
 
   it("preserves dynamic and unregistered conversation Card color overrides", () => {
@@ -66,9 +87,15 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.conversations.contentCardColors["claude-code.reasoning"]).toBe("#123abc");
-    expect(settings.conversations.contentCardColors["history.custom-trace"]).toBe("#fedcba");
-    expect(settings.conversations.contentCardColors["Invalid Kind"]).toBeUndefined();
+    expect(
+      settings.conversations.contentCardColors["claude-code.reasoning"],
+    ).toBe("#123abc");
+    expect(
+      settings.conversations.contentCardColors["history.custom-trace"],
+    ).toBe("#fedcba");
+    expect(
+      settings.conversations.contentCardColors["Invalid Kind"],
+    ).toBeUndefined();
   });
 
   it("preserves configured conversation runtime override paths", () => {
@@ -96,7 +123,9 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.conversationRuntimeOverrides).toEqual(defaultSettings.conversationRuntimeOverrides);
+    expect(settings.conversationRuntimeOverrides).toEqual(
+      defaultSettings.conversationRuntimeOverrides,
+    );
   });
 
   it("preserves a configured database backup directory", () => {
@@ -120,18 +149,33 @@ describe("AppSettingsProvider", () => {
   });
 
   it("preserves custom page-level typography overrides", () => {
-    const contentFontFamily = createFontFamilySetting("custom", "Inter Variable");
-    const codeFontFamily = createFontFamilySetting("custom", "Maple Mono NF CN");
-    const sessionBrowserFontFamily = createFontFamilySetting("custom", "LXGW WenKai");
+    const contentFontFamily = createFontFamilySetting(
+      "custom",
+      "Inter Variable",
+    );
+    const codeFontFamily = createFontFamilySetting(
+      "custom",
+      "Maple Mono NF CN",
+    );
+    const sessionBrowserFontFamily = createFontFamilySetting(
+      "custom",
+      "LXGW WenKai",
+    );
     const settings = normalizeStoredSettings({
       typography: {
         codeFontFamily,
         contentFontFamily,
         contentFontSize: 16,
-        interfaceFontFamily: createFontFamilySetting("custom", "SF Pro Display"),
+        interfaceFontFamily: createFontFamilySetting(
+          "custom",
+          "SF Pro Display",
+        ),
       },
       conversations: {
-        contentFontFamily: createFontFamilySetting("custom", "Atkinson Hyperlegible"),
+        contentFontFamily: createFontFamilySetting(
+          "custom",
+          "Atkinson Hyperlegible",
+        ),
         contentFontSize: 15,
         resultPreviewLineLimit: 12,
         sessionBrowserFontFamily,
@@ -143,20 +187,32 @@ describe("AppSettingsProvider", () => {
     expect(settings.typography.codeFontFamily).toEqual(codeFontFamily);
     expect(settings.typography.contentFontFamily).toEqual(contentFontFamily);
     expect(settings.typography.contentFontSize).toBe(16);
-    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("custom", "SF Pro Display"));
-    expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("custom", "Atkinson Hyperlegible"));
+    expect(settings.typography.interfaceFontFamily).toEqual(
+      createFontFamilySetting("custom", "SF Pro Display"),
+    );
+    expect(settings.conversations.contentFontFamily).toEqual(
+      createFontFamilySetting("custom", "Atkinson Hyperlegible"),
+    );
     expect(settings.conversations.contentFontSize).toBe(15);
     expect(settings.conversations.resultPreviewLineLimit).toBe(12);
-    expect(settings.conversations.sessionBrowserFontFamily).toEqual(sessionBrowserFontFamily);
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(
+      sessionBrowserFontFamily,
+    );
     expect(settings.conversations.sessionBrowserFontSize).toBe(12);
     expect(settings.conversations.sessionToolbarCompact).toBe(false);
-    expect(settings.conversationTranslation.targetLanguage).toBe(defaultSettings.conversationTranslation.targetLanguage);
+    expect(settings.conversationTranslation.targetLanguage).toBe(
+      defaultSettings.conversationTranslation.targetLanguage,
+    );
   });
 
   it("migrates and normalizes conversation translation settings", () => {
-    expect(normalizeStoredSettings({
-      conversations: { translationTargetLanguage: "  Spanish (Latin America)  " },
-    }).conversationTranslation.targetLanguage).toBe("Spanish (Latin America)");
+    expect(
+      normalizeStoredSettings({
+        conversations: {
+          translationTargetLanguage: "  Spanish (Latin America)  ",
+        },
+      }).conversationTranslation.targetLanguage,
+    ).toBe("Spanish (Latin America)");
     const normalized = normalizeStoredSettings({
       conversationTranslation: {
         cli: "gemini",
@@ -175,20 +231,26 @@ describe("AppSettingsProvider", () => {
       provider: "cli",
       targetLanguage: "French Canadian",
     });
-    expect(normalizeStoredSettings({
-      conversationTranslation: {
-        cli: "custom",
-        model: "x".repeat(200),
-        promptTemplate: "",
-        provider: "google",
-        targetLanguage: "zh-CN",
-      },
-    }).conversationTranslation).toEqual({
+    expect(
+      normalizeStoredSettings({
+        conversationTranslation: {
+          cli: "custom",
+          model: "x".repeat(200),
+          promptTemplate: "",
+          provider: "google",
+          targetLanguage: "zh-CN",
+        },
+      }).conversationTranslation,
+    ).toEqual({
       ...defaultSettings.conversationTranslation,
       provider: "google",
     });
-    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{targetLanguage}");
-    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain("{content}");
+    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain(
+      "{targetLanguage}",
+    );
+    expect(DEFAULT_CONVERSATION_TRANSLATION_PROMPT_TEMPLATE).toContain(
+      "{content}",
+    );
   });
 
   it("migrates and normalizes prompt optimization settings", () => {
@@ -207,21 +269,29 @@ describe("AppSettingsProvider", () => {
 
     const customized = normalizeStoredSettings({
       promptOptimization: {
-        promptTemplate: "  Optimize this request for a technical audience.\r\n\r\n{content}  ",
+        promptTemplate:
+          "  Optimize this request for a technical audience.\r\n\r\n{content}  ",
       },
     });
 
     expect(customized.promptOptimization).toEqual({
-      promptTemplate: "Optimize this request for a technical audience.\n\n{content}",
+      promptTemplate:
+        "Optimize this request for a technical audience.\n\n{content}",
     });
-    expect(normalizeStoredSettings({
-      promptOptimization: { promptTemplate: "" },
-    }).promptOptimization).toEqual(defaultSettings.promptOptimization);
-    expect(normalizeStoredSettings({
-      promptOptimization: { promptTemplate: legacyDefaultPrompt },
-    }).promptOptimization).toEqual(defaultSettings.promptOptimization);
+    expect(
+      normalizeStoredSettings({
+        promptOptimization: { promptTemplate: "" },
+      }).promptOptimization,
+    ).toEqual(defaultSettings.promptOptimization);
+    expect(
+      normalizeStoredSettings({
+        promptOptimization: { promptTemplate: legacyDefaultPrompt },
+      }).promptOptimization,
+    ).toEqual(defaultSettings.promptOptimization);
     expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).toContain("{content}");
-    expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).not.toContain("{targetLanguage}");
+    expect(DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE).not.toContain(
+      "{targetLanguage}",
+    );
   });
 
   it("migrates legacy translation runtime settings into canonical action assignments", () => {
@@ -282,23 +352,43 @@ describe("AppSettingsProvider", () => {
   });
 
   it("updates canonical action models when the Agent model changes", () => {
-    const assignments = assignModelToAgentActions({
-      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
-      "memory.extraction": { agentId: "opencode", modelId: null },
-      "prompt.optimization": { agentId: "opencode", modelId: "opencode/expired" },
-    }, "opencode", "opencode/hy3-free");
+    const assignments = assignModelToAgentActions(
+      {
+        "translation.card": {
+          agentId: "opencode",
+          modelId: "opencode/expired",
+        },
+        "memory.extraction": { agentId: "opencode", modelId: null },
+        "prompt.optimization": {
+          agentId: "opencode",
+          modelId: "opencode/expired",
+        },
+      },
+      "opencode",
+      "opencode/hy3-free",
+    );
 
     expect(assignments["translation.card"]?.modelId).toBe("opencode/hy3-free");
     expect(assignments["memory.extraction"]?.modelId).toBe("opencode/hy3-free");
-    expect(assignments["prompt.optimization"]?.modelId).toBe("opencode/hy3-free");
+    expect(assignments["prompt.optimization"]?.modelId).toBe(
+      "opencode/hy3-free",
+    );
   });
 
   it("replaces an action Agent and its model atomically", () => {
-    const assignments = assignAgentToAction({
-      "translation.card": { agentId: "opencode", modelId: "opencode/expired" },
-      "memory.extraction": { agentId: "opencode", modelId: null },
-      "prompt.optimization": { agentId: "opencode", modelId: null },
-    }, "translation.card", "codex", "openai/gpt-5");
+    const assignments = assignAgentToAction(
+      {
+        "translation.card": {
+          agentId: "opencode",
+          modelId: "opencode/expired",
+        },
+        "memory.extraction": { agentId: "opencode", modelId: null },
+        "prompt.optimization": { agentId: "opencode", modelId: null },
+      },
+      "translation.card",
+      "codex",
+      "openai/gpt-5",
+    );
 
     expect(assignments["translation.card"]).toEqual({
       agentId: "codex",
@@ -309,7 +399,10 @@ describe("AppSettingsProvider", () => {
   it("resolves execution from the canonical action assignment", () => {
     const settings = normalizeStoredSettings({
       agentAssignments: {
-        "translation.card": { agentId: "opencode", modelId: "opencode/hy3-free" },
+        "translation.card": {
+          agentId: "opencode",
+          modelId: "opencode/hy3-free",
+        },
       },
       agentModels: { opencode: "opencode/expired" },
     });
@@ -327,14 +420,16 @@ describe("AppSettingsProvider", () => {
       excludedSessionIds: [],
       excludedSourceIds: [],
     });
-    expect(normalizeStoredSettings({
-      memory: {
-        generationEnabled: false,
-        usageEnabled: false,
-        excludedSessionIds: [" session-1 ", "session-1"],
-        excludedSourceIds: ["source-1"],
-      },
-    }).memory).toEqual({
+    expect(
+      normalizeStoredSettings({
+        memory: {
+          generationEnabled: false,
+          usageEnabled: false,
+          excludedSessionIds: [" session-1 ", "session-1"],
+          excludedSourceIds: ["source-1"],
+        },
+      }).memory,
+    ).toEqual({
       generationEnabled: false,
       usageEnabled: false,
       excludedSessionIds: ["session-1"],
@@ -343,15 +438,21 @@ describe("AppSettingsProvider", () => {
   });
 
   it("normalizes command result preview line limits", () => {
-    expect(normalizeStoredSettings({
-      conversations: { resultPreviewLineLimit: 12 },
-    }).conversations.resultPreviewLineLimit).toBe(12);
-    expect(normalizeStoredSettings({
-      conversations: { resultPreviewLineLimit: 2 },
-    }).conversations.resultPreviewLineLimit).toBe(RESULT_PREVIEW_LINE_LIMIT_MIN);
-    expect(normalizeStoredSettings({
-      conversations: { resultPreviewLineLimit: 2000 },
-    }).conversations.resultPreviewLineLimit).toBe(RESULT_PREVIEW_LINE_LIMIT_MAX);
+    expect(
+      normalizeStoredSettings({
+        conversations: { resultPreviewLineLimit: 12 },
+      }).conversations.resultPreviewLineLimit,
+    ).toBe(12);
+    expect(
+      normalizeStoredSettings({
+        conversations: { resultPreviewLineLimit: 2 },
+      }).conversations.resultPreviewLineLimit,
+    ).toBe(RESULT_PREVIEW_LINE_LIMIT_MIN);
+    expect(
+      normalizeStoredSettings({
+        conversations: { resultPreviewLineLimit: 2000 },
+      }).conversations.resultPreviewLineLimit,
+    ).toBe(RESULT_PREVIEW_LINE_LIMIT_MAX);
   });
 
   it("migrates legacy font tokens to single editable font names", () => {
@@ -367,18 +468,29 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
-    expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("serif"));
-    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("jetbrains"));
-    expect(settings.conversations.contentFontFamily).toEqual(createFontFamilySetting("system"));
-    expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("mono"));
+    expect(settings.typography.codeFontFamily).toEqual(
+      createFontFamilySetting("mono"),
+    );
+    expect(settings.typography.contentFontFamily).toEqual(
+      createFontFamilySetting("serif"),
+    );
+    expect(settings.typography.interfaceFontFamily).toEqual(
+      createFontFamilySetting("jetbrains"),
+    );
+    expect(settings.conversations.contentFontFamily).toEqual(
+      createFontFamilySetting("system"),
+    );
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(
+      createFontFamilySetting("mono"),
+    );
   });
 
   it("migrates legacy CSS font-family stacks to the primary font name", () => {
     const settings = normalizeStoredSettings({
       typography: {
         codeFontFamily: fontFamilyCss.mono,
-        contentFontFamily: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
+        contentFontFamily:
+          '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
         interfaceFontFamily: fontFamilyCss.jetbrains,
       },
       conversations: {
@@ -386,17 +498,32 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("mono"));
-    expect(settings.typography.contentFontFamily).toEqual(createFontFamilySetting("custom", "Inter Variable"));
-    expect(settings.typography.interfaceFontFamily).toEqual(createFontFamilySetting("jetbrains"));
-    expect(settings.conversations.sessionBrowserFontFamily).toEqual(createFontFamilySetting("custom", "LXGW WenKai"));
+    expect(settings.typography.codeFontFamily).toEqual(
+      createFontFamilySetting("mono"),
+    );
+    expect(settings.typography.contentFontFamily).toEqual(
+      createFontFamilySetting("custom", "Inter Variable"),
+    );
+    expect(settings.typography.interfaceFontFamily).toEqual(
+      createFontFamilySetting("jetbrains"),
+    );
+    expect(settings.conversations.sessionBrowserFontFamily).toEqual(
+      createFontFamilySetting("custom", "LXGW WenKai"),
+    );
   });
 
   it("resolves single font names to CSS font-family stacks at render time", () => {
-    expect(resolveFontFamilyCss(createFontFamilySetting("custom", "Maple Mono NF CN"), "mono")).toBe(
+    expect(
+      resolveFontFamilyCss(
+        createFontFamilySetting("custom", "Maple Mono NF CN"),
+        "mono",
+      ),
+    ).toBe(
       '"Maple Mono NF CN", "JetBrains Mono", "SFMono-Regular", Consolas, monospace',
     );
-    expect(resolveFontFamilyCss(createFontFamilySetting("jetbrains"), "sans")).toBe(fontFamilyCss.jetbrains);
+    expect(
+      resolveFontFamilyCss(createFontFamilySetting("jetbrains"), "sans"),
+    ).toBe(fontFamilyCss.jetbrains);
   });
 
   it("preserves custom mode even when the custom font name matches a preset font", () => {
@@ -406,7 +533,9 @@ describe("AppSettingsProvider", () => {
       },
     });
 
-    expect(settings.typography.codeFontFamily).toEqual(createFontFamilySetting("custom", "JetBrains Mono"));
+    expect(settings.typography.codeFontFamily).toEqual(
+      createFontFamilySetting("custom", "JetBrains Mono"),
+    );
   });
 
   it("normalizes invalid typography values", () => {
@@ -417,13 +546,57 @@ describe("AppSettingsProvider", () => {
       },
       conversations: {
         contentFontSize: 2,
-        sessionBrowserFontFamily: createFontFamilySetting("custom", "Bad { font-family: serif }"),
+        sessionBrowserFontFamily: createFontFamilySetting(
+          "custom",
+          "Bad { font-family: serif }",
+        ),
       },
     });
 
     expect(settings.typography.baseFontSize).toBe(FONT_SIZE_MAX);
-    expect(settings.typography.codeFontFamily).toBe(defaultSettings.typography.codeFontFamily);
+    expect(settings.typography.codeFontFamily).toBe(
+      defaultSettings.typography.codeFontFamily,
+    );
     expect(settings.conversations.contentFontSize).toBe(FONT_SIZE_MIN);
-    expect(settings.conversations.sessionBrowserFontFamily).toBe(defaultSettings.typography.contentFontFamily);
+    expect(settings.conversations.sessionBrowserFontFamily).toBe(
+      defaultSettings.typography.contentFontFamily,
+    );
+  });
+
+  it("normalizes missing or invalid locale to null, and preserves valid locales", () => {
+    expect(normalizeStoredSettings({}).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: null }).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: "zh" }).locale).toBe("zh");
+    expect(normalizeStoredSettings({ locale: "en" }).locale).toBe("en");
+    expect(normalizeStoredSettings({ locale: "fr" }).locale).toBeNull();
+    expect(normalizeStoredSettings({ locale: 123 }).locale).toBeNull();
+  });
+
+  it("normalizes columnLayouts filtering invalid entries and preserving valid arrays", () => {
+    expect(normalizeStoredSettings({}).columnLayouts).toEqual({});
+    expect(
+      normalizeStoredSettings({ columnLayouts: null }).columnLayouts,
+    ).toEqual({});
+    expect(
+      normalizeStoredSettings({ columnLayouts: "invalid" }).columnLayouts,
+    ).toEqual({});
+
+    const validLayout = { catalog: [1, 2, 1], explorer: [2, 3] };
+    expect(
+      normalizeStoredSettings({ columnLayouts: validLayout }).columnLayouts,
+    ).toEqual(validLayout);
+
+    // Filters entries with invalid structure or values
+    const mixed = {
+      valid: [1, 2],
+      tooShort: [1],
+      tooLong: Array(17).fill(1),
+      containsZero: [0, 1],
+      containsNegative: [-1, 2],
+      containsNonNumber: ["1", 2],
+    };
+    expect(
+      normalizeStoredSettings({ columnLayouts: mixed }).columnLayouts,
+    ).toEqual({ valid: [1, 2] });
   });
 });

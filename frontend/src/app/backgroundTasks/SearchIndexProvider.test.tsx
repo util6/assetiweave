@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SearchIndexProvider, useSearchIndex } from "./SearchIndexProvider";
 
@@ -17,9 +26,16 @@ vi.mock("../../services/conversations", () => ({
 }));
 
 describe("SearchIndexProvider", () => {
+  let queryClient: QueryClient;
+
   beforeEach(() => {
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
     subscribeSearchIndexTasksMock.mockReset().mockResolvedValue(vi.fn());
-    statusMock.mockReset().mockResolvedValue({ health: "ready", source_revision: 0 });
+    statusMock
+      .mockReset()
+      .mockResolvedValue({ health: "ready", source_revision: 0 });
     taskMock.mockReset().mockResolvedValue(null);
     rebuildMock.mockReset();
   });
@@ -28,6 +44,7 @@ describe("SearchIndexProvider", () => {
     cleanup();
     vi.useRealTimers();
     vi.clearAllMocks();
+    queryClient.clear();
   });
 
   it("polls a running rebuild while unrelated controls remain enabled", async () => {
@@ -41,25 +58,36 @@ describe("SearchIndexProvider", () => {
       error: null,
     } as const;
     rebuildMock.mockResolvedValue(running);
-    taskMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ ...running, status: "completed", finished_at: "2026-07-22T00:00:01Z" });
+    taskMock.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      ...running,
+      status: "completed",
+      finished_at: "2026-07-22T00:00:01Z",
+    });
     statusMock
       .mockResolvedValueOnce({ health: "ready", source_revision: 0 })
       .mockResolvedValueOnce({ health: "ready", source_revision: 0 });
 
     render(
-      <SearchIndexProvider>
-        <Harness />
-      </SearchIndexProvider>,
+      <QueryClientProvider client={queryClient}>
+        <SearchIndexProvider>
+          <Harness />
+        </SearchIndexProvider>
+      </QueryClientProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
-    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
     expect(screen.getByTestId("task-status").textContent).toBe("running");
-    expect((screen.getByRole("button", { name: "Other" }) as HTMLButtonElement).disabled).toBe(false);
+
+    expect(
+      (screen.getByRole("button", { name: "Other" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1);
     });
     expect(screen.getByTestId("task-status").textContent).toBe("completed");
     expect(screen.getByTestId("index-health").textContent).toBe("ready");
@@ -69,13 +97,15 @@ describe("SearchIndexProvider", () => {
     statusMock.mockResolvedValue({ health: "missing", source_revision: 3 });
 
     render(
-      <SearchIndexProvider>
-        <Harness />
-      </SearchIndexProvider>,
+      <QueryClientProvider client={queryClient}>
+        <SearchIndexProvider>
+          <Harness />
+        </SearchIndexProvider>
+      </QueryClientProvider>,
     );
-    await act(async () => {});
-    await act(async () => {});
-    expect(screen.getByTestId("index-health").textContent).toBe("missing");
+    await waitFor(() => {
+      expect(screen.getByTestId("index-health").textContent).toBe("missing");
+    });
     expect(rebuildMock).not.toHaveBeenCalled();
   });
 });
@@ -84,7 +114,9 @@ function Harness() {
   const { rebuild, status, task } = useSearchIndex();
   return (
     <>
-      <button onClick={() => void rebuild()} type="button">Rebuild</button>
+      <button onClick={() => void rebuild()} type="button">
+        Rebuild
+      </button>
       <button type="button">Other</button>
       <output data-testid="task-status">{task?.status ?? "idle"}</output>
       <output data-testid="index-health">{status?.health ?? "unknown"}</output>

@@ -11,7 +11,9 @@ describe("isManagedSkillSource", () => {
   });
 
   it("allows normal sources to be edited", () => {
-    expect(isManagedSkillSource(source("local-skills", "local_folder"))).toBe(false);
+    expect(isManagedSkillSource(source("local-skills", "local_folder"))).toBe(
+      false,
+    );
   });
 });
 

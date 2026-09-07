@@ -38,7 +38,9 @@ describe("source input schema", () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors.formErrors).toEqual([expect.stringContaining("Unrecognized key")]);
+      expect(result.errors.formErrors).toEqual([
+        expect.stringContaining("Unrecognized key"),
+      ]);
     }
   });
 

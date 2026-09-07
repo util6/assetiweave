@@ -35,7 +35,13 @@ const iconRegistry = {
   users: Users,
 } satisfies Record<NavigationIcon, typeof Archive>;
 
-export function MenuIcon({ name, size = 19 }: { name: NavigationIcon; size?: number }) {
+export function MenuIcon({
+  name,
+  size = 19,
+}: {
+  name: NavigationIcon;
+  size?: number;
+}) {
   const Icon = iconRegistry[name];
   return <Icon size={size} />;
 }

@@ -39,9 +39,9 @@ export function createScrollActivityController(): ScrollActivityController {
 
   const notifyIfChanged = (next: ScrollActivitySnapshot) => {
     if (
-      next.direction === snapshot.direction
-      && next.phase === snapshot.phase
-      && next.velocity === snapshot.velocity
+      next.direction === snapshot.direction &&
+      next.phase === snapshot.phase &&
+      next.velocity === snapshot.velocity
     ) {
       return;
     }
@@ -79,16 +79,23 @@ export function createScrollActivityController(): ScrollActivityController {
     const offset = element.scrollTop;
     const elapsed = Math.max(now - previousTime, 1);
     const instantVelocity = Math.abs(offset - previousOffset) / elapsed;
-    const velocity = previousVelocity * VELOCITY_PREVIOUS_WEIGHT
-      + instantVelocity * VELOCITY_INSTANT_WEIGHT;
-    const direction = offset > previousOffset
-      ? "forward"
-      : offset < previousOffset
-        ? "backward"
-        : snapshot.direction;
-    const phase: ScrollPhase = snapshot.phase === "fast"
-      ? velocity > FAST_SCROLL_EXIT_PX_PER_MS ? "fast" : "moving"
-      : velocity >= FAST_SCROLL_ENTER_PX_PER_MS ? "fast" : "moving";
+    const velocity =
+      previousVelocity * VELOCITY_PREVIOUS_WEIGHT +
+      instantVelocity * VELOCITY_INSTANT_WEIGHT;
+    const direction =
+      offset > previousOffset
+        ? "forward"
+        : offset < previousOffset
+          ? "backward"
+          : snapshot.direction;
+    const phase: ScrollPhase =
+      snapshot.phase === "fast"
+        ? velocity > FAST_SCROLL_EXIT_PX_PER_MS
+          ? "fast"
+          : "moving"
+        : velocity >= FAST_SCROLL_ENTER_PX_PER_MS
+          ? "fast"
+          : "moving";
 
     previousOffset = offset;
     previousTime = now;

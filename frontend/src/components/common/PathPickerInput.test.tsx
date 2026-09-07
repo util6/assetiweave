@@ -23,8 +23,12 @@ describe("PathPickerInput", () => {
       />,
     );
 
-    expect(screen.getByLabelText<HTMLInputElement>("Source directory").value).toBe("~/code-space/skills");
-    fireEvent.click(screen.getByRole("button", { name: "Choose source directory" }));
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Source directory").value,
+    ).toBe("~/code-space/skills");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose source directory" }),
+    );
 
     expect(onPick).toHaveBeenCalledTimes(1);
   });
@@ -41,7 +45,13 @@ describe("PathPickerInput", () => {
       />,
     );
 
-    expect(screen.getByLabelText<HTMLInputElement>("Target directory").disabled).toBe(true);
-    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Choose target directory" }).disabled).toBe(true);
+    expect(
+      screen.getByLabelText<HTMLInputElement>("Target directory").disabled,
+    ).toBe(true);
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Choose target directory",
+      }).disabled,
+    ).toBe(true);
   });
 });

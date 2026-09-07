@@ -1,6 +1,13 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,8 +39,12 @@ describe("TenantSwitcher", () => {
 
     renderTenantManager({ onCreateTenant });
     fireEvent.click(screen.getByRole("button", { name: "Tenants" }));
-    fireEvent.change(screen.getByLabelText("Tenant name *"), { target: { value: "Client A" } });
-    fireEvent.change(screen.getByLabelText("Tenant slug"), { target: { value: "client-a" } });
+    fireEvent.change(screen.getByLabelText("Tenant name *"), {
+      target: { value: "Client A" },
+    });
+    fireEvent.change(screen.getByLabelText("Tenant slug"), {
+      target: { value: "client-a" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Create tenant" }));
 
     await waitFor(() =>
@@ -48,26 +59,34 @@ describe("TenantSwitcher", () => {
   it("renders the tenant dialog outside the side rail trigger container", () => {
     renderTenantManager();
 
-    fireEvent.click(within(screen.getByTestId("side-rail-action")).getByRole("button", { name: "Tenants" }));
+    fireEvent.click(
+      within(screen.getByTestId("side-rail-action")).getByRole("button", {
+        name: "Tenants",
+      }),
+    );
 
-    expect(within(screen.getByTestId("side-rail-action")).queryByRole("dialog")).toBeNull();
+    expect(
+      within(screen.getByTestId("side-rail-action")).queryByRole("dialog"),
+    ).toBeNull();
     expect(screen.getByRole("dialog")).not.toBeNull();
   });
 
   it("uses the side rail trigger as the permanent entry point", () => {
     const { rerender } = renderTenantSwitcher();
 
-    expect(screen.getByRole("button", { name: "Tenants" }).getAttribute("title")).toBe("Tenants: Default Workspace");
+    expect(
+      screen.getByRole("button", { name: "Tenants" }).getAttribute("title"),
+    ).toBe("Tenants: Default Workspace");
     expect(screen.queryByText("Default Workspace")).toBeNull();
 
     rerender(
       <I18nProvider>
-          <TenantSwitcher
-            activeTenant={defaultTenant}
-            busy={false}
-            expanded
-            loading={false}
-            onOpen={vi.fn()}
+        <TenantSwitcher
+          activeTenant={defaultTenant}
+          busy={false}
+          expanded
+          loading={false}
+          onOpen={vi.fn()}
           open={false}
         />
       </I18nProvider>,

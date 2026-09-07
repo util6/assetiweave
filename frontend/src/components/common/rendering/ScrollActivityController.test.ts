@@ -42,16 +42,27 @@ afterEach(() => {
 describe("ScrollActivityController", () => {
   it("attaches one passive listener and reports direction and moving phase", () => {
     const raf = createRafHarness();
-    const now = vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValueOnce(20);
+    const now = vi
+      .spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(20);
     const element = document.createElement("div");
-    Object.defineProperty(element, "scrollTop", { configurable: true, value: 0, writable: true });
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
     const controller = createScrollActivityController();
     const listener = vi.spyOn(element, "addEventListener");
     const snapshots: ReturnType<typeof controller.getSnapshot>[] = [];
     controller.subscribe(() => snapshots.push(controller.getSnapshot()));
 
     const detach = controller.attach(element);
-    Object.defineProperty(element, "scrollTop", { configurable: true, value: 40, writable: true });
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      value: 40,
+      writable: true,
+    });
     element.dispatchEvent(new Event("scroll"));
     act(() => raf.flush());
 
@@ -72,26 +83,40 @@ describe("ScrollActivityController", () => {
     const times = [0, 10, 20, 30, 40, 50, 60];
     vi.spyOn(performance, "now").mockImplementation(() => times.shift() ?? 60);
     const element = document.createElement("div");
-    Object.defineProperty(element, "scrollTop", { configurable: true, value: 0, writable: true });
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
     const controller = createScrollActivityController();
     controller.attach(element);
 
     const scrollAndFlush = (offset: number) => {
-      Object.defineProperty(element, "scrollTop", { configurable: true, value: offset, writable: true });
+      Object.defineProperty(element, "scrollTop", {
+        configurable: true,
+        value: offset,
+        writable: true,
+      });
       element.dispatchEvent(new Event("scroll"));
       act(() => raf.flush());
     };
 
     scrollAndFlush(50);
-    expect(controller.getSnapshot().velocity).toBeGreaterThanOrEqual(FAST_SCROLL_ENTER_PX_PER_MS);
+    expect(controller.getSnapshot().velocity).toBeGreaterThanOrEqual(
+      FAST_SCROLL_ENTER_PX_PER_MS,
+    );
     expect(controller.getSnapshot().phase).toBe("fast");
     scrollAndFlush(55);
-    expect(controller.getSnapshot().velocity).toBeGreaterThan(FAST_SCROLL_EXIT_PX_PER_MS);
+    expect(controller.getSnapshot().velocity).toBeGreaterThan(
+      FAST_SCROLL_EXIT_PX_PER_MS,
+    );
     expect(controller.getSnapshot().phase).toBe("fast");
     scrollAndFlush(55);
     scrollAndFlush(55);
     scrollAndFlush(55);
-    expect(controller.getSnapshot().velocity).toBeLessThan(FAST_SCROLL_EXIT_PX_PER_MS);
+    expect(controller.getSnapshot().velocity).toBeLessThan(
+      FAST_SCROLL_EXIT_PX_PER_MS,
+    );
     expect(controller.getSnapshot().phase).toBe("moving");
   });
 
@@ -99,7 +124,11 @@ describe("ScrollActivityController", () => {
     vi.useFakeTimers();
     const raf = createRafHarness();
     const element = document.createElement("div");
-    Object.defineProperty(element, "scrollTop", { configurable: true, value: 0, writable: true });
+    Object.defineProperty(element, "scrollTop", {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
     const controller = createScrollActivityController();
     const subscriber = vi.fn();
     controller.subscribe(subscriber);
@@ -111,7 +140,11 @@ describe("ScrollActivityController", () => {
     expect(raf.callbacks.size).toBe(0);
     const callsAfterDetach = subscriber.mock.calls.length;
     vi.advanceTimersByTime(SCROLL_IDLE_DELAY_MS);
-    expect(controller.getSnapshot()).toMatchObject({ direction: null, phase: "idle", velocity: 0 });
+    expect(controller.getSnapshot()).toMatchObject({
+      direction: null,
+      phase: "idle",
+      velocity: 0,
+    });
     expect(subscriber).toHaveBeenCalledTimes(callsAfterDetach);
   });
 });

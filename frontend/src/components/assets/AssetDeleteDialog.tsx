@@ -19,7 +19,11 @@ export function AssetDeleteDialog({
 }) {
   const { t } = useI18n();
   const [unmount, setUnmount] = useState(false);
-  const mountedCount = asset ? mountStatuses.filter((status) => status.asset_id === asset.id && status.state === "mounted").length : 0;
+  const mountedCount = asset
+    ? mountStatuses.filter(
+        (status) => status.asset_id === asset.id && status.state === "mounted",
+      ).length
+    : 0;
 
   useEffect(() => {
     setUnmount(false);
@@ -42,8 +46,12 @@ export function AssetDeleteDialog({
     >
       <div className="grid gap-3 rounded-xl border border-theme-card-border bg-theme-card/65 p-3">
         <div className="min-w-0">
-          <div className="text-label-caps uppercase text-outline">{t("asset.deleteDialog.path")}</div>
-          <div className="mt-1 truncate font-mono text-body-sm text-on-surface">{displayAssetPath(asset)}</div>
+          <div className="text-label-caps uppercase text-outline">
+            {t("asset.deleteDialog.path")}
+          </div>
+          <div className="mt-1 truncate font-mono text-body-sm text-on-surface">
+            {displayAssetPath(asset)}
+          </div>
         </div>
         {mountedCount > 0 && (
           <>

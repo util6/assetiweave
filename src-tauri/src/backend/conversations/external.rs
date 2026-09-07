@@ -12,7 +12,7 @@ pub(super) struct ExternalAdapterSourceReader<'a> {
 }
 
 impl<'a> ExternalAdapterSourceReader<'a> {
-    pub(super) fn new(
+    pub(super) async fn new(
         adapter: &'a ConversationAdapter,
         source: &'a ConversationSource,
         settings: &Value,
@@ -30,7 +30,7 @@ impl<'a> ExternalAdapterSourceReader<'a> {
             "location": resolve_source_location_for_adapter(source)?,
             "config": source_config_value(source)?,
         });
-        let invocation = prepare_adapter_invocation(&validation, settings)?;
+        let invocation = prepare_adapter_invocation(&validation, settings).await?;
         Ok(Self {
             adapter,
             source,
@@ -41,7 +41,7 @@ impl<'a> ExternalAdapterSourceReader<'a> {
         })
     }
 
-    pub(super) fn discover(&self) -> AppResult<Option<ExternalAdapterRunResult>> {
+    pub(super) async fn discover(&self) -> AppResult<Option<ExternalAdapterRunResult>> {
         if !self
             .adapter
             .capabilities
@@ -50,23 +50,29 @@ impl<'a> ExternalAdapterSourceReader<'a> {
         {
             return Ok(None);
         }
-        let result = self.run(
-            "list_sessions",
-            json!({"cursor": null}),
-            DEFAULT_LIST_TIMEOUT_MS,
-        )?;
+        let result = self
+            .run(
+                "list_sessions",
+                json!({"cursor": null}),
+                DEFAULT_LIST_TIMEOUT_MS,
+            )
+            .await?;
         Ok(result.snapshot_complete.then_some(result))
     }
 
-    pub(super) fn read(&self, session_id: Option<&str>) -> AppResult<ExternalAdapterRunResult> {
+    pub(super) async fn read(
+        &self,
+        session_id: Option<&str>,
+    ) -> AppResult<ExternalAdapterRunResult> {
         self.run(
             "read_session",
             json!({"session_id": session_id}),
             DEFAULT_READ_TIMEOUT_MS,
         )
+        .await
     }
 
-    fn run(
+    async fn run(
         &self,
         method: &str,
         params: Value,
@@ -96,6 +102,7 @@ impl<'a> ExternalAdapterSourceReader<'a> {
             Duration::from_millis(timeout_ms),
             self.cancellation,
         )
+        .await
     }
 }
 
@@ -103,22 +110,23 @@ pub(super) fn ensure_read_not_cancelled(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<()> {
     if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-        return Err(AppError::Canceled(
+        return Err(AppError::Cancelled(
             "conversation sync cancelled".to_string(),
         ));
     }
     Ok(())
 }
 
-pub(super) fn read_external_adapter_sessions(
+pub(super) async fn read_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
-    run_external_adapter_read_session(adapter, source, None, settings)
+    run_external_adapter_read_session(adapter, source, None, settings).await
 }
 
-pub(super) fn discover_external_adapter_sessions(
+#[cfg(test)]
+pub(super) async fn discover_external_adapter_sessions(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     settings: &Value,
@@ -132,12 +140,10 @@ pub(super) fn discover_external_adapter_sessions(
     }
     validate_external_adapter_for_method(adapter, source, "list_sessions")?;
     let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
-        AppError::external({
-            format!(
-                "external conversation adapter has no manifest: {}",
-                adapter.id
-            )
-        })
+        AppError::external(format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        ))
     })?;
     let validation = validate_external_adapter_manifest(manifest_path)?;
     validate_external_adapter_manifest_for_method(adapter, &validation, "list_sessions")?;
@@ -155,14 +161,15 @@ pub(super) fn discover_external_adapter_sessions(
         request,
         Duration::from_millis(DEFAULT_LIST_TIMEOUT_MS),
         settings,
-    )?;
+    )
+    .await?;
     if !result.snapshot_complete {
         return Ok(None);
     }
     Ok(Some(result))
 }
 
-fn run_external_adapter_read_session(
+async fn run_external_adapter_read_session(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     session_id: Option<&str>,
@@ -194,9 +201,10 @@ fn run_external_adapter_read_session(
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
         settings,
     )
+    .await
 }
 
-pub(crate) fn export_external_adapter_markdown_with_settings(
+pub(crate) async fn export_external_adapter_markdown_with_settings(
     adapter: &ConversationAdapter,
     source: &ConversationSource,
     detail: &crate::backend::dto::ConversationSessionDetail,
@@ -237,7 +245,8 @@ pub(crate) fn export_external_adapter_markdown_with_settings(
         request,
         Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
         settings,
-    )?
+    )
+    .await?
     .markdown_export
     .ok_or_else(|| {
         AppError::NotFound(format!(
@@ -247,7 +256,7 @@ pub(crate) fn export_external_adapter_markdown_with_settings(
     })?)
 }
 
-pub(crate) fn project_external_adapter_command_parts_with_settings(
+pub(crate) async fn project_external_adapter_command_parts_with_settings(
     adapter: &ConversationAdapter,
     parts: &[ConversationCommandProjectionPart],
     settings: &Value,
@@ -329,7 +338,8 @@ pub(crate) fn project_external_adapter_command_parts_with_settings(
         request,
         Duration::from_millis(DEFAULT_PROJECT_TIMEOUT_MS),
         settings,
-    )?;
+    )
+    .await?;
 
     let mut by_part_id = std::collections::BTreeMap::new();
     for projection in result.command_projections {
@@ -787,7 +797,7 @@ pub(crate) fn validate_external_adapter(
     validate_external_adapter_manifest(&params.manifest_path)
 }
 
-pub(crate) fn register_external_adapter_with_settings(
+pub(crate) async fn register_external_adapter_with_settings(
     params: ExternalAdapterRegisterParams,
     settings: &Value,
 ) -> AppResult<Value> {
@@ -800,7 +810,7 @@ pub(crate) fn register_external_adapter_with_settings(
     let probe = if params.dry_run {
         None
     } else {
-        Some(probe_external_adapter_before_trust(&validation, settings)?)
+        Some(probe_external_adapter_before_trust(&validation, settings).await?)
     };
     let now = Utc::now().to_rfc3339();
     let adapter = ConversationAdapter {
@@ -831,11 +841,13 @@ pub(crate) fn register_external_adapter_with_settings(
 }
 
 #[cfg(test)]
-pub(crate) fn register_external_adapter(params: ExternalAdapterRegisterParams) -> AppResult<Value> {
-    register_external_adapter_with_settings(params, &serde_json::json!({}))
+pub(crate) async fn register_external_adapter(
+    params: ExternalAdapterRegisterParams,
+) -> AppResult<Value> {
+    register_external_adapter_with_settings(params, &serde_json::json!({})).await
 }
 
-fn probe_external_adapter_before_trust(
+async fn probe_external_adapter_before_trust(
     validation: &ExternalAdapterValidationResult,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
@@ -868,6 +880,7 @@ fn probe_external_adapter_before_trust(
         Duration::from_millis(DEFAULT_PROBE_TIMEOUT_MS),
         settings,
     )
+    .await
     .map_err(|error| {
         AppError::External(format!(
             "adapter {} probe failed; refusing to trust: {error}",
@@ -876,7 +889,7 @@ fn probe_external_adapter_before_trust(
     })?)
 }
 
-pub(crate) fn try_run_external_adapter_with_settings(
+pub(crate) async fn try_run_external_adapter_with_settings(
     params: ExternalAdapterTryRunParams,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
@@ -940,45 +953,32 @@ pub(crate) fn try_run_external_adapter_with_settings(
         Duration::from_millis(timeout_ms),
         settings,
     )
+    .await
 }
 
 #[cfg(test)]
-pub(crate) fn try_run_external_adapter(
+pub(crate) async fn try_run_external_adapter(
     params: ExternalAdapterTryRunParams,
 ) -> AppResult<ExternalAdapterRunResult> {
-    try_run_external_adapter_with_settings(params, &serde_json::json!({}))
+    try_run_external_adapter_with_settings(params, &serde_json::json!({})).await
 }
 
 pub(crate) fn adapter_from_registration_preview(value: Value) -> AppResult<ConversationAdapter> {
-    let adapter = value.get("adapter").cloned().ok_or_else(|| {
-        AppError::external({ "registration preview did not include adapter".to_string() })
-    })?;
+    let adapter = value
+        .get("adapter")
+        .cloned()
+        .ok_or_else(|| AppError::external("registration preview did not include adapter"))?;
     serde_json::from_value(adapter).map_err(AppError::external)
 }
 
-pub(crate) fn list_conversation_adapter_runtime_statuses_with_settings(
+pub(crate) async fn list_conversation_adapter_runtime_statuses_with_settings(
     adapters: &[ConversationAdapter],
     sources: &[ConversationSource],
     settings: &Value,
 ) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
     let mut requirements = adapter_runtime_requirements(adapters);
     super::harvester::append_harvester_runtime_requirements(&mut requirements, sources);
-    Ok(list_adapter_runtime_statuses_with_settings(
-        &requirements,
-        settings,
-    ))
-}
-
-#[cfg(test)]
-pub(crate) fn list_conversation_adapter_runtime_statuses(
-    adapters: &[ConversationAdapter],
-    sources: &[ConversationSource],
-) -> AppResult<Vec<ConversationAdapterRuntimeStatus>> {
-    list_conversation_adapter_runtime_statuses_with_settings(
-        adapters,
-        sources,
-        &serde_json::json!({}),
-    )
+    Ok(list_adapter_runtime_statuses_with_settings(&requirements, settings).await)
 }
 
 pub(super) fn validate_external_adapter_manifest(
@@ -995,9 +995,9 @@ pub(super) fn validate_external_adapter_manifest(
     let manifest: ConversationAdapterManifest =
         serde_json::from_str(&manifest_text).map_err(AppError::external)?;
     validate_manifest_shape(&manifest)?;
-    let manifest_dir = path.parent().ok_or_else(|| {
-        AppError::external({ "adapter manifest path has no parent directory".to_string() })
-    })?;
+    let manifest_dir = path
+        .parent()
+        .ok_or_else(|| AppError::external("adapter manifest path has no parent directory"))?;
     let executable_path = resolve_adapter_entry_path(manifest_dir, &manifest)?;
     let executable_hash = if executable_path.is_file() {
         Some(hash_file(&executable_path)?)
@@ -1131,27 +1131,25 @@ fn looks_like_windows_rooted_path(path: &str) -> bool {
     bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic()
 }
 
-pub(super) fn run_external_adapter_with_settings(
+pub(super) async fn run_external_adapter_with_settings(
     validation: &ExternalAdapterValidationResult,
     method: &str,
     request: Value,
     timeout: Duration,
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
-    let invocation = prepare_adapter_invocation(validation, settings)?;
-    run_prepared_adapter(validation, &invocation, method, request, timeout, None)
+    let invocation = prepare_adapter_invocation(validation, settings).await?;
+    run_prepared_adapter(validation, &invocation, method, request, timeout, None).await
 }
 
-fn prepare_adapter_invocation(
+async fn prepare_adapter_invocation(
     validation: &ExternalAdapterValidationResult,
     settings: &Value,
 ) -> AppResult<AdapterCommandInvocation> {
     let manifest = &validation.manifest;
     let manifest_dir = Path::new(&validation.manifest_path)
         .parent()
-        .ok_or_else(|| {
-            AppError::external({ "adapter manifest path has no parent directory".to_string() })
-        })?;
+        .ok_or_else(|| AppError::external("adapter manifest path has no parent directory"))?;
     let execution_runtime = adapter_execution_runtime(manifest);
     let mut invocation = match execution_runtime.as_ref() {
         Some(runtime) => {
@@ -1166,12 +1164,12 @@ fn prepare_adapter_invocation(
         .ok_or_else(|| AppError::external("adapter runtime program was not found"))?;
     }
     if let Some(runtime) = execution_runtime.as_ref() {
-        ensure_adapter_runtime_available(runtime, &invocation)?;
+        ensure_adapter_runtime_available(runtime, &invocation).await?;
     }
     Ok(invocation)
 }
 
-fn run_prepared_adapter(
+async fn run_prepared_adapter(
     validation: &ExternalAdapterValidationResult,
     invocation: &AdapterCommandInvocation,
     method: &str,
@@ -1181,7 +1179,7 @@ fn run_prepared_adapter(
 ) -> AppResult<ExternalAdapterRunResult> {
     let manifest = &validation.manifest;
     let request_text = serde_json::to_vec(&request).map_err(AppError::external)?;
-    let output = crate::backend::host_process::run_host_command_with_cancellation(
+    let output = crate::backend::host_process::run_host_command_async(
         crate::backend::host_process::HostCommandSpec {
             program: invocation.program.clone(),
             args: invocation.args.clone(),
@@ -1196,6 +1194,7 @@ fn run_prepared_adapter(
         },
         cancellation,
     )
+    .await
     .map_err(|error| match error {
         crate::backend::host_process::HostProcessError::MissingProgram { program } => {
             format!("adapter program was not found: {}", program.display())
@@ -1227,7 +1226,7 @@ fn run_prepared_adapter(
     })
     .map_err(|error| {
         if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-            AppError::Canceled("conversation sync cancelled".to_string())
+            AppError::Cancelled("conversation sync cancelled".to_string())
         } else {
             AppError::external(error)
         }
@@ -1250,13 +1249,14 @@ fn run_prepared_adapter(
 }
 
 #[cfg(test)]
-pub(super) fn run_external_adapter(
+pub(super) async fn run_external_adapter(
     validation: &ExternalAdapterValidationResult,
     method: &str,
     request: Value,
     timeout: Duration,
 ) -> AppResult<ExternalAdapterRunResult> {
     run_external_adapter_with_settings(validation, method, request, timeout, &serde_json::json!({}))
+        .await
 }
 
 #[cfg(test)]
@@ -1316,7 +1316,7 @@ fn parse_external_adapter_output_impl(
             "item" => {
                 item_count += 1;
                 let item = parsed.item.ok_or_else(|| {
-                    AppError::external({ format!("adapter item line {} missing item", index + 1) })
+                    AppError::external(format!("adapter item line {} missing item", index + 1))
                 })?;
                 match adapter_item_kind(&item) {
                     "session_descriptor" => {

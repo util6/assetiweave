@@ -1,0 +1,12 @@
+dist
+build
+target
+cli
+src-tauri
+coverage
+node_modules
+agent-docs
+docs
+cli/internal/schema/contract.json
+builtin-assets
+pnpm-lock.yaml

@@ -1,7 +1,19 @@
 import { z } from "zod";
 
-const teamRunStateSchema = z.enum(["drafting", "awaiting_review", "executing", "terminal"]);
-const teamTaskStateSchema = z.enum(["draft", "queued", "running", "succeeded", "failed", "canceled"]);
+const teamRunStateSchema = z.enum([
+  "drafting",
+  "awaiting_review",
+  "executing",
+  "terminal",
+]);
+const teamTaskStateSchema = z.enum([
+  "draft",
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "canceled",
+]);
 
 export const teamTaskSchema = z.object({
   id: z.string(),
@@ -26,14 +38,16 @@ const teamRunSchema = z.object({
   state: teamRunStateSchema,
   revision: z.number(),
   leader_member_id: z.string(),
-  roster_snapshot: z.array(z.object({
-    member_id: z.string(),
-    role: z.enum(["leader", "teammate"]),
-    sort_order: z.number(),
-    agent_id: z.string(),
-    model: z.string().nullable(),
-    execution_context_key: z.string(),
-  })),
+  roster_snapshot: z.array(
+    z.object({
+      member_id: z.string(),
+      role: z.enum(["leader", "teammate"]),
+      sort_order: z.number(),
+      agent_id: z.string(),
+      model: z.string().nullable(),
+      execution_context_key: z.string(),
+    }),
+  ),
   created_at: z.string(),
   updated_at: z.string(),
   finished_at: z.string().nullable(),
@@ -57,30 +71,36 @@ export const teamLeaderChatResultSchema = z.object({
 export const teamRestoreTaskResultSchema = z.object({
   run_id: z.string(),
   leader_error_code: z.string().nullable(),
-  members: z.array(z.object({
-    member_id: z.string(),
-    role: z.enum(["leader", "teammate"]),
-    state: z.enum(["ready", "unavailable"]),
-    error_code: z.string().nullable(),
-  })),
+  members: z.array(
+    z.object({
+      member_id: z.string(),
+      role: z.enum(["leader", "teammate"]),
+      state: z.enum(["ready", "unavailable"]),
+      error_code: z.string().nullable(),
+    }),
+  ),
 });
 
 export const teamRestoreSnapshotSchema = z.object({
   run: teamRunSnapshotSchema,
-  leader: z.object({
-    team_id: z.string(),
-    member_id: z.string(),
-    execution_id: z.string(),
-    text: z.string(),
-    replay: z.boolean(),
-  }).nullable(),
+  leader: z
+    .object({
+      team_id: z.string(),
+      member_id: z.string(),
+      execution_id: z.string(),
+      text: z.string(),
+      replay: z.boolean(),
+    })
+    .nullable(),
   leader_error_code: z.string().nullable(),
-  members: z.array(z.object({
-    member_id: z.string(),
-    role: z.enum(["leader", "teammate"]),
-    state: z.enum(["ready", "unavailable"]),
-    error_code: z.string().nullable(),
-  })),
+  members: z.array(
+    z.object({
+      member_id: z.string(),
+      role: z.enum(["leader", "teammate"]),
+      state: z.enum(["ready", "unavailable"]),
+      error_code: z.string().nullable(),
+    }),
+  ),
 });
 
 export const teamRuntimeTaskSnapshotSchema = z.object({
@@ -88,18 +108,29 @@ export const teamRuntimeTaskSnapshotSchema = z.object({
   kind: z.literal("TeamRun"),
   tenant_id: z.string().optional(),
   dedup_key: z.string().nullable(),
-  state: z.enum(["Pending", "Running", "Cancelling", "Succeeded", "Failed", "Canceled"]),
-  progress: z.object({
-    current: z.number(),
-    total: z.number().nullable(),
-    note: z.string().nullable(),
-  }).nullable(),
-  error: z.object({
-    code: z.string(),
-    message: z.string(),
-    retryable: z.boolean(),
-    details: z.unknown().optional(),
-  }).nullable(),
+  state: z.enum([
+    "Pending",
+    "Running",
+    "Cancelling",
+    "Succeeded",
+    "Failed",
+    "Canceled",
+  ]),
+  progress: z
+    .object({
+      current: z.number(),
+      total: z.number().nullable(),
+      note: z.string().nullable(),
+    })
+    .nullable(),
+  error: z
+    .object({
+      code: z.string(),
+      message: z.string(),
+      retryable: z.boolean(),
+      details: z.unknown().optional(),
+    })
+    .nullable(),
   started_at: z.string(),
   finished_at: z.string().nullable(),
   detail: z.unknown(),
@@ -124,22 +155,51 @@ export const sessionItemIdentitySchema = z.object({
 });
 
 export const sessionEventKindSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("user_message_acknowledged"), accepted: z.boolean() }),
+  z.object({
+    type: z.literal("user_message_acknowledged"),
+    accepted: z.boolean(),
+  }),
   z.object({ type: z.literal("assistant_text_delta"), text: z.string() }),
   z.object({ type: z.literal("assistant_text_snapshot"), text: z.string() }),
-  z.object({ type: z.literal("processing"), state: z.enum(["started", "active", "completed"]) }),
+  z.object({
+    type: z.literal("processing"),
+    state: z.enum(["started", "active", "completed"]),
+  }),
   z.object({ type: z.literal("thinking_delta"), text: z.string() }),
   z.object({ type: z.literal("thinking_snapshot"), text: z.string() }),
   z.object({ type: z.literal("tool_start"), name: z.string().nullable() }),
-  z.object({ type: z.literal("tool_update"), state: z.enum(["running", "succeeded", "failed", "cancelled"]), detail: z.string().nullable() }),
-  z.object({ type: z.literal("tool_result"), success: z.boolean(), detail: z.string().nullable() }),
+  z.object({
+    type: z.literal("tool_update"),
+    state: z.enum(["running", "succeeded", "failed", "cancelled"]),
+    detail: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal("tool_result"),
+    success: z.boolean(),
+    detail: z.string().nullable(),
+  }),
   z.object({ type: z.literal("task_projection"), task_id: z.string() }),
-  z.object({ type: z.literal("task_status"), status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]) }),
-  z.object({ type: z.literal("task_result"), success: z.boolean(), detail: z.string().nullable() }),
-  z.object({ type: z.literal("notice"), code: z.string(), detail: z.string().nullable() }),
+  z.object({
+    type: z.literal("task_status"),
+    status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]),
+  }),
+  z.object({
+    type: z.literal("task_result"),
+    success: z.boolean(),
+    detail: z.string().nullable(),
+  }),
+  z.object({
+    type: z.literal("notice"),
+    code: z.string(),
+    detail: z.string().nullable(),
+  }),
   z.object({ type: z.literal("terminal_result"), text: z.string().nullable() }),
   z.object({ type: z.literal("cancel") }),
-  z.object({ type: z.literal("error"), code: z.string(), retryable: z.boolean() }),
+  z.object({
+    type: z.literal("error"),
+    code: z.string(),
+    retryable: z.boolean(),
+  }),
 ]);
 
 export const sessionEventSchema = z.object({
@@ -165,9 +225,18 @@ export const sessionItemSnapshotSchema = z.object({
   ]),
   sequence: z.number(),
   delivery: z.enum(["live", "replay"]),
-  state: z.enum(["pending", "streaming", "completed", "succeeded", "failed", "cancelled"]),
+  state: z.enum([
+    "pending",
+    "streaming",
+    "completed",
+    "succeeded",
+    "failed",
+    "cancelled",
+  ]),
   text: z.string().nullable(),
-  status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]).nullable(),
+  status: z
+    .enum(["queued", "running", "succeeded", "failed", "cancelled"])
+    .nullable(),
   code: z.string().nullable(),
 });
 
@@ -206,10 +275,11 @@ export const teamMemberTaskResultSchema = z.object({
   terminal: z.literal(true),
 });
 
-export const teamMemberTaskSnapshotSchema = teamRuntimeTaskSnapshotSchema.extend({
-  detail: teamMemberTaskDetailSchema,
-  result: teamMemberTaskResultSchema.nullable(),
-});
+export const teamMemberTaskSnapshotSchema =
+  teamRuntimeTaskSnapshotSchema.extend({
+    detail: teamMemberTaskDetailSchema,
+    result: teamMemberTaskResultSchema.nullable(),
+  });
 
 export const teamMemberStreamSnapshotSchema = z.object({
   team_id: z.string(),

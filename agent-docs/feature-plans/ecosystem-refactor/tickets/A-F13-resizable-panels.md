@@ -1,6 +1,6 @@
 # A-F13：成熟分栏组件接管 resize 与尺寸偏好
 
-> **Status: PLANNED**。使用 `superpowers:executing-plans`，一轮只做本卡。
+> **Status: COMPLETED**。使用 `superpowers:executing-plans`，一轮只做本卡。
 
 **Goal:** 删除自研分栏拖动/键盘 resize 算法，保留 Finder 式横向浏览与 SQLite 尺寸偏好。
 **Depends:** A-F12、A-F06、A-C01。
@@ -45,14 +45,14 @@ it("权重转库 layout 后保持比例", () => {
 
 ## 步骤
 
-- [ ] 跑原 ResizableColumns 测试，保留最小宽度/窄屏/滚动可达的行为断言；新增 layout 转换和 native Separator 键盘测试。
-- [ ] `pnpm add -E react-resizable-panels@4.12.3`；用锁定声明文件确认 Group/Panel 属性，组件真实切库，不包着旧 resize 算法。
-- [ ] 安装测试所需的 ResizeObserver/元素尺寸 fixture，使用 Vitest 原有方式；不要 mock 掉整个库后声称键盘/尺寸验收完成。
-- [ ] settings 数据成功读取后先用 SQLite `columnLayouts[storageKey]`；缺失才读旧 localStorage 的权重数组，合法且列数一致时经正常设置 mutation 一次导入；`await setColumnLayoutAsync(...)` 成功后再删除旧 key。没有 storageKey 的实例只维护局部布局。
-- [ ] 用 `onLayoutChanged` 的提交回调持久化；过滤初始 mount/程序设置/尺寸重算，只有用户 resize 才保存（4.12.3 使用第二个参数 `meta.isUserInteraction`，只有 true 才提交）。重复相同权重不保存，每次拖动结束最多一次写。读取旧 prefs 不得在每次 render 自动回写。
-- [ ] 设置异步到达时通过库 groupRef/setLayout 应用已存比例；这类程序变更不触发持久化回环。
-- [ ] 删除原 ColumnDragState、pointer resize listener、resizeColumnWeights/resizeColumnDragWeights/getColumnBoundaries 等被库取代的机制。横向 scrollbar 的 ScrollMetrics/拖动逻辑仍属产品布局，保留独立代码与测试。
-- [ ] 验证新增表单/设置测试均通过，不以快照更新掩盖控件不可达。
+- [x] 跑原 ResizableColumns 测试，保留最小宽度/窄屏/滚动可达的行为断言；新增 layout 转换和 native Separator 键盘测试。
+- [x] `pnpm add -E react-resizable-panels@4.12.3`；用锁定声明文件确认 Group/Panel 属性，组件真实切库，不包着旧 resize 算法。
+- [x] 安装测试所需的 ResizeObserver/元素尺寸 fixture，使用 Vitest 原有方式；不要 mock 掉整个库后声称键盘/尺寸验收完成。
+- [x] settings 数据成功读取后先用 SQLite `columnLayouts[storageKey]`；缺失才读旧 localStorage 的权重数组，合法且列数一致时经正常设置 mutation 一次导入；`await setColumnLayoutAsync(...)` 成功后再删除旧 key。没有 storageKey 的实例只维护局部布局。
+- [x] 用 `onLayoutChanged` 的提交回调持久化；过滤初始 mount/程序设置/尺寸重算，只有用户 resize 才保存（4.12.3 使用第二个参数 `meta.isUserInteraction`，只有 true 才提交）。重复相同权重不保存，每次拖动结束最多一次写。读取旧 prefs 不得在每次 render 自动回写。
+- [x] 设置异步到达时通过库 groupRef/setLayout 应用已存比例；这类程序变更不触发持久化回环。
+- [x] 删除原 ColumnDragState、pointer resize listener、resizeColumnWeights/resizeColumnDragWeights/getColumnBoundaries 等被库取代的机制。横向 scrollbar 的 ScrollMetrics/拖动逻辑仍属产品布局，保留独立代码与测试。
+- [x] 验证新增表单/设置测试均通过，不以快照更新掩盖控件不可达。
 
 ```sh
 pnpm exec vitest run --config frontend/vite.config.ts frontend/src/components/layout/ResizableColumns.test.tsx frontend/src/components/layout/columnLayouts.test.ts frontend/src/store/settings

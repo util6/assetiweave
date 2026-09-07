@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n/I18nProvider";
@@ -11,7 +17,8 @@ const saveNavigationModelMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../hooks/catalog/useCatalogController", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
-  const { navigationModel } = await vi.importActual<typeof import("./menu")>("./menu");
+  const { navigationModel } =
+    await vi.importActual<typeof import("./menu")>("./menu");
   return {
     useCatalogController: () => {
       const [model, setModel] = React.useState({
@@ -81,12 +88,22 @@ vi.mock("../app/backgroundTasks/MemoryTaskProvider", () => ({
   useMemoryTasks: () => ({ tasks: [], publicTasks: [] }),
 }));
 
-vi.mock("../app/updates/AppUpdateDialog", () => ({ AppUpdateDialog: () => null }));
-vi.mock("../components/backup/SkillBackupProgress", () => ({ SkillBackupBackgroundTaskIndicator: () => null }));
-vi.mock("../components/conversations/ConversationToolbarControls", () => ({ ConversationBackgroundTaskIndicator: () => null }));
+vi.mock("../app/updates/AppUpdateDialog", () => ({
+  AppUpdateDialog: () => null,
+}));
+vi.mock("../components/backup/SkillBackupProgress", () => ({
+  SkillBackupBackgroundTaskIndicator: () => null,
+}));
+vi.mock("../components/conversations/ConversationToolbarControls", () => ({
+  ConversationBackgroundTaskIndicator: () => null,
+}));
 
 vi.mock("../pages/memory/MemoryPage", () => ({
-  MemoryPage: ({ onNavigate }: { onNavigate?: (target: Record<string, unknown>) => void }) => (
+  MemoryPage: ({
+    onNavigate,
+  }: {
+    onNavigate?: (target: Record<string, unknown>) => void;
+  }) => (
     <button
       onClick={() =>
         onNavigate?.({
@@ -120,7 +137,10 @@ vi.mock("../pages/conversations/ConversationsPage", () => ({
           : "none"}
       </output>
       {navigationTarget ? (
-        <button onClick={() => onNavigationTargetConsumed?.(navigationTarget.nonce)} type="button">
+        <button
+          onClick={() => onNavigationTargetConsumed?.(navigationTarget.nonce)}
+          type="button"
+        >
           Consume target
         </button>
       ) : null}
@@ -141,11 +161,16 @@ describe("AppRouter Memory evidence navigation", () => {
       </I18nProvider>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open web evidence" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open web evidence" }),
+    );
 
     await waitFor(() => {
       expect(saveNavigationModelMock).toHaveBeenCalledWith(
-        expect.objectContaining({ activeHeaderTabId: "conversations", activeSubNavId: "web-records" }),
+        expect.objectContaining({
+          activeHeaderTabId: "conversations",
+          activeSubNavId: "web-records",
+        }),
       );
     });
     expect((await screen.findByTestId("conversation-target")).textContent).toBe(
@@ -154,7 +179,9 @@ describe("AppRouter Memory evidence navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Consume target" }));
     await waitFor(() => {
-      expect(screen.getByTestId("conversation-target").textContent).toBe("none");
+      expect(screen.getByTestId("conversation-target").textContent).toBe(
+        "none",
+      );
     });
   });
 });

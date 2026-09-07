@@ -18,6 +18,8 @@ export function createConversationNavigationTarget(
   };
 }
 
-export function conversationSubNavId(recordKind: ConversationNavigationTarget["recordKind"]) {
+export function conversationSubNavId(
+  recordKind: ConversationNavigationTarget["recordKind"],
+) {
   return recordKind === "web" ? "web-records" : "sessions";
 }

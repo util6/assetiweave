@@ -1,9 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  mergeAgentLifecycleTaskSnapshots,
-} from "./AgentLifecycleTaskProvider";
+import { mergeAgentLifecycleTaskSnapshots } from "./AgentLifecycleTaskProvider";
 import type { AgentLifecycleTaskSnapshot } from "../../services/agentRuntime";
 
 vi.mock("../../services/agentRuntime", () => ({
@@ -12,7 +10,9 @@ vi.mock("../../services/agentRuntime", () => ({
   subscribeAgentLifecycleTasks: vi.fn().mockResolvedValue(vi.fn()),
 }));
 
-function task(overrides: Partial<AgentLifecycleTaskSnapshot> = {}): AgentLifecycleTaskSnapshot {
+function task(
+  overrides: Partial<AgentLifecycleTaskSnapshot> = {},
+): AgentLifecycleTaskSnapshot {
   return {
     id: "task-1",
     agentId: "agent",
@@ -55,16 +55,20 @@ describe("AgentLifecycleTaskProvider merge", () => {
   });
 
   it("retains active tasks and caps terminal history", () => {
-    const terminal = Array.from({ length: 105 }, (_, index) => task({
-      id: `terminal-${index}`,
-      state: "failed",
-      phase: "failed",
-      cancellable: false,
-      updatedAt: `2026-08-17T00:01:${String(index).padStart(2, "0")}Z`,
-      finishedAt: `2026-08-17T00:01:${String(index).padStart(2, "0")}Z`,
-    }));
+    const terminal = Array.from({ length: 105 }, (_, index) =>
+      task({
+        id: `terminal-${index}`,
+        state: "failed",
+        phase: "failed",
+        cancellable: false,
+        updatedAt: `2026-08-17T00:01:${String(index).padStart(2, "0")}Z`,
+        finishedAt: `2026-08-17T00:01:${String(index).padStart(2, "0")}Z`,
+      }),
+    );
     const merged = mergeAgentLifecycleTaskSnapshots([], [task(), ...terminal]);
     expect(merged.some((entry) => entry.state === "running")).toBe(true);
-    expect(merged.filter((entry) => entry.state === "failed")).toHaveLength(100);
+    expect(merged.filter((entry) => entry.state === "failed")).toHaveLength(
+      100,
+    );
   });
 });

@@ -1,5 +1,4 @@
 use std::{
-    io::Read,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
     time::Duration,
@@ -10,7 +9,7 @@ use crate::backend::{
         registry::AgentRegistry,
         types::{AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol},
     },
-    ai_execution::{check_agent_connection_blocking, executor::AgentExecutor},
+    ai_execution::{check_agent_connection, executor::AgentExecutor},
 };
 
 use super::{
@@ -23,8 +22,8 @@ use crate::backend::agent_market::{
     },
     types::{
         AgentInstallStartRequest, AgentInstallation, AgentMarketError, AgentMarketProtocol,
-        Distribution, InstallationStatus, LifecycleTaskPhase, Ownership, ProtocolStatus,
-        RuntimeStatus,
+        Distribution, InstallationStatus, LifecycleTaskPhase, MaterializedRuntime, Ownership,
+        ProtocolStatus, RuntimeStatus,
     },
 };
 
@@ -169,28 +168,46 @@ async fn materialize_and_activate(
         Distribution::Npx { .. } | Distribution::Uvx { .. } => LifecycleTaskPhase::Installing,
     });
     let materialized = match distribution {
-        Distribution::System { .. } => {
-            SystemInstaller::default().materialize(distribution, &context)
-        }
+        Distribution::System { .. } => SystemInstaller::default()
+            .materialize(distribution, &context)
+            .await
+            .map_err(install_error)?,
         Distribution::Binary { url, size, .. } => {
-            context.report_phase(LifecycleTaskPhase::ValidatingIntegrity);
-            let bytes = download_artifact(url, *size, &context)?;
-            BinaryInstaller.materialize_bytes(distribution, &context, &bytes)
+            let dist = distribution.clone();
+            let ctx = context.clone();
+            let url = url.clone();
+            let size = *size;
+            tokio::task::spawn_blocking(move || {
+                download_and_materialize_binary(&dist, &ctx, &url, size)
+            })
+            .await
+            .map_err(|error| {
+                market_error(
+                    "install_failed",
+                    format!("binary install task panicked: {error}"),
+                    true,
+                )
+            })??
         }
-        Distribution::Npx { .. } => NpxInstaller::default().materialize(distribution, &context),
-        Distribution::Uvx { .. } => UvxInstaller::default().materialize(distribution, &context),
-    }
-    .map_err(|error| install_error(error))?;
+        Distribution::Npx { .. } => NpxInstaller::default()
+            .materialize(distribution, &context)
+            .await
+            .map_err(install_error)?,
+        Distribution::Uvx { .. } => UvxInstaller::default()
+            .materialize(distribution, &context)
+            .await
+            .map_err(install_error)?,
+    };
     context.report_phase(LifecycleTaskPhase::ValidatingLayout);
 
     let definition = definition_for(item, distribution, &materialized)?;
     context.report_phase(LifecycleTaskPhase::ProbingProtocol);
-    let (protocol_status, protocol_error, mut warnings) =
-        conformance(&definition, &service.runtime_root);
+    let (protocol_status, mut protocol_error, mut warnings) =
+        conformance(&definition, &service.runtime_root).await;
     if !matches!(protocol_status, ProtocolStatus::Ready)
         && matches!(materialized.ownership, Ownership::Managed)
     {
-        return Err(protocol_error.clone().unwrap_or_else(|| {
+        return Err(protocol_error.take().unwrap_or_else(|| {
             market_error(
                 "protocol_failed",
                 "Agent protocol conformance failed.",
@@ -231,8 +248,8 @@ async fn materialize_and_activate(
 
     context.report_phase(LifecycleTaskPhase::ActivatingDatabase);
     let now = chrono::Utc::now().to_rfc3339();
-    let protocol_error_code = protocol_error.as_ref().map(|error| error.code.clone());
-    let protocol_error_message = protocol_error.as_ref().map(|error| error.message.clone());
+    let protocol_error_code = protocol_error.as_ref().map(|error| error.code());
+    let protocol_error_message = protocol_error.as_ref().map(|error| error.message());
     let protocol_status_for_row = protocol_status.clone();
     let definition_json = serde_json::json!({
         "id": item.id,
@@ -350,15 +367,12 @@ async fn materialize_and_activate(
     })
 }
 
-fn download_artifact(
+fn download_and_materialize_binary(
+    distribution: &Distribution,
+    context: &InstallContext,
     url: &str,
     expected_size: Option<u64>,
-    context: &InstallContext,
-) -> Result<Vec<u8>, AgentMarketError> {
-    #[cfg(test)]
-    if let Some(bytes) = test_artifact(url) {
-        return Ok(bytes);
-    }
+) -> Result<MaterializedRuntime, AgentMarketError> {
     if !crate::backend::agent_market::types::is_safe_artifact_url(url) {
         return Err(market_error(
             "artifact_invalid",
@@ -373,48 +387,64 @@ fn download_artifact(
             false,
         ));
     }
-    let agent = ureq::AgentBuilder::new().timeout(context.timeout).build();
-    let response = agent
-        .get(url)
-        .set("User-Agent", "AssetIWeave/agent-market")
-        .call()
-        .map_err(|_| market_error("download_failed", "Agent artifact download failed.", true))?;
-    let mut bytes = Vec::new();
-    let mut reader = response.into_reader();
-    let mut buffer = [0_u8; 8192];
-    loop {
-        if crate::backend::agent_market::installers::is_cancelled(context) {
-            return Err(market_error(
-                "cancelled",
-                "Agent installation was cancelled.",
-                true,
-            ));
-        }
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|error| market_error("download_failed", error.to_string(), true))?;
-        if count == 0 {
-            break;
-        }
-        bytes.extend_from_slice(&buffer[..count]);
-        if bytes.len() as u64 > MAX_BINARY_BYTES {
+    let part_path = context.staging_dir.join("artifact.part");
+
+    #[cfg(test)]
+    let has_test_artifact = if let Some(bytes) = test_artifact(url) {
+        if bytes.len() as u64 > MAX_BINARY_BYTES
+            || expected_size.is_some_and(|size| bytes.len() as u64 != size)
+        {
             return Err(market_error(
                 "artifact_size_invalid",
-                "The Agent artifact exceeds the catalog size limit.",
+                "The Agent artifact exceeds or differs from the catalog size limit.",
                 false,
             ));
         }
+        std::fs::write(&part_path, &bytes)
+            .map_err(|error| market_error("download_failed", error.to_string(), true))?;
+        true
+    } else {
+        false
+    };
+    #[cfg(not(test))]
+    let has_test_artifact = false;
+
+    if !has_test_artifact {
+        let client = crate::backend::http_client::shared_http_client()
+            .map_err(|error| market_error("download_failed", error.to_string(), true))?;
+        let cancelled = || crate::backend::agent_market::installers::is_cancelled(context);
+        let spec = crate::backend::http_client::DownloadSpec {
+            url,
+            path: &part_path,
+            max_bytes: MAX_BINARY_BYTES,
+            expected_size,
+            timeout: context.timeout,
+        };
+        crate::backend::http_client::download_to_file(&client, spec, &cancelled).map_err(
+            |error| match error {
+                crate::backend::runtime::AppError::Cancelled(_) => {
+                    market_error("cancelled", "Agent installation was cancelled.", true)
+                }
+                crate::backend::runtime::AppError::Validation(message)
+                    if message == "artifact_size_invalid" =>
+                {
+                    market_error(
+                        "artifact_size_invalid",
+                        "The Agent artifact exceeds or differs from the catalog size limit.",
+                        false,
+                    )
+                }
+                other => market_error("download_failed", other.to_string(), true),
+            },
+        )?;
     }
-    if bytes.len() as u64 > MAX_BINARY_BYTES
-        || expected_size.is_some_and(|size| bytes.len() as u64 != size)
-    {
-        return Err(market_error(
-            "artifact_size_invalid",
-            "The Agent artifact exceeds or differs from the catalog size limit.",
-            false,
-        ));
-    }
-    Ok(bytes)
+
+    context.report_phase(LifecycleTaskPhase::ValidatingIntegrity);
+    let materialized = BinaryInstaller
+        .materialize_file(distribution, context, &part_path)
+        .map_err(install_error)?;
+    let _ = std::fs::remove_file(&part_path);
+    Ok(materialized)
 }
 
 #[cfg(test)]
@@ -523,7 +553,7 @@ fn session_cleanup_args(distribution: &Distribution) -> Option<Vec<String>> {
     }
 }
 
-fn conformance(
+async fn conformance(
     definition: &AgentDefinition,
     workspace_root: &Path,
 ) -> (ProtocolStatus, Option<AgentMarketError>, Vec<String>) {
@@ -552,11 +582,12 @@ fn conformance(
         1,
     );
     let id = definition.id.clone();
-    let result = check_agent_connection_blocking(
+    let result = check_agent_connection(
         Arc::new(executor),
         id,
         crate::backend::agents::types::AgentConnectionCheckMode::Connection,
-    );
+    )
+    .await;
     if result.connected {
         (ProtocolStatus::Ready, None, Vec::new())
     } else {

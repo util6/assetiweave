@@ -38,17 +38,97 @@ pub(crate) struct HostDirectories {
 
 impl HostDirectories {
     pub(crate) fn current() -> AppResult<Self> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            crate::backend::runtime::AppError::NotFound("无法确定用户主目录".to_string())
-        })?;
+        let base_dirs = directories::BaseDirs::new();
+        let home = base_dirs
+            .as_ref()
+            .map(|b| b.home_dir().to_path_buf())
+            .or_else(dirs::home_dir)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .ok_or_else(|| {
+                crate::backend::runtime::AppError::NotFound("无法确定用户基本目录".to_string())
+            })?;
+
+        let config = base_dirs
+            .as_ref()
+            .map(|b| b.config_dir().to_path_buf())
+            .or_else(dirs::config_dir)
+            .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Roaming")
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    home.join(".config")
+                }
+            });
+
+        let local_data = base_dirs
+            .as_ref()
+            .map(|b| b.data_local_dir().to_path_buf())
+            .or_else(dirs::data_local_dir)
+            .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Local")
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    home.join("Library").join("Application Support")
+                }
+                #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+                {
+                    home.join(".local").join("share")
+                }
+            });
+
+        let data = base_dirs
+            .as_ref()
+            .map(|b| b.data_dir().to_path_buf())
+            .or_else(dirs::data_dir)
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    config.clone()
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    local_data.clone()
+                }
+            });
+
+        let cache = base_dirs
+            .as_ref()
+            .map(|b| b.cache_dir().to_path_buf())
+            .or_else(dirs::cache_dir)
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Local")
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    home.join("Library").join("Caches")
+                }
+                #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+                {
+                    home.join(".cache")
+                }
+            });
+
+        let workspace = std::env::current_dir()
+            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+
         Ok(Self {
-            config: dirs::config_dir().unwrap_or_else(|| home.clone()),
-            local_data: dirs::data_local_dir().unwrap_or_else(|| home.clone()),
-            data: dirs::data_dir().unwrap_or_else(|| home.clone()),
-            cache: dirs::cache_dir().unwrap_or_else(|| home.clone()),
-            workspace: std::env::current_dir()
-                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
             home,
+            config,
+            local_data,
+            data,
+            cache,
+            workspace,
         })
     }
 }
@@ -245,26 +325,29 @@ impl HostPathResolver {
             return base.to_path_buf();
         }
         if self.platform == HostPlatform::Windows {
-            let base = base.to_string_lossy().replace('/', "\\");
-            let relative = relative.replace('/', "\\");
-            return PathBuf::from(format!(
-                "{}\\{}",
-                base.trim_end_matches(['\\', '/']),
-                relative.trim_start_matches(['\\', '/'])
-            ));
+            if let Some(base_str) = base.to_str() {
+                let base = base_str.replace('/', "\\");
+                let relative = relative.replace('/', "\\");
+                return PathBuf::from(format!(
+                    "{}\\{}",
+                    base.trim_end_matches(['\\', '/']),
+                    relative.trim_start_matches(['\\', '/'])
+                ));
+            }
         }
-        let base = base.to_string_lossy().replace('\\', "/");
-        let relative = relative.replace('\\', "/");
-        PathBuf::from(format!(
-            "{}/{}",
-            base.trim_end_matches(['\\', '/']),
-            relative.trim_start_matches(['\\', '/'])
-        ))
+        let mut result = base.to_path_buf();
+        for part in relative.split(['/', '\\']) {
+            if !part.is_empty() {
+                result.push(part);
+            }
+        }
+        result
     }
 
     fn strip_directory_prefix(&self, path: &str, directory: &Path) -> Option<String> {
+        let directory_str = directory.to_str()?;
         let path = self.portable_text(path);
-        let directory = self.portable_text(&directory.to_string_lossy());
+        let directory = self.portable_text(directory_str);
         let comparison_path = self.comparison_text(&path);
         let comparison_directory = self.comparison_text(directory.trim_end_matches('/'));
         if comparison_path == comparison_directory {
@@ -285,8 +368,7 @@ impl HostPathResolver {
     }
 
     fn same_directory(&self, left: &Path, right: &Path) -> bool {
-        self.comparison_text(&self.portable_text(&left.to_string_lossy()))
-            == self.comparison_text(&self.portable_text(&right.to_string_lossy()))
+        crate::backend::host_filesystem::HostFilesystem::new(self.platform).same_path(left, right)
     }
 
     fn host_text(&self, value: &str) -> String {
@@ -462,6 +544,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn linux_all_anchors_normalize_resolve_and_display_round_trip() {
+        let resolver = linux_resolver();
+
+        // Config
+        let config_stored = resolver
+            .normalize_input("/home/alice/.config/assetiweave/skills")
+            .expect("normalize linux config path");
+        assert_eq!(config_stored.as_str(), "@config/assetiweave/skills");
+        assert_eq!(
+            resolver.resolve(&config_stored).expect("resolve").as_path(),
+            Path::new("/home/alice/.config/assetiweave/skills")
+        );
+        assert_eq!(
+            resolver.display(&config_stored).expect("display").as_str(),
+            "~/.config/assetiweave/skills"
+        );
+
+        // Data / LocalData
+        let data_stored = resolver
+            .normalize_input("/home/alice/.local/share/assetiweave/data")
+            .expect("normalize linux data path");
+        assert_eq!(data_stored.as_str(), "@local-data/assetiweave/data");
+        assert_eq!(
+            resolver.resolve(&data_stored).expect("resolve").as_path(),
+            Path::new("/home/alice/.local/share/assetiweave/data")
+        );
+
+        // Cache
+        let cache_stored = resolver
+            .normalize_input("/home/alice/.cache/assetiweave/cache")
+            .expect("normalize linux cache path");
+        assert_eq!(cache_stored.as_str(), "@cache/assetiweave/cache");
+        assert_eq!(
+            resolver.resolve(&cache_stored).expect("resolve").as_path(),
+            Path::new("/home/alice/.cache/assetiweave/cache")
+        );
+
+        // Home
+        let home_stored = resolver
+            .normalize_input("/home/alice/projects/demo")
+            .expect("normalize linux home path");
+        assert_eq!(home_stored.as_str(), "~/projects/demo");
+        assert_eq!(
+            resolver.resolve(&home_stored).expect("resolve").as_path(),
+            Path::new("/home/alice/projects/demo")
+        );
+        assert_eq!(
+            resolver.display(&home_stored).expect("display").as_str(),
+            "~/projects/demo"
+        );
+    }
+
+    #[test]
+    fn longest_prefix_prefers_specific_anchor_over_home() {
+        let resolver = macos_resolver();
+
+        let stored = resolver
+            .normalize_input("/Users/alice/Library/Caches/assetiweave/logs")
+            .expect("normalize cache path");
+        // Should match @cache rather than ~
+        assert_eq!(stored.as_str(), "@cache/assetiweave/logs");
+    }
+
+    #[test]
+    fn relative_traversal_paths_are_kept_portable() {
+        let resolver = macos_resolver();
+
+        let stored = resolver
+            .normalize_input("src/../docs/guide.md")
+            .expect("normalize relative traversal path");
+        assert_eq!(stored.as_str(), "src/../docs/guide.md");
+    }
+
     fn macos_resolver() -> HostPathResolver {
         HostPathResolver::new(
             HostPlatform::Macos,
@@ -486,6 +642,20 @@ mod tests {
                 data: PathBuf::from(r"C:\Users\Alice\AppData\Roaming"),
                 cache: PathBuf::from(r"C:\Users\Alice\AppData\Local\Cache"),
                 workspace: PathBuf::from(r"C:\workspace\assetiweave"),
+            },
+        )
+    }
+
+    fn linux_resolver() -> HostPathResolver {
+        HostPathResolver::new(
+            HostPlatform::Linux,
+            HostDirectories {
+                home: PathBuf::from("/home/alice"),
+                config: PathBuf::from("/home/alice/.config"),
+                local_data: PathBuf::from("/home/alice/.local/share"),
+                data: PathBuf::from("/home/alice/.local/share"),
+                cache: PathBuf::from("/home/alice/.cache"),
+                workspace: PathBuf::from("/workspace/assetiweave"),
             },
         )
     }

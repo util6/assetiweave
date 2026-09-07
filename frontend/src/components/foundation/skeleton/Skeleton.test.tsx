@@ -18,34 +18,57 @@ describe("skeleton primitives", () => {
   });
 
   it("renders three text lines by default and normalizes zero lines", () => {
-    expect((renderToStaticMarkup(<SkeletonText />).match(/aurora-skeleton/g) ?? []).length).toBe(3);
-    expect((renderToStaticMarkup(<SkeletonText lines={0} />).match(/aurora-skeleton/g) ?? []).length).toBe(1);
+    expect(
+      (renderToStaticMarkup(<SkeletonText />).match(/aurora-skeleton/g) ?? [])
+        .length,
+    ).toBe(3);
+    expect(
+      (
+        renderToStaticMarkup(<SkeletonText lines={0} />).match(
+          /aurora-skeleton/g,
+        ) ?? []
+      ).length,
+    ).toBe(1);
   });
 });
 
 describe("skeleton recipes", () => {
-  it.each(Object.entries(skeletonRecipes))("renders a default %s recipe", (_name, definition) => {
-    const Recipe = definition.component;
-    const html = renderToStaticMarkup(<Recipe {...definition.defaults} />);
+  it.each(Object.entries(skeletonRecipes))(
+    "renders a default %s recipe",
+    (_name, definition) => {
+      const Recipe = definition.component;
+      const html = renderToStaticMarkup(<Recipe {...definition.defaults} />);
 
-    expect(html).toContain("aurora-skeleton");
-    expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(80);
-  });
+      expect(html).toContain("aurora-skeleton");
+      expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(
+        80,
+      );
+    },
+  );
 });
 
 describe("AppSkeleton", () => {
-  it.each(["list", "cards", "columns"] as const)("renders %s through the common entry point", (layout) => {
-    const html = renderToStaticMarkup(<AppSkeleton label="Loading" layout={layout} />);
+  it.each(["list", "cards", "columns"] as const)(
+    "renders %s through the common entry point",
+    (layout) => {
+      const html = renderToStaticMarkup(
+        <AppSkeleton label="Loading" layout={layout} />,
+      );
 
-    expect(html).toContain('aria-busy="true"');
-    expect(html).toContain('role="status"');
-    expect(html).toContain("Loading");
-    expect((html.match(/role="status"/g) ?? []).length).toBe(1);
-    expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(80);
-  });
+      expect(html).toContain('aria-busy="true"');
+      expect(html).toContain('role="status"');
+      expect(html).toContain("Loading");
+      expect((html.match(/role="status"/g) ?? []).length).toBe(1);
+      expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(
+        80,
+      );
+    },
+  );
 
   it("does not render page chrome for content scope", () => {
-    const html = renderToStaticMarkup(<AppSkeleton label="Loading" layout="cards" scope="content" />);
+    const html = renderToStaticMarkup(
+      <AppSkeleton label="Loading" layout="cards" scope="content" />,
+    );
 
     expect(html).toContain("app-skeleton-root");
     expect(html).not.toContain("w-64");
@@ -53,7 +76,11 @@ describe("AppSkeleton", () => {
 
   it("uses custom children instead of default recipe content", () => {
     const html = renderToStaticMarkup(
-      <AppSkeleton label="Loading" layout="columns" layoutProps={{ columns: 3 }}>
+      <AppSkeleton
+        label="Loading"
+        layout="columns"
+        layoutProps={{ columns: 3 }}
+      >
         <SkeletonColumn>
           <Skeleton className="feature-only" />
         </SkeletonColumn>
@@ -65,21 +92,31 @@ describe("AppSkeleton", () => {
   });
 
   it("requires a non-empty label", () => {
-    expect(() => renderToStaticMarkup(<AppSkeleton label=" " layout="list" />)).toThrow(
-      "AppSkeleton requires a non-empty label",
-    );
+    expect(() =>
+      renderToStaticMarkup(<AppSkeleton label=" " layout="list" />),
+    ).toThrow("AppSkeleton requires a non-empty label");
   });
 });
 
 describe("SkeletonBoundary", () => {
   it("switches exclusively between fallback and real content", () => {
     const loadingHtml = renderToStaticMarkup(
-      <SkeletonBoundary fallbackChildren={<span>fallback</span>} label="Loading" layout="list" loading>
+      <SkeletonBoundary
+        fallbackChildren={<span>fallback</span>}
+        label="Loading"
+        layout="list"
+        loading
+      >
         <span>content</span>
       </SkeletonBoundary>,
     );
     const contentHtml = renderToStaticMarkup(
-      <SkeletonBoundary fallbackChildren={<span>fallback</span>} label="Loading" layout="list" loading={false}>
+      <SkeletonBoundary
+        fallbackChildren={<span>fallback</span>}
+        label="Loading"
+        layout="list"
+        loading={false}
+      >
         <span>content</span>
       </SkeletonBoundary>,
     );

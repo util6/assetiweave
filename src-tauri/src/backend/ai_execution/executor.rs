@@ -16,7 +16,6 @@ use crate::backend::agents::{
         AgentModelsResult, AgentProtocol, DeclaredAgentCapabilities,
     },
 };
-use crate::backend::operation_log::{log_info, log_warn, LogField};
 
 use super::{
     backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
@@ -215,23 +214,6 @@ impl AgentExecutor {
         }
     }
 
-    pub(crate) fn with_registry_handle(
-        registry: AgentRegistryHandle,
-        acp: Arc<dyn AgentExecutionBackend>,
-        native: Arc<dyn AgentExecutionBackend>,
-        max_concurrency: usize,
-    ) -> Self {
-        Self {
-            registry,
-            acp,
-            native,
-            permits: Arc::new(Semaphore::new(max_concurrency.max(1))),
-            active: Arc::new(Mutex::new(HashMap::new())),
-            mutation_gates: Arc::new(Mutex::new(HashMap::new())),
-            persistent_bindings: None,
-        }
-    }
-
     pub(crate) async fn execute(
         &self,
         mut request: AiExecutionRequest,
@@ -243,10 +225,13 @@ impl AgentExecutor {
         let suppress_diagnostics = request.replay;
         let session_mode = request.session_mode;
         if !suppress_diagnostics {
-            log_info(
-                "ai_execution.lifecycle",
-                "AI execution started",
-                &execution_log_fields(&execution_id, &agent_id, purpose, 0),
+            tracing::info!(
+                action = "ai_execution.lifecycle",
+                execution_id = %execution_id,
+                agent_id = %agent_id,
+                purpose = ?purpose,
+                elapsed_ms = 0,
+                "AI execution started"
             );
         }
         let downstream_progress = request.progress.take();
@@ -398,26 +383,30 @@ impl AgentExecutor {
             other => other,
         };
         if !suppress_diagnostics {
-            let mut fields = execution_log_fields(
-                &execution_id,
-                &agent_id,
-                purpose,
-                started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-            );
+            let elapsed_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
             match &outcome {
                 Ok(result) => {
-                    fields.extend([
-                        (
-                            "protocol",
-                            format!("{:?}", result.protocol).to_ascii_lowercase(),
-                        ),
-                        ("text_bytes", result.text.len().to_string()),
-                    ]);
-                    log_info("ai_execution.lifecycle", "AI execution completed", &fields);
+                    tracing::info!(
+                        action = "ai_execution.lifecycle",
+                        execution_id = %execution_id,
+                        agent_id = %agent_id,
+                        purpose = ?purpose,
+                        elapsed_ms,
+                        protocol = ?result.protocol,
+                        text_bytes = result.text.len(),
+                        "AI execution completed"
+                    );
                 }
                 Err(error) => {
-                    fields.push(("error_code", error.to_view().code));
-                    log_warn("ai_execution.lifecycle", "AI execution failed", &fields);
+                    tracing::warn!(
+                        action = "ai_execution.lifecycle",
+                        execution_id = %execution_id,
+                        agent_id = %agent_id,
+                        purpose = ?purpose,
+                        elapsed_ms,
+                        error_code = error.to_view().code,
+                        "AI execution failed"
+                    );
                 }
             }
         }
@@ -425,7 +414,7 @@ impl AgentExecutor {
     }
 
     async fn check_connection(&self, agent_id: &AgentId) -> AgentConnectionResult {
-        let installation = self.registry.check_availability(agent_id);
+        let installation = self.registry.check_availability(agent_id).await;
         let mut result = connection_result_from_availability(agent_id, &installation);
         if !installation.available {
             return result;
@@ -477,7 +466,7 @@ impl AgentExecutor {
     }
 
     async fn discover_agent_models(&self, agent_id: &AgentId) -> AgentModelsResult {
-        let installation = self.registry.check_availability(agent_id);
+        let installation = self.registry.check_availability(agent_id).await;
         if !installation.available {
             return models_result_from_availability(agent_id, &installation);
         }
@@ -556,14 +545,16 @@ impl AiExecutionProgressSink for ObservedProgressSink {
             downstream.set_phase(phase);
         }
         if !self.suppress_diagnostics {
-            let mut fields = execution_log_fields(
-                &self.execution_id,
-                &self.agent_id,
-                self.purpose,
-                self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            let elapsed_ms = self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            tracing::info!(
+                action = "ai_execution.phase",
+                execution_id = %self.execution_id,
+                agent_id = %self.agent_id,
+                purpose = ?self.purpose,
+                elapsed_ms,
+                phase = ?phase,
+                "AI execution phase changed"
             );
-            fields.push(("phase", format!("{phase:?}").to_ascii_lowercase()));
-            log_info("ai_execution.phase", "AI execution phase changed", &fields);
         }
     }
 
@@ -586,6 +577,10 @@ impl AiExecutionProgressSink for ObservedProgressSink {
     }
 }
 
+#[cfg(test)]
+type LogField = (&'static str, String);
+
+#[cfg(test)]
 fn execution_log_fields(
     execution_id: &str,
     agent_id: &str,
@@ -606,7 +601,7 @@ impl AgentExecutionRuntime for AgentExecutor {
     }
 
     fn check_availability(&self, agent_id: &AgentId) -> AgentAvailability {
-        self.registry.check_availability(agent_id)
+        self.registry.cached_availability(agent_id)
     }
 
     fn list_agent_catalog(&self) -> Vec<AgentCatalogEntry> {
@@ -620,7 +615,7 @@ impl AgentExecutionRuntime for AgentExecutor {
     }
 
     fn check_agent_installation(&self, agent_id: &AgentId) -> AgentConnectionResult {
-        connection_result_from_availability(agent_id, &self.registry.check_availability(agent_id))
+        connection_result_from_availability(agent_id, &self.registry.cached_availability(agent_id))
     }
 
     fn check_agent_connection<'a>(&'a self, agent_id: &'a AgentId) -> AgentConnectionFuture<'a> {
@@ -634,9 +629,12 @@ impl AgentExecutionRuntime for AgentExecutor {
     fn discover_models(
         &self,
         agent_id: &AgentId,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<Vec<u8>, AgentProbeError> {
-        self.registry.discover_models(agent_id, timeout)
+        Err(AgentProbeError::ProbeNotConfigured {
+            agent_id: agent_id.clone(),
+            kind: "model_discovery",
+        })
     }
 
     fn cancel_all(&self) {

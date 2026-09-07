@@ -13,8 +13,7 @@ use std::{
     path::PathBuf,
     sync::{Mutex, OnceLock},
 };
-use std::{future::Future, path::Path, sync::Arc, time::Duration};
-use tokio::runtime::Runtime;
+use std::{path::Path, time::Duration};
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 #[cfg(test)]
@@ -22,64 +21,42 @@ static INITIALIZED_DB_PATHS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new(
 
 #[derive(Clone)]
 pub(crate) struct Database {
-    inner: Arc<DatabaseInner>,
-}
-
-struct DatabaseInner {
     pool: SqlitePool,
-    runtime: Runtime,
 }
 
 impl Database {
-    #[cfg(test)]
-    pub(crate) fn open(db_path: &Path) -> AppResult<Self> {
-        let runtime = build_runtime()?;
-        let pool = runtime.block_on(open_migrated_pool(db_path))?;
-        Ok(Self::from_parts(pool, runtime))
+    pub(crate) fn from_pool(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     #[cfg(test)]
-    pub(crate) fn open_initialized(db_path: &Path) -> AppResult<Self> {
-        let runtime = build_runtime()?;
-        let pool = runtime.block_on(open_migrated_pool(db_path))?;
+    pub(crate) async fn open_async(db_path: &Path) -> AppResult<Self> {
+        let pool = open_migrated_pool(db_path).await?;
+        Ok(Self::from_pool(pool))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn open_initialized_async(db_path: &Path) -> AppResult<Self> {
+        let pool = open_migrated_pool(db_path).await?;
         let initialized_paths = INITIALIZED_DB_PATHS.get_or_init(|| Mutex::new(BTreeSet::new()));
         let mut initialized_paths = initialized_paths.lock().map_err(AppError::external)?;
         if !initialized_paths.contains(db_path) {
             ensure_app_library_dirs()?;
-            runtime.block_on(seed_defaults_sqlx(&pool))?;
-            #[cfg(test)]
-            {
-                let adapters =
-                    crate::backend::conversations::ensure_official_conversation_adapters()?;
-                runtime.block_on(
-                    super::conversation_repo::seed_prepared_builtin_conversation_adapters_sqlx(
-                        &pool,
-                        super::tenant_repo::DEFAULT_TENANT_ID,
-                        adapters,
-                    ),
-                )?;
-            }
+            seed_defaults_sqlx(&pool).await?;
+            let adapters = crate::backend::conversations::ensure_official_conversation_adapters()?;
+            super::conversation_repo::seed_prepared_builtin_conversation_adapters_sqlx(
+                &pool,
+                super::tenant_repo::DEFAULT_TENANT_ID,
+                adapters,
+            )
+            .await?;
             initialized_paths.insert(db_path.to_path_buf());
         }
-        Ok(Self::from_parts(pool, runtime))
-    }
-
-    pub(crate) fn from_parts(pool: SqlitePool, runtime: Runtime) -> Self {
-        Self {
-            inner: Arc::new(DatabaseInner { pool, runtime }),
-        }
-    }
-
-    pub(crate) fn pool(&self) -> &SqlitePool {
-        &self.inner.pool
-    }
-
-    pub(crate) fn block_on<F: Future>(&self, future: F) -> F::Output {
-        self.inner.runtime.block_on(future)
-    }
-
-    pub(crate) fn run_sync<F: Future>(&self, future: F) -> F::Output {
-        self.inner.runtime.block_on(future)
+        Ok(Self::from_pool(pool))
     }
 }
 
@@ -140,25 +117,10 @@ pub(crate) async fn count_rows(
 }
 
 #[cfg(test)]
-pub(crate) fn migrate_database(db_path: &Path) -> AppResult<()> {
-    let db_path = db_path.to_path_buf();
-    std::thread::spawn(move || {
-        let runtime = build_runtime()?;
-        let pool = runtime.block_on(open_migrated_pool(&db_path))?;
-        runtime.block_on(pool.close());
-        Ok(())
-    })
-    .join()
-    .map_err(|_| AppError::Process("SQLx migration worker panicked".to_string()))?
-}
-
-pub(crate) fn build_runtime() -> AppResult<Runtime> {
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("aiw-rt")
-        .enable_time()
-        .build()
-        .map_err(AppError::external)
+pub(crate) async fn migrate_database(db_path: &Path) -> AppResult<()> {
+    let pool = open_migrated_pool(db_path).await?;
+    pool.close().await;
+    Ok(())
 }
 
 pub(crate) async fn open_migrated_pool(db_path: &Path) -> AppResult<SqlitePool> {
@@ -236,16 +198,14 @@ pub(crate) async fn seed_tenant_defaults_sqlx_with_catalog(
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
         super::menu_repo::seed_navigation_model_sqlx(pool, tenant_id, &default_navigation_model)
-            .await
-            .map_err(AppError::external)?;
+            .await?;
     } else {
         super::menu_repo::ensure_navigation_model_items_sqlx(
             pool,
             tenant_id,
             &default_navigation_model,
         )
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     }
 
     if count_rows(pool, tenant_id, "app_shortcut_items").await? == 0 {
@@ -617,10 +577,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
+    #[tokio::test]
+    async fn migrations_retain_recall_indexes_after_question_contract_rebuild() {
         let db_path = temp_database_path("memory-recall-index-upgrade");
-        migrate_database(&db_path).expect("create current database");
+        migrate_database(&db_path)
+            .await
+            .expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         let index_count: i64 = conn
@@ -645,11 +607,11 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_create_fresh_schema_and_track_version() {
+    #[tokio::test]
+    async fn migrations_create_fresh_schema_and_track_version() {
         let db_path = temp_database_path("fresh");
 
-        migrate_database(&db_path).expect("run migrations");
+        migrate_database(&db_path).await.expect("run migrations");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         let source_table_count: i64 = conn
@@ -694,10 +656,10 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn conversation_question_contract_contains_only_stable_metadata() {
+    #[tokio::test]
+    async fn conversation_question_contract_contains_only_stable_metadata() {
         let db_path = temp_database_path("conversation-question-contract");
-        migrate_database(&db_path).expect("run migrations");
+        migrate_database(&db_path).await.expect("run migrations");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         for table in ["conversation_questions", "web_record_questions"] {
@@ -733,10 +695,12 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapshots() {
+    #[tokio::test]
+    async fn migrations_rebuild_representative_legacy_question_rows_and_audit_snapshots() {
         let db_path = temp_database_path("conversation-question-legacy-rebuild");
-        migrate_database(&db_path).expect("create current database");
+        migrate_database(&db_path)
+            .await
+            .expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open current database");
         conn.execute_batch(
@@ -850,7 +814,9 @@ mod tests {
         .expect("seed representative legacy question schema");
         drop(conn);
 
-        migrate_database(&db_path).expect("rebuild legacy question schema");
+        migrate_database(&db_path)
+            .await
+            .expect("rebuild legacy question schema");
 
         let conn = Connection::open(&db_path).expect("open rebuilt database");
         for table in ["conversation_questions", "web_record_questions"] {
@@ -910,8 +876,8 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_adopt_legacy_schema_without_losing_rows() {
+    #[tokio::test]
+    async fn migrations_adopt_legacy_schema_without_losing_rows() {
         let db_path = temp_database_path("legacy");
         let conn = Connection::open(&db_path).expect("open legacy database");
         conn.execute_batch(
@@ -949,7 +915,9 @@ mod tests {
         .expect("create legacy schema");
         drop(conn);
 
-        migrate_database(&db_path).expect("adopt legacy database");
+        migrate_database(&db_path)
+            .await
+            .expect("adopt legacy database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         let source: (String, String, String) = conn
@@ -985,10 +953,12 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_accept_the_original_catalog_release_details_checksum() {
+    #[tokio::test]
+    async fn migrations_accept_the_original_catalog_release_details_checksum() {
         let db_path = temp_database_path("catalog-release-checksum");
-        migrate_database(&db_path).expect("create current database");
+        migrate_database(&db_path)
+            .await
+            .expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         conn.execute_batch(
@@ -1003,7 +973,9 @@ mod tests {
         .expect("simulate database created by the original migration");
         drop(conn);
 
-        migrate_database(&db_path).expect("upgrade database without modifying applied migrations");
+        migrate_database(&db_path)
+            .await
+            .expect("upgrade database without modifying applied migrations");
 
         let conn = Connection::open(&db_path).expect("open upgraded database");
         let source_json_count: i64 = conn
@@ -1017,10 +989,12 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_repair_the_known_modified_catalog_release_details_checksum() {
+    #[tokio::test]
+    async fn migrations_repair_the_known_modified_catalog_release_details_checksum() {
         let db_path = temp_database_path("catalog-release-modified-checksum");
-        migrate_database(&db_path).expect("create current database");
+        migrate_database(&db_path)
+            .await
+            .expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         conn.execute_batch(
@@ -1034,7 +1008,9 @@ mod tests {
         .expect("simulate database created by the modified migration");
         drop(conn);
 
-        migrate_database(&db_path).expect("repair known migration checksum and continue");
+        migrate_database(&db_path)
+            .await
+            .expect("repair known migration checksum and continue");
 
         let conn = Connection::open(&db_path).expect("open repaired database");
         let migration_count: i64 = conn
@@ -1046,10 +1022,12 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn migrations_repair_the_known_modified_question_contract_checksum() {
+    #[tokio::test]
+    async fn migrations_repair_the_known_modified_question_contract_checksum() {
         let db_path = temp_database_path("question-contract-modified-checksum");
-        migrate_database(&db_path).expect("create current database");
+        migrate_database(&db_path)
+            .await
+            .expect("create current database");
 
         let conn = Connection::open(&db_path).expect("open migrated database");
         conn.execute_batch(
@@ -1065,7 +1043,9 @@ mod tests {
         .expect("simulate database opened after the released migration was modified");
         drop(conn);
 
-        migrate_database(&db_path).expect("repair known checksum and apply follow-up migration");
+        migrate_database(&db_path)
+            .await
+            .expect("repair known checksum and apply follow-up migration");
 
         let conn = Connection::open(&db_path).expect("open repaired database");
         let question_contract_checksum: String = conn
@@ -1099,17 +1079,14 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn database_reuses_pool_for_queries_after_migration() {
+    #[tokio::test]
+    async fn database_reuses_pool_for_queries_after_migration() {
         let db_path = temp_database_path("pool");
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
 
-        let source_count = database
-            .run_sync(async {
-                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
-                    .fetch_one(database.pool())
-                    .await
-            })
+        let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
+            .fetch_one(database.pool())
+            .await
             .expect("query via SQLx pool");
 
         assert_eq!(source_count, 0);
@@ -1117,39 +1094,35 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn initialized_database_seeds_defaults_without_reseeding() {
+    #[tokio::test]
+    async fn initialized_database_seeds_defaults_without_reseeding() {
         let db_path = temp_database_path("initialized");
-        let database = Database::open_initialized(&db_path).expect("open initialized database");
+        let database = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open initialized database");
 
-        let (source_count, profile_count, navigation_count, shortcut_count) = database
-            .block_on(async {
-                let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
-                    .fetch_one(database.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
-                    .fetch_one(database.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                let navigation_count =
-                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
-                        .fetch_one(database.pool())
-                        .await
-                        .map_err(AppError::external)?;
-                let shortcut_count =
-                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
-                        .fetch_one(database.pool())
-                        .await
-                        .map_err(AppError::external)?;
-                Ok::<_, AppError>((
-                    source_count,
-                    profile_count,
-                    navigation_count,
-                    shortcut_count,
-                ))
-            })
-            .expect("query seeded defaults");
+        let source_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sources")
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)
+            .expect("query sources");
+        let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)
+            .expect("query profiles");
+        let navigation_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM navigation_state")
+                .fetch_one(database.pool())
+                .await
+                .map_err(AppError::external)
+                .expect("query navigation_state");
+        let shortcut_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
+                .fetch_one(database.pool())
+                .await
+                .map_err(AppError::external)
+                .expect("query app_shortcut_items");
 
         assert!(source_count > 0);
         assert!(profile_count > 0);
@@ -1165,27 +1138,28 @@ mod tests {
         .expect("customize seeded adapter");
         drop(conn);
 
-        let reopened = Database::open_initialized(&db_path).expect("reopen initialized database");
-        let codex_name = reopened
-            .block_on(async {
-                sqlx::query_scalar::<_, String>(
-                    "SELECT name FROM conversation_adapters WHERE id = 'codex'",
-                )
-                .fetch_one(reopened.pool())
-                .await
-                .map_err(AppError::external)
-            })
-            .expect("query preserved adapter");
+        let reopened = Database::open_initialized_async(&db_path)
+            .await
+            .expect("reopen initialized database");
+        let codex_name = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM conversation_adapters WHERE id = 'codex'",
+        )
+        .fetch_one(reopened.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("query preserved adapter");
 
         assert_eq!(codex_name, "preserved");
         drop(reopened);
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn initialized_database_restores_missing_builtin_app_icon_rows() {
+    #[tokio::test]
+    async fn initialized_database_restores_missing_builtin_app_icon_rows() {
         let db_path = temp_database_path("app-icon-defaults");
-        let database = Database::open_initialized(&db_path).expect("open initialized database");
+        let database = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open initialized database");
         drop(database);
 
         let conn = Connection::open(&db_path).expect("open seeded database");
@@ -1197,36 +1171,37 @@ mod tests {
         .expect("remove newly introduced app defaults");
         drop(conn);
 
-        let reopened = Database::open(&db_path).expect("reopen initialized database");
-        reopened
-            .block_on(seed_tenant_defaults_sqlx(reopened.pool(), "default"))
-            .expect("restore initialized defaults");
-        let (profile_count, shortcut_count, codex_accent, hermes_accent) = reopened
-            .block_on(async {
-                let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
-                    .fetch_one(reopened.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                let shortcut_count =
-                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
-                        .fetch_one(reopened.pool())
-                        .await
-                        .map_err(AppError::external)?;
-                let codex_accent = sqlx::query_scalar::<_, String>(
-                    "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
-                )
+        let reopened = Database::open_async(&db_path)
+            .await
+            .expect("reopen initialized database");
+        seed_tenant_defaults_sqlx(reopened.pool(), "default")
+            .await
+            .expect("seed tenant defaults");
+        let profile_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM profiles")
+            .fetch_one(reopened.pool())
+            .await
+            .map_err(AppError::external)
+            .expect("query profiles");
+        let shortcut_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_shortcut_items")
                 .fetch_one(reopened.pool())
                 .await
-                .map_err(AppError::external)?;
-                let hermes_accent = sqlx::query_scalar::<_, String>(
-                    "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
-                )
-                .fetch_one(reopened.pool())
-                .await
-                .map_err(AppError::external)?;
-                Ok::<_, AppError>((profile_count, shortcut_count, codex_accent, hermes_accent))
-            })
-            .expect("query restored app defaults");
+                .map_err(AppError::external)
+                .expect("query shortcuts");
+        let codex_accent = sqlx::query_scalar::<_, String>(
+            "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'codex'",
+        )
+        .fetch_one(reopened.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("query codex accent");
+        let hermes_accent = sqlx::query_scalar::<_, String>(
+            "SELECT accent_color FROM app_shortcut_items WHERE profile_id = 'hermes'",
+        )
+        .fetch_one(reopened.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("query hermes accent");
 
         let expected_profile_count = crate::backend::defaults::default_profiles_from_catalog(
             &crate::backend::target_catalog::TargetCatalog::builtin_for_tests()
@@ -1244,43 +1219,39 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn initialized_database_seeds_local_principal_and_default_tenant() {
+    #[tokio::test]
+    async fn initialized_database_seeds_local_principal_and_default_tenant() {
         let db_path = temp_database_path("tenant-identity");
-        let database = Database::open_initialized(&db_path).expect("open initialized database");
+        let database = Database::open_initialized_async(&db_path)
+            .await
+            .expect("open initialized database");
 
-        let (principal_count, tenant_count, membership_count, active_tenant_id) = database
-            .block_on(async {
-                let principal_count =
-                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
-                        .fetch_one(database.pool())
-                        .await
-                        .map_err(AppError::external)?;
-                let tenant_count =
-                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
-                        .fetch_one(database.pool())
-                        .await
-                        .map_err(AppError::external)?;
-                let membership_count = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
-                )
+        let principal_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM principals WHERE id = 'local'")
                 .fetch_one(database.pool())
                 .await
-                .map_err(AppError::external)?;
-                let active_tenant_id = sqlx::query_scalar::<_, String>(
-                    "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
-                )
+                .map_err(AppError::external)
+                .expect("query principal count");
+        let tenant_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tenants WHERE id = 'default'")
                 .fetch_one(database.pool())
                 .await
-                .map_err(AppError::external)?;
-                Ok::<_, AppError>((
-                    principal_count,
-                    tenant_count,
-                    membership_count,
-                    active_tenant_id,
-                ))
-            })
-            .expect("query tenant identity defaults");
+                .map_err(AppError::external)
+                .expect("query tenant count");
+        let membership_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM tenant_memberships WHERE principal_id = 'local' AND tenant_id = 'default' AND role = 'owner'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("query membership count");
+        let active_tenant_id = sqlx::query_scalar::<_, String>(
+            "SELECT active_tenant_id FROM tenant_state WHERE principal_id = 'local'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .map_err(AppError::external)
+        .expect("query active tenant");
 
         assert_eq!(principal_count, 1);
         assert_eq!(tenant_count, 1);

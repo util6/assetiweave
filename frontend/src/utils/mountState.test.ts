@@ -18,15 +18,27 @@ describe("mount state helpers", () => {
       status("asset-b", "codex", "not_mounted"),
     ]);
 
-    expect(grouped.get("asset-a")).toEqual([status("asset-a", "codex", "mounted")]);
-    expect(grouped.get("asset-b")).toEqual([status("asset-b", "codex", "not_mounted")]);
+    expect(grouped.get("asset-a")).toEqual([
+      status("asset-a", "codex", "mounted"),
+    ]);
+    expect(grouped.get("asset-b")).toEqual([
+      status("asset-b", "codex", "not_mounted"),
+    ]);
   });
 
   it("derives display state only from physical state", () => {
-    expect(getMountDisplayState(status("asset-a", "codex", "mounted"))).toBe("mounted");
-    expect(getMountDisplayState(status("asset-a", "codex", "not_mounted"))).toBe("not_mounted");
-    expect(getMountDisplayState(status("asset-a", "codex", "conflict"))).toBe("conflict");
-    expect(getMountDisplayState(status("asset-a", "codex", "broken"))).toBe("broken");
+    expect(getMountDisplayState(status("asset-a", "codex", "mounted"))).toBe(
+      "mounted",
+    );
+    expect(
+      getMountDisplayState(status("asset-a", "codex", "not_mounted")),
+    ).toBe("not_mounted");
+    expect(getMountDisplayState(status("asset-a", "codex", "conflict"))).toBe(
+      "conflict",
+    );
+    expect(getMountDisplayState(status("asset-a", "codex", "broken"))).toBe(
+      "broken",
+    );
     expect(getMountDisplayState()).toBe("not_mounted");
   });
 
@@ -43,9 +55,18 @@ describe("mount state helpers", () => {
   });
 
   it("summarizes an asset by the most actionable mount state", () => {
-    expect(getAssetMountSummaryState([status("asset-a", "codex", "mounted")])).toBe("mounted");
-    expect(getAssetMountSummaryState([status("asset-a", "codex", "not_mounted")])).toBe("not_mounted");
-    expect(getAssetMountSummaryState([status("asset-a", "codex", "conflict"), status("asset-a", "cursor", "mounted")])).toBe("conflict");
+    expect(
+      getAssetMountSummaryState([status("asset-a", "codex", "mounted")]),
+    ).toBe("mounted");
+    expect(
+      getAssetMountSummaryState([status("asset-a", "codex", "not_mounted")]),
+    ).toBe("not_mounted");
+    expect(
+      getAssetMountSummaryState([
+        status("asset-a", "codex", "conflict"),
+        status("asset-a", "cursor", "mounted"),
+      ]),
+    ).toBe("conflict");
     expect(getAssetMountSummaryState([])).toBe("not_mounted");
   });
 
@@ -60,12 +81,15 @@ describe("mount state helpers", () => {
 
   it("counts currently mounted assets for a profile", () => {
     expect(
-      countMountedAssetsForProfile([
-        status("asset-a", "codex", "mounted"),
-        status("asset-b", "codex", "not_mounted"),
-        status("asset-c", "codex", "mounted"),
-        status("asset-d", "cursor", "mounted"),
-      ], "codex"),
+      countMountedAssetsForProfile(
+        [
+          status("asset-a", "codex", "mounted"),
+          status("asset-b", "codex", "not_mounted"),
+          status("asset-c", "codex", "mounted"),
+          status("asset-d", "cursor", "mounted"),
+        ],
+        "codex",
+      ),
     ).toBe(2);
   });
 
@@ -77,9 +101,30 @@ describe("mount state helpers", () => {
       status("asset-d", "cursor", "mounted"),
     ];
 
-    expect(countAssetsForProfileState(["asset-a", "asset-a", "asset-b", "asset-missing"], statuses, "codex", "mounted")).toBe(1);
-    expect(countAssetsForProfileState(["asset-a", "asset-b", "asset-missing"], statuses, "codex", "not_mounted")).toBe(2);
-    expect(countAssetsForProfileState(["asset-c", "asset-d"], statuses, "codex", "conflict")).toBe(1);
+    expect(
+      countAssetsForProfileState(
+        ["asset-a", "asset-a", "asset-b", "asset-missing"],
+        statuses,
+        "codex",
+        "mounted",
+      ),
+    ).toBe(1);
+    expect(
+      countAssetsForProfileState(
+        ["asset-a", "asset-b", "asset-missing"],
+        statuses,
+        "codex",
+        "not_mounted",
+      ),
+    ).toBe(2);
+    expect(
+      countAssetsForProfileState(
+        ["asset-c", "asset-d"],
+        statuses,
+        "codex",
+        "conflict",
+      ),
+    ).toBe(1);
   });
 
   it("summarizes physical refresh results for user feedback", () => {
@@ -101,7 +146,11 @@ describe("mount state helpers", () => {
   });
 });
 
-function status(assetId: string, profileId: string, state: AssetMountStatus["state"]): AssetMountStatus {
+function status(
+  assetId: string,
+  profileId: string,
+  state: AssetMountStatus["state"],
+): AssetMountStatus {
   return {
     asset_id: assetId,
     profile_id: profileId,

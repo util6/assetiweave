@@ -35,7 +35,11 @@ describe("conversationIdFragment", () => {
   });
 
   it("supports legacy hash lengths and falls back when no hash exists", () => {
-    expect(conversationIdFragment("conversation-session-abcdef1234567890abcdef1234567890")).toBe("abcdef12");
+    expect(
+      conversationIdFragment(
+        "conversation-session-abcdef1234567890abcdef1234567890",
+      ),
+    ).toBe("abcdef12");
     expect(conversationIdFragment("  Legacy-Session  ")).toBe("legacy-s");
     expect(conversationIdFragment("   ")).toBe("");
   });

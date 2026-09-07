@@ -264,13 +264,12 @@ fn install_builtin_skills_at(root: &Path) -> AppResult<BuiltinSkillInstallResult
     }
     if path_is_present(&previous) {
         if let Err(error) = remove_path(&previous) {
-            crate::backend::operation_log::log_warn(
-                "app.startup.skills.cleanup",
-                "failed to remove previous AssetIWeave system Skills",
-                &[
-                    ("path", previous.display().to_string()),
-                    ("error", error.to_string()),
-                ],
+            tracing::warn!(
+                target: "assetiweave.operation",
+                operation = "app.startup.skills.cleanup",
+                path = %previous.display(),
+                error = %error,
+                "failed to remove previous AssetIWeave system Skills"
             );
         }
     }

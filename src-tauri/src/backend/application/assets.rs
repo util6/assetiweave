@@ -43,7 +43,7 @@ pub(crate) enum BatchMountWorkflowOutput {
 }
 
 impl AppService {
-    pub(crate) fn run_batch_mount_workflow_with_progress<BeforeItem>(
+    pub(crate) async fn run_batch_mount_workflow_with_progress<BeforeItem>(
         &self,
         input: BatchMountWorkflowInput,
         mut before_item: BeforeItem,
@@ -58,25 +58,27 @@ impl AppService {
                 enabled,
             } => self
                 .apply_explicit_mount_with_progress(asset_ids, &profile_id, enabled, before_item)
+                .await
                 .map(BatchMountWorkflowOutput::Explicit),
             BatchMountWorkflowInput::Group {
                 group_id,
                 profile_id,
                 enabled,
             } => capabilities::apply_skill_group_mount_record_with_progress(
-                &self.db,
+                self.db.pool(),
                 self.tenant_id(),
                 &group_id,
                 &profile_id,
                 enabled,
                 before_item,
             )
+            .await
             .map(BatchMountWorkflowOutput::Group),
             BatchMountWorkflowInput::Exclusive {
                 group_ids,
                 profile_id,
             } => capabilities::apply_skill_group_exclusive_mount_record_with_progress(
-                &self.db,
+                self.db.pool(),
                 self.tenant_id(),
                 &SkillGroupExclusiveMountInput {
                     group_ids,
@@ -86,35 +88,33 @@ impl AppService {
                 },
                 |index, total, asset_id| before_item(index, total, asset_id),
             )
+            .await
             .map(BatchMountWorkflowOutput::Exclusive),
         }
     }
 
-    pub(crate) fn list_assets(&self, params: ListAssetsParams) -> AppResult<Vec<CatalogAsset>> {
-        Ok(capabilities::catalog_assets_sqlx(
-            &self.db,
-            self.tenant_id(),
-            params.kind,
-        )?)
+    pub(crate) async fn list_assets(
+        &self,
+        params: ListAssetsParams,
+    ) -> AppResult<Vec<CatalogAsset>> {
+        capabilities::catalog_assets_sqlx(self.db.pool(), self.tenant_id(), params.kind).await
     }
 
-    pub(crate) fn update_asset_description(
+    pub(crate) async fn update_asset_description(
         &self,
         asset_id: String,
         description: Option<String>,
     ) -> AppResult<Asset> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let mut asset = self
-            .db
-            .block_on(async move {
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await
-            })?
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let mut asset = crate::backend::store::load_assets_sqlx(pool, tenant_id, None)
+            .await?
             .into_iter()
             .find(|asset| asset.id == asset_id)
             .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
         if !self
-            .list_sources()?
+            .list_sources()
+            .await?
             .iter()
             .any(|source| source.id == asset.source_id)
         {
@@ -136,24 +136,15 @@ impl AppService {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
         asset.updated_at = Utc::now().to_rfc3339();
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let asset_to_save = asset.clone();
-        self.db.block_on(async move {
-            crate::backend::store::update_asset_description_sqlx(&pool, &tenant_id, &asset_to_save)
-                .await
-        })?;
+        crate::backend::store::update_asset_description_sqlx(pool, tenant_id, &asset).await?;
         Ok(asset)
     }
 
-    pub(crate) fn delete_asset(&self, asset_id: String, unmount: bool) -> AppResult<Asset> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let asset = self
-            .db
-            .block_on(async move {
-                crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await
-            })?
+    pub(crate) async fn delete_asset(&self, asset_id: String, unmount: bool) -> AppResult<Asset> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let asset = crate::backend::store::load_assets_sqlx(pool, tenant_id, None)
+            .await?
             .into_iter()
             .find(|asset| asset.id == asset_id)
             .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
@@ -168,104 +159,94 @@ impl AppService {
             dry_run: false,
             yes: true,
             unmount,
-        })?;
+        })
+        .await?;
         Ok(asset)
     }
 
-    pub(crate) fn list_asset_mounts(&self, asset_id: Option<&str>) -> AppResult<Vec<AssetMount>> {
-        let pool = self.db.pool().clone();
-        let asset_id = asset_id.map(str::to_string);
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self.db.block_on(async move {
-            crate::backend::store::load_asset_mounts_sqlx(&pool, &tenant_id, asset_id.as_deref())
-                .await
-        })?)
+    pub(crate) async fn list_asset_mounts(
+        &self,
+        asset_id: Option<&str>,
+    ) -> AppResult<Vec<AssetMount>> {
+        crate::backend::store::load_asset_mounts_sqlx(self.db.pool(), self.tenant_id(), asset_id)
+            .await
     }
 
-    pub(crate) fn list_asset_mount_statuses(
+    pub(crate) async fn list_asset_mount_statuses(
         &self,
         asset_id: Option<&str>,
     ) -> AppResult<Vec<AssetMountStatus>> {
-        Ok(capabilities::scan_asset_mount_statuses_sqlx(
-            &self.db,
-            self.tenant_id(),
-            asset_id,
-        )?)
+        capabilities::scan_asset_mount_statuses_sqlx(self.db.pool(), self.tenant_id(), asset_id)
+            .await
     }
 
-    pub(crate) fn refresh_asset_mount_statuses(
+    pub(crate) async fn refresh_asset_mount_statuses(
         &self,
         asset_id: Option<&str>,
     ) -> AppResult<Vec<AssetMountStatus>> {
-        Ok(capabilities::sync_asset_mount_observations(
-            &self.db,
-            self.tenant_id(),
-            asset_id,
-        )?)
+        capabilities::sync_asset_mount_observations(self.db.pool(), self.tenant_id(), asset_id)
+            .await
     }
 
-    pub(crate) fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
-        let assets = capabilities::catalog_visible_assets_sqlx(&self.db, self.tenant_id(), None)?;
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        let profile_filter = profile_id.map(str::to_string);
-        let profile_filter_for_query = profile_filter.clone();
-        let (profiles, mounts) = self.db.block_on(async move {
-            let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
-            let mounts = crate::backend::store::load_enabled_asset_mounts_sqlx(
-                &pool,
-                &tenant_id,
-                profile_filter_for_query.as_deref(),
-            )
-            .await?;
-            AppResult::Ok((profiles, mounts))
-        })?;
+    pub(crate) async fn create_plan(&self, profile_id: Option<&str>) -> AppResult<DeploymentPlan> {
+        let assets =
+            capabilities::catalog_visible_assets_sqlx(self.db.pool(), self.tenant_id(), None)
+                .await?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let profiles = crate::backend::store::load_profiles_sqlx(pool, tenant_id).await?;
+        let mounts =
+            crate::backend::store::load_enabled_asset_mounts_sqlx(pool, tenant_id, profile_id)
+                .await?;
         Ok(crate::backend::planner::build_plan_with_catalog(
             &assets,
             &profiles,
             &mounts,
-            profile_filter.as_deref(),
+            profile_id,
             self.runtime.target_catalog().as_ref(),
         )
         .map_err(AppError::external)?)
     }
 
-    pub(crate) fn mount_asset_by_id(
+    pub(crate) async fn mount_asset_by_id(
         &self,
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        Ok(capabilities::mount_asset_mount_record(
-            &self.db,
+        capabilities::mount_asset_mount_record(
+            self.db.pool(),
             self.tenant_id(),
             asset_id,
             profile_id,
-        )?)
+        )
+        .await
     }
 
-    pub(crate) fn unmount_asset_by_id(
+    pub(crate) async fn unmount_asset_by_id(
         &self,
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMountUpdateResult> {
-        Ok(capabilities::unmount_asset_mount_record(
-            &self.db,
+        capabilities::unmount_asset_mount_record(
+            self.db.pool(),
             self.tenant_id(),
             asset_id,
             profile_id,
-        )?)
+        )
+        .await
     }
 
-    pub(crate) fn toggle_asset_mount(
+    pub(crate) async fn toggle_asset_mount(
         &self,
         asset_id: &str,
         profile_id: &str,
     ) -> AppResult<AssetMount> {
         let (asset, profile) =
-            load_mount_asset_and_profile(&self.db, self.tenant_id(), asset_id, profile_id)?;
+            load_mount_asset_and_profile(self.db.pool(), self.tenant_id(), asset_id, profile_id)
+                .await?;
         let inspection = crate::backend::targeting::inspect_mount(&profile, &asset)?;
-        Ok(capabilities::set_asset_mount_record(
-            &self.db,
+        capabilities::set_asset_mount_record(
+            self.db.pool(),
             self.tenant_id(),
             asset_id,
             profile_id,
@@ -274,27 +255,29 @@ impl AppService {
                 crate::backend::targeting::PhysicalMountState::Mounted
             ),
             None,
-        )?)
+        )
+        .await
     }
 
-    pub(crate) fn set_asset_mount(
+    pub(crate) async fn set_asset_mount(
         &self,
         asset_id: &str,
         profile_id: &str,
         enabled: bool,
         strategy: Option<DeploymentStrategy>,
     ) -> AppResult<AssetMount> {
-        Ok(capabilities::set_asset_mount_record(
-            &self.db,
+        capabilities::set_asset_mount_record(
+            self.db.pool(),
             self.tenant_id(),
             asset_id,
             profile_id,
             enabled,
             strategy,
-        )?)
+        )
+        .await
     }
 
-    pub(crate) fn apply_explicit_mount_with_progress<BeforeItem>(
+    pub(crate) async fn apply_explicit_mount_with_progress<BeforeItem>(
         &self,
         asset_ids: Vec<String>,
         profile_id: &str,
@@ -317,8 +300,12 @@ impl AppService {
             ));
         }
 
-        let (assets, sources, profile) =
-            capabilities::load_batch_mount_inputs_sqlx(&self.db, self.tenant_id(), profile_id)?;
+        let (assets, sources, profile) = capabilities::load_batch_mount_inputs_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            profile_id,
+        )
+        .await?;
         let asset_by_id = assets
             .iter()
             .map(|asset| (asset.id.as_str(), asset))
@@ -329,29 +316,49 @@ impl AppService {
             .collect::<HashMap<_, _>>();
 
         let total = asset_ids.len();
-        let (results, errors) = run_batch_items(&asset_ids, &mut before_item, |asset_id| {
-            let asset = asset_by_id
-                .get(asset_id)
-                .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
-            if !enabled {
-                return capabilities::unmount_preloaded_asset_mount_record(
-                    &self.db,
-                    self.tenant_id(),
-                    asset,
-                    &profile,
-                );
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+        for (index, asset_id) in asset_ids.iter().enumerate() {
+            before_item(index, total, asset_id)?;
+            let item_res = match asset_by_id.get(asset_id.as_str()) {
+                Some(asset) => {
+                    if !enabled {
+                        capabilities::unmount_preloaded_asset_mount_record(
+                            self.db.pool(),
+                            self.tenant_id(),
+                            asset,
+                            &profile,
+                        )
+                        .await
+                    } else {
+                        match source_by_id.get(asset.source_id.as_str()) {
+                            Some(source) => {
+                                capabilities::mount_preloaded_asset_mount_record(
+                                    self.db.pool(),
+                                    self.tenant_id(),
+                                    asset,
+                                    source,
+                                    &profile,
+                                )
+                                .await
+                            }
+                            None => Err(AppError::NotFound(format!(
+                                "source not found: {}",
+                                asset.source_id
+                            ))),
+                        }
+                    }
+                }
+                None => Err(AppError::NotFound(format!("asset not found: {asset_id}"))),
+            };
+            match item_res {
+                Ok(result) => results.push(result),
+                Err(error) => errors.push(BatchMountItemError {
+                    asset_id: asset_id.clone(),
+                    message: error.to_string(),
+                }),
             }
-            let source = source_by_id.get(asset.source_id.as_str()).ok_or_else(|| {
-                AppError::NotFound(format!("source not found: {}", asset.source_id))
-            })?;
-            capabilities::mount_preloaded_asset_mount_record(
-                &self.db,
-                self.tenant_id(),
-                asset,
-                source,
-                &profile,
-            )
-        })?;
+        }
 
         Ok(BatchMountWorkflowResult {
             requested_count: total,
@@ -362,34 +369,30 @@ impl AppService {
         })
     }
 
-    pub(crate) fn execute_plan(
+    pub(crate) async fn execute_plan(
         &self,
         plan: DeploymentPlan,
         action_ids: Option<Vec<String>>,
     ) -> AppResult<ExecutionResult> {
-        let pool = self.db.pool().clone();
-        let tenant_id = self.tenant_id().to_string();
-        Ok(self
-            .db
-            .block_on(async move {
-                let profiles = crate::backend::store::load_profiles_sqlx(&pool, &tenant_id).await?;
-                let assets =
-                    crate::backend::store::load_assets_sqlx(&pool, &tenant_id, None).await?;
-                crate::backend::executor::execute_deployment_plan(
-                    &pool,
-                    &tenant_id,
-                    &profiles,
-                    &assets,
-                    &plan,
-                    action_ids.as_deref(),
-                    self.runtime.target_catalog().as_ref(),
-                )
-                .await
-            })
-            .map_err(AppError::external)?)
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let profiles = crate::backend::store::load_profiles_sqlx(pool, tenant_id).await?;
+        let assets = crate::backend::store::load_assets_sqlx(pool, tenant_id, None).await?;
+        crate::backend::executor::execute_deployment_plan(
+            pool,
+            tenant_id,
+            &profiles,
+            &assets,
+            &plan,
+            action_ids.as_deref(),
+            self.runtime.target_catalog().as_ref(),
+        )
+        .await
+        .map_err(AppError::external)
     }
 }
 
+#[cfg(test)]
 fn run_batch_items<T, BeforeItem, ApplyItem>(
     asset_ids: &[String],
     before_item: &mut BeforeItem,
@@ -415,25 +418,19 @@ where
     Ok((results, errors))
 }
 
-fn load_mount_asset_and_profile(
-    db: &crate::backend::store::Database,
+async fn load_mount_asset_and_profile(
+    pool: &sqlx::SqlitePool,
     tenant_id: &str,
     asset_id: &str,
     profile_id: &str,
 ) -> AppResult<(Asset, TargetProfile)> {
-    let pool = db.pool().clone();
-    let tenant_id = tenant_id.to_string();
-    let asset_id = asset_id.to_string();
-    let profile_id = profile_id.to_string();
-    db.block_on(async move {
-        let asset = crate::backend::store::load_asset_sqlx(&pool, &tenant_id, &asset_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
-        let profile = crate::backend::store::load_profile_sqlx(&pool, &tenant_id, &profile_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
-        AppResult::Ok((asset, profile))
-    })
+    let asset = crate::backend::store::load_asset_sqlx(pool, tenant_id, asset_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("asset not found: {asset_id}")))?;
+    let profile = crate::backend::store::load_profile_sqlx(pool, tenant_id, profile_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("profile not found: {profile_id}")))?;
+    AppResult::Ok((asset, profile))
 }
 
 #[cfg(test)]

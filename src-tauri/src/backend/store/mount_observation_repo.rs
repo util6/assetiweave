@@ -178,79 +178,85 @@ mod tests {
     use crate::backend::dto::PhysicalMountStateDto;
     use uuid::Uuid;
 
-    #[test]
-    fn sqlx_mount_observation_repo_upserts_and_cleans_orphans() {
+    #[tokio::test]
+    async fn sqlx_mount_observation_repo_upserts_and_cleans_orphans() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-mount-observation-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
 
-        database
-            .block_on(async {
-                insert_asset(database.pool(), "asset-a").await?;
-                upsert_asset_mount_observations_sqlx(
-                    database.pool(),
-                    "default",
-                    &[
-                        test_observation(
-                            "asset-a",
-                            "profile-a",
-                            PhysicalMountStateDto::Mounted,
-                            Some("/source/a"),
-                        ),
-                        test_observation(
-                            "asset-b",
-                            "profile-a",
-                            PhysicalMountStateDto::Conflict,
-                            None,
-                        ),
-                    ],
-                )
-                .await?;
-                upsert_asset_mount_observations_sqlx(
-                    database.pool(),
-                    "default",
-                    &[test_observation(
-                        "asset-a",
-                        "profile-a",
-                        PhysicalMountStateDto::Broken,
-                        Some("/source/new"),
-                    )],
-                )
-                .await?;
+        insert_asset(database.pool(), "asset-a")
+            .await
+            .expect("insert asset");
+        upsert_asset_mount_observations_sqlx(
+            database.pool(),
+            "default",
+            &[
+                test_observation(
+                    "asset-a",
+                    "profile-a",
+                    PhysicalMountStateDto::Mounted,
+                    Some("/source/a"),
+                ),
+                test_observation(
+                    "asset-b",
+                    "profile-a",
+                    PhysicalMountStateDto::Conflict,
+                    None,
+                ),
+            ],
+        )
+        .await
+        .expect("upsert observations");
+        upsert_asset_mount_observations_sqlx(
+            database.pool(),
+            "default",
+            &[test_observation(
+                "asset-a",
+                "profile-a",
+                PhysicalMountStateDto::Broken,
+                Some("/source/new"),
+            )],
+        )
+        .await
+        .expect("upsert broken observation");
 
-                let before_cleanup =
-                    load_asset_mount_observations_sqlx(database.pool(), "default").await?;
-                delete_orphan_asset_mount_observations_sqlx(database.pool(), "default").await?;
-                let after_cleanup =
-                    load_asset_mount_observations_sqlx(database.pool(), "default").await?;
+        let before_cleanup = load_asset_mount_observations_sqlx(database.pool(), "default")
+            .await
+            .expect("load before cleanup");
+        delete_orphan_asset_mount_observations_sqlx(database.pool(), "default")
+            .await
+            .expect("delete orphans");
+        let after_cleanup = load_asset_mount_observations_sqlx(database.pool(), "default")
+            .await
+            .expect("load after cleanup");
 
-                AppResult::Ok((before_cleanup, after_cleanup))
-            })
-            .map(|(before_cleanup, after_cleanup)| {
-                assert_eq!(before_cleanup.len(), 2);
-                let retained = before_cleanup
-                    .iter()
-                    .find(|observation| observation.asset_id == "asset-a")
-                    .expect("retained observation");
-                assert_eq!(retained.state, PhysicalMountStateDto::Broken);
-                assert_eq!(retained.linked_source.as_deref(), Some("/source/new"));
-                assert_eq!(after_cleanup.len(), 1);
-                assert_eq!(after_cleanup[0].asset_id, "asset-a");
-            })
-            .expect("query SQLx mount observation repo");
+        assert_eq!(before_cleanup.len(), 2);
+        let retained = before_cleanup
+            .iter()
+            .find(|observation| observation.asset_id == "asset-a")
+            .expect("retained observation");
+        assert_eq!(retained.state, PhysicalMountStateDto::Broken);
+        assert_eq!(retained.linked_source.as_deref(), Some("/source/new"));
+        assert_eq!(after_cleanup.len(), 1);
+        assert_eq!(after_cleanup[0].asset_id, "asset-a");
+
         drop(database);
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_mount_snapshot_rolls_back_when_status_references_missing_asset() {
+    #[tokio::test]
+    async fn sqlx_mount_snapshot_rolls_back_when_status_references_missing_asset() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-mount-snapshot-rollback-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let observation = test_observation(
             "missing-asset",
             "profile-a",
@@ -269,21 +275,18 @@ mod tests {
             linked_source: observation.linked_source.clone(),
         };
 
-        let error = database
-            .block_on(persist_asset_mount_snapshot_sqlx(
-                database.pool(),
-                "default",
-                std::slice::from_ref(&observation),
-                &[],
-                &[],
-                std::slice::from_ref(&status),
-            ))
-            .expect_err("missing asset must reject snapshot");
-        let observations = database
-            .block_on(load_asset_mount_observations_sqlx(
-                database.pool(),
-                "default",
-            ))
+        let error = persist_asset_mount_snapshot_sqlx(
+            database.pool(),
+            "default",
+            std::slice::from_ref(&observation),
+            &[],
+            &[],
+            std::slice::from_ref(&status),
+        )
+        .await
+        .expect_err("missing asset must reject snapshot");
+        let observations = load_asset_mount_observations_sqlx(database.pool(), "default")
+            .await
             .expect("load observations after rollback");
 
         assert!(error.to_string().contains("asset not found: missing-asset"));

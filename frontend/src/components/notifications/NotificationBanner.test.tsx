@@ -24,7 +24,9 @@ describe("NotificationBanner", () => {
 
     expect(html).toContain("absolute");
     expect(html).toContain("inset-x-0");
-    expect(html).toContain("top-[calc(var(--app-toolbar-top)-var(--app-window-titlebar-height))]");
+    expect(html).toContain(
+      "top-[calc(var(--app-toolbar-top)-var(--app-window-titlebar-height))]",
+    );
     expect(html).toContain("pointer-events-none");
     expect(html).toContain("pointer-events-auto");
     expect(html).not.toContain("sticky");
@@ -38,7 +40,8 @@ describe("NotificationBanner", () => {
           notification={{
             id: "notice-long-error",
             tone: "error",
-            message: "The selected AI model is currently unavailable. Choose another model in Agent settings.",
+            message:
+              "The selected AI model is currently unavailable. Choose another model in Agent settings.",
           }}
           onDismiss={vi.fn()}
         />

@@ -6,13 +6,19 @@ export function ConversationDataMaintenanceTaskIndicator() {
   const { cancel, tasks } = useConversationDataMaintenance();
   const [cancelling, setCancelling] = useState(false);
   const task = [...tasks]
-    .filter((candidate) => candidate.status === "running" || candidate.status === "cancelling")
+    .filter(
+      (candidate) =>
+        candidate.status === "running" || candidate.status === "cancelling",
+    )
     .sort((left, right) => right.started_at.localeCompare(left.started_at))[0];
 
   if (!task) return null;
-  const progress = task.progress.total_stage > 0
-    ? Math.round((task.progress.completed_stage / task.progress.total_stage) * 100)
-    : 0;
+  const progress =
+    task.progress.total_stage > 0
+      ? Math.round(
+          (task.progress.completed_stage / task.progress.total_stage) * 100,
+        )
+      : 0;
 
   async function handleCancel() {
     setCancelling(true);

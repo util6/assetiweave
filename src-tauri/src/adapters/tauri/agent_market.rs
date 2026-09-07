@@ -28,24 +28,18 @@ pub(crate) async fn list_agent_market(
     state: State<'_, AppState>,
     params: AgentMarketListRequest,
 ) -> AppResult<Vec<AgentMarketItemView>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_agent_market(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_agent_market(params)
+        .await
 }
 
 pub(crate) async fn inspect_agent_market_item(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentMarketItemView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).inspect_agent_market_item(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .inspect_agent_market_item(agent_id)
+        .await
 }
 
 pub(crate) fn refresh_agent_market(
@@ -94,59 +88,44 @@ pub(crate) async fn preview_agent_installation(
     state: State<'_, AppState>,
     params: AgentInstallPreviewRequest,
 ) -> AppResult<AgentInstallPreview> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).preview_agent_installation(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .preview_agent_installation(params)
+        .await
 }
 
 pub(crate) async fn list_installed_agents(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<AgentInstallationView>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).list_installed_agents()
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .list_installed_agents()
+        .await
 }
 
 pub(crate) async fn get_installed_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).get_installed_agent(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .get_installed_agent(agent_id)
+        .await
 }
 
 pub(crate) async fn check_agent_runtime(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).check_agent_runtime(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .check_agent_runtime(agent_id)
+        .await
 }
 
 pub(crate) async fn preview_agent_uninstall(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentUninstallPreview> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).preview_agent_uninstall(agent_id)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .preview_agent_uninstall(agent_id)
+        .await
 }
 
 pub(crate) fn get_agent_lifecycle_task(
@@ -250,36 +229,28 @@ pub(crate) async fn enable_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let service = AppService::from_runtime(&runtime);
-        let installation = service.set_agent_enabled(agent_id, true)?;
-        service
-            .list_installed_agents()?
-            .into_iter()
-            .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    let service = AppService::from_runtime(&state.runtime);
+    let installation = service.set_agent_enabled(agent_id, true).await?;
+    service
+        .list_installed_agents()
+        .await?
+        .into_iter()
+        .find(|item| item.agent_id == installation.agent_id)
+        .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
 }
 
 pub(crate) async fn disable_agent(
     state: State<'_, AppState>,
     agent_id: String,
 ) -> AppResult<AgentInstallationView> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let service = AppService::from_runtime(&runtime);
-        let installation = service.set_agent_enabled(agent_id, false)?;
-        service
-            .list_installed_agents()?
-            .into_iter()
-            .find(|item| item.agent_id == installation.agent_id)
-            .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    let service = AppService::from_runtime(&state.runtime);
+    let installation = service.set_agent_enabled(agent_id, false).await?;
+    service
+        .list_installed_agents()
+        .await?
+        .into_iter()
+        .find(|item| item.agent_id == installation.agent_id)
+        .ok_or_else(|| AppError::NotFound("Agent installation disappeared".to_string()))
 }
 
 fn spawn_install_worker(
@@ -313,21 +284,26 @@ fn spawn_install_worker(
                     "Agent installation cancelled".to_string(),
                 ))
             } else {
-                AppService::from_runtime(&runtime).install_agent_with_cancellation_and_progress(
-                    params,
-                    Some(cancellation_flag.clone()),
-                    Some(Arc::new(move |phase| {
-                        if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
-                            &phase_task_id,
-                            phase,
-                            1,
-                            None,
-                            Vec::new(),
-                        ) {
-                            let _ = phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
-                        }
-                    })),
-                )
+                tauri::async_runtime::block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .install_agent_with_cancellation_and_progress(
+                            params,
+                            Some(cancellation_flag.clone()),
+                            Some(Arc::new(move |phase| {
+                                if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                    &phase_task_id,
+                                    phase,
+                                    1,
+                                    None,
+                                    Vec::new(),
+                                ) {
+                                    let _ = phase_app
+                                        .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                                }
+                            })),
+                        )
+                        .await
+                })
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();
@@ -392,21 +368,26 @@ fn spawn_uninstall_worker(
             let result = if cancellation.is_cancelled() {
                 Err(AppError::Cancelled("Agent uninstall cancelled".to_string()))
             } else {
-                AppService::from_runtime(&runtime).uninstall_agent_with_cancellation_and_progress(
-                    params,
-                    Some(cancellation_flag.clone()),
-                    Some(Arc::new(move |phase| {
-                        if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
-                            &phase_task_id,
-                            phase,
-                            1,
-                            None,
-                            Vec::new(),
-                        ) {
-                            let _ = phase_app.emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
-                        }
-                    })),
-                )
+                tauri::async_runtime::block_on(async {
+                    AppService::from_runtime(&runtime)
+                        .uninstall_agent_with_cancellation_and_progress(
+                            params,
+                            Some(cancellation_flag.clone()),
+                            Some(Arc::new(move |phase| {
+                                if let Ok(snapshot) = phase_tasks.update_agent_lifecycle(
+                                    &phase_task_id,
+                                    phase,
+                                    1,
+                                    None,
+                                    Vec::new(),
+                                ) {
+                                    let _ = phase_app
+                                        .emit(AGENT_LIFECYCLE_TASK_UPDATED_EVENT, &snapshot);
+                                }
+                            })),
+                        )
+                        .await
+                })
             };
             bridge_stop.store(true, std::sync::atomic::Ordering::SeqCst);
             let _ = bridge.join();
@@ -468,9 +449,7 @@ fn start_cancellation_bridge(
 
 fn market_error_from_app(error: &AppError) -> AgentMarketError {
     let view = error.view();
-    let mut market_error = AgentMarketError::new(&view.code, &view.message, view.retryable);
-    market_error.details = view.details;
-    market_error
+    AgentMarketError::new(&view.code, &view.message, view.retryable).with_details(view.details)
 }
 
 #[cfg(test)]
@@ -494,5 +473,132 @@ mod tests {
         assert!(!view.retryable);
         assert_eq!(view.details.as_ref().unwrap()["stdout"], true);
         assert_eq!(view.details.as_ref().unwrap()["stderr"], false);
+    }
+
+    #[tokio::test]
+    async fn agent_market_error_parity_asserts_all_five_scenarios() {
+        use crate::adapters::engine::transport::EngineError;
+        use std::error::Error;
+
+        // --- Scenario 1: SQL failure in Agent Market repository ---
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
+        let repo = crate::backend::agent_market::AgentInstallationRepository::new(pool);
+        let repo_err = repo.get("test_agent").await.unwrap_err();
+        let app_err = AppError::from(repo_err);
+        assert_eq!(
+            app_err.code(),
+            "storage_error",
+            "SQL failure must map to storage_error"
+        );
+        assert!(app_err.retryable(), "storage errors must be retryable");
+
+        let mut found_sqlx = false;
+        let mut cur: Option<&(dyn Error + 'static)> = app_err.source();
+        while let Some(e) = cur {
+            if e.is::<sqlx::Error>() {
+                found_sqlx = true;
+                break;
+            }
+            cur = e.source();
+        }
+        assert!(found_sqlx, "AppError source chain must contain sqlx::Error");
+
+        let tauri_view = app_err.view();
+        let engine_err = EngineError::from_app(app_err);
+        assert_eq!(tauri_view.code, "storage_error");
+        assert_eq!(engine_err.code, "storage_error");
+        assert_eq!(tauri_view.retryable, engine_err.retryable);
+        assert_eq!(tauri_view.message, engine_err.message);
+        assert!(!tauri_view.message.to_ascii_lowercase().contains("select"));
+
+        // --- Scenario 2: Illegal / invalid catalog ---
+        let catalog_err = AgentMarketError::CatalogValidation {
+            message: "Catalog version 99.0.0 unsupported".to_string(),
+            agent_id: Some("agent_invalid".to_string()),
+            field: Some("catalogVersion".to_string()),
+            details: None,
+        };
+        let app_err = AppError::from(catalog_err);
+        assert_eq!(app_err.code(), "catalog_validation_failed");
+        assert!(!app_err.retryable());
+        let tauri_view = app_err.view();
+        let engine_err = EngineError::from_app(app_err);
+        assert_eq!(tauri_view.code, engine_err.code);
+        assert_eq!(tauri_view.message, engine_err.message);
+        assert_eq!(tauri_view.retryable, engine_err.retryable);
+        assert_eq!(tauri_view.details, engine_err.details);
+        assert_eq!(
+            tauri_view.details.as_ref().unwrap()["agentId"],
+            "agent_invalid"
+        );
+        assert_eq!(
+            tauri_view.details.as_ref().unwrap()["field"],
+            "catalogVersion"
+        );
+
+        // --- Scenario 3: Missing installation ---
+        let missing_err = AgentMarketError::InstallationNotFound {
+            agent_id: "missing_agent_404".to_string(),
+        };
+        let app_err = AppError::from(missing_err);
+        assert_eq!(app_err.code(), "agent_not_installed");
+        assert!(!app_err.retryable());
+        let tauri_view = app_err.view();
+        let engine_err = EngineError::from_app(app_err);
+        assert_eq!(tauri_view.code, engine_err.code);
+        assert_eq!(tauri_view.message, engine_err.message);
+        assert_eq!(tauri_view.retryable, engine_err.retryable);
+        assert_eq!(tauri_view.details, engine_err.details);
+        assert_eq!(
+            tauri_view.details.as_ref().unwrap()["agentId"],
+            "missing_agent_404"
+        );
+
+        // --- Scenario 4: Artifact / distribution mismatch ---
+        let dist_err = AgentMarketError::Distribution {
+            code: "distribution_artifact_mismatch".to_string(),
+            message: "Checksum mismatch for distribution artifact".to_string(),
+            agent_id: Some("agent_hash_fail".to_string()),
+            distribution_id: Some("dist_darwin_arm64".to_string()),
+            details: None,
+        };
+        let app_err = AppError::from(dist_err);
+        assert_eq!(app_err.code(), "distribution_artifact_mismatch");
+        assert!(!app_err.retryable());
+        let tauri_view = app_err.view();
+        let engine_err = EngineError::from_app(app_err);
+        assert_eq!(tauri_view.code, engine_err.code);
+        assert_eq!(tauri_view.message, engine_err.message);
+        assert_eq!(tauri_view.retryable, engine_err.retryable);
+        assert_eq!(tauri_view.details, engine_err.details);
+        assert_eq!(
+            tauri_view.details.as_ref().unwrap()["agentId"],
+            "agent_hash_fail"
+        );
+        assert_eq!(
+            tauri_view.details.as_ref().unwrap()["distributionId"],
+            "dist_darwin_arm64"
+        );
+
+        // --- Scenario 5: Process timeout ---
+        let proc_timeout_err =
+            AgentMarketError::Process(crate::backend::host_process::HostProcessError::Timeout {
+                stdout: vec![],
+                stderr: vec![],
+                stdout_truncated: false,
+                stderr_truncated: false,
+            });
+        let app_err = AppError::from(proc_timeout_err);
+        assert_eq!(app_err.code(), "timeout");
+        assert!(app_err.retryable());
+        let tauri_view = app_err.view();
+        let engine_err = EngineError::from_app(app_err);
+        assert_eq!(tauri_view.code, engine_err.code);
+        assert_eq!(tauri_view.message, engine_err.message);
+        assert_eq!(tauri_view.retryable, engine_err.retryable);
     }
 }

@@ -1,17 +1,56 @@
 /* @vitest-environment jsdom */
 
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { AppSettingsProvider } from "../../store/settings/AppSettingsProvider";
-import { defaultSettings, defaultStorageInfo, type AppSettings } from "../../store/settings/settingsSchema";
+import {
+  defaultSettings,
+  defaultStorageInfo,
+  type AppSettings,
+} from "../../store/settings/settingsSchema";
 import { parseTags, PromptOverviewPage } from "./PromptOverviewPage";
 
-const selectTargetDirectoryMock = vi.hoisted(() => vi.fn(async () => "/picked/project"));
-const copyPromptImagesToClipboardMock = vi.hoisted(() => vi.fn(async () => undefined));
-const copyPromptTextToClipboardMock = vi.hoisted(() => vi.fn(async () => undefined));
-const appSettingsState = vi.hoisted(() => ({ settings: null as unknown }));
+vi.mock("../../store/settings/useAppSettings", () => ({
+  useAppSettings: () => ({
+    resetSettings: vi.fn(),
+    retrySave: vi.fn(),
+    setColumnLayout: vi.fn(),
+    setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
+    settings: appSettingsState.settings,
+    settingsError: null,
+    settingsLoaded: true,
+    storageInfo: defaultStorageInfo,
+    updateSetting: vi.fn((key: keyof AppSettings, val: unknown) => {
+      appSettingsState.settings = {
+        ...(appSettingsState.settings as AppSettings),
+        [key]: val,
+      };
+    }),
+  }),
+}));
+
+const selectTargetDirectoryMock = vi.hoisted(() =>
+  vi.fn(async () => "/picked/project"),
+);
+const copyPromptImagesToClipboardMock = vi.hoisted(() =>
+  vi.fn(async () => undefined),
+);
+const copyPromptTextToClipboardMock = vi.hoisted(() =>
+  vi.fn(async () => undefined),
+);
+const appSettingsState = vi.hoisted(() => ({
+  settings: null as unknown as AppSettings,
+}));
+
 const getAppSettingsMock = vi.hoisted(() => vi.fn());
 const saveAppSettingsMock = vi.hoisted(() => vi.fn());
 
@@ -22,12 +61,14 @@ vi.mock("../../services/appSettings", () => ({
     conversation_adapter_dir: defaultStorageInfo.conversationAdapterDir,
     settings: appSettingsState.settings,
   })),
-  saveAppSettings: saveAppSettingsMock.mockImplementation(async (settings: AppSettings) => ({
-    config_dir: defaultStorageInfo.configDir,
-    config_path: defaultStorageInfo.configPath,
-    conversation_adapter_dir: defaultStorageInfo.conversationAdapterDir,
-    settings,
-  })),
+  saveAppSettings: saveAppSettingsMock.mockImplementation(
+    async (settings: AppSettings) => ({
+      config_dir: defaultStorageInfo.configDir,
+      config_path: defaultStorageInfo.configPath,
+      conversation_adapter_dir: defaultStorageInfo.conversationAdapterDir,
+      settings,
+    }),
+  ),
 }));
 
 vi.mock("../../services/catalog", () => ({
@@ -63,14 +104,23 @@ describe("PromptOverviewPage", () => {
   it("creates prompt cards and persists them locally", () => {
     renderPromptPage();
 
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "Draft a feature spec for prompt cards." },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "Draft a feature spec for prompt cards." },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    expect(screen.getByText("Draft a feature spec for prompt cards.")).toBeTruthy();
+    expect(
+      screen.getByText("Draft a feature spec for prompt cards."),
+    ).toBeTruthy();
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
       content: "Draft a feature spec for prompt cards.",
@@ -84,14 +134,26 @@ describe("PromptOverviewPage", () => {
 
   it("restores an unsaved new prompt card draft after the page remounts", () => {
     seedPromptCards([
-      createStoredPromptCard("Saved prompt", "already saved prompt", ["work"], "/tmp/a", "session-a", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Saved prompt",
+        "already saved prompt",
+        ["work"],
+        "/tmp/a",
+        "session-a",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     const view = renderPromptPage();
 
     fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "half-written prompt draft" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "half-written prompt draft" },
+      },
+    );
     view.unmount();
 
     renderPromptPage();
@@ -99,7 +161,9 @@ describe("PromptOverviewPage", () => {
     expect(screen.getByDisplayValue("half-written prompt draft")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       content: "half-written prompt draft",
     });
@@ -109,7 +173,9 @@ describe("PromptOverviewPage", () => {
   it("previews, removes, and persists pasted images on prompt cards", async () => {
     renderPromptPage();
 
-    const composer = screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。");
+    const composer = screen.getByPlaceholderText(
+      "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+    );
     fireEvent.change(composer, {
       target: { value: "Use this screenshot in the prompt." },
     });
@@ -120,7 +186,9 @@ describe("PromptOverviewPage", () => {
     });
 
     expect(await screen.findByAltText("screenshot.png")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "移除图片 screenshot.png" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "移除图片 screenshot.png" }),
+    );
     await waitFor(() => {
       expect(screen.queryByAltText("screenshot.png")).toBeNull();
     });
@@ -133,17 +201,24 @@ describe("PromptOverviewPage", () => {
     expect(await screen.findByAltText("screenshot.png")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0].attachments).toHaveLength(1);
     expect(stored[0].attachments[0]).toMatchObject({
       mimeType: "image/png",
       name: "screenshot.png",
     });
-    expect(stored[0].attachments[0].dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(stored[0].attachments[0].dataUrl).toMatch(
+      /^data:image\/png;base64,/,
+    );
   });
 
   it("copies prompt cards with images through a two-step clipboard flow", async () => {
-    const attachment = createStoredPromptImageAttachment("diagram.png", "data:image/png;base64,ZGlhZ3JhbQ==");
+    const attachment = createStoredPromptImageAttachment(
+      "diagram.png",
+      "data:image/png;base64,ZGlhZ3JhbQ==",
+    );
     seedPromptCards([
       createStoredPromptCard(
         "Image prompt",
@@ -169,15 +244,31 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "复制文字" }));
 
     await waitFor(() => {
-      expect(copyPromptTextToClipboardMock).toHaveBeenCalledWith("Use this diagram.");
+      expect(copyPromptTextToClipboardMock).toHaveBeenCalledWith(
+        "Use this diagram.",
+      );
     });
     expect(copyPromptImagesToClipboardMock).toHaveBeenCalledTimes(1);
   });
 
   it("counts copies for the active prompt card", async () => {
     seedPromptCards([
-      createStoredPromptCard("Low use", "first prompt", ["work"], "/tmp/a", "session-a", "2026-01-01T00:00:00.000Z"),
-      createStoredPromptCard("High use", "second prompt", ["ops"], "/tmp/b", "session-b", "2026-01-02T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Low use",
+        "first prompt",
+        ["work"],
+        "/tmp/a",
+        "session-a",
+        "2026-01-01T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "High use",
+        "second prompt",
+        ["ops"],
+        "/tmp/b",
+        "session-b",
+        "2026-01-02T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
@@ -186,14 +277,20 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(copyButton);
 
     await waitFor(() => {
-      expect(screen.getByTestId("prompt-active-card").textContent).toContain("second prompt");
+      expect(screen.getByTestId("prompt-active-card").textContent).toContain(
+        "second prompt",
+      );
     });
     expect(screen.queryByTestId("prompt-card-list")).toBeNull();
     expect(screen.getAllByText("复制 2 次").length).toBeGreaterThan(0);
 
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
-      expect(stored.find((note: { title: string }) => note.title === "High use")).toMatchObject({
+      const stored = JSON.parse(
+        localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+      );
+      expect(
+        stored.find((note: { title: string }) => note.title === "High use"),
+      ).toMatchObject({
         copyCount: 2,
       });
     });
@@ -203,14 +300,31 @@ describe("PromptOverviewPage", () => {
     vi.useFakeTimers();
     try {
       seedPromptCards([
-        createStoredPromptCard("Feature prompt", "feature prompt", ["feature"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
-        createStoredPromptCard("Ops prompt", "ops prompt", ["ops"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
+        createStoredPromptCard(
+          "Feature prompt",
+          "feature prompt",
+          ["feature"],
+          "/tmp/project",
+          "s1",
+          "2026-01-01T00:00:00.000Z",
+        ),
+        createStoredPromptCard(
+          "Ops prompt",
+          "ops prompt",
+          ["ops"],
+          "/tmp/project",
+          "s2",
+          "2026-01-02T00:00:00.000Z",
+        ),
       ]);
       renderPromptPage();
 
-      fireEvent.change(screen.getByPlaceholderText("搜索正文、标签或翻译结果..."), {
-        target: { value: "feature" },
-      });
+      fireEvent.change(
+        screen.getByPlaceholderText("搜索正文、标签或翻译结果..."),
+        {
+          target: { value: "feature" },
+        },
+      );
 
       expect(screen.getAllByText("ops prompt").length).toBeGreaterThan(0);
 
@@ -227,7 +341,14 @@ describe("PromptOverviewPage", () => {
 
   it("shows the default tag group instead of untitled and no-project fallbacks in card headers", () => {
     seedPromptCards([
-      createStoredPromptCard("未命名提示词", "default grouped prompt", [], "", "", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "未命名提示词",
+        "default grouped prompt",
+        [],
+        "",
+        "",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
@@ -239,38 +360,83 @@ describe("PromptOverviewPage", () => {
 
   it("filters prompt cards from the toolbar tag group control", async () => {
     seedPromptCards([
-      createStoredPromptCard("Default prompt", "default grouped prompt", [], "", "s1", "2026-01-01T00:00:00.000Z"),
-      createStoredPromptCard("Ops prompt", "ops grouped prompt", ["ops"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Default prompt",
+        "default grouped prompt",
+        [],
+        "",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "Ops prompt",
+        "ops grouped prompt",
+        ["ops"],
+        "/tmp/project",
+        "s2",
+        "2026-01-02T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "标签筛选" }));
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "默认" }));
+    fireEvent.click(
+      await screen.findByRole("menuitemcheckbox", { name: "默认" }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("prompt-active-card").textContent).toContain("default grouped prompt");
+      expect(screen.getByTestId("prompt-active-card").textContent).toContain(
+        "default grouped prompt",
+      );
       expect(screen.queryAllByText("ops grouped prompt")).toHaveLength(0);
     });
   });
 
   it("applies the active tag when creating a prompt card from a tag filter", async () => {
     seedPromptCards([
-      createStoredPromptCard("Ops prompt", "ops grouped prompt", ["ops"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
-      createStoredPromptCard("Design prompt", "design grouped prompt", ["design"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Ops prompt",
+        "ops grouped prompt",
+        ["ops"],
+        "/tmp/project",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "Design prompt",
+        "design grouped prompt",
+        ["design"],
+        "/tmp/project",
+        "s2",
+        "2026-01-02T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "标签筛选" }));
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "ops" }));
-    fireEvent.keyDown(screen.getByRole("menu", { name: "标签筛选" }), { key: "Escape" });
-    fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
-    expect(screen.getByTestId("prompt-active-card").textContent).toContain("ops");
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "new ops prompt" },
+    fireEvent.click(
+      await screen.findByRole("menuitemcheckbox", { name: "ops" }),
+    );
+    fireEvent.keyDown(screen.getByRole("menu", { name: "标签筛选" }), {
+      key: "Escape",
     });
+    fireEvent.click(screen.getByRole("button", { name: "新建卡片" }));
+    expect(screen.getByTestId("prompt-active-card").textContent).toContain(
+      "ops",
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "new ops prompt" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       content: "new ops prompt",
       tags: ["ops"],
@@ -279,13 +445,29 @@ describe("PromptOverviewPage", () => {
 
   it("shows random color swatches for toolbar tag group options", async () => {
     seedPromptCards([
-      createStoredPromptCard("Ops prompt", "ops grouped prompt", ["ops"], "/tmp/project", "s1", "2026-01-01T00:00:00.000Z"),
-      createStoredPromptCard("Design prompt", "design grouped prompt", ["design"], "/tmp/project", "s2", "2026-01-02T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Ops prompt",
+        "ops grouped prompt",
+        ["ops"],
+        "/tmp/project",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "Design prompt",
+        "design grouped prompt",
+        ["design"],
+        "/tmp/project",
+        "s2",
+        "2026-01-02T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.pointerDown(screen.getByRole("button", { name: "标签筛选" }));
-    const opsOption = await screen.findByRole("menuitemcheckbox", { name: "ops" });
+    const opsOption = await screen.findByRole("menuitemcheckbox", {
+      name: "ops",
+    });
     const swatch = opsOption.querySelector("[data-toolbar-option-swatch]");
 
     expect(swatch).not.toBeNull();
@@ -294,15 +476,25 @@ describe("PromptOverviewPage", () => {
 
   it("edits prompt card metadata from the top-right info action", () => {
     seedPromptCards([
-      createStoredPromptCard("Original prompt", "keep this body", ["draft"], "/tmp/old", "s1", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Original prompt",
+        "keep this body",
+        ["draft"],
+        "/tmp/old",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
     expect(screen.queryByPlaceholderText("标题，可留空")).toBeNull();
-    fireEvent.change(screen.getByPlaceholderText("项目目录路径，例如 ~/project"), {
-      target: { value: "/tmp/new" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText("项目目录路径，例如 ~/project"),
+      {
+        target: { value: "/tmp/new" },
+      },
+    );
     const tagInput = screen.getByPlaceholderText("输入标签（还能添加 9 个）");
     fireEvent.change(tagInput, { target: { value: "ready" } });
     fireEvent.click(screen.getByRole("button", { name: "添加" }));
@@ -311,7 +503,9 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
     expect(screen.getByText("keep this body")).toBeTruthy();
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       content: "keep this body",
       projectPath: "/tmp/new",
@@ -322,7 +516,14 @@ describe("PromptOverviewPage", () => {
 
   it("picks a project directory from the edit card dialog", async () => {
     seedPromptCards([
-      createStoredPromptCard("Project prompt", "keep project body", ["draft"], "/tmp/old", "s1", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Project prompt",
+        "keep project body",
+        ["draft"],
+        "/tmp/old",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
@@ -335,7 +536,9 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
     expect(selectTargetDirectoryMock).toHaveBeenCalledWith("选择项目目录");
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       projectPath: "/picked/project",
     });
@@ -343,8 +546,22 @@ describe("PromptOverviewPage", () => {
 
   it("separates the created tag library from current card tags in the edit card dialog", () => {
     seedPromptCards([
-      createStoredPromptCard("Library prompt", "library prompt body", ["library-only", "shared"], "/tmp/old", "s0", "2026-01-01T00:00:00.000Z"),
-      createStoredPromptCard("Current prompt", "keep current body", ["current"], "/tmp/old", "s1", "2026-01-02T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Library prompt",
+        "library prompt body",
+        ["library-only", "shared"],
+        "/tmp/old",
+        "s0",
+        "2026-01-01T00:00:00.000Z",
+      ),
+      createStoredPromptCard(
+        "Current prompt",
+        "keep current body",
+        ["current"],
+        "/tmp/old",
+        "s1",
+        "2026-01-02T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
@@ -357,36 +574,55 @@ describe("PromptOverviewPage", () => {
     expect(within(currentTags).getByText("current")).toBeTruthy();
     expect(within(currentTags).queryByText("library-only")).toBeNull();
 
-    fireEvent.click(within(tagLibrary).getByRole("button", { name: "绑定标签 library-only" }));
+    fireEvent.click(
+      within(tagLibrary).getByRole("button", { name: "绑定标签 library-only" }),
+    );
     expect(within(currentTags).getByText("library-only")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
-    expect(stored.find((note: { title: string }) => note.title === "Current prompt")).toMatchObject({
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
+    expect(
+      stored.find((note: { title: string }) => note.title === "Current prompt"),
+    ).toMatchObject({
       tags: ["current", "library-only"],
     });
   });
 
   it("shows editable colored chips for current tags in the edit card dialog", () => {
     seedPromptCards([
-      createStoredPromptCard("Tagged prompt", "keep tagged body", ["draft", "ready"], "/tmp/old", "s1", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Tagged prompt",
+        "keep tagged body",
+        ["draft", "ready"],
+        "/tmp/old",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
 
-    expect(screen.getByText("最多 10 个标签，单个标签长度不超过 20 个字符。")).toBeTruthy();
+    expect(
+      screen.getByText("最多 10 个标签，单个标签长度不超过 20 个字符。"),
+    ).toBeTruthy();
     expect(screen.queryByText("暂无标签")).toBeNull();
     expect(screen.getByText("当前卡片标签")).toBeTruthy();
     const draftChip = screen.getByTestId("prompt-edit-tag-chip-draft");
     expect(draftChip.textContent).toContain("draft");
     expect(draftChip.className).toContain("bg-");
-    expect(screen.getByPlaceholderText("输入标签（还能添加 8 个）")).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText("输入标签（还能添加 8 个）"),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "移除标签 draft" }));
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       tags: ["ready"],
     });
@@ -394,26 +630,41 @@ describe("PromptOverviewPage", () => {
 
   it("adds tags from the edit card tag input and enforces tag limits", () => {
     seedPromptCards([
-      createStoredPromptCard("Untagged prompt", "keep untagged body", [], "/tmp/old", "s1", "2026-01-01T00:00:00.000Z"),
+      createStoredPromptCard(
+        "Untagged prompt",
+        "keep untagged body",
+        [],
+        "/tmp/old",
+        "s1",
+        "2026-01-01T00:00:00.000Z",
+      ),
     ]);
     renderPromptPage();
 
     fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
 
-    const addButton = screen.getByRole("button", { name: "添加" }) as HTMLButtonElement;
-    const tagInput = screen.getByPlaceholderText("输入标签（还能添加 10 个）") as HTMLInputElement;
+    const addButton = screen.getByRole("button", {
+      name: "添加",
+    }) as HTMLButtonElement;
+    const tagInput = screen.getByPlaceholderText(
+      "输入标签（还能添加 10 个）",
+    ) as HTMLInputElement;
     expect(addButton.disabled).toBe(true);
 
     fireEvent.change(tagInput, { target: { value: "公益站" } });
     expect(addButton.disabled).toBe(false);
     fireEvent.click(addButton);
 
-    fireEvent.change(tagInput, { target: { value: "abcdefghijklmnopqrstuvwxyz" } });
+    fireEvent.change(tagInput, {
+      target: { value: "abcdefghijklmnopqrstuvwxyz" },
+    });
     expect(tagInput.value).toHaveLength(20);
     fireEvent.click(addButton);
     fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
 
-    const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+    const stored = JSON.parse(
+      localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+    );
     expect(stored[0]).toMatchObject({
       tags: ["公益站", "abcdefghijklmnopqrst"],
     });
@@ -434,25 +685,38 @@ describe("PromptOverviewPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
 
-    const addButton = screen.getByRole("button", { name: "添加" }) as HTMLButtonElement;
-    const tagInput = screen.getByPlaceholderText("输入标签（还能添加 0 个）") as HTMLInputElement;
+    const addButton = screen.getByRole("button", {
+      name: "添加",
+    }) as HTMLButtonElement;
+    const tagInput = screen.getByPlaceholderText(
+      "输入标签（还能添加 0 个）",
+    ) as HTMLInputElement;
     expect(tagInput.disabled).toBe(true);
     expect(addButton.disabled).toBe(true);
   });
 
   it("translates and optimizes a prompt through the injected CLI translator", async () => {
-    const translator = vi.fn(async () => ({ translated_text: "为提示词卡片编写功能规格。" }));
+    const translator = vi.fn(async () => ({
+      translated_text: "为提示词卡片编写功能规格。",
+    }));
     const optimizer = vi.fn(async () => ({
       optimized_text: "Write a concise implementation plan for prompt cards.",
     }));
 
     renderPromptPage({ optimizer, translator });
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "make prompt card feature" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "make prompt card feature" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    const translateButton = screen.getByRole("button", { name: "翻译到 简体中文" }) as HTMLButtonElement;
+    const translateButton = screen.getByRole("button", {
+      name: "翻译到 简体中文",
+    }) as HTMLButtonElement;
     await waitFor(() => {
       expect(translateButton.disabled).toBe(false);
     });
@@ -463,10 +727,16 @@ describe("PromptOverviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "优化" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Write a concise implementation plan for prompt cards.")).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Write a concise implementation plan for prompt cards.",
+        ),
+      ).toBeTruthy();
     });
     await waitFor(() => {
-      const stored = JSON.parse(localStorage.getItem("assetiweave.promptNotes") ?? "[]");
+      const stored = JSON.parse(
+        localStorage.getItem("assetiweave.promptNotes") ?? "[]",
+      );
       expect(stored[0]).toMatchObject({
         content: "make prompt card feature",
         optimizedText: "Write a concise implementation plan for prompt cards.",
@@ -477,50 +747,77 @@ describe("PromptOverviewPage", () => {
   });
 
   it("uses the configured prompt optimization system prompt", async () => {
-    const customPrompt = "Turn this into a concrete engineering plan.\n\n{content}";
+    const customPrompt =
+      "Turn this into a concrete engineering plan.\n\n{content}";
     appSettingsState.settings = {
       ...defaultSettings,
       promptOptimization: { promptTemplate: customPrompt },
     };
-    const optimizer = vi.fn(async () => ({ optimized_text: "Optimized implementation plan." }));
+    const optimizer = vi.fn(async () => ({
+      optimized_text: "Optimized implementation plan.",
+    }));
 
     renderPromptPage({ optimizer });
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "add prompt optimization settings" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "add prompt optimization settings" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
 
-    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    const optimizeButton = screen.getByRole("button", {
+      name: "优化",
+    }) as HTMLButtonElement;
     await waitFor(() => {
       expect(optimizeButton.disabled).toBe(false);
     });
     fireEvent.click(optimizeButton);
 
     await waitFor(() => {
-      expect(optimizer).toHaveBeenCalledWith(expect.objectContaining({
-        promptTemplate: customPrompt,
-      }));
+      expect(optimizer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          promptTemplate: customPrompt,
+        }),
+      );
     });
   });
 
   it("routes prompt optimization through its dedicated executor instead of translation", async () => {
-    const translator = vi.fn(async () => ({ translated_text: "wrong translation route" }));
-    const optimizer = vi.fn(async () => ({ optimized_text: "明确输出验收标准的实现提示词" }));
+    const translator = vi.fn(async () => ({
+      translated_text: "wrong translation route",
+    }));
+    const optimizer = vi.fn(async () => ({
+      optimized_text: "明确输出验收标准的实现提示词",
+    }));
 
     renderPromptPage({ optimizer, translator });
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "完善实现要求" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "完善实现要求" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
-    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    const optimizeButton = screen.getByRole("button", {
+      name: "优化",
+    }) as HTMLButtonElement;
     await waitFor(() => expect(optimizeButton.disabled).toBe(false));
 
     fireEvent.click(optimizeButton);
 
-    expect(await screen.findByText("明确输出验收标准的实现提示词")).toBeTruthy();
-    expect(optimizer).toHaveBeenCalledWith(expect.objectContaining({
-      text: "完善实现要求",
-    }));
+    expect(
+      await screen.findByText("明确输出验收标准的实现提示词"),
+    ).toBeTruthy();
+    expect(optimizer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "完善实现要求",
+      }),
+    );
     expect(translator).not.toHaveBeenCalled();
   });
 
@@ -531,21 +828,34 @@ describe("PromptOverviewPage", () => {
     });
 
     renderPromptPage({ onNotifyError, optimizer });
-    fireEvent.change(screen.getByPlaceholderText("粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。"), {
-      target: { value: "完善实现要求" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(
+        "粘贴一段 prompt、记录一个 feature 想法，或写下还没整理完的灵感。",
+      ),
+      {
+        target: { value: "完善实现要求" },
+      },
+    );
     fireEvent.click(screen.getByRole("button", { name: "保存卡片" }));
-    const optimizeButton = screen.getByRole("button", { name: "优化" }) as HTMLButtonElement;
+    const optimizeButton = screen.getByRole("button", {
+      name: "优化",
+    }) as HTMLButtonElement;
     await waitFor(() => expect(optimizeButton.disabled).toBe(false));
 
     fireEvent.click(optimizeButton);
 
-    await waitFor(() => expect(onNotifyError).toHaveBeenCalledWith(expect.stringContaining("optimization failed")));
+    await waitFor(() =>
+      expect(onNotifyError).toHaveBeenCalledWith(
+        expect.stringContaining("optimization failed"),
+      ),
+    );
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("flips to an existing optimized prompt without running optimization again", async () => {
-    const translator = vi.fn(async () => ({ translated_text: "should not run" }));
+    const translator = vi.fn(async () => ({
+      translated_text: "should not run",
+    }));
     seedPromptCards([
       createStoredPromptCard(
         "Optimized prompt",
@@ -559,7 +869,9 @@ describe("PromptOverviewPage", () => {
     ]);
     renderPromptPage({ translator });
 
-    const showOptimizedButton = await screen.findByRole("button", { name: "查看优化稿" }) as HTMLButtonElement;
+    const showOptimizedButton = (await screen.findByRole("button", {
+      name: "查看优化稿",
+    })) as HTMLButtonElement;
     await waitFor(() => {
       expect(showOptimizedButton.disabled).toBe(false);
     });
@@ -571,7 +883,11 @@ describe("PromptOverviewPage", () => {
   });
 
   it("deduplicates comma and space separated tags", () => {
-    expect(parseTags(" prompt,feature，prompt  idea ")).toEqual(["prompt", "feature", "idea"]);
+    expect(parseTags(" prompt,feature，prompt  idea ")).toEqual([
+      "prompt",
+      "feature",
+      "idea",
+    ]);
   });
 });
 
@@ -604,7 +920,10 @@ function createStoredPromptCard(
   };
 }
 
-function createStoredPromptImageAttachment(name: string, dataUrl = "data:image/png;base64,c2NyZWVuc2hvdA==") {
+function createStoredPromptImageAttachment(
+  name: string,
+  dataUrl = "data:image/png;base64,c2NyZWVuc2hvdA==",
+) {
   return {
     createdAt: "2026-01-01T00:00:00.000Z",
     dataUrl,
@@ -647,7 +966,11 @@ function renderPromptPage({
   translator?: ComponentProps<typeof PromptOverviewPage>["translator"];
 } = {}) {
   const pageProps = {
-    availabilityChecker: async () => ({ available: true, error: null, version: "test" }),
+    availabilityChecker: async () => ({
+      available: true,
+      error: null,
+      version: "test",
+    }),
     onManualOpen: vi.fn(),
     onNotifyError,
     optimizer,
@@ -655,9 +978,7 @@ function renderPromptPage({
   } as unknown as ComponentProps<typeof PromptOverviewPage>;
   return render(
     <I18nProvider>
-      <AppSettingsProvider>
-        <PromptOverviewPage {...pageProps} />
-      </AppSettingsProvider>
+      <PromptOverviewPage {...pageProps} />
     </I18nProvider>,
   );
 }

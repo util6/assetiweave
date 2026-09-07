@@ -1,5 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTenant, getActiveTenant, listTenants, switchTenant } from "./tenants";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createTenant,
+  getActiveTenant,
+  listTenants,
+  switchTenant,
+} from "./tenants";
 import type { Tenant } from "../types";
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -26,8 +31,32 @@ describe("tenant services", () => {
     }
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects in desktop environment when invoke fails", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const wireError = {
+      code: "conflict",
+      message: "The task is already running.",
+      retryable: true,
+      details: { taskId: "fixture-task" },
+    };
+    invokeMock.mockRejectedValue(wireError);
+
+    await expect(listTenants()).rejects.toMatchObject(wireError);
+    await expect(getActiveTenant()).rejects.toMatchObject(wireError);
+    await expect(createTenant({ name: "Client A" })).rejects.toMatchObject(
+      wireError,
+    );
+    await expect(switchTenant("client-a")).rejects.toMatchObject(wireError);
+  });
+
   it("reads the tenant list and active tenant from Tauri", async () => {
-    invokeMock.mockImplementation(async (command: string) => (command === "list_tenants" ? [tenant] : tenant));
+    invokeMock.mockImplementation(async (command: string) =>
+      command === "list_tenants" ? [tenant] : tenant,
+    );
 
     await expect(listTenants()).resolves.toEqual([tenant]);
     await expect(getActiveTenant()).resolves.toEqual(tenant);
@@ -39,7 +68,9 @@ describe("tenant services", () => {
   it("creates a tenant through the typed params payload", async () => {
     invokeMock.mockResolvedValue(tenant);
 
-    await expect(createTenant({ name: " Client A ", slug: " client-a " })).resolves.toEqual(tenant);
+    await expect(
+      createTenant({ name: " Client A ", slug: " client-a " }),
+    ).resolves.toEqual(tenant);
 
     expect(invokeMock).toHaveBeenCalledWith("create_tenant", {
       params: {
@@ -55,15 +86,24 @@ describe("tenant services", () => {
 
     await expect(switchTenant(" client-a ")).resolves.toEqual(tenant);
 
-    expect(invokeMock).toHaveBeenCalledWith("switch_tenant", { tenantId: "client-a" });
+    expect(invokeMock).toHaveBeenCalledWith("switch_tenant", {
+      tenantId: "client-a",
+    });
   });
 
   it("keeps browser previews usable without the Tauri runtime", async () => {
     invokeMock.mockRejectedValue(new Error("preview"));
 
-    await expect(listTenants()).resolves.toMatchObject([{ id: "default", name: "Default Workspace" }]);
-    await expect(getActiveTenant()).resolves.toMatchObject({ id: "default", name: "Default Workspace" });
-    await expect(createTenant({ name: "Client Preview", set_active: true })).resolves.toMatchObject({
+    await expect(listTenants()).resolves.toMatchObject([
+      { id: "default", name: "Default Workspace" },
+    ]);
+    await expect(getActiveTenant()).resolves.toMatchObject({
+      id: "default",
+      name: "Default Workspace",
+    });
+    await expect(
+      createTenant({ name: "Client Preview", set_active: true }),
+    ).resolves.toMatchObject({
       id: "client-preview",
       name: "Client Preview",
     });
@@ -74,7 +114,9 @@ describe("tenant services", () => {
   });
 
   it("rejects empty create and switch inputs before invoking Tauri", async () => {
-    await expect(createTenant({ name: " " })).rejects.toThrow("Tenant name is required");
+    await expect(createTenant({ name: " " })).rejects.toThrow(
+      "Tenant name is required",
+    );
     await expect(switchTenant(" ")).rejects.toThrow("Tenant id is required");
 
     expect(invokeMock).not.toHaveBeenCalled();

@@ -1,11 +1,11 @@
 use crate::backend::models::{
     RecentMemoryEvent, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
-    SessionMemoryJobStatus, SessionMemorySourceReference, SessionMemoryStatus,
+    SessionMemoryJobStatus, SessionMemoryStatus,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{FromRow, QueryBuilder, Sqlite, SqlitePool, Transaction};
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 
@@ -152,7 +152,7 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     .map_err(AppError::Db)?
     .flatten()
     .unwrap_or(0);
-    let sources = sqlx::query(
+    let sources = sqlx::query_as::<_, SessionMemorySourceCandidateRow>(
         "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1)) ORDER BY id ASC",
     )
     .bind(tenant_id)
@@ -162,7 +162,7 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     .map_err(AppError::Db)?;
     let mut inserted = 0usize;
     for row in sources {
-        let candidate = candidate_from_row(&row)?;
+        let candidate: SessionMemorySourceCandidate = row.into();
         if policy.excluded_session_ids.contains(&candidate.id)
             || policy.excluded_source_ids.contains(&candidate.source_id)
         {
@@ -252,23 +252,19 @@ async fn load_session_candidates_sqlx(
         }
     }
     query.push(") ORDER BY id ASC");
-    let rows = query.build().fetch_all(pool).await.map_err(AppError::Db)?;
-    rows.iter()
+    let rows = query
+        .build_query_as::<SessionMemorySourceCandidateRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::Db)?;
+    Ok(rows
+        .into_iter()
         .map(|row| {
-            let mut candidate = candidate_from_row(row)?;
+            let mut candidate: SessionMemorySourceCandidate = row.into();
             candidate.source_id = source_id.to_string();
-            Ok(candidate)
+            candidate
         })
-        .collect()
-}
-
-fn candidate_from_row(row: &sqlx::sqlite::SqliteRow) -> AppResult<SessionMemorySourceCandidate> {
-    Ok(SessionMemorySourceCandidate {
-        id: row.try_get(0).map_err(AppError::external)?,
-        source_id: row.try_get(1).map_err(AppError::external)?,
-        source_fingerprint: row.try_get(2).map_err(AppError::external)?,
-        updated_at: row.try_get(3).map_err(AppError::external)?,
-    })
+        .collect())
 }
 
 fn candidate_with_not_before(
@@ -401,7 +397,7 @@ pub(crate) async fn load_session_memory_job_sqlx(
     tenant_id: &str,
     job_id: &str,
 ) -> AppResult<Option<SessionMemoryJob>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, SessionMemoryJobRow>(
         "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, source_event_id, source_sync_run_id, status, not_before, attempt_count, last_error, started_at, finished_at, created_at, updated_at, ownership_token, lease_expires_at, heartbeat_at, retry_count, retry_at, watermark FROM session_memory_jobs WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -409,7 +405,7 @@ pub(crate) async fn load_session_memory_job_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    row.as_ref().map(map_job).transpose()
+    row.map(|r| r.try_into_job()).transpose()
 }
 
 pub(crate) async fn claim_session_memory_job_with_lease_sqlx(
@@ -565,6 +561,7 @@ pub(crate) async fn retry_session_memory_job_sqlx(
     Ok(result.rows_affected() == 1)
 }
 
+#[cfg(test)]
 pub(crate) async fn list_due_session_memory_job_ids_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -771,7 +768,7 @@ pub(crate) async fn load_session_memory_sqlx(
     tenant_id: &str,
     memory_id: &str,
 ) -> AppResult<Option<SessionMemory>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, SessionMemoryRow>(
         "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, status, project_path, summary, goal, result, decisions_json, verification_json, blockers_json, follow_up_json, topics_json, generated_at, created_at, updated_at FROM session_memories WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -779,8 +776,7 @@ pub(crate) async fn load_session_memory_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    let Some(row) = row else { return Ok(None) };
-    Ok(Some(map_memory(&row)?))
+    row.map(|r| r.try_into_memory()).transpose()
 }
 
 pub(crate) async fn list_session_memories_for_project_sqlx(
@@ -788,7 +784,7 @@ pub(crate) async fn list_session_memories_for_project_sqlx(
     tenant_id: &str,
     project_path: &str,
 ) -> AppResult<Vec<SessionMemory>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, SessionMemoryRow>(
         "SELECT m.tenant_id, m.id, m.session_id, m.source_id, m.source_revision, m.source_fingerprint, m.contract_version, m.prompt_version, m.status, m.project_path, m.summary, m.goal, m.result, m.decisions_json, m.verification_json, m.blockers_json, m.follow_up_json, m.topics_json, m.generated_at, m.created_at, m.updated_at FROM session_memories m WHERE m.tenant_id = ?1 AND m.project_path = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source WHERE source.tenant_id = c.tenant_id AND source.id = c.source_id AND source.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))) ORDER BY m.id ASC",
     )
     .bind(tenant_id)
@@ -796,7 +792,7 @@ pub(crate) async fn list_session_memories_for_project_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::Db)?;
-    rows.iter().map(map_memory).collect()
+    rows.into_iter().map(|r| r.try_into_memory()).collect()
 }
 
 pub(crate) async fn load_session_memory_for_job_sqlx(
@@ -814,44 +810,12 @@ pub(crate) async fn load_session_memory_for_job_sqlx(
     load_session_memory_sqlx(pool, tenant_id, &memory_id).await
 }
 
-pub(crate) async fn list_session_memory_source_references_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    memory_id: &str,
-) -> AppResult<Vec<SessionMemorySourceReference>> {
-    let rows = sqlx::query(
-        "SELECT tenant_id, id, memory_id, source_id, session_id, question_id, turn_id, part_id, node_id, node_order, reference_key, source_revision, created_at FROM session_memory_source_references WHERE tenant_id = ?1 AND memory_id = ?2 ORDER BY reference_key ASC",
-    )
-    .bind(tenant_id)
-    .bind(memory_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::Db)?;
-    rows.iter().map(map_reference).collect()
-}
-
-pub(crate) async fn list_recent_memory_events_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    session_id: &str,
-) -> AppResult<Vec<RecentMemoryEvent>> {
-    let rows = sqlx::query(
-        "SELECT e.tenant_id, e.id, e.memory_id, e.session_id, e.category, e.title, e.summary, e.occurred_at, e.source_reference_id, e.fingerprint, e.created_at FROM recent_memory_events e JOIN session_memories m ON m.tenant_id = e.tenant_id AND m.id = e.memory_id WHERE e.tenant_id = ?1 AND e.session_id = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) ORDER BY e.occurred_at DESC, e.id ASC",
-    )
-    .bind(tenant_id)
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::Db)?;
-    rows.iter().map(map_event).collect()
-}
-
 pub(crate) async fn load_recent_memory_event_target_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     event_id: &str,
 ) -> AppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, RecentMemoryEventTargetRow>(
         "SELECT e.session_id, r.question_id, r.turn_id, r.node_id FROM recent_memory_events e JOIN session_memories m ON m.tenant_id = e.tenant_id AND m.id = e.memory_id LEFT JOIN session_memory_source_references r ON r.tenant_id = e.tenant_id AND r.id = e.source_reference_id WHERE e.tenant_id = ?1 AND e.id = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND EXISTS (SELECT 1 FROM conversation_sessions c JOIN conversation_sources source ON source.tenant_id = c.tenant_id AND source.id = c.source_id AND source.enabled = 1 WHERE c.tenant_id = e.tenant_id AND c.id = e.session_id AND c.missing = 0)",
     )
     .bind(tenant_id)
@@ -859,16 +823,7 @@ pub(crate) async fn load_recent_memory_event_target_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    row.map(|row| {
-        Ok(crate::backend::dto::RecentMemoryEventTarget {
-            record_kind: "session".to_string(),
-            session_id: row.try_get(0).map_err(AppError::external)?,
-            question_id: row.try_get(1).map_err(AppError::external)?,
-            turn_id: row.try_get(2).map_err(AppError::external)?,
-            block_id: row.try_get(3).map_err(AppError::external)?,
-        })
-    })
-    .transpose()
+    Ok(row.map(Into::into))
 }
 
 pub(crate) async fn list_recent_memory_events_for_sessions_sqlx(
@@ -897,10 +852,14 @@ pub(crate) async fn list_recent_memory_events_for_sessions_sqlx(
         }
     }
     query.push(") AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) ORDER BY e.session_id ASC, e.occurred_at DESC, e.id ASC");
-    let rows = query.build().fetch_all(pool).await.map_err(AppError::Db)?;
+    let rows = query
+        .build_query_as::<RecentMemoryEventRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::Db)?;
     let mut events_by_session = BTreeMap::new();
-    for row in &rows {
-        let event = map_event(row)?;
+    for row in rows {
+        let event = row.try_into_event()?;
         events_by_session
             .entry(event.session_id.clone())
             .or_insert_with(Vec::new)
@@ -909,6 +868,7 @@ pub(crate) async fn list_recent_memory_events_for_sessions_sqlx(
     Ok(events_by_session)
 }
 
+#[cfg(test)]
 pub(crate) async fn count_session_memory_rows_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -934,101 +894,189 @@ pub(crate) async fn count_session_memory_rows_sqlx(
         .map_err(AppError::Db)
 }
 
-fn map_job(row: &sqlx::sqlite::SqliteRow) -> AppResult<SessionMemoryJob> {
-    Ok(SessionMemoryJob {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        session_id: row.try_get(2).map_err(AppError::external)?,
-        source_id: row.try_get(3).map_err(AppError::external)?,
-        source_revision: row.try_get(4).map_err(AppError::external)?,
-        source_fingerprint: row.try_get(5).map_err(AppError::external)?,
-        contract_version: row.try_get(6).map_err(AppError::external)?,
-        prompt_version: row.try_get(7).map_err(AppError::external)?,
-        source_event_id: row.try_get(8).map_err(AppError::external)?,
-        source_sync_run_id: row.try_get(9).map_err(AppError::external)?,
-        status: parse_job_status(&row.try_get::<String, _>(10).map_err(AppError::external)?)?,
-        not_before: row.try_get(11).map_err(AppError::external)?,
-        attempt_count: row.try_get(12).map_err(AppError::external)?,
-        last_error: row.try_get(13).map_err(AppError::external)?,
-        started_at: row.try_get(14).map_err(AppError::external)?,
-        finished_at: row.try_get(15).map_err(AppError::external)?,
-        created_at: row.try_get(16).map_err(AppError::external)?,
-        updated_at: row.try_get(17).map_err(AppError::external)?,
-        ownership_token: row.try_get(18).map_err(AppError::external)?,
-        lease_expires_at: row.try_get(19).map_err(AppError::external)?,
-        heartbeat_at: row.try_get(20).map_err(AppError::external)?,
-        retry_count: row.try_get(21).map_err(AppError::external)?,
-        retry_at: row.try_get(22).map_err(AppError::external)?,
-        watermark: row.try_get(23).map_err(AppError::external)?,
-    })
+#[derive(Debug, FromRow)]
+struct SessionMemorySourceCandidateRow {
+    id: String,
+    source_id: String,
+    source_fingerprint: Option<String>,
+    updated_at: Option<String>,
 }
 
-fn map_memory(row: &sqlx::sqlite::SqliteRow) -> AppResult<SessionMemory> {
-    Ok(SessionMemory {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        session_id: row.try_get(2).map_err(AppError::external)?,
-        source_id: row.try_get(3).map_err(AppError::external)?,
-        source_revision: row.try_get(4).map_err(AppError::external)?,
-        source_fingerprint: row.try_get(5).map_err(AppError::external)?,
-        contract_version: row.try_get(6).map_err(AppError::external)?,
-        prompt_version: row.try_get(7).map_err(AppError::external)?,
-        status: parse_memory_status(&row.try_get::<String, _>(8).map_err(AppError::external)?)?,
-        project_path: row.try_get(9).map_err(AppError::external)?,
-        summary: row.try_get(10).map_err(AppError::external)?,
-        goal: row.try_get(11).map_err(AppError::external)?,
-        result: row.try_get(12).map_err(AppError::external)?,
-        decisions: decode_string_array(&row.try_get::<String, _>(13).map_err(AppError::external)?)?,
-        verification: decode_string_array(
-            &row.try_get::<String, _>(14).map_err(AppError::external)?,
-        )?,
-        blockers: decode_string_array(&row.try_get::<String, _>(15).map_err(AppError::external)?)?,
-        follow_up: decode_string_array(&row.try_get::<String, _>(16).map_err(AppError::external)?)?,
-        topics: decode_string_array(&row.try_get::<String, _>(17).map_err(AppError::external)?)?,
-        generated_at: row.try_get(18).map_err(AppError::external)?,
-        created_at: row.try_get(19).map_err(AppError::external)?,
-        updated_at: row.try_get(20).map_err(AppError::external)?,
-    })
+impl From<SessionMemorySourceCandidateRow> for SessionMemorySourceCandidate {
+    fn from(row: SessionMemorySourceCandidateRow) -> Self {
+        Self {
+            id: row.id,
+            source_id: row.source_id,
+            source_fingerprint: row.source_fingerprint,
+            updated_at: row.updated_at,
+        }
+    }
 }
 
-fn map_reference(row: &sqlx::sqlite::SqliteRow) -> AppResult<SessionMemorySourceReference> {
-    Ok(SessionMemorySourceReference {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        memory_id: row.try_get(2).map_err(AppError::external)?,
-        source_id: row.try_get(3).map_err(AppError::external)?,
-        session_id: row.try_get(4).map_err(AppError::external)?,
-        question_id: row.try_get(5).map_err(AppError::external)?,
-        turn_id: row.try_get(6).map_err(AppError::external)?,
-        part_id: row.try_get(7).map_err(AppError::external)?,
-        node_id: row.try_get(8).map_err(AppError::external)?,
-        node_order: row
-            .try_get::<Option<i64>, _>(9)
-            .map_err(AppError::external)?
-            .map(|value| value as usize),
-        reference_key: row.try_get(10).map_err(AppError::external)?,
-        source_revision: row.try_get(11).map_err(AppError::external)?,
-        created_at: row.try_get(12).map_err(AppError::external)?,
-    })
+#[derive(Debug, FromRow)]
+struct RecentMemoryEventTargetRow {
+    session_id: String,
+    question_id: Option<String>,
+    turn_id: Option<String>,
+    node_id: Option<String>,
 }
 
-fn map_event(row: &sqlx::sqlite::SqliteRow) -> AppResult<RecentMemoryEvent> {
-    Ok(RecentMemoryEvent {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        memory_id: row.try_get(2).map_err(AppError::external)?,
-        session_id: row.try_get(3).map_err(AppError::external)?,
-        category: RecentMemoryEventCategory::parse(
-            &row.try_get::<String, _>(4).map_err(AppError::external)?,
-        )
-        .ok_or_else(|| AppError::external("invalid Recent Event category"))?,
-        title: row.try_get(5).map_err(AppError::external)?,
-        summary: row.try_get(6).map_err(AppError::external)?,
-        occurred_at: row.try_get(7).map_err(AppError::external)?,
-        source_reference_id: row.try_get(8).map_err(AppError::external)?,
-        fingerprint: row.try_get(9).map_err(AppError::external)?,
-        created_at: row.try_get(10).map_err(AppError::external)?,
-    })
+impl From<RecentMemoryEventTargetRow> for crate::backend::dto::RecentMemoryEventTarget {
+    fn from(row: RecentMemoryEventTargetRow) -> Self {
+        Self {
+            record_kind: "session".to_string(),
+            session_id: row.session_id,
+            question_id: row.question_id,
+            turn_id: row.turn_id,
+            block_id: row.node_id,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SessionMemoryJobRow {
+    tenant_id: String,
+    id: String,
+    session_id: String,
+    source_id: String,
+    source_revision: i64,
+    source_fingerprint: String,
+    contract_version: String,
+    prompt_version: String,
+    source_event_id: String,
+    source_sync_run_id: String,
+    status: String,
+    not_before: String,
+    attempt_count: i64,
+    last_error: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+    ownership_token: Option<String>,
+    lease_expires_at: Option<String>,
+    heartbeat_at: Option<String>,
+    retry_count: i64,
+    retry_at: Option<String>,
+    watermark: Option<i64>,
+}
+
+impl SessionMemoryJobRow {
+    fn try_into_job(self) -> AppResult<SessionMemoryJob> {
+        Ok(SessionMemoryJob {
+            tenant_id: self.tenant_id,
+            id: self.id,
+            session_id: self.session_id,
+            source_id: self.source_id,
+            source_revision: self.source_revision,
+            source_fingerprint: self.source_fingerprint,
+            contract_version: self.contract_version,
+            prompt_version: self.prompt_version,
+            source_event_id: self.source_event_id,
+            source_sync_run_id: self.source_sync_run_id,
+            status: parse_job_status(&self.status)?,
+            not_before: self.not_before,
+            attempt_count: self.attempt_count,
+            last_error: self.last_error,
+            started_at: self.started_at,
+            finished_at: self.finished_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            ownership_token: self.ownership_token,
+            lease_expires_at: self.lease_expires_at,
+            heartbeat_at: self.heartbeat_at,
+            retry_count: self.retry_count,
+            retry_at: self.retry_at,
+            watermark: self.watermark,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct SessionMemoryRow {
+    tenant_id: String,
+    id: String,
+    session_id: String,
+    source_id: String,
+    source_revision: i64,
+    source_fingerprint: String,
+    contract_version: String,
+    prompt_version: String,
+    status: String,
+    project_path: Option<String>,
+    summary: String,
+    goal: String,
+    result: String,
+    decisions_json: String,
+    verification_json: String,
+    blockers_json: String,
+    follow_up_json: String,
+    topics_json: String,
+    generated_at: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl SessionMemoryRow {
+    fn try_into_memory(self) -> AppResult<SessionMemory> {
+        Ok(SessionMemory {
+            tenant_id: self.tenant_id,
+            id: self.id,
+            session_id: self.session_id,
+            source_id: self.source_id,
+            source_revision: self.source_revision,
+            source_fingerprint: self.source_fingerprint,
+            contract_version: self.contract_version,
+            prompt_version: self.prompt_version,
+            status: parse_memory_status(&self.status)?,
+            project_path: self.project_path,
+            summary: self.summary,
+            goal: self.goal,
+            result: self.result,
+            decisions: decode_string_array(&self.decisions_json)?,
+            verification: decode_string_array(&self.verification_json)?,
+            blockers: decode_string_array(&self.blockers_json)?,
+            follow_up: decode_string_array(&self.follow_up_json)?,
+            topics: decode_string_array(&self.topics_json)?,
+            generated_at: self.generated_at,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct RecentMemoryEventRow {
+    tenant_id: String,
+    id: String,
+    memory_id: String,
+    session_id: String,
+    category: String,
+    title: String,
+    summary: String,
+    occurred_at: String,
+    source_reference_id: Option<String>,
+    fingerprint: String,
+    created_at: String,
+}
+
+impl RecentMemoryEventRow {
+    fn try_into_event(self) -> AppResult<RecentMemoryEvent> {
+        Ok(RecentMemoryEvent {
+            tenant_id: self.tenant_id,
+            id: self.id,
+            memory_id: self.memory_id,
+            session_id: self.session_id,
+            category: RecentMemoryEventCategory::parse(&self.category)
+                .ok_or_else(|| AppError::external("invalid Recent Event category"))?,
+            title: self.title,
+            summary: self.summary,
+            occurred_at: self.occurred_at,
+            source_reference_id: self.source_reference_id,
+            fingerprint: self.fingerprint,
+            created_at: self.created_at,
+        })
+    }
 }
 
 fn decode_string_array(value: &str) -> AppResult<Vec<String>> {
@@ -1071,17 +1119,18 @@ mod tests {
         assert_ne!(first, second);
     }
 
-    #[test]
-    fn a_new_source_watermark_invalidates_old_projection_and_is_idempotent() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_source_watermark_invalidates_old_projection_and_is_idempotent() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-invalidation-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
+        let database = crate::backend::store::Database::open_initialized_async(&path)
+            .await
             .expect("open invalidation fixture");
-        database.run_sync(sqlx::query(
+        sqlx::query(
             "INSERT INTO session_memories (tenant_id,id,session_id,source_id,source_revision,source_fingerprint,contract_version,prompt_version,status,project_path,summary,goal,result,decisions_json,verification_json,blockers_json,follow_up_json,topics_json,raw_output_json,generated_at,created_at,updated_at) VALUES ('default','memory-old','session-invalidation','source-invalidation',1,'fingerprint-old','session-memory.v1','session-memory-prompt.v1','active','/project','old summary','','','[]','[]','[]','[]','[]','{}','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z')",
-        ).execute(database.pool())).expect("insert active projection");
+        ).execute(database.pool()).await.expect("insert active projection");
         let old = SessionMemoryJobCandidate {
             session_id: "session-invalidation".to_string(),
             source_id: "source-invalidation".to_string(),
@@ -1096,64 +1145,67 @@ mod tests {
             ..old.clone()
         };
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &old,
-                    "event-old",
-                    "sync-old",
-                    "2026-08-31T00:00:00Z",
-                ))
-                .expect("insert old job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &old,
+                "event-old",
+                "sync-old",
+                "2026-08-31T00:00:00Z",
+            )
+            .await
+            .expect("insert old job"),
             1
         );
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &new,
-                    "event-new",
-                    "sync-new",
-                    "2026-08-31T00:01:00Z",
-                ))
-                .expect("insert new job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &new,
+                "event-new",
+                "sync-new",
+                "2026-08-31T00:01:00Z",
+            )
+            .await
+            .expect("insert new job"),
             1
         );
-        let projection_state: (String, String) = database
-            .run_sync(sqlx::query_as(
-                "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
-            ).fetch_one(database.pool()))
-            .expect("read invalidated projection");
+        let projection_state: (String, String) = sqlx::query_as(
+            "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("read invalidated projection");
         assert_eq!(
             projection_state,
             ("invalid".to_string(), "fingerprint-old".to_string())
         );
-        let old_job_status: String = database
-            .run_sync(sqlx::query_scalar(
-                "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",
-            ).fetch_one(database.pool()))
-            .expect("read superseded job");
+        let old_job_status: String = sqlx::query_scalar(
+            "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("read superseded job");
         assert_eq!(old_job_status, "skipped");
         assert_eq!(
-            database
-                .run_sync(insert_job_candidate_sqlx(
-                    database.pool(),
-                    "default",
-                    &new,
-                    "event-new-repeat",
-                    "sync-new-repeat",
-                    "2026-08-31T00:02:00Z",
-                ))
-                .expect("repeat new job"),
+            insert_job_candidate_sqlx(
+                database.pool(),
+                "default",
+                &new,
+                "event-new-repeat",
+                "sync-new-repeat",
+                "2026-08-31T00:02:00Z",
+            )
+            .await
+            .expect("repeat new job"),
             0
         );
-        let active_count: i64 = database
-            .run_sync(sqlx::query_scalar(
-                "SELECT COUNT(*) FROM session_memories WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND status = 'active'",
-            ).fetch_one(database.pool()))
-            .expect("count active projections");
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_memories WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND status = 'active'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("count active projections");
         assert_eq!(active_count, 0);
         drop(database);
         let _ = std::fs::remove_file(&path);
@@ -1177,13 +1229,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn scheduler_prioritizes_the_most_recent_ready_session() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn scheduler_prioritizes_the_most_recent_ready_session() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-scheduler-priority-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
+        let database = crate::backend::store::Database::open_initialized_async(&path)
+            .await
             .expect("open scheduler priority fixture");
         let old = SessionMemoryJobCandidate {
             session_id: "old-session".to_string(),
@@ -1198,236 +1251,236 @@ mod tests {
             not_before: "2026-08-31T23:30:00Z".to_string(),
             ..old.clone()
         };
-        database
-            .run_sync(insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &old,
-                "event-old",
-                "sync-old",
-                "2026-08-01T00:00:00Z",
-            ))
-            .expect("insert old job");
-        database
-            .run_sync(insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &recent,
-                "event-recent",
-                "sync-recent",
-                "2026-08-31T23:00:00Z",
-            ))
-            .expect("insert recent job");
+        insert_job_candidate_sqlx(
+            database.pool(),
+            "default",
+            &old,
+            "event-old",
+            "sync-old",
+            "2026-08-01T00:00:00Z",
+        )
+        .await
+        .expect("insert old job");
+        insert_job_candidate_sqlx(
+            database.pool(),
+            "default",
+            &recent,
+            "event-recent",
+            "sync-recent",
+            "2026-08-31T23:00:00Z",
+        )
+        .await
+        .expect("insert recent job");
 
-        let jobs = database
-            .run_sync(list_session_memory_job_ids_for_scheduler_sqlx(
-                database.pool(),
-                "default",
-                "2026-09-01T00:00:00Z",
-                2,
-            ))
-            .expect("list scheduler jobs");
-        let sessions = jobs
-            .iter()
-            .map(|job_id| {
-                database
-                    .run_sync(load_session_memory_job_sqlx(
-                        database.pool(),
-                        "default",
-                        job_id,
-                    ))
-                    .expect("load scheduler job")
-                    .expect("scheduler job exists")
-                    .session_id
-            })
-            .collect::<Vec<_>>();
+        let jobs = list_session_memory_job_ids_for_scheduler_sqlx(
+            database.pool(),
+            "default",
+            "2026-09-01T00:00:00Z",
+            2,
+        )
+        .await
+        .expect("list scheduler jobs");
+        let mut sessions = Vec::new();
+        for job_id in &jobs {
+            let job = load_session_memory_job_sqlx(database.pool(), "default", job_id)
+                .await
+                .expect("load scheduler job")
+                .expect("scheduler job exists");
+            sessions.push(job.session_id);
+        }
         assert_eq!(sessions, vec!["recent-session", "old-session"]);
 
         drop(database);
         let _ = std::fs::remove_file(&path);
     }
 
-    #[test]
-    fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
         let path = std::env::temp_dir().join(format!(
             "assetiweave-session-memory-durable-red-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open_initialized(&path)
-            .expect("open durable job fixture");
-        database.run_sync(async {
-            sqlx::query(
-                r#"
-                INSERT INTO conversation_sessions (
-                    tenant_id, id, source_id, adapter_id, external_id, title,
-                    project_path, started_at, updated_at, source_locator,
-                    source_fingerprint, missing, created_at, imported_at
-                ) VALUES (
-                    'default', 'durable-session', 'durable-source', 'durable-adapter',
-                    'durable-external', 'Durable fixture', NULL,
-                    '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
-                    'fixture://durable-session', 'durable-revision', 0,
-                    '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
-                )
-                "#,
-            )
-            .execute(database.pool())
+        let database = crate::backend::store::Database::open_initialized_async(&path)
             .await
-            .expect("insert durable session");
-        });
+            .expect("open durable job fixture");
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sessions (
+                tenant_id, id, source_id, adapter_id, external_id, title,
+                project_path, started_at, updated_at, source_locator,
+                source_fingerprint, missing, created_at, imported_at
+            ) VALUES (
+                'default', 'durable-session', 'durable-source', 'durable-adapter',
+                'durable-external', 'Durable fixture', NULL,
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
+                'fixture://durable-session', 'durable-revision', 0,
+                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(database.pool())
+        .await
+        .expect("insert durable session");
         let now = "2026-08-31T00:00:00Z";
         assert_eq!(
-            database
-                .run_sync(enqueue_session_memory_jobs_sqlx(
-                    database.pool(),
-                    "default",
-                    "durable-source",
-                    "durable-sync",
-                    1,
-                    "durable-event",
-                    Some(&["durable-session".to_string()]),
-                    "",
-                    now,
-                ))
-                .expect("enqueue durable job"),
-            1
-        );
-        let job_id: String = database.run_sync(sqlx::query_scalar(
-            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'durable-session'",
-        ).fetch_one(database.pool())).expect("load durable job");
-        let first = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
+            enqueue_session_memory_jobs_sqlx(
                 database.pool(),
                 "default",
-                &job_id,
+                "durable-source",
+                "durable-sync",
+                1,
+                "durable-event",
+                Some(&["durable-session".to_string()]),
+                "",
                 now,
-                false,
-                "owner-a",
-                Duration::seconds(30),
-            ))
-            .expect("claim first owner")
-            .expect("first owner claim");
+            )
+            .await
+            .expect("enqueue durable job"),
+            1
+        );
+        let job_id: String = sqlx::query_scalar(
+            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'durable-session'",
+        )
+        .fetch_one(database.pool())
+        .await
+        .expect("load durable job");
+        let first = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            now,
+            false,
+            "owner-a",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim first owner")
+        .expect("first owner claim");
         assert_eq!(first.ownership_token.as_deref(), Some("owner-a"));
         assert_eq!(
-            database
-                .run_sync(heartbeat_session_memory_job_sqlx(
-                    database.pool(),
-                    "default",
-                    &job_id,
-                    "owner-old",
-                    "2026-08-31T00:00:10Z",
-                    Duration::seconds(30),
-                ))
-                .expect("reject stale heartbeat"),
+            heartbeat_session_memory_job_sqlx(
+                database.pool(),
+                "default",
+                &job_id,
+                "owner-old",
+                "2026-08-31T00:00:10Z",
+                Duration::seconds(30),
+            )
+            .await
+            .expect("reject stale heartbeat"),
             false
         );
         assert_eq!(
-            database
-                .run_sync(recover_expired_session_memory_leases_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:00:31Z",
-                ))
-                .expect("recover expired lease"),
+            recover_expired_session_memory_leases_sqlx(
+                database.pool(),
+                "default",
+                "2026-08-31T00:00:31Z",
+            )
+            .await
+            .expect("recover expired lease"),
             1
         );
-        let second = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:31Z",
-                false,
-                "owner-b",
-                Duration::seconds(30),
-            ))
-            .expect("claim recovered owner")
-            .expect("recovered owner claim");
+        let second = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:31Z",
+            false,
+            "owner-b",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim recovered owner")
+        .expect("recovered owner claim");
         assert_eq!(second.ownership_token.as_deref(), Some("owner-b"));
         assert_eq!(
-            database
-                .run_sync(mark_session_memory_job_failed_with_lease_sqlx(
-                    database.pool(),
-                    "default",
-                    &job_id,
-                    "owner-a",
-                    "phase1_failed",
-                    "2026-08-31T00:00:32Z",
-                ))
-                .expect("reject stale failure"),
-            false
-        );
-        assert!(database
-            .run_sync(mark_session_memory_job_failed_with_lease_sqlx(
+            mark_session_memory_job_failed_with_lease_sqlx(
                 database.pool(),
                 "default",
                 &job_id,
-                "owner-b",
+                "owner-a",
                 "phase1_failed",
                 "2026-08-31T00:00:32Z",
-            ))
-            .expect("record retryable failure"));
-        assert!(database
-            .run_sync(list_due_session_memory_job_ids_sqlx(
+            )
+            .await
+            .expect("reject stale failure"),
+            false
+        );
+        assert!(mark_session_memory_job_failed_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "owner-b",
+            "phase1_failed",
+            "2026-08-31T00:00:32Z",
+        )
+        .await
+        .expect("record retryable failure"));
+        assert!(list_due_session_memory_job_ids_sqlx(
+            database.pool(),
+            "default",
+            "2026-08-31T00:00:33Z",
+            10,
+        )
+        .await
+        .expect("list before retry")
+        .is_empty());
+        assert_eq!(
+            list_due_session_memory_job_ids_sqlx(
                 database.pool(),
                 "default",
-                "2026-08-31T00:00:33Z",
+                "2026-08-31T00:00:47Z",
                 10,
-            ))
-            .expect("list before retry")
-            .is_empty());
-        assert_eq!(
-            database
-                .run_sync(list_due_session_memory_job_ids_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:00:47Z",
-                    10,
-                ))
-                .expect("list after retry backoff"),
+            )
+            .await
+            .expect("list after retry backoff"),
             vec![job_id.clone()]
         );
-        let third = database
-            .run_sync(claim_session_memory_job_with_lease_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:47Z",
-                false,
-                "owner-c",
-                Duration::seconds(30),
-            ))
-            .expect("claim retry owner")
-            .expect("retry owner claim");
+        let third = claim_session_memory_job_with_lease_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:47Z",
+            false,
+            "owner-c",
+            Duration::seconds(30),
+        )
+        .await
+        .expect("claim retry owner")
+        .expect("retry owner claim");
         assert_eq!(third.retry_count, 2);
-        assert!(database
-            .run_sync(cancel_session_memory_job_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:34Z",
-            ))
-            .expect("cancel retry job"));
-        assert!(!database
-            .run_sync(cancel_session_memory_job_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "2026-08-31T00:00:35Z",
-            ))
-            .expect("cancel retry job idempotently"));
-        let status: String = database.run_sync(sqlx::query_scalar(
+        assert!(cancel_session_memory_job_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:34Z",
+        )
+        .await
+        .expect("cancel retry job"));
+        assert!(!cancel_session_memory_job_sqlx(
+            database.pool(),
+            "default",
+            &job_id,
+            "2026-08-31T00:00:35Z",
+        )
+        .await
+        .expect("cancel retry job idempotently"));
+        let status: String = sqlx::query_scalar(
             "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-        ).bind(&job_id).fetch_one(database.pool())).expect("read cancelled job");
+        )
+        .bind(&job_id)
+        .fetch_one(database.pool())
+        .await
+        .expect("read cancelled job");
         assert_eq!(status, "canceled");
         assert_eq!(
-            database
-                .run_sync(recover_expired_session_memory_leases_sqlx(
-                    database.pool(),
-                    "default",
-                    "2026-08-31T00:48:00Z",
-                ))
-                .expect("do not recover cancelled job"),
+            recover_expired_session_memory_leases_sqlx(
+                database.pool(),
+                "default",
+                "2026-08-31T00:48:00Z",
+            )
+            .await
+            .expect("do not recover cancelled job"),
             0
         );
         drop(database);

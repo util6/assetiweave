@@ -2,7 +2,17 @@ import type { ThemeDefinition, ThemeId } from "./schema";
 import { getTheme } from "./themes";
 
 export function themeCssVars(theme: ThemeDefinition): Record<string, string> {
-  const { button, component, control, effect, navigation, palette, status, surface, switch: switchTokens } = theme.tokens;
+  const {
+    button,
+    component,
+    control,
+    effect,
+    navigation,
+    palette,
+    status,
+    surface,
+    switch: switchTokens,
+  } = theme.tokens;
 
   return {
     "--color-background": palette.background,
@@ -33,7 +43,12 @@ export function themeCssVars(theme: ThemeDefinition): Record<string, string> {
     "--theme-focus-ring": effect.focusRing,
     "--theme-scrim": effect.scrim,
     "--theme-glass-opacity": effect.glassOpacity,
-    "--theme-hover-lift": effect.hoverLift === "raised" ? "-2px" : effect.hoverLift === "subtle" ? "-1px" : "0",
+    "--theme-hover-lift":
+      effect.hoverLift === "raised"
+        ? "-2px"
+        : effect.hoverLift === "subtle"
+          ? "-1px"
+          : "0",
     "--theme-card-bg": surface.cardBg,
     "--theme-card-border": surface.cardBorder,
     "--theme-card-header": surface.cardHeader,

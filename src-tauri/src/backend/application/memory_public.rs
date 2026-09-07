@@ -6,37 +6,28 @@ use crate::backend::{
 };
 
 impl AppService {
-    pub(crate) fn get_memory_project(
+    pub(crate) async fn get_memory_project(
         &self,
         params: MemoryProjectGetParams,
     ) -> AppResult<Option<MemoryProjectView>> {
         let project_path = self
-            .resolve_context_project_path(Some(&params.project_path))?
+            .resolve_context_project_path(Some(&params.project_path))
+            .await?
             .ok_or_else(|| AppError::Validation("project_path is required".to_string()))?;
         let tenant_id = self.tenant_id().to_string();
-        let project = self.runtime.run_sync(store::load_project_memory_sqlx(
-            self.db.pool(),
-            &tenant_id,
-            &project_path,
-        ))?;
+        let project =
+            store::load_project_memory_sqlx(self.db.pool(), &tenant_id, &project_path).await?;
         let Some(project) = project else {
             return Ok(None);
         };
-        let version = self
-            .runtime
-            .run_sync(store::load_project_memory_latest_version_sqlx(
-                self.db.pool(),
-                &tenant_id,
-                &project.id,
-            ))?;
+        let version =
+            store::load_project_memory_latest_version_sqlx(self.db.pool(), &tenant_id, &project.id)
+                .await?;
         let sources = match version.as_ref() {
-            Some(version) => self
-                .runtime
-                .run_sync(store::load_project_memory_sources_sqlx(
-                    self.db.pool(),
-                    &tenant_id,
-                    &version.id,
-                ))?,
+            Some(version) => {
+                store::load_project_memory_sources_sqlx(self.db.pool(), &tenant_id, &version.id)
+                    .await?
+            }
             None => Vec::new(),
         };
         Ok(Some(MemoryProjectView {
@@ -46,11 +37,11 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn rebuild_memory_scope(
+    pub(crate) async fn rebuild_memory_scope(
         &self,
         params: MemoryScopeRebuildParams,
     ) -> AppResult<MemoryRebuildResult> {
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(MemoryRebuildResult {
                 scope: params.scope,
                 queued: false,
@@ -66,38 +57,34 @@ impl AppService {
                 "scope rebuild requires project_path when a narrow scope is provided".to_string(),
             ));
         }
-        let project_path = params
-            .scope
-            .project_path
-            .as_deref()
-            .map(|path| self.resolve_context_project_path(Some(path)))
-            .transpose()?
-            .flatten();
+        let project_path = match params.scope.project_path.as_deref() {
+            Some(path) => self.resolve_context_project_path(Some(path)).await?,
+            None => None,
+        };
         let tenant_id = self.tenant_id().to_string();
         let now = Utc::now();
-        let queued = self.runtime.run_sync(async {
-            let mut tx = self.db.pool().begin().await.map_err(AppError::Db)?;
-            let queued = if let Some(project_path) = project_path.as_deref() {
-                store::enqueue_project_memory_job_tx(
-                    &mut tx,
-                    &tenant_id,
-                    project_path,
-                    &now.to_rfc3339(),
-                )
+        let mut tx = self.db.pool().begin().await.map_err(AppError::Db)?;
+        let queued = if let Some(project_path) = project_path.as_deref() {
+            store::enqueue_project_memory_job_tx(
+                &mut tx,
+                &tenant_id,
+                project_path,
+                &now.to_rfc3339(),
+            )
+            .await?
+            .is_some()
+        } else {
+            store::enqueue_global_memory_job_tx(&mut tx, &tenant_id, &now.to_rfc3339())
                 .await?
                 .is_some()
-            } else {
-                store::enqueue_global_memory_job_tx(&mut tx, &tenant_id, &now.to_rfc3339())
-                    .await?
-                    .is_some()
-            };
-            tx.commit().await.map_err(AppError::Db)?;
-            Ok::<_, AppError>(queued)
-        })?;
+        };
+        tx.commit().await.map_err(AppError::Db)?;
         let scheduled_tasks = if project_path.is_some() {
-            self.reconcile_project_memory_jobs_for_tenant_at(&tenant_id, now)?
+            self.reconcile_project_memory_jobs_for_tenant_at(&tenant_id, now)
+                .await?
         } else {
-            self.reconcile_global_memory_jobs_for_tenant_at(&tenant_id, now)?
+            self.reconcile_global_memory_jobs_for_tenant_at(&tenant_id, now)
+                .await?
         };
         Ok(MemoryRebuildResult {
             scope: MemoryScope {
@@ -153,7 +140,7 @@ impl AppService {
         }
     }
 
-    pub(crate) fn retry_memory_task(
+    pub(crate) async fn retry_memory_task(
         &self,
         params: MemoryTaskRetryParams,
     ) -> AppResult<MemoryTaskView> {
@@ -183,26 +170,18 @@ impl AppService {
             .ok_or_else(|| AppError::Validation("Memory task has no durable job id".to_string()))?;
         let tenant_id = self.tenant_id().to_string();
         let changed = match domain {
-            "session_memory" => self.runtime.run_sync(store::retry_session_memory_job_sqlx(
-                self.db.pool(),
-                &tenant_id,
-                job_id,
-            ))?,
-            "project_memory" => self.runtime.run_sync(store::retry_project_memory_job_sqlx(
-                self.db.pool(),
-                &tenant_id,
-                job_id,
-            ))?,
-            "global_memory" => self.runtime.run_sync(store::retry_global_memory_job_sqlx(
-                self.db.pool(),
-                &tenant_id,
-                job_id,
-            ))?,
-            "memory_recall" => self.runtime.run_sync(store::retry_memory_recall_turn_sqlx(
-                self.db.pool(),
-                &tenant_id,
-                job_id,
-            ))?,
+            "session_memory" => {
+                store::retry_session_memory_job_sqlx(self.db.pool(), &tenant_id, job_id).await?
+            }
+            "project_memory" => {
+                store::retry_project_memory_job_sqlx(self.db.pool(), &tenant_id, job_id).await?
+            }
+            "global_memory" => {
+                store::retry_global_memory_job_sqlx(self.db.pool(), &tenant_id, job_id).await?
+            }
+            "memory_recall" => {
+                store::retry_memory_recall_turn_sqlx(self.db.pool(), &tenant_id, job_id).await?
+            }
             _ => false,
         };
         if !changed {
@@ -214,16 +193,20 @@ impl AppService {
         let now = Utc::now();
         match domain {
             "session_memory" => {
-                self.reconcile_session_memory_jobs_for_tenant_at(&tenant_id, now)?;
+                self.reconcile_session_memory_jobs_for_tenant_at(&tenant_id, now)
+                    .await?;
             }
             "project_memory" => {
-                self.reconcile_project_memory_jobs_for_tenant_at(&tenant_id, now)?;
+                self.reconcile_project_memory_jobs_for_tenant_at(&tenant_id, now)
+                    .await?;
             }
             "global_memory" => {
-                self.reconcile_global_memory_jobs_for_tenant_at(&tenant_id, now)?;
+                self.reconcile_global_memory_jobs_for_tenant_at(&tenant_id, now)
+                    .await?;
             }
             "memory_recall" => {
-                self.schedule_memory_recall_turn_for_tenant(&tenant_id, job_id)?;
+                self.schedule_memory_recall_turn_for_tenant(&tenant_id, job_id)
+                    .await?;
             }
             _ => {}
         }

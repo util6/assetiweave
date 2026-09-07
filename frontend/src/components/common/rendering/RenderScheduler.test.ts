@@ -28,7 +28,11 @@ function createRafHarness() {
   };
 }
 
-const task = (key: string, priority: 0 | 1 | 2, commit: () => void) => ({ key, priority, commit });
+const task = (key: string, priority: 0 | 1 | 2, commit: () => void) => ({
+  key,
+  priority,
+  commit,
+});
 
 describe("RenderScheduler", () => {
   it("does not submit while fast, then flushes moving one task per frame", () => {
@@ -66,16 +70,29 @@ describe("RenderScheduler", () => {
     expect(commits).toEqual(["front", "new", "middle", "rear"]);
     expect(scheduler.size()).toBe(2);
     act(() => raf.flush());
-    expect(commits).toEqual(["front", "new", "middle", "rear", "fourth", "fifth"]);
+    expect(commits).toEqual([
+      "front",
+      "new",
+      "middle",
+      "rear",
+      "fourth",
+      "fifth",
+    ]);
   });
 
   it("isolates commit failures and makes cancellation and disposal idempotent", () => {
     const raf = createRafHarness();
     const errors: unknown[] = [];
-    const scheduler = createRenderScheduler({ onError: (error) => errors.push(error) });
+    const scheduler = createRenderScheduler({
+      onError: (error) => errors.push(error),
+    });
     scheduler.setPhase("moving");
     const committed: string[] = [];
-    scheduler.schedule(task("bad", 0, () => { throw new Error("boom"); }));
+    scheduler.schedule(
+      task("bad", 0, () => {
+        throw new Error("boom");
+      }),
+    );
     scheduler.schedule(task("good", 1, () => committed.push("good")));
     scheduler.cancel("missing");
     act(() => raf.flush());

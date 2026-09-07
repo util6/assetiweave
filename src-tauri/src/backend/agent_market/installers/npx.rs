@@ -34,7 +34,7 @@ impl NpxInstaller {
 }
 
 impl Installer for NpxInstaller {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
@@ -79,7 +79,7 @@ impl Installer for NpxInstaller {
             .args(&args)
             .env("npm_config_userconfig", &user_config)
             .env("npm_config_cache", &npm_cache);
-        let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024)?;
+        let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024).await?;
         if !output.status.success() {
             return Err(InstallError::Failed("npm install failed".to_string()));
         }

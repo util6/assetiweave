@@ -51,10 +51,12 @@ pub(crate) fn authorize(spec: &CommandSpec) -> Result<(), PolicyFailure> {
     if DIAGNOSTIC_METHODS.contains(&spec.method) {
         return Ok(());
     }
-    let Some(path) = env::var_os("ASSETIWEAVE_POLICY_PATH") else {
+    let config = crate::backend::runtime::config::runtime_config()
+        .map_err(|error| invalid_policy(Path::new("<runtime_config>"), error.to_string()))?;
+
+    let Some(path) = config.policy_path.as_deref() else {
         return Ok(());
     };
-    let path = Path::new(&path);
     let content =
         fs::read_to_string(path).map_err(|error| invalid_policy(path, error.to_string()))?;
     let policy: PolicyDocument =

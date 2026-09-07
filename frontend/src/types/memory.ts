@@ -1,9 +1,23 @@
 export type MemoryRecordKind = "session" | "web";
 export type RecentConversationView = "project" | "time";
-export type RecentMemoryEventCategory = "progress" | "decision" | "research" | "verification" | "blocker" | "follow_up";
-export type MemoryRecallSessionStatus = "active" | "completed" | "failed" | "cancelled" | "resume_unavailable";
-export type MemoryRecallTurnStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "resume_unavailable";
-export type MemoryPublicTaskStatus = "pending" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
+export type RecentMemoryEventCategory =
+  | "progress"
+  | "decision"
+  | "research"
+  | "verification"
+  | "blocker"
+  | "follow_up";
+export type MemoryRecallSessionStatus =
+  "active" | "completed" | "failed" | "cancelled" | "resume_unavailable";
+export type MemoryRecallTurnStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "resume_unavailable";
+export type MemoryPublicTaskStatus =
+  "pending" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled";
 
 export interface RecentMemoryEvent {
   id: string;
@@ -169,6 +183,11 @@ export interface MemoryTaskView {
   started_at: string;
   finished_at: string | null;
   result: unknown;
-  error: { code: string; message: string; retryable: boolean; details?: unknown } | null;
+  error: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    details?: unknown;
+  } | null;
   detail: Record<string, unknown>;
 }

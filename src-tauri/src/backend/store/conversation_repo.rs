@@ -22,9 +22,7 @@ use crate::backend::projection::conversation_content_nodes::{
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{
-    sqlite::SqliteRow, AssertSqlSafe, Executor, Row as SqlxRow, Sqlite, SqlitePool, Transaction,
-};
+use sqlx::{sqlite::SqliteRow, AssertSqlSafe, Executor, FromRow, Sqlite, SqlitePool, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::codec::{decode_enum, decode_json, encode_enum, encode_json};
@@ -219,7 +217,7 @@ pub(crate) struct ConversationImportResult {
     pub(crate) warnings: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, FromRow)]
 pub(crate) struct ConversationSyncDelta {
     pub(crate) sync_run_id: String,
     pub(crate) session_id: String,
@@ -323,7 +321,14 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
         upsert_conversation_adapter_package_sqlx(pool, &package).await?;
     }
 
-    let version_rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageInstallRow {
+        package_id: String,
+        version: String,
+        install_dir: String,
+    }
+
+    let version_rows = sqlx::query_as::<_, AdapterPackageInstallRow>(
         r#"
         SELECT package_id, version, install_dir
         FROM app_conversation_adapter_package_versions
@@ -333,9 +338,6 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
     .await
     .map_err(AppError::external)?;
     for row in version_rows {
-        let package_id: String = row.try_get(0).map_err(AppError::external)?;
-        let version: String = row.try_get(1).map_err(AppError::external)?;
-        let install_dir: String = row.try_get(2).map_err(AppError::external)?;
         sqlx::query(
             r#"
             UPDATE app_conversation_adapter_package_versions
@@ -343,9 +345,9 @@ pub(crate) async fn normalize_conversation_paths_sqlx(
             WHERE package_id = ?2 AND version = ?3
             "#,
         )
-        .bind(normalize_conversation_path(&install_dir)?)
-        .bind(package_id)
-        .bind(version)
+        .bind(normalize_conversation_path(&row.install_dir)?)
+        .bind(row.package_id)
+        .bind(row.version)
         .execute(pool)
         .await
         .map_err(AppError::external)?;
@@ -451,7 +453,7 @@ pub(crate) async fn delete_conversation_adapter_sqlx(
         delete_conversation_adapter_registration_sqlx(pool, tenant_id, adapter_id, None)
             .await?
             .ok_or_else(|| {
-                AppError::external({ format!("conversation adapter not found: {adapter_id}") })
+                AppError::external(format!("conversation adapter not found: {adapter_id}"))
             })?,
     )
 }
@@ -543,7 +545,7 @@ pub(crate) async fn disable_builtin_conversation_adapter_sqlx(
     let mut adapter = load_conversation_adapter_sqlx(pool, tenant_id, adapter_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation adapter not found: {adapter_id}") })
+            AppError::external(format!("conversation adapter not found: {adapter_id}"))
         })?;
     if adapter.trust_state != ConversationAdapterTrustState::BuiltIn {
         return Err(AppError::Validation(
@@ -710,7 +712,13 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     version: &ConversationAdapterPackageVersion,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let existing = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageVersionHashRow {
+        artifact_hash: Option<String>,
+        content_hash: String,
+    }
+
+    let existing = sqlx::query_as::<_, AdapterPackageVersionHashRow>(
         r#"
         SELECT artifact_hash, content_hash
         FROM app_conversation_adapter_package_versions
@@ -723,9 +731,9 @@ pub(crate) async fn activate_conversation_adapter_package_sqlx(
     .await
     .map_err(AppError::external)?;
     if let Some(existing) = existing {
-        let artifact_hash: Option<String> = existing.try_get(0).map_err(AppError::external)?;
-        let content_hash: String = existing.try_get(1).map_err(AppError::external)?;
-        if artifact_hash != version.artifact_hash || content_hash != version.content_hash {
+        if existing.artifact_hash != version.artifact_hash
+            || existing.content_hash != version.content_hash
+        {
             return Err(AppError::Conflict(format!(
                 "conversation adapter package version is immutable: {}@{}",
                 version.package_id, version.version
@@ -783,7 +791,9 @@ pub(crate) async fn deactivate_conversation_adapter_package_sqlx(
     let mut package = load_conversation_adapter_package_sqlx(pool, package_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation adapter package not found: {package_id}") })
+            AppError::external(format!(
+                "conversation adapter package not found: {package_id}"
+            ))
         })?;
     if package.origin != ConversationAdapterPackageOrigin::ManagedRelease {
         return Err(AppError::Validation(
@@ -944,7 +954,32 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     pool: &SqlitePool,
     package_id: &str,
 ) -> AppResult<Vec<ConversationAdapterPackageVersion>> {
-    let rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct AdapterPackageVersionRow {
+        package_id: String,
+        version: String,
+        install_dir: String,
+        artifact_hash: Option<String>,
+        content_hash: String,
+        runtime_gate_status: String,
+        installed_at: String,
+    }
+
+    impl AdapterPackageVersionRow {
+        fn into_domain(self) -> AppResult<ConversationAdapterPackageVersion> {
+            Ok(ConversationAdapterPackageVersion {
+                package_id: self.package_id,
+                version: self.version,
+                install_dir: normalize_conversation_path(&self.install_dir)?,
+                artifact_hash: self.artifact_hash,
+                content_hash: self.content_hash,
+                runtime_gate_status: decode_enum(self.runtime_gate_status)?,
+                installed_at: self.installed_at,
+            })
+        }
+    }
+
+    let rows = sqlx::query_as::<_, AdapterPackageVersionRow>(
         r#"
         SELECT package_id, version, install_dir, artifact_hash, content_hash,
                runtime_gate_status, installed_at
@@ -957,22 +992,8 @@ pub(crate) async fn list_conversation_adapter_package_versions_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok(ConversationAdapterPackageVersion {
-                package_id: row.try_get(0).map_err(AppError::external)?,
-                version: row.try_get(1).map_err(AppError::external)?,
-                install_dir: normalize_conversation_path(
-                    &row.try_get::<String, _>(2).map_err(AppError::external)?,
-                )?,
-                artifact_hash: row.try_get(3).map_err(AppError::external)?,
-                content_hash: row.try_get(4).map_err(AppError::external)?,
-                runtime_gate_status: decode_enum(
-                    row.try_get::<String, _>(5).map_err(AppError::external)?,
-                )?,
-                installed_at: row.try_get(6).map_err(AppError::external)?,
-            })
-        })
+    rows.into_iter()
+        .map(AdapterPackageVersionRow::into_domain)
         .collect()
 }
 
@@ -1014,33 +1035,67 @@ pub(crate) async fn delete_conversation_adapter_package_version_sqlx(
     Ok(true)
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationAdapterCatalogReleaseRow {
+    catalog_url: String,
+    package_id: String,
+    adapter_id: String,
+    name: String,
+    publisher: String,
+    version: String,
+    channel: String,
+    released_at: Option<String>,
+    core_compatibility: String,
+    artifact_url: String,
+    artifact_size: Option<i64>,
+    artifact_sha256: String,
+    changelog_markdown: String,
+    breaking_change: i64,
+    runtime_protocol: String,
+    record_kind: String,
+    package_manifest_file: String,
+    adapter_manifest_file: String,
+    adapter_manifest_json: Option<String>,
+    source_json: Option<String>,
+    etag: Option<String>,
+    fetched_at: String,
+}
+
+impl ConversationAdapterCatalogReleaseRow {
+    fn into_domain(self) -> AppResult<ConversationAdapterCatalogRelease> {
+        Ok(ConversationAdapterCatalogRelease {
+            catalog_url: self.catalog_url,
+            package_id: self.package_id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            publisher: self.publisher,
+            version: self.version,
+            channel: decode_enum(self.channel)?,
+            released_at: self.released_at,
+            core_compatibility: self.core_compatibility,
+            artifact_url: self.artifact_url,
+            artifact_size: self.artifact_size,
+            artifact_sha256: self.artifact_sha256,
+            changelog_markdown: self.changelog_markdown,
+            breaking_change: self.breaking_change == 1,
+            runtime_protocol: self.runtime_protocol,
+            record_kind: decode_enum(self.record_kind)?,
+            package_manifest_file: self.package_manifest_file,
+            adapter_manifest_file: self.adapter_manifest_file,
+            adapter_manifest_json: self.adapter_manifest_json,
+            source_json: self.source_json,
+            etag: self.etag,
+            fetched_at: self.fetched_at,
+        })
+    }
+}
+
 fn map_sqlx_conversation_adapter_catalog_release(
     row: &SqliteRow,
 ) -> AppResult<ConversationAdapterCatalogRelease> {
-    Ok(ConversationAdapterCatalogRelease {
-        catalog_url: row.try_get(0).map_err(AppError::external)?,
-        package_id: row.try_get(1).map_err(AppError::external)?,
-        adapter_id: row.try_get(2).map_err(AppError::external)?,
-        name: row.try_get(3).map_err(AppError::external)?,
-        publisher: row.try_get(4).map_err(AppError::external)?,
-        version: row.try_get(5).map_err(AppError::external)?,
-        channel: decode_enum(row.try_get::<String, _>(6).map_err(AppError::external)?)?,
-        released_at: row.try_get(7).map_err(AppError::external)?,
-        core_compatibility: row.try_get(8).map_err(AppError::external)?,
-        artifact_url: row.try_get(9).map_err(AppError::external)?,
-        artifact_size: row.try_get(10).map_err(AppError::external)?,
-        artifact_sha256: row.try_get(11).map_err(AppError::external)?,
-        changelog_markdown: row.try_get(12).map_err(AppError::external)?,
-        breaking_change: row.try_get::<i64, _>(13).map_err(AppError::external)? == 1,
-        runtime_protocol: row.try_get(14).map_err(AppError::external)?,
-        record_kind: decode_enum(row.try_get::<String, _>(15).map_err(AppError::external)?)?,
-        package_manifest_file: row.try_get(16).map_err(AppError::external)?,
-        adapter_manifest_file: row.try_get(17).map_err(AppError::external)?,
-        adapter_manifest_json: row.try_get(18).map_err(AppError::external)?,
-        source_json: row.try_get(19).map_err(AppError::external)?,
-        etag: row.try_get(20).map_err(AppError::external)?,
-        fetched_at: row.try_get(21).map_err(AppError::external)?,
-    })
+    ConversationAdapterCatalogReleaseRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 #[cfg(test)]
@@ -1138,9 +1193,7 @@ pub(crate) async fn disable_conversation_source_sqlx(
 ) -> AppResult<ConversationSource> {
     let mut source = load_conversation_source_sqlx(pool, tenant_id, source_id)
         .await?
-        .ok_or_else(|| {
-            AppError::external({ format!("conversation source not found: {source_id}") })
-        })?;
+        .ok_or_else(|| AppError::external(format!("conversation source not found: {source_id}")))?;
     source.enabled = false;
     source.updated_at = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(AppError::external)?;
@@ -1179,6 +1232,7 @@ pub(crate) async fn import_conversation_sessions_sqlx(
     .await
 }
 
+#[cfg(test)]
 pub(crate) async fn import_incremental_conversation_sessions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1223,7 +1277,7 @@ fn ensure_sync_import_active(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
 ) -> AppResult<()> {
     if cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled) {
-        return Err(AppError::Canceled(
+        return Err(AppError::Cancelled(
             "conversation sync cancelled".to_string(),
         ));
     }
@@ -1441,6 +1495,111 @@ pub(crate) async fn import_conversation_sessions_with_control_sqlx(
     })
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationSessionListItemRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+    question_count: i64,
+    turn_count: i64,
+}
+
+impl ConversationSessionListItemRow {
+    fn into_item(self) -> AppResult<ConversationSessionListItem> {
+        let question_count = usize::try_from(self.question_count)
+            .map_err(|_| AppError::external("invalid conversation question count"))?;
+        let turn_count = usize::try_from(self.turn_count)
+            .map_err(|_| AppError::external("invalid conversation turn count"))?;
+        let session = ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        };
+        Ok(ConversationSessionListItem {
+            session,
+            question_count,
+            turn_count,
+        })
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct RecentConversationSessionRecordRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+    question_count: i64,
+    turn_count: i64,
+    last_activity_at: String,
+    cwd: Option<String>,
+    source_agent: String,
+}
+
+impl RecentConversationSessionRecordRow {
+    fn into_record(self) -> AppResult<RecentConversationSessionRecord> {
+        let question_count = usize::try_from(self.question_count)
+            .map_err(|_| AppError::external("invalid recent question count"))?;
+        let turn_count = usize::try_from(self.turn_count)
+            .map_err(|_| AppError::external("invalid recent turn count"))?;
+        let session = ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        };
+        Ok(RecentConversationSessionRecord {
+            session: ConversationSessionListItem {
+                session,
+                question_count,
+                turn_count,
+            },
+            last_activity_at: self.last_activity_at,
+            cwd: self.cwd,
+            source_agent: self.source_agent,
+            recent_events: Vec::new(),
+        })
+    }
+}
+
 pub(crate) async fn list_conversation_sessions_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1452,7 +1611,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
 ) -> AppResult<Vec<ConversationSessionListItem>> {
     let needle = normalize_query(query);
     let id_needle = query.and_then(crate::backend::models::conversation_id_search_term);
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(
         r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
@@ -1500,31 +1659,18 @@ pub(crate) async fn list_conversation_sessions_sqlx(
     .bind(id_needle.as_deref())
     .bind(
         i64::try_from(limit)
-            .map_err(|_| AppError::external({ format!("invalid conversation limit: {limit}") }))?,
+            .map_err(|_| AppError::external(format!("invalid conversation limit: {limit}")))?,
     )
     .bind(
-        i64::try_from(offset).map_err(|_| {
-            AppError::external({ format!("invalid conversation offset: {offset}") })
-        })?,
+        i64::try_from(offset)
+            .map_err(|_| AppError::external(format!("invalid conversation offset: {offset}")))?,
     )
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
 
-    rows.iter()
-        .map(|row| {
-            let question_count =
-                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation question count"))?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation turn count"))?;
-            Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row)?,
-                question_count,
-                turn_count,
-            })
-        })
+    rows.into_iter()
+        .map(ConversationSessionListItemRow::into_item)
         .collect()
 }
 
@@ -1624,35 +1770,19 @@ pub(crate) async fn list_recent_conversation_sessions_sqlx(
     now: &str,
     excluded_project_root: &str,
 ) -> AppResult<Vec<RecentConversationSessionRecord>> {
-    let rows = sqlx::query(LIST_RECENT_CONVERSATION_SESSIONS_SQL)
-        .bind(tenant_id)
-        .bind(cutoff)
-        .bind(now)
-        .bind(excluded_project_root)
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::external)?;
+    let rows = sqlx::query_as::<_, RecentConversationSessionRecordRow>(
+        LIST_RECENT_CONVERSATION_SESSIONS_SQL,
+    )
+    .bind(tenant_id)
+    .bind(cutoff)
+    .bind(now)
+    .bind(excluded_project_root)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
 
-    rows.iter()
-        .map(|row| {
-            let question_count =
-                usize::try_from(row.try_get::<i64, _>(13).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid recent question count"))?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid recent turn count"))?;
-            Ok(RecentConversationSessionRecord {
-                session: ConversationSessionListItem {
-                    session: map_sqlx_conversation_session(row)?,
-                    question_count,
-                    turn_count,
-                },
-                last_activity_at: row.try_get(15).map_err(AppError::external)?,
-                cwd: row.try_get(16).map_err(AppError::external)?,
-                source_agent: row.try_get(17).map_err(AppError::external)?,
-                recent_events: Vec::new(),
-            })
-        })
+    rows.into_iter()
+        .map(RecentConversationSessionRecordRow::into_record)
         .collect()
 }
 
@@ -1675,9 +1805,7 @@ pub(crate) async fn load_conversation_session_detail_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation session not found: {session_id}") })
-    })?;
+    .ok_or_else(|| AppError::external(format!("conversation session not found: {session_id}")))?;
     let session = map_sqlx_conversation_session(&session_row)?;
     let questions =
         load_conversation_question_details_for_session_sqlx(pool, tenant_id, session_id).await?;
@@ -1736,9 +1864,7 @@ pub(crate) async fn load_conversation_question_detail_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation question not found: {question_id}") })
-    })?;
+    .ok_or_else(|| AppError::external(format!("conversation question not found: {question_id}")))?;
     let question = map_sqlx_conversation_question(&question_row)?;
     let question_turns = load_question_turn_memberships_sqlx(pool, tenant_id, question_id).await?;
 
@@ -1818,7 +1944,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     question_id: &str,
 ) -> AppResult<Vec<ConversationBlockLocator>> {
     let tables = record_kind.tables();
-    let question_row = sqlx::query(AssertSqlSafe(format!(
+    let session_id = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
         "SELECT session_id FROM {} WHERE tenant_id = ?1 AND id = ?2",
         tables.questions
     )))
@@ -1827,10 +1953,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::external)?
-    .ok_or_else(|| {
-        AppError::external({ format!("conversation question not found: {question_id}") })
-    })?;
-    let session_id: String = question_row.try_get(0).map_err(AppError::external)?;
+    .ok_or_else(|| AppError::external(format!("conversation question not found: {question_id}")))?;
 
     let turn_rows = sqlx::query(AssertSqlSafe(format!(
         r#"
@@ -1889,8 +2012,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
                 part,
                 &adapter_id,
                 &card_kinds,
-            )
-            .map_err(AppError::external)?,
+            )?,
         );
         Ok::<_, AppError>(projected)
     })?;
@@ -1922,6 +2044,88 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
     Ok(locators)
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationTurnWithQuestionRow {
+    id: String,
+    session_id: String,
+    external_id: String,
+    turn_index: i64,
+    user_text: String,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    fingerprint: String,
+    missing: i64,
+    imported_at: String,
+    question_id: String,
+}
+
+impl ConversationTurnWithQuestionRow {
+    fn into_turn(self) -> (String, ConversationTurn) {
+        let question_id = self.question_id;
+        let turn = ConversationTurn {
+            id: self.id,
+            session_id: self.session_id,
+            external_id: self.external_id,
+            turn_index: self.turn_index,
+            user_text: self.user_text,
+            title: self.title,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            fingerprint: self.fingerprint,
+            missing: self.missing == 1,
+            imported_at: self.imported_at,
+        };
+        (question_id, turn)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationPartDetailRow {
+    id: String,
+    turn_id: String,
+    part_index: i64,
+    role: String,
+    kind: String,
+    text: Option<String>,
+    language: Option<String>,
+    command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    metadata_json: Option<String>,
+    content_card_json: Option<String>,
+    translated_text: Option<String>,
+    source_execution_id: Option<String>,
+    command_label: Option<String>,
+    question_id: String,
+    session_id: String,
+}
+
+impl ConversationPartDetailRow {
+    fn into_part(self) -> AppResult<(ConversationPart, String, String)> {
+        let part = ConversationPart {
+            id: self.id,
+            turn_id: self.turn_id,
+            part_index: self.part_index,
+            role: decode_enum(self.role)?,
+            kind: decode_enum(self.kind)?,
+            text: self.text,
+            language: self.language,
+            command: self.command,
+            cwd: self.cwd,
+            status: self.status,
+            exit_code: self.exit_code.map(|v| v as i32),
+            command_label: self.command_label,
+            source_execution_id: self.source_execution_id,
+            content_card: self.content_card_json.map(decode_json).transpose()?,
+            metadata_json: self.metadata_json,
+            translated_text: self.translated_text,
+        };
+        Ok((part, self.question_id, self.session_id))
+    }
+}
+
 pub(crate) async fn load_conversation_block_detail_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -1930,7 +2134,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
 ) -> AppResult<ConversationBlockDetail> {
     let tables = record_kind.tables();
     if let Some(turn_id) = block_id.strip_suffix("-question") {
-        let row = sqlx::query(AssertSqlSafe(format!(
+        let row = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(format!(
             r#"
             SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                    t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
@@ -1948,10 +2152,9 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         .await
         .map_err(AppError::external)?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation question block not found: {block_id}") })
+            AppError::external(format!("conversation question block not found: {block_id}"))
         })?;
-        let turn = map_sqlx_conversation_turn(&row)?;
-        let question_id: String = row.try_get(11).map_err(AppError::external)?;
+        let (question_id, turn) = row.into_turn();
         let locator =
             conversation_question_block_locator(record_kind, &turn.session_id, &question_id, &turn);
         return Ok(ConversationBlockDetail {
@@ -1962,7 +2165,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     }
 
     let part_id = conversation_part_id_for_block_id(block_id);
-    let row = sqlx::query(AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, ConversationPartDetailRow>(AssertSqlSafe(format!(
         r#"
         SELECT p.id, p.turn_id, p.part_index, p.role, p.kind, p.text, p.language,
                p.command, p.cwd, p.status, p.exit_code, p.metadata_json,
@@ -1983,11 +2186,9 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
     .await
     .map_err(AppError::external)?
     .ok_or_else(|| {
-        AppError::external({ format!("conversation content block not found: {block_id}") })
+        AppError::external(format!("conversation content block not found: {block_id}"))
     })?;
-    let part = map_sqlx_conversation_part(&row)?;
-    let question_id: String = row.try_get(16).map_err(AppError::external)?;
-    let session_id: String = row.try_get(17).map_err(AppError::external)?;
+    let (part, question_id, session_id) = row.into_part()?;
     let (adapter_id, card_kinds) = load_conversation_card_projection_context_for_record_sqlx(
         pool,
         tenant_id,
@@ -1999,16 +2200,15 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         &part,
         &adapter_id,
         &card_kinds,
-    )
-    .map_err(AppError::external)?;
+    )?;
     let card = cards
         .iter()
         .find(|card| card.node_id == block_id)
         .or_else(|| (block_id == part.id).then(|| cards.first()).flatten())
         .ok_or_else(|| {
-            AppError::external({
-                format!("conversation block is not a readable content card: {block_id}")
-            })
+            AppError::external(format!(
+                "conversation block is not a readable content card: {block_id}"
+            ))
         })?;
     let mut locator =
         conversation_card_block_locator(record_kind, &session_id, &question_id, &part, card);
@@ -2071,9 +2271,7 @@ pub(crate) async fn merge_conversation_questions_sqlx(
             load_conversation_question_sqlx_tx(&mut tx, tenant_id, &resolved_question_id)
                 .await?
                 .ok_or_else(|| {
-                    AppError::external({
-                        format!("conversation question not found: {question_id}")
-                    })
+                    AppError::external(format!("conversation question not found: {question_id}"))
                 })?,
         );
     }
@@ -2245,7 +2443,7 @@ pub(crate) async fn split_conversation_question_sqlx(
     let question = load_conversation_question_sqlx_tx(&mut tx, tenant_id, question_id)
         .await?
         .ok_or_else(|| {
-            AppError::external({ format!("conversation question not found: {question_id}") })
+            AppError::external(format!("conversation question not found: {question_id}"))
         })?;
     reject_invalid_conversation_question_turns_sqlx_tx(&mut tx, tenant_id).await?;
     let turns = load_question_turns_sqlx_tx(&mut tx, tenant_id, question_id).await?;
@@ -2280,9 +2478,9 @@ pub(crate) async fn split_conversation_question_sqlx(
                 ],
             });
         }
-        return Err(AppError::external({
-            format!("turn is not in question: {before_turn_id}")
-        }));
+        return Err(AppError::external(format!(
+            "turn is not in question: {before_turn_id}"
+        )));
     };
     if split_index == 0 {
         return Err(AppError::Validation(
@@ -2462,7 +2660,7 @@ async fn load_conversation_question_details_for_session_sqlx(
             .push(membership);
     }
 
-    let turn_rows = sqlx::query(
+    let turn_rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(
         r#"
         SELECT t.id, t.session_id, t.external_id, t.turn_index, t.user_text, t.title,
                t.started_at, t.ended_at, t.fingerprint, t.missing, t.imported_at,
@@ -2482,12 +2680,9 @@ async fn load_conversation_question_details_for_session_sqlx(
     .await
     .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in &turn_rows {
-        let question_id = row.try_get::<String, _>(11).map_err(AppError::external)?;
-        turns_by_question
-            .entry(question_id)
-            .or_default()
-            .push(map_sqlx_conversation_turn(row)?);
+    for row in turn_rows {
+        let (question_id, turn) = row.into_turn();
+        turns_by_question.entry(question_id).or_default().push(turn);
     }
 
     let part_rows = sqlx::query(
@@ -2708,18 +2903,22 @@ pub(super) fn project_question_content_nodes(
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> AppResult<Vec<ConversationContentNode>> {
-    project_conversation_content_nodes(question_id, question_turns, parts, |part| {
-        crate::backend::projection::conversation_cards::project_conversation_content_cards(
-            part, adapter_id, card_kinds,
-        )
-        .map(|cards| {
-            cards
-                .into_iter()
-                .map(ConversationContentNodeCandidate::from)
-                .collect()
-        })
-    })
-    .map_err(AppError::external)
+    Ok(project_conversation_content_nodes(
+        question_id,
+        question_turns,
+        parts,
+        |part| {
+            crate::backend::projection::conversation_cards::project_conversation_content_cards(
+                part, adapter_id, card_kinds,
+            )
+            .map(|cards| {
+                cards
+                    .into_iter()
+                    .map(ConversationContentNodeCandidate::from)
+                    .collect()
+            })
+        },
+    )?)
 }
 
 pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
@@ -2735,9 +2934,9 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
         ConversationRecordKind::Web => "web",
     };
     let run_limit = i64::try_from(recent_run_limit.clamp(1, 20)).map_err(|_| {
-        AppError::external({ "invalid recent conversation sync run limit".to_string() })
+        AppError::external("invalid recent conversation sync run limit".to_string())
     })?;
-    let rows = sqlx::query(
+    sqlx::query_as::<_, ConversationSyncDelta>(
         r#"
         WITH recent_runs AS (
             SELECT r.id
@@ -2767,17 +2966,7 @@ pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
     .bind(run_limit)
     .fetch_all(pool)
     .await
-    .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            Ok(ConversationSyncDelta {
-                sync_run_id: row.try_get(0).map_err(AppError::external)?,
-                session_id: row.try_get(1).map_err(AppError::external)?,
-                change_kind: row.try_get(2).map_err(AppError::external)?,
-                observed_at: row.try_get(3).map_err(AppError::external)?,
-            })
-        })
-        .collect()
+    .map_err(AppError::external)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2800,9 +2989,8 @@ pub(crate) async fn search_conversation_cards_sqlx(
     offset: usize,
     allowed_session_ids: Option<&BTreeSet<String>>,
 ) -> AppResult<ConversationSearchPage> {
-    let needle = normalize_query(Some(query)).ok_or_else(|| {
-        AppError::external({ "conversation search query is required".to_string() })
-    })?;
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| AppError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::models::conversation_id_search_term(query)
         .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let project_path = normalize_project_path(project_path);
@@ -3076,9 +3264,8 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
     .flatten()
     .map(|item| (item.id.clone(), item))
     .collect::<BTreeMap<_, _>>();
-    let needle = normalize_query(Some(query)).ok_or_else(|| {
-        AppError::external({ "conversation search query is required".to_string() })
-    })?;
+    let needle = normalize_query(Some(query))
+        .ok_or_else(|| AppError::external("conversation search query is required".to_string()))?;
     let id_fragment = crate::backend::models::conversation_id_search_term(query)
         .map(|value| crate::backend::models::conversation_id_fragment(&value));
     let mut hits = Vec::with_capacity(matches.hits.len());
@@ -3096,14 +3283,10 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
             .any(|value| crate::backend::models::conversation_id_fragment(value) == fragment)
         });
         let session = sessions.get(&matched.session_id).ok_or_else(|| {
-            AppError::external({
-                "conversation search index hydration missed a session".to_string()
-            })
+            AppError::external("conversation search index hydration missed a session".to_string())
         })?;
         let question = questions.get(&matched.question_id).ok_or_else(|| {
-            AppError::external({
-                "conversation search index hydration missed a question".to_string()
-            })
+            AppError::external("conversation search index hydration missed a question".to_string())
         })?;
         let question_title = search_question_title_from_turns(
             question,
@@ -3114,16 +3297,12 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
         );
         let (part_id, text) = if matched.card_type == "question" {
             let turn = turns.get(&matched.turn_id).ok_or_else(|| {
-                AppError::external({
-                    "conversation search index hydration missed a turn".to_string()
-                })
+                AppError::external("conversation search index hydration missed a turn".to_string())
             })?;
             (None, turn.user_text.clone())
         } else {
             let part = parts.get(&matched.part_id).ok_or_else(|| {
-                AppError::external({
-                    "conversation search index hydration missed a part".to_string()
-                })
+                AppError::external("conversation search index hydration missed a part".to_string())
             })?;
             let cards =
                 crate::backend::projection::conversation_cards::project_conversation_content_cards(
@@ -3133,15 +3312,14 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                         .get(&session.session.adapter_id)
                         .map(Vec::as_slice)
                         .unwrap_or_default(),
-                )
-                .map_err(AppError::external)?;
+                )?;
             let card = cards
                 .iter()
                 .find(|card| card.node_id == matched.document_id)
                 .ok_or_else(|| {
-                    AppError::external({
-                        "conversation search index hydration missed a projected card".to_string()
-                    })
+                    AppError::external(
+                        "conversation search index hydration missed a projected card".to_string(),
+                    )
                 })?;
             if card.kind != matched.card_type || card.part_id != part.id {
                 return Err(AppError::Validation(
@@ -3155,9 +3333,9 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                 (matched.card_type == "question").then_some(ConversationSearchCardType::question())
             })
             .ok_or_else(|| {
-                AppError::external({
-                    "conversation search index returned an invalid card type".to_string()
-                })
+                AppError::external(
+                    "conversation search index returned an invalid card type".to_string(),
+                )
             })?;
         hits.push(ConversationSearchHit {
             session: session.clone(),
@@ -3232,102 +3410,176 @@ fn builtin_sources(now: &str) -> Vec<ConversationSource> {
     ]
 }
 
-fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
-    let protocol_version = row
-        .try_get::<Option<i64>, _>(10)
-        .map_err(AppError::external)?
-        .map(|value| {
-            u32::try_from(value)
-                .map_err(|_| AppError::external({ format!("invalid protocol_version: {value}") }))
-        })
-        .transpose()?;
-    Ok(ConversationAdapter {
-        id: row.try_get(0).map_err(AppError::external)?,
-        name: row.try_get(1).map_err(AppError::external)?,
-        kind: decode_enum(row.try_get::<String, _>(2).map_err(AppError::external)?)?,
-        version: row.try_get(3).map_err(AppError::external)?,
-        enabled: row.try_get::<i64, _>(4).map_err(AppError::external)? == 1,
-        manifest_path: normalize_optional_conversation_path(
-            row.try_get::<Option<String>, _>(5)
-                .map_err(AppError::external)?
-                .as_deref(),
-        )?,
-        executable_path: normalize_optional_conversation_path(
-            row.try_get::<Option<String>, _>(6)
-                .map_err(AppError::external)?
-                .as_deref(),
-        )?,
-        content_hash: row.try_get(7).map_err(AppError::external)?,
-        trusted_hash: row.try_get(8).map_err(AppError::external)?,
-        trust_state: decode_enum(row.try_get::<String, _>(9).map_err(AppError::external)?)?,
-        protocol_version,
-        capabilities: decode_json(row.try_get::<String, _>(11).map_err(AppError::external)?)?,
-        input_kinds: decode_json(row.try_get::<String, _>(12).map_err(AppError::external)?)?,
-        card_contract_version: row
-            .try_get::<Option<i64>, _>(13)
-            .map_err(AppError::external)?
+#[derive(Debug, FromRow)]
+struct ConversationAdapterRow {
+    id: String,
+    name: String,
+    kind: String,
+    version: String,
+    enabled: i64,
+    manifest_path: Option<String>,
+    executable_path: Option<String>,
+    content_hash: Option<String>,
+    trusted_hash: Option<String>,
+    trust_state: String,
+    protocol_version: Option<i64>,
+    capabilities: String,
+    input_kinds: String,
+    card_contract_version: Option<i64>,
+    card_kinds_json: String,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationAdapterRow {
+    fn into_domain(self) -> AppResult<ConversationAdapter> {
+        let protocol_version = self
+            .protocol_version
+            .map(|value| {
+                u32::try_from(value)
+                    .map_err(|_| AppError::external(format!("invalid protocol_version: {value}")))
+            })
+            .transpose()?;
+        let card_contract_version = self
+            .card_contract_version
             .map(|value| {
                 u32::try_from(value).map_err(|_| {
-                    AppError::external({ format!("invalid card_contract_version: {value}") })
+                    AppError::external(format!("invalid card_contract_version: {value}"))
                 })
             })
-            .transpose()?,
-        card_kinds: decode_json(row.try_get::<String, _>(14).map_err(AppError::external)?)?,
-        created_at: row.try_get(15).map_err(AppError::external)?,
-        updated_at: row.try_get(16).map_err(AppError::external)?,
-    })
+            .transpose()?;
+        Ok(ConversationAdapter {
+            id: self.id,
+            name: self.name,
+            kind: decode_enum(self.kind)?,
+            version: self.version,
+            enabled: self.enabled == 1,
+            manifest_path: normalize_optional_conversation_path(self.manifest_path.as_deref())?,
+            executable_path: normalize_optional_conversation_path(self.executable_path.as_deref())?,
+            content_hash: self.content_hash,
+            trusted_hash: self.trusted_hash,
+            trust_state: decode_enum(self.trust_state)?,
+            protocol_version,
+            capabilities: decode_json(self.capabilities)?,
+            input_kinds: decode_json(self.input_kinds)?,
+            card_contract_version,
+            card_kinds: decode_json(self.card_kinds_json)?,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+fn map_sqlx_conversation_adapter(row: &SqliteRow) -> AppResult<ConversationAdapter> {
+    ConversationAdapterRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationAdapterPackageRow {
+    package_id: String,
+    adapter_id: String,
+    name: String,
+    version: String,
+    record_kind: String,
+    install_dir: String,
+    manifest_path: String,
+    adapter_manifest_path: String,
+    runtime_protocol: String,
+    runtime_ready: i64,
+    origin: String,
+    source_url: Option<String>,
+    git_ref: Option<String>,
+    git_commit: Option<String>,
+    catalog_url: Option<String>,
+    update_policy: String,
+    latest_version: Option<String>,
+    last_checked_at: Option<String>,
+    runtime_gate_status: String,
+    runtime_validated_at: Option<String>,
+    installed_content_hash: Option<String>,
+    trusted_package_hash: Option<String>,
+    error_message: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationAdapterPackageRow {
+    fn into_domain(self) -> AppResult<ConversationAdapterPackage> {
+        Ok(ConversationAdapterPackage {
+            package_id: self.package_id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            version: self.version,
+            record_kind: decode_enum(self.record_kind)?,
+            install_dir: normalize_conversation_path(&self.install_dir)?,
+            manifest_path: normalize_conversation_path(&self.manifest_path)?,
+            adapter_manifest_path: normalize_conversation_path(&self.adapter_manifest_path)?,
+            runtime_protocol: self.runtime_protocol,
+            runtime_ready: self.runtime_ready == 1,
+            origin: decode_enum(self.origin)?,
+            source_url: self.source_url,
+            git_ref: self.git_ref,
+            git_commit: self.git_commit,
+            catalog_url: self.catalog_url,
+            update_policy: decode_enum(self.update_policy)?,
+            latest_version: self.latest_version,
+            last_checked_at: self.last_checked_at,
+            runtime_gate_status: decode_enum(self.runtime_gate_status)?,
+            runtime_validated_at: self.runtime_validated_at,
+            installed_content_hash: self.installed_content_hash,
+            trusted_package_hash: self.trusted_package_hash,
+            error_message: self.error_message,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 fn map_sqlx_conversation_adapter_package(row: &SqliteRow) -> AppResult<ConversationAdapterPackage> {
-    let install_dir: String = row.try_get(5).map_err(AppError::external)?;
-    let manifest_path: String = row.try_get(6).map_err(AppError::external)?;
-    let adapter_manifest_path: String = row.try_get(7).map_err(AppError::external)?;
-    Ok(ConversationAdapterPackage {
-        package_id: row.try_get(0).map_err(AppError::external)?,
-        adapter_id: row.try_get(1).map_err(AppError::external)?,
-        name: row.try_get(2).map_err(AppError::external)?,
-        version: row.try_get(3).map_err(AppError::external)?,
-        record_kind: decode_enum(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
-        install_dir: normalize_conversation_path(&install_dir)?,
-        manifest_path: normalize_conversation_path(&manifest_path)?,
-        adapter_manifest_path: normalize_conversation_path(&adapter_manifest_path)?,
-        runtime_protocol: row.try_get(8).map_err(AppError::external)?,
-        runtime_ready: row.try_get::<i64, _>(9).map_err(AppError::external)? == 1,
-        origin: decode_enum(row.try_get::<String, _>(10).map_err(AppError::external)?)?,
-        source_url: row.try_get(11).map_err(AppError::external)?,
-        git_ref: row.try_get(12).map_err(AppError::external)?,
-        git_commit: row.try_get(13).map_err(AppError::external)?,
-        catalog_url: row.try_get(14).map_err(AppError::external)?,
-        update_policy: decode_enum(row.try_get::<String, _>(15).map_err(AppError::external)?)?,
-        latest_version: row.try_get(16).map_err(AppError::external)?,
-        last_checked_at: row.try_get(17).map_err(AppError::external)?,
-        runtime_gate_status: decode_enum(
-            row.try_get::<String, _>(18).map_err(AppError::external)?,
-        )?,
-        runtime_validated_at: row.try_get(19).map_err(AppError::external)?,
-        installed_content_hash: row.try_get(20).map_err(AppError::external)?,
-        trusted_package_hash: row.try_get(21).map_err(AppError::external)?,
-        error_message: row.try_get(22).map_err(AppError::external)?,
-        created_at: row.try_get(23).map_err(AppError::external)?,
-        updated_at: row.try_get(24).map_err(AppError::external)?,
-    })
+    ConversationAdapterPackageRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationSourceRow {
+    id: String,
+    adapter_id: String,
+    name: String,
+    kind: String,
+    location: String,
+    config_json: Option<String>,
+    enabled: i64,
+    last_synced_at: Option<String>,
+    last_sync_status: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationSourceRow {
+    fn into_domain(self) -> AppResult<ConversationSource> {
+        Ok(ConversationSource {
+            id: self.id,
+            adapter_id: self.adapter_id,
+            name: self.name,
+            kind: decode_enum(self.kind)?,
+            location: normalize_conversation_source_location(&self.location)?,
+            config_json: self.config_json,
+            enabled: self.enabled == 1,
+            last_synced_at: self.last_synced_at,
+            last_sync_status: self.last_sync_status,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 fn map_sqlx_conversation_source(row: &SqliteRow) -> AppResult<ConversationSource> {
-    let location: String = row.try_get(4).map_err(AppError::external)?;
-    Ok(ConversationSource {
-        id: row.try_get(0).map_err(AppError::external)?,
-        adapter_id: row.try_get(1).map_err(AppError::external)?,
-        name: row.try_get(2).map_err(AppError::external)?,
-        kind: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        location: normalize_conversation_source_location(&location)?,
-        config_json: row.try_get(5).map_err(AppError::external)?,
-        enabled: row.try_get::<i64, _>(6).map_err(AppError::external)? == 1,
-        last_synced_at: row.try_get(7).map_err(AppError::external)?,
-        last_sync_status: row.try_get(8).map_err(AppError::external)?,
-        created_at: row.try_get(9).map_err(AppError::external)?,
-        updated_at: row.try_get(10).map_err(AppError::external)?,
-    })
+    ConversationSourceRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 fn normalize_conversation_source_location(location: &str) -> AppResult<String> {
@@ -3349,88 +3601,193 @@ fn normalize_optional_conversation_path(path: Option<&str>) -> AppResult<Option<
     path.map(normalize_conversation_path).transpose()
 }
 
+#[derive(Debug, FromRow)]
+struct ConversationSessionRow {
+    id: String,
+    source_id: String,
+    adapter_id: String,
+    external_id: String,
+    title: String,
+    project_path: Option<String>,
+    started_at: Option<String>,
+    updated_at: Option<String>,
+    source_locator: Option<String>,
+    source_fingerprint: Option<String>,
+    missing: i64,
+    created_at: String,
+    imported_at: String,
+}
+
+impl ConversationSessionRow {
+    fn into_domain(self) -> ConversationSession {
+        ConversationSession {
+            id: self.id,
+            source_id: self.source_id,
+            adapter_id: self.adapter_id,
+            external_id: self.external_id,
+            title: self.title,
+            project_path: self.project_path,
+            started_at: self.started_at,
+            updated_at: self.updated_at,
+            source_locator: self.source_locator,
+            source_fingerprint: self.source_fingerprint,
+            missing: self.missing == 1,
+            created_at: self.created_at,
+            imported_at: self.imported_at,
+        }
+    }
+}
+
 pub(super) fn map_sqlx_conversation_session(row: &SqliteRow) -> AppResult<ConversationSession> {
-    Ok(ConversationSession {
-        id: row.try_get(0).map_err(AppError::external)?,
-        source_id: row.try_get(1).map_err(AppError::external)?,
-        adapter_id: row.try_get(2).map_err(AppError::external)?,
-        external_id: row.try_get(3).map_err(AppError::external)?,
-        title: row.try_get(4).map_err(AppError::external)?,
-        project_path: row.try_get(5).map_err(AppError::external)?,
-        started_at: row.try_get(6).map_err(AppError::external)?,
-        updated_at: row.try_get(7).map_err(AppError::external)?,
-        source_locator: row.try_get(8).map_err(AppError::external)?,
-        source_fingerprint: row.try_get(9).map_err(AppError::external)?,
-        missing: row.try_get::<i64, _>(10).map_err(AppError::external)? == 1,
-        created_at: row.try_get(11).map_err(AppError::external)?,
-        imported_at: row.try_get(12).map_err(AppError::external)?,
-    })
+    Ok(ConversationSessionRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationTurnRow {
+    id: String,
+    session_id: String,
+    external_id: String,
+    turn_index: i64,
+    user_text: String,
+    title: Option<String>,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    fingerprint: String,
+    missing: i64,
+    imported_at: String,
+}
+
+impl ConversationTurnRow {
+    fn into_domain(self) -> ConversationTurn {
+        ConversationTurn {
+            id: self.id,
+            session_id: self.session_id,
+            external_id: self.external_id,
+            turn_index: self.turn_index,
+            user_text: self.user_text,
+            title: self.title,
+            started_at: self.started_at,
+            ended_at: self.ended_at,
+            fingerprint: self.fingerprint,
+            missing: self.missing == 1,
+            imported_at: self.imported_at,
+        }
+    }
 }
 
 pub(super) fn map_sqlx_conversation_turn(row: &SqliteRow) -> AppResult<ConversationTurn> {
-    Ok(ConversationTurn {
-        id: row.try_get(0).map_err(AppError::external)?,
-        session_id: row.try_get(1).map_err(AppError::external)?,
-        external_id: row.try_get(2).map_err(AppError::external)?,
-        turn_index: row.try_get(3).map_err(AppError::external)?,
-        user_text: row.try_get(4).map_err(AppError::external)?,
-        title: row.try_get(5).map_err(AppError::external)?,
-        started_at: row.try_get(6).map_err(AppError::external)?,
-        ended_at: row.try_get(7).map_err(AppError::external)?,
-        fingerprint: row.try_get(8).map_err(AppError::external)?,
-        missing: row.try_get::<i64, _>(9).map_err(AppError::external)? == 1,
-        imported_at: row.try_get(10).map_err(AppError::external)?,
-    })
+    Ok(ConversationTurnRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationPartRow {
+    id: String,
+    turn_id: String,
+    part_index: i64,
+    role: String,
+    kind: String,
+    text: Option<String>,
+    language: Option<String>,
+    command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    metadata_json: Option<String>,
+    command_label: Option<String>,
+    source_execution_id: Option<String>,
+    content_card_json: Option<String>,
+    translated_text: Option<String>,
+}
+
+impl ConversationPartRow {
+    fn into_domain(self) -> AppResult<ConversationPart> {
+        Ok(ConversationPart {
+            id: self.id,
+            turn_id: self.turn_id,
+            part_index: self.part_index,
+            role: decode_enum(self.role)?,
+            kind: decode_enum(self.kind)?,
+            text: self.text,
+            language: self.language,
+            command: self.command,
+            cwd: self.cwd,
+            status: self.status,
+            exit_code: self.exit_code.map(|v| v as i32),
+            command_label: self.command_label,
+            source_execution_id: self.source_execution_id,
+            content_card: self.content_card_json.map(decode_json).transpose()?,
+            metadata_json: self.metadata_json,
+            translated_text: self.translated_text,
+        })
+    }
 }
 
 pub(super) fn map_sqlx_conversation_part(row: &SqliteRow) -> AppResult<ConversationPart> {
-    Ok(ConversationPart {
-        id: row.try_get(0).map_err(AppError::external)?,
-        turn_id: row.try_get(1).map_err(AppError::external)?,
-        part_index: row.try_get(2).map_err(AppError::external)?,
-        role: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        kind: decode_enum(row.try_get::<String, _>(4).map_err(AppError::external)?)?,
-        text: row.try_get(5).map_err(AppError::external)?,
-        language: row.try_get(6).map_err(AppError::external)?,
-        command: row.try_get(7).map_err(AppError::external)?,
-        cwd: row.try_get(8).map_err(AppError::external)?,
-        status: row.try_get(9).map_err(AppError::external)?,
-        exit_code: row.try_get(10).map_err(AppError::external)?,
-        metadata_json: row.try_get(11).map_err(AppError::external)?,
-        command_label: row.try_get("command_label").map_err(AppError::external)?,
-        source_execution_id: row
-            .try_get("source_execution_id")
-            .map_err(AppError::external)?,
-        content_card: row
-            .try_get::<Option<String>, _>(12)
-            .map_err(AppError::external)?
-            .map(decode_json)
-            .transpose()?,
-        translated_text: row.try_get(13).map_err(AppError::external)?,
-    })
+    ConversationPartRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationQuestionRow {
+    id: String,
+    session_id: String,
+    title: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl ConversationQuestionRow {
+    fn into_domain(self) -> ConversationQuestion {
+        ConversationQuestion {
+            id: self.id,
+            session_id: self.session_id,
+            title: self.title,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
 }
 
 pub(super) fn map_sqlx_conversation_question(row: &SqliteRow) -> AppResult<ConversationQuestion> {
-    Ok(ConversationQuestion {
-        id: row.try_get(0).map_err(AppError::external)?,
-        session_id: row.try_get(1).map_err(AppError::external)?,
-        title: row.try_get(2).map_err(AppError::external)?,
-        created_at: row.try_get(3).map_err(AppError::external)?,
-        updated_at: row.try_get(4).map_err(AppError::external)?,
-    })
+    Ok(ConversationQuestionRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain())
+}
+
+#[derive(Debug, FromRow)]
+struct ConversationQuestionTurnRow {
+    question_id: String,
+    turn_id: String,
+    turn_order: i64,
+    assignment_origin: String,
+    assigned_at: String,
+    updated_at: String,
+}
+
+impl ConversationQuestionTurnRow {
+    fn into_domain(self) -> AppResult<ConversationQuestionTurn> {
+        Ok(ConversationQuestionTurn {
+            question_id: self.question_id,
+            turn_id: self.turn_id,
+            turn_order: self.turn_order,
+            assignment_origin: decode_enum(self.assignment_origin)?,
+            assigned_at: self.assigned_at,
+            updated_at: self.updated_at,
+        })
+    }
 }
 
 pub(super) fn map_sqlx_conversation_question_turn(
     row: &SqliteRow,
 ) -> AppResult<ConversationQuestionTurn> {
-    Ok(ConversationQuestionTurn {
-        question_id: row.try_get(0).map_err(AppError::external)?,
-        turn_id: row.try_get(1).map_err(AppError::external)?,
-        turn_order: row.try_get(2).map_err(AppError::external)?,
-        assignment_origin: decode_enum(row.try_get::<String, _>(3).map_err(AppError::external)?)?,
-        assigned_at: row.try_get(4).map_err(AppError::external)?,
-        updated_at: row.try_get(5).map_err(AppError::external)?,
-    })
+    ConversationQuestionTurnRow::from_row(row)
+        .map_err(AppError::external)?
+        .into_domain()
 }
 
 fn conversation_session_from_normalized(
@@ -3493,7 +3850,18 @@ async fn conversation_session_is_unchanged_sqlx_tx(
     let Some(source_fingerprint) = session.source_fingerprint.as_deref() else {
         return Ok(false);
     };
-    let Some(row) = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct ConversationSessionUnchangedCheckRow {
+        title: String,
+        project_path: Option<String>,
+        started_at: Option<String>,
+        updated_at: Option<String>,
+        source_locator: Option<String>,
+        source_fingerprint: Option<String>,
+        missing: i64,
+    }
+
+    let Some(row) = sqlx::query_as::<_, ConversationSessionUnchangedCheckRow>(
         r#"
         SELECT title, project_path, started_at, updated_at, source_locator,
                source_fingerprint, missing
@@ -3511,21 +3879,13 @@ async fn conversation_session_is_unchanged_sqlx_tx(
         return Ok(false);
     };
 
-    let title: String = row.try_get(0).map_err(AppError::external)?;
-    let project_path: Option<String> = row.try_get(1).map_err(AppError::external)?;
-    let started_at: Option<String> = row.try_get(2).map_err(AppError::external)?;
-    let updated_at: Option<String> = row.try_get(3).map_err(AppError::external)?;
-    let source_locator: Option<String> = row.try_get(4).map_err(AppError::external)?;
-    let existing_fingerprint: Option<String> = row.try_get(5).map_err(AppError::external)?;
-    let missing: i64 = row.try_get(6).map_err(AppError::external)?;
-
-    Ok(title == session.title
-        && project_path == session.project_path
-        && started_at == session.started_at
-        && updated_at == session.updated_at
-        && source_locator == session.source_locator
-        && existing_fingerprint.as_deref() == Some(source_fingerprint)
-        && missing == 0
+    Ok(row.title == session.title
+        && row.project_path == session.project_path
+        && row.started_at == session.started_at
+        && row.updated_at == session.updated_at
+        && row.source_locator == session.source_locator
+        && row.source_fingerprint.as_deref() == Some(source_fingerprint)
+        && row.missing == 0
         && conversation_session_turns_are_unchanged_sqlx_tx(tx, tenant_id, &session.id, normalized)
             .await?)
 }
@@ -3552,7 +3912,14 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
     session_id: &str,
     normalized: &NormalizedConversationSession,
 ) -> AppResult<bool> {
-    let rows = sqlx::query(
+    #[derive(Debug, FromRow)]
+    struct ConversationTurnUnchangedCheckRow {
+        external_id: String,
+        fingerprint: String,
+        missing: i64,
+    }
+
+    let rows = sqlx::query_as::<_, ConversationTurnUnchangedCheckRow>(
         r#"
         SELECT external_id, fingerprint, missing
         FROM conversation_turns
@@ -3569,12 +3936,9 @@ async fn conversation_session_turns_are_unchanged_sqlx_tx(
         return Ok(false);
     }
     for (row, turn) in rows.iter().zip(&normalized.turns) {
-        let external_id: String = row.try_get(0).map_err(AppError::external)?;
-        let fingerprint: String = row.try_get(1).map_err(AppError::external)?;
-        let missing: i64 = row.try_get(2).map_err(AppError::external)?;
-        if external_id != turn.external_id
-            || fingerprint != conversation_turn_fingerprint(turn)
-            || missing != 0
+        if row.external_id != turn.external_id
+            || row.fingerprint != conversation_turn_fingerprint(turn)
+            || row.missing != 0
         {
             return Ok(false);
         }
@@ -3849,18 +4213,15 @@ async fn prune_conversation_turns_sqlx_tx(
         .filter(|turn| !turn.user_text.trim().is_empty())
         .map(|turn| stable_id("conversation-turn", &[session_id, &turn.external_id]))
         .collect::<BTreeSet<_>>();
-    let rows =
-        sqlx::query("SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2")
-            .bind(tenant_id)
-            .bind(session_id)
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(AppError::external)?;
-    let stale_turn_ids = rows
-        .iter()
-        .map(|row| row.try_get::<String, _>(0))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(AppError::external)?
+    let turn_ids = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM conversation_turns WHERE tenant_id = ?1 AND session_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(session_id)
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+    let stale_turn_ids = turn_ids
         .into_iter()
         .filter(|turn_id| !retained_turn_ids.contains(turn_id))
         .collect::<Vec<_>>();
@@ -4127,11 +4488,18 @@ async fn ensure_question_turn_scope_sqlx_tx(
     Ok(())
 }
 
+#[derive(Debug, FromRow)]
+struct InvalidConversationQuestionTurnRow {
+    question_id: String,
+    turn_id: String,
+    reason: String,
+}
+
 async fn reject_invalid_conversation_question_turns_sqlx_tx(
     tx: &mut Transaction<'_, Sqlite>,
     tenant_id: &str,
 ) -> AppResult<()> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, InvalidConversationQuestionTurnRow>(
         r#"
         SELECT qt.question_id, qt.turn_id,
                CASE
@@ -4153,23 +4521,20 @@ async fn reject_invalid_conversation_question_turns_sqlx_tx(
     .fetch_all(&mut **tx)
     .await
     .map_err(AppError::external)?;
-    if rows.is_empty() {
-        return Ok(());
+    if let Some(first) = rows.first() {
+        return Err(AppError::Validation(format!(
+            "invalid question turn membership ({}): question={}, turn={}",
+            first.reason, first.question_id, first.turn_id
+        )));
     }
-
-    let question_id: String = rows[0].try_get(0).map_err(AppError::external)?;
-    let turn_id: String = rows[0].try_get(1).map_err(AppError::external)?;
-    let reason: String = rows[0].try_get(2).map_err(AppError::external)?;
-    Err(AppError::Validation(format!(
-        "invalid question turn membership ({reason}): question={question_id}, turn={turn_id}"
-    )))
+    Ok(())
 }
 
 async fn audit_invalid_conversation_question_turns_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<()> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, InvalidConversationQuestionTurnRow>(
         r#"
         SELECT qt.question_id, qt.turn_id,
                CASE
@@ -4207,9 +4572,9 @@ async fn audit_invalid_conversation_question_turns_sqlx(
             "#,
         )
         .bind(tenant_id)
-        .bind(row.try_get::<String, _>(0).map_err(AppError::external)?)
-        .bind(row.try_get::<String, _>(1).map_err(AppError::external)?)
-        .bind(row.try_get::<String, _>(2).map_err(AppError::external)?)
+        .bind(&row.question_id)
+        .bind(&row.turn_id)
+        .bind(&row.reason)
         .bind(&detected_at)
         .execute(&mut *tx)
         .await
@@ -4805,7 +5170,7 @@ async fn load_search_sessions_sqlx(
         questions = tables.questions,
         turns = tables.turns,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, ConversationSessionListItemRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -4813,23 +5178,8 @@ async fn load_search_sessions_sqlx(
         .fetch_all(pool)
         .await
         .map_err(AppError::external)?;
-    rows.iter()
-        .map(|row| {
-            let question_count = usize::try_from(
-                row.try_get::<i64, _>(13).map_err(AppError::external)?,
-            )
-            .map_err(|_| {
-                AppError::external({ "invalid conversation search question count".to_string() })
-            })?;
-            let turn_count =
-                usize::try_from(row.try_get::<i64, _>(14).map_err(AppError::external)?)
-                    .map_err(|_| AppError::external("invalid conversation search turn count"))?;
-            Ok(ConversationSessionListItem {
-                session: map_sqlx_conversation_session(row)?,
-                question_count,
-                turn_count,
-            })
-        })
+    rows.into_iter()
+        .map(ConversationSessionListItemRow::into_item)
         .collect()
 }
 
@@ -4908,7 +5258,7 @@ async fn load_search_turns_sqlx(
         question_turns = tables.question_turns,
         sessions = tables.sessions,
     );
-    let rows = sqlx::query(AssertSqlSafe(query))
+    let rows = sqlx::query_as::<_, ConversationTurnWithQuestionRow>(AssertSqlSafe(query))
         .bind(tenant_id)
         .bind(adapter_id)
         .bind(source_id)
@@ -4917,12 +5267,9 @@ async fn load_search_turns_sqlx(
         .await
         .map_err(AppError::external)?;
     let mut turns_by_question = BTreeMap::<String, Vec<ConversationTurn>>::new();
-    for row in &rows {
-        let question_id = row.try_get::<String, _>(11).map_err(AppError::external)?;
-        turns_by_question
-            .entry(question_id)
-            .or_default()
-            .push(map_sqlx_conversation_turn(row)?);
+    for row in rows {
+        let (question_id, turn) = row.into_turn();
+        turns_by_question.entry(question_id).or_default().push(turn);
     }
     Ok(turns_by_question)
 }
@@ -4979,6 +5326,7 @@ struct ConversationSearchEntry {
     semantic_role: Option<String>,
 }
 
+#[cfg(test)]
 pub(super) fn append_declared_card_to_question_aggregate(
     part: &ConversationPart,
     answer_text: &mut Vec<String>,
@@ -5013,8 +5361,7 @@ pub(super) fn append_projected_cards_to_question_aggregate(
 ) -> AppResult<()> {
     let cards = crate::backend::projection::conversation_cards::project_conversation_content_cards(
         part, adapter_id, card_kinds,
-    )
-    .map_err(AppError::external)?;
+    )?;
     for card in cards {
         let semantic_role = card
             .semantic_role
@@ -5031,6 +5378,7 @@ pub(super) fn append_projected_cards_to_question_aggregate(
     Ok(())
 }
 
+#[cfg(test)]
 fn resolved_content_card_for_part(
     part: &ConversationPart,
 ) -> Option<crate::backend::projection::conversation_cards::ResolvedConversationContentCard> {
@@ -5227,22 +5575,27 @@ fn search_entries_for_part(
     .collect()
 }
 
+#[derive(Debug, FromRow)]
+struct AdapterCardKindsRow {
+    id: String,
+    card_kinds_json: String,
+}
+
 async fn load_search_adapter_card_kinds_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<BTreeMap<String, Vec<ConversationCardKindDefinition>>> {
-    let rows =
-        sqlx::query("SELECT id, card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1")
-            .bind(tenant_id)
-            .fetch_all(pool)
-            .await
-            .map_err(AppError::external)?;
-    rows.iter()
+    let rows = sqlx::query_as::<_, AdapterCardKindsRow>(
+        "SELECT id, card_kinds_json FROM conversation_adapters WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+    rows.into_iter()
         .map(|row| {
-            let adapter_id = row.try_get(0).map_err(AppError::external)?;
-            let definitions =
-                decode_json(row.try_get::<String, _>(1).map_err(AppError::external)?)?;
-            Ok((adapter_id, definitions))
+            let definitions = decode_json(row.card_kinds_json)?;
+            Ok((row.id, definitions))
         })
         .collect()
 }
@@ -5350,18 +5703,18 @@ mod tests {
 
     const TEST_TENANT_ID: &str = "default";
 
-    #[test]
-    fn sqlx_sync_import_reports_progress_and_rolls_back_cancelled_batch() {
+    #[tokio::test]
+    async fn sqlx_sync_import_reports_progress_and_rolls_back_cancelled_batch() {
         let db_path =
             std::env::temp_dir().join(format!("assetiweave-sync-cancel-{}.sqlite", Uuid::new_v4()));
-        let database = Database::open(&db_path).unwrap();
+        let database = Database::open_async(&db_path).await.unwrap();
         let adapter = test_conversation_adapter(
             "sync-cancel",
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
         let source = test_conversation_source(&adapter.id);
-        database.block_on(async {
+        async {
             let pool = database.pool();
             upsert_conversation_adapter_sqlx(pool, TEST_TENANT_ID, &adapter)
                 .await
@@ -5408,7 +5761,7 @@ mod tests {
                     },
                 )
                 .await;
-                assert!(matches!(result, Err(AppError::Canceled(_))), "{result:?}");
+                assert!(matches!(result, Err(AppError::Cancelled(_))), "{result:?}");
                 assert_eq!(progress, vec![(0, 2), (1, 2)]);
                 let fingerprints: Vec<Option<String>> = sqlx::query_scalar(
                     "SELECT source_fingerprint FROM conversation_sessions WHERE tenant_id = ?1",
@@ -5438,34 +5791,38 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
-        });
+        }
+        .await;
         drop(database);
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
+    #[tokio::test]
+    async fn recent_session_cwd_lookup_uses_session_and_turn_indexes() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-recent-session-query-plan-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let explain = format!("EXPLAIN QUERY PLAN {LIST_RECENT_CONVERSATION_SESSIONS_SQL}");
-        let details = database
-            .block_on(async {
-                let rows = sqlx::query(AssertSqlSafe(explain))
-                    .bind(TEST_TENANT_ID)
-                    .bind("2026-08-29T00:00:00Z")
-                    .bind("2026-09-01T00:00:00Z")
-                    .bind("")
-                    .fetch_all(database.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                rows.iter()
-                    .map(|row| row.try_get::<String, _>(3).map_err(AppError::external))
-                    .collect::<AppResult<Vec<_>>>()
-            })
-            .expect("explain recent query");
+        #[derive(Debug, FromRow)]
+        struct SqliteExplainQueryPlanRow {
+            detail: String,
+        }
+
+        let details = async {
+            let rows = sqlx::query_as::<_, SqliteExplainQueryPlanRow>(AssertSqlSafe(explain))
+                .bind(TEST_TENANT_ID)
+                .bind("2026-08-29T00:00:00Z")
+                .bind("2026-09-01T00:00:00Z")
+                .bind("")
+                .fetch_all(database.pool())
+                .await
+                .map_err(AppError::external)?;
+            Ok::<_, AppError>(rows.into_iter().map(|row| row.detail).collect::<Vec<_>>())
+        }
+        .await
+        .expect("explain recent query");
         let plan = details.join("\n");
 
         assert!(
@@ -5593,13 +5950,13 @@ mod tests {
         assert!(code_text.is_empty());
     }
 
-    #[test]
-    fn sqlx_conversation_metadata_round_trips_and_disables_sources() {
+    #[tokio::test]
+    async fn sqlx_conversation_metadata_round_trips_and_disables_sources() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-metadata-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let builtin_adapter = test_conversation_adapter(
             "metadata-builtin",
             ConversationAdapterKind::External,
@@ -5622,71 +5979,64 @@ mod tests {
             deleted_adapter,
             source_after_adapter_delete,
             missing_adapter,
-        ) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &builtin_adapter)
+        ) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &builtin_adapter)
+                .await?;
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &external_adapter)
+                .await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+
+            let adapters = list_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID).await?;
+            let loaded_adapter = load_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &external_adapter.id,
+            )
+            .await?;
+            let sources = list_conversation_sources_sqlx(database.pool(), TEST_TENANT_ID).await?;
+            let loaded_source =
+                load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id).await?;
+            let disabled_source =
+                disable_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                     .await?;
-                upsert_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &external_adapter,
-                )
-                .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            let disabled_builtin = delete_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &builtin_adapter.id,
+            )
+            .await?;
+            let deleted_adapter = delete_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &external_adapter.id,
+            )
+            .await?;
+            let source_after_adapter_delete =
+                load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                    .await?
+                    .expect("source is retained after adapter delete");
+            let missing_adapter = load_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &external_adapter.id,
+            )
+            .await?;
 
-                let adapters =
-                    list_conversation_adapters_sqlx(database.pool(), TEST_TENANT_ID).await?;
-                let loaded_adapter = load_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &external_adapter.id,
-                )
-                .await?;
-                let sources =
-                    list_conversation_sources_sqlx(database.pool(), TEST_TENANT_ID).await?;
-                let loaded_source =
-                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                        .await?;
-                let disabled_source =
-                    disable_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                        .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                let disabled_builtin = delete_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &builtin_adapter.id,
-                )
-                .await?;
-                let deleted_adapter = delete_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &external_adapter.id,
-                )
-                .await?;
-                let source_after_adapter_delete =
-                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                        .await?
-                        .expect("source is retained after adapter delete");
-                let missing_adapter = load_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &external_adapter.id,
-                )
-                .await?;
-
-                Ok::<_, AppError>((
-                    adapters,
-                    loaded_adapter,
-                    sources,
-                    loaded_source,
-                    disabled_source,
-                    disabled_builtin,
-                    deleted_adapter,
-                    source_after_adapter_delete,
-                    missing_adapter,
-                ))
-            })
-            .expect("query SQLx conversation metadata repo");
+            Ok::<_, AppError>((
+                adapters,
+                loaded_adapter,
+                sources,
+                loaded_source,
+                disabled_source,
+                disabled_builtin,
+                deleted_adapter,
+                source_after_adapter_delete,
+                missing_adapter,
+            ))
+        }
+        .await
+        .expect("query SQLx conversation metadata repo");
 
         assert!(adapters.iter().any(|adapter| adapter == &external_adapter));
         assert_eq!(loaded_adapter.as_ref(), Some(&external_adapter));
@@ -5705,16 +6055,17 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn sqlx_conversation_adapter_packages_round_trip_by_package_and_adapter() {
+    async fn sqlx_conversation_adapter_packages_round_trip_by_package_and_adapter() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-package-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
-        let install_dir = dirs::config_dir()
-            .expect("config directory")
+        let database = Database::open_async(&db_path).await.expect("open database");
+        let install_dir = crate::backend::host_paths::HostDirectories::current()
+            .expect("host directories")
+            .config
             .join("assetiweave")
             .join("conversation-adapters")
             .join("packages")
@@ -5754,36 +6105,36 @@ mod tests {
             updated_at: "2026-07-04T00:00:00Z".to_string(),
         };
 
-        let (listed, listed_after_switch, by_package, by_adapter, deleted, missing) = database
-            .block_on(async {
-                upsert_conversation_adapter_package_sqlx(database.pool(), &package).await?;
-                let listed = list_conversation_adapter_packages_sqlx(database.pool()).await?;
-                let listed_after_switch =
-                    list_conversation_adapter_packages_sqlx(database.pool()).await?;
-                let by_package =
-                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
-                        .await?;
-                let by_adapter = load_conversation_adapter_package_by_adapter_sqlx(
-                    database.pool(),
-                    &package.adapter_id,
-                )
-                .await?;
-                let deleted =
-                    delete_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
-                        .await?;
-                let missing =
-                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
-                        .await?;
-                Ok::<_, AppError>((
-                    listed,
-                    listed_after_switch,
-                    by_package,
-                    by_adapter,
-                    deleted,
-                    missing,
-                ))
-            })
-            .expect("round trip package");
+        let (listed, listed_after_switch, by_package, by_adapter, deleted, missing) = async {
+            upsert_conversation_adapter_package_sqlx(database.pool(), &package).await?;
+            let listed = list_conversation_adapter_packages_sqlx(database.pool()).await?;
+            let listed_after_switch =
+                list_conversation_adapter_packages_sqlx(database.pool()).await?;
+            let by_package =
+                load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                    .await?;
+            let by_adapter = load_conversation_adapter_package_by_adapter_sqlx(
+                database.pool(),
+                &package.adapter_id,
+            )
+            .await?;
+            let deleted =
+                delete_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                    .await?;
+            let missing =
+                load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                    .await?;
+            Ok::<_, AppError>((
+                listed,
+                listed_after_switch,
+                by_package,
+                by_adapter,
+                deleted,
+                missing,
+            ))
+        }
+        .await
+        .expect("round trip package");
 
         let mut stored_package = package;
         stored_package.install_dir =
@@ -5805,21 +6156,22 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(unix)]
-    fn conversation_adapter_runtime_paths_normalize_to_config_anchor() {
+    async fn conversation_adapter_runtime_paths_normalize_to_config_anchor() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-adapter-config-path-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut adapter = test_conversation_adapter(
             "portable-adapter",
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
-        let adapter_dir = dirs::config_dir()
-            .expect("config directory")
+        let adapter_dir = crate::backend::host_paths::HostDirectories::current()
+            .expect("host directories")
+            .config
             .join("assetiweave")
             .join("conversation-adapters")
             .join("portable-adapter");
@@ -5836,13 +6188,13 @@ mod tests {
                 .to_string(),
         );
 
-        let loaded = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id).await
-            })
-            .expect("round trip adapter")
-            .expect("stored adapter");
+        let loaded = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id).await
+        }
+        .await
+        .expect("round trip adapter")
+        .expect("stored adapter");
 
         assert_eq!(
             loaded.manifest_path.as_deref(),
@@ -5856,13 +6208,14 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn managed_package_uninstall_disables_runtime_but_preserves_package_versions_and_sources() {
+    #[tokio::test]
+    async fn managed_package_uninstall_disables_runtime_but_preserves_package_versions_and_sources()
+    {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-package-uninstall-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "uninstall-adapter",
             ConversationAdapterKind::External,
@@ -5914,64 +6267,63 @@ mod tests {
             retained_source_after_switch,
             missing_adapter,
             missing_adapter_after_switch,
-        ) = database
-            .block_on(async {
-                crate::backend::store::create_local_tenant_sqlx(
-                    database.pool(),
-                    "local",
-                    "Tenant B",
-                    Some("tenant-b"),
-                )
-                .await?;
-                activate_conversation_adapter_package_sqlx(
-                    database.pool(),
-                    &adapter,
-                    &package,
-                    &version,
-                )
-                .await?;
-                let projected_adapter_after_switch =
-                    load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id)
-                        .await?
-                        .expect("application package projects into every existing tenant");
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                upsert_conversation_source_sqlx(database.pool(), "tenant-b", &source).await?;
-                let uninstalled = deactivate_conversation_adapter_package_sqlx(
-                    database.pool(),
-                    &package.package_id,
-                    &adapter.id,
-                )
-                .await?;
-                let remaining_versions = list_conversation_adapter_package_versions_sqlx(
-                    database.pool(),
-                    &package.package_id,
-                )
-                .await?;
-                let retained_source =
-                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                        .await?
-                        .expect("source remains after uninstall");
-                let retained_source_after_switch =
-                    load_conversation_source_sqlx(database.pool(), "tenant-b", &source.id)
-                        .await?
-                        .expect("other tenant source remains after uninstall");
-                let missing_adapter =
-                    load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
-                        .await?;
-                let missing_adapter_after_switch =
-                    load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id)
-                        .await?;
-                Ok::<_, AppError>((
-                    uninstalled,
-                    remaining_versions,
-                    projected_adapter_after_switch,
-                    retained_source,
-                    retained_source_after_switch,
-                    missing_adapter,
-                    missing_adapter_after_switch,
-                ))
-            })
-            .expect("uninstall managed package runtime");
+        ) = async {
+            crate::backend::store::create_local_tenant_sqlx(
+                database.pool(),
+                "local",
+                "Tenant B",
+                Some("tenant-b"),
+            )
+            .await?;
+            activate_conversation_adapter_package_sqlx(
+                database.pool(),
+                &adapter,
+                &package,
+                &version,
+            )
+            .await?;
+            let projected_adapter_after_switch =
+                load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id)
+                    .await?
+                    .expect("application package projects into every existing tenant");
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            upsert_conversation_source_sqlx(database.pool(), "tenant-b", &source).await?;
+            let uninstalled = deactivate_conversation_adapter_package_sqlx(
+                database.pool(),
+                &package.package_id,
+                &adapter.id,
+            )
+            .await?;
+            let remaining_versions = list_conversation_adapter_package_versions_sqlx(
+                database.pool(),
+                &package.package_id,
+            )
+            .await?;
+            let retained_source =
+                load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                    .await?
+                    .expect("source remains after uninstall");
+            let retained_source_after_switch =
+                load_conversation_source_sqlx(database.pool(), "tenant-b", &source.id)
+                    .await?
+                    .expect("other tenant source remains after uninstall");
+            let missing_adapter =
+                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
+                    .await?;
+            let missing_adapter_after_switch =
+                load_conversation_adapter_sqlx(database.pool(), "tenant-b", &adapter.id).await?;
+            Ok::<_, AppError>((
+                uninstalled,
+                remaining_versions,
+                projected_adapter_after_switch,
+                retained_source,
+                retained_source_after_switch,
+                missing_adapter,
+                missing_adapter_after_switch,
+            ))
+        }
+        .await
+        .expect("uninstall managed package runtime");
 
         assert!(!uninstalled.runtime_ready);
         assert_eq!(
@@ -5986,38 +6338,36 @@ mod tests {
         assert!(missing_adapter_after_switch.is_none());
 
         let (deleted_version, missing_package, versions_after_delete, source_after_delete) =
-            database
-                .block_on(async {
-                    let deleted_version = delete_conversation_adapter_package_version_sqlx(
-                        database.pool(),
-                        &package.package_id,
-                        &package.version,
-                        None,
-                        true,
-                    )
-                    .await?;
-                    let missing_package = load_conversation_adapter_package_sqlx(
-                        database.pool(),
-                        &package.package_id,
-                    )
-                    .await?;
-                    let versions_after_delete = list_conversation_adapter_package_versions_sqlx(
-                        database.pool(),
-                        &package.package_id,
-                    )
-                    .await?;
-                    let source_after_delete =
-                        load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                            .await?
-                            .expect("source remains after deleting package files");
-                    Ok::<_, AppError>((
-                        deleted_version,
-                        missing_package,
-                        versions_after_delete,
-                        source_after_delete,
-                    ))
-                })
-                .expect("delete the final uninstalled package version");
+            async {
+                let deleted_version = delete_conversation_adapter_package_version_sqlx(
+                    database.pool(),
+                    &package.package_id,
+                    &package.version,
+                    None,
+                    true,
+                )
+                .await?;
+                let missing_package =
+                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
+                        .await?;
+                let versions_after_delete = list_conversation_adapter_package_versions_sqlx(
+                    database.pool(),
+                    &package.package_id,
+                )
+                .await?;
+                let source_after_delete =
+                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
+                        .await?
+                        .expect("source remains after deleting package files");
+                Ok::<_, AppError>((
+                    deleted_version,
+                    missing_package,
+                    versions_after_delete,
+                    source_after_delete,
+                ))
+            }
+            .await
+            .expect("delete the final uninstalled package version");
         assert!(deleted_version);
         assert!(missing_package.is_none());
         assert!(versions_after_delete.is_empty());
@@ -6027,13 +6377,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn package_activation_rolls_back_adapter_and_active_version_when_version_insert_fails() {
+    #[tokio::test]
+    async fn package_activation_rolls_back_adapter_and_active_version_when_version_insert_fails() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-package-activation-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let original_adapter = test_conversation_adapter(
             "activation-adapter",
             ConversationAdapterKind::External,
@@ -6075,14 +6425,14 @@ mod tests {
             runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
             installed_at: package.created_at.clone(),
         };
-        database
-            .block_on(activate_conversation_adapter_package_sqlx(
-                database.pool(),
-                &original_adapter,
-                &package,
-                &version,
-            ))
-            .expect("activate original package");
+        activate_conversation_adapter_package_sqlx(
+            database.pool(),
+            &original_adapter,
+            &package,
+            &version,
+        )
+        .await
+        .expect("activate original package");
 
         let mut candidate_adapter = original_adapter.clone();
         candidate_adapter.version = "2.0.0".to_string();
@@ -6099,29 +6449,29 @@ mod tests {
             runtime_gate_status: ConversationAdapterRuntimeGateStatus::Ready,
             installed_at: "2026-07-15T01:00:00Z".to_string(),
         };
-        database
-            .block_on(activate_conversation_adapter_package_sqlx(
-                database.pool(),
-                &candidate_adapter,
-                &candidate_package,
-                &invalid_version,
-            ))
-            .expect_err("foreign-key failure should roll back activation");
+        activate_conversation_adapter_package_sqlx(
+            database.pool(),
+            &candidate_adapter,
+            &candidate_package,
+            &invalid_version,
+        )
+        .await
+        .expect_err("foreign-key failure should roll back activation");
 
-        let (stored_adapter, stored_package) = database
-            .block_on(async {
-                Ok::<_, AppError>((
-                    load_conversation_adapter_sqlx(
-                        database.pool(),
-                        TEST_TENANT_ID,
-                        &original_adapter.id,
-                    )
+        let (stored_adapter, stored_package) = async {
+            Ok::<_, AppError>((
+                load_conversation_adapter_sqlx(
+                    database.pool(),
+                    TEST_TENANT_ID,
+                    &original_adapter.id,
+                )
+                .await?,
+                load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
                     .await?,
-                    load_conversation_adapter_package_sqlx(database.pool(), &package.package_id)
-                        .await?,
-                ))
-            })
-            .expect("reload active package");
+            ))
+        }
+        .await
+        .expect("reload active package");
         assert_eq!(stored_adapter, Some(original_adapter));
         assert_eq!(stored_package, Some(package));
 
@@ -6129,13 +6479,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter() {
+    #[tokio::test]
+    async fn seeding_builtin_conversation_adapters_preserves_user_registered_adapter() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-adapter-seed-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut market_adapter = test_conversation_adapter(
             "codex",
             ConversationAdapterKind::External,
@@ -6146,24 +6496,24 @@ mod tests {
         market_adapter.executable_path =
             Some("/tmp/assetiweave-market/codex-session/adapter.mjs".to_string());
 
-        let loaded = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter)
-                    .await?;
-                seed_prepared_builtin_conversation_adapters_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    vec![test_conversation_adapter(
-                        "codex",
-                        ConversationAdapterKind::External,
-                        ConversationAdapterTrustState::BuiltIn,
-                    )],
-                )
+        let loaded = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &market_adapter)
                 .await?;
-                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
-            })
-            .expect("seed built-in conversation adapters")
-            .expect("codex adapter");
+            seed_prepared_builtin_conversation_adapters_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                vec![test_conversation_adapter(
+                    "codex",
+                    ConversationAdapterKind::External,
+                    ConversationAdapterTrustState::BuiltIn,
+                )],
+            )
+            .await?;
+            load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, "codex").await
+        }
+        .await
+        .expect("seed built-in conversation adapters")
+        .expect("codex adapter");
 
         assert_eq!(loaded.trust_state, ConversationAdapterTrustState::Trusted);
         assert_eq!(loaded.manifest_path, market_adapter.manifest_path);
@@ -6173,13 +6523,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn disabling_builtin_adapter_disables_runtime_and_sources() {
+    #[tokio::test]
+    async fn disabling_builtin_adapter_disables_runtime_and_sources() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-adapter-disable-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
 
         let builtin_adapter = test_conversation_adapter(
             "disable-builtin",
@@ -6187,31 +6537,30 @@ mod tests {
             ConversationAdapterTrustState::BuiltIn,
         );
         let source = test_conversation_source(&builtin_adapter.id);
-        let (adapter, source) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &builtin_adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                disable_builtin_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &builtin_adapter.id,
-                )
+        let (adapter, source) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &builtin_adapter)
                 .await?;
-                let adapter = load_conversation_adapter_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &builtin_adapter.id,
-                )
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            disable_builtin_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &builtin_adapter.id,
+            )
+            .await?;
+            let adapter = load_conversation_adapter_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &builtin_adapter.id,
+            )
+            .await?
+            .expect("built-in adapter retained");
+            let source = load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
                 .await?
-                .expect("built-in adapter retained");
-                let source =
-                    load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id)
-                        .await?
-                        .expect("source retained");
-                Ok::<_, AppError>((adapter, source))
-            })
-            .expect("disable built-in adapter");
+                .expect("source retained");
+            Ok::<_, AppError>((adapter, source))
+        }
+        .await
+        .expect("disable built-in adapter");
 
         assert!(!adapter.enabled);
         assert!(!source.enabled);
@@ -6220,13 +6569,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_import_preserves_manual_grouping_across_resync() {
+    #[tokio::test]
+    async fn sqlx_import_preserves_manual_grouping_across_resync() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-external",
             ConversationAdapterKind::External,
@@ -6234,69 +6583,69 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let (initial_question_count, initial_first_question_turn_count, detail) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await?;
-                let sessions = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    None,
-                    20,
-                    0,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &sessions[0].session.id,
-                )
-                .await?;
-                let initial_question_count = detail.questions.len();
-                let initial_first_question_turn_count = detail.questions[0].turns.len();
-                let question_ids = detail
-                    .questions
-                    .iter()
-                    .map(|question| question.question.id.clone())
-                    .collect::<Vec<_>>();
-                merge_conversation_questions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &question_ids,
-                    false,
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v2")],
-                    false,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &sessions[0].session.id,
-                )
-                .await?;
-                Ok::<_, AppError>((
-                    initial_question_count,
-                    initial_first_question_turn_count,
-                    detail,
-                ))
-            })
-            .expect("import and merge through SQLx");
+        let (initial_question_count, initial_first_question_turn_count, detail) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await?;
+            let sessions = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                None,
+                20,
+                0,
+            )
+            .await?;
+            let detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &sessions[0].session.id,
+            )
+            .await?;
+            let initial_question_count = detail.questions.len();
+            let initial_first_question_turn_count = detail.questions[0].turns.len();
+            let question_ids = detail
+                .questions
+                .iter()
+                .map(|question| question.question.id.clone())
+                .collect::<Vec<_>>();
+            merge_conversation_questions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &question_ids,
+                false,
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v2")],
+                false,
+            )
+            .await?;
+            let detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &sessions[0].session.id,
+            )
+            .await?;
+            Ok::<_, AppError>((
+                initial_question_count,
+                initial_first_question_turn_count,
+                detail,
+            ))
+        }
+        .await
+        .expect("import and merge through SQLx");
 
         assert_eq!(initial_question_count, 2);
         assert_eq!(initial_first_question_turn_count, 2);
@@ -6311,21 +6660,20 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_reconciliation_rebuilds_changed_automatic_grouping_deterministically() {
+    #[tokio::test]
+    async fn sqlx_reconciliation_rebuilds_changed_automatic_grouping_deterministically() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-reconciliation-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "reconciliation-external",
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
         let source = test_conversation_source(&adapter.id);
-        let (detail, membership_rows) = database
-            .block_on(async {
+        let (detail, membership_rows) = async {
                 upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
                 upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
                 let mut initial = fixture_session("v1");
@@ -6364,7 +6712,7 @@ mod tests {
                 .await
                 .map_err(AppError::external)?;
                 Ok::<_, AppError>((detail, membership_rows))
-            })
+            }.await
             .expect("reconcile changed grouping");
 
         assert_eq!(detail.questions.len(), 2);
@@ -6380,69 +6728,66 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_manual_membership_is_a_reconciliation_fence() {
+    #[tokio::test]
+    async fn sqlx_manual_membership_is_a_reconciliation_fence() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-manual-fence-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "manual-fence-external",
             ConversationAdapterKind::External,
             ConversationAdapterTrustState::Trusted,
         );
         let source = test_conversation_source(&adapter.id);
-        let detail = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                let mut initial = fixture_session("v1");
-                initial.turns.truncate(2);
-                initial.turns[1].user_text = "Export it".to_string();
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[initial],
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let initial_detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                let question_ids = initial_detail
-                    .questions
-                    .iter()
-                    .map(|question| question.question.id.clone())
-                    .collect::<Vec<_>>();
-                merge_conversation_questions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &question_ids,
-                    false,
-                )
-                .await?;
-
-                let mut updated = fixture_session("v1");
-                updated.turns[1].user_text = "Export it".to_string();
-                updated.turns[2].user_text = "继续".to_string();
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[updated],
-                    false,
-                )
-                .await?;
+        let detail = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            let mut initial = fixture_session("v1");
+            initial.turns.truncate(2);
+            initial.turns[1].user_text = "Export it".to_string();
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[initial],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let initial_detail =
                 load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                    .await
-            })
-            .expect("preserve manual fence");
+                    .await?;
+            let question_ids = initial_detail
+                .questions
+                .iter()
+                .map(|question| question.question.id.clone())
+                .collect::<Vec<_>>();
+            merge_conversation_questions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &question_ids,
+                false,
+            )
+            .await?;
+
+            let mut updated = fixture_session("v1");
+            updated.turns[1].user_text = "Export it".to_string();
+            updated.turns[2].user_text = "继续".to_string();
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[updated],
+                false,
+            )
+            .await?;
+            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await
+        }
+        .await
+        .expect("preserve manual fence");
 
         assert_eq!(detail.questions.len(), 2);
         assert_eq!(detail.questions[0].turns.len(), 2);
@@ -6457,8 +6802,8 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
+    #[tokio::test]
+    async fn sqlx_full_repeat_and_equivalent_incremental_imports_converge() {
         let full_db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-full-convergence-sqlx-{}.sqlite",
             Uuid::new_v4()
@@ -6467,9 +6812,12 @@ mod tests {
             "assetiweave-conversation-incremental-convergence-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let full_database = Database::open(&full_db_path).expect("open full database");
-        let incremental_database =
-            Database::open(&incremental_db_path).expect("open incremental database");
+        let full_database = Database::open_async(&full_db_path)
+            .await
+            .expect("open full database");
+        let incremental_database = Database::open_async(&incremental_db_path)
+            .await
+            .expect("open incremental database");
         let adapter = test_conversation_adapter(
             "convergence-external",
             ConversationAdapterKind::External,
@@ -6505,87 +6853,78 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let (full_snapshot, repeated_snapshot) = full_database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(full_database.pool(), TEST_TENANT_ID, &adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(full_database.pool(), TEST_TENANT_ID, &source)
-                    .await?;
-                import_conversation_sessions_sqlx(
-                    full_database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[full_session.clone()],
-                    false,
-                )
+        let (full_snapshot, repeated_snapshot) = async {
+            upsert_conversation_adapter_sqlx(full_database.pool(), TEST_TENANT_ID, &adapter)
                 .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let full_detail = load_conversation_session_detail_sqlx(
-                    full_database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    full_database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[full_session.clone()],
-                    false,
-                )
-                .await?;
-                let repeated_detail = load_conversation_session_detail_sqlx(
-                    full_database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                Ok::<_, AppError>((snapshot(&full_detail), snapshot(&repeated_detail)))
-            })
-            .expect("full and repeated imports");
+            upsert_conversation_source_sqlx(full_database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                full_database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[full_session.clone()],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let full_detail = load_conversation_session_detail_sqlx(
+                full_database.pool(),
+                TEST_TENANT_ID,
+                &session_id,
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                full_database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[full_session.clone()],
+                false,
+            )
+            .await?;
+            let repeated_detail = load_conversation_session_detail_sqlx(
+                full_database.pool(),
+                TEST_TENANT_ID,
+                &session_id,
+            )
+            .await?;
+            Ok::<_, AppError>((snapshot(&full_detail), snapshot(&repeated_detail)))
+        }
+        .await
+        .expect("full and repeated imports");
 
-        let incremental_snapshot = incremental_database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(
-                    incremental_database.pool(),
-                    TEST_TENANT_ID,
-                    &adapter,
-                )
+        let incremental_snapshot = async {
+            upsert_conversation_adapter_sqlx(incremental_database.pool(), TEST_TENANT_ID, &adapter)
                 .await?;
-                upsert_conversation_source_sqlx(
-                    incremental_database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                )
+            upsert_conversation_source_sqlx(incremental_database.pool(), TEST_TENANT_ID, &source)
                 .await?;
-                import_incremental_conversation_sessions_sqlx(
-                    incremental_database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[partial_session],
-                    &BTreeSet::from(["session-1".to_string()]),
-                    false,
-                )
-                .await?;
-                import_incremental_conversation_sessions_sqlx(
-                    incremental_database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[full_session.clone()],
-                    &BTreeSet::from(["session-1".to_string()]),
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let detail = load_conversation_session_detail_sqlx(
-                    incremental_database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                Ok::<_, AppError>(snapshot(&detail))
-            })
-            .expect("equivalent incremental import");
+            import_incremental_conversation_sessions_sqlx(
+                incremental_database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[partial_session],
+                &BTreeSet::from(["session-1".to_string()]),
+                false,
+            )
+            .await?;
+            import_incremental_conversation_sessions_sqlx(
+                incremental_database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[full_session.clone()],
+                &BTreeSet::from(["session-1".to_string()]),
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let detail = load_conversation_session_detail_sqlx(
+                incremental_database.pool(),
+                TEST_TENANT_ID,
+                &session_id,
+            )
+            .await?;
+            Ok::<_, AppError>(snapshot(&detail))
+        }
+        .await
+        .expect("equivalent incremental import");
 
         assert_eq!(full_snapshot, repeated_snapshot);
         assert_eq!(full_snapshot, incremental_snapshot);
@@ -6596,13 +6935,13 @@ mod tests {
         cleanup_database(&incremental_db_path);
     }
 
-    #[test]
-    fn sqlx_question_detail_projects_from_question_turn_membership_and_turn_facts() {
+    #[tokio::test]
+    async fn sqlx_question_detail_projects_from_question_turn_membership_and_turn_facts() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-question-projection-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "question-projection-external",
             ConversationAdapterKind::External,
@@ -6610,23 +6949,23 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let detail = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
-                    .await
-            })
-            .expect("load projected question detail");
+        let detail = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                .await
+        }
+        .await
+        .expect("load projected question detail");
 
         let first_question = &detail.questions[0];
         assert_eq!(
@@ -6669,13 +7008,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_rejects_cross_session_question_turn_membership_before_new_write() {
+    #[tokio::test]
+    async fn sqlx_rejects_cross_session_question_turn_membership_before_new_write() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-question-membership-scope-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "question-membership-scope-external",
             ConversationAdapterKind::External,
@@ -6685,71 +7024,66 @@ mod tests {
         let mut second_session = fixture_session("v1");
         second_session.external_id = "session-2".to_string();
 
-        let error = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1"), second_session],
-                    false,
-                )
-                .await?;
+        let error = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1"), second_session],
+                false,
+            )
+            .await?;
 
-                let first_session_id =
-                    stable_id("conversation-session", &[&source.id, "session-1"]);
-                let second_session_id =
-                    stable_id("conversation-session", &[&source.id, "session-2"]);
-                let first_turn_id = stable_id("conversation-turn", &[&first_session_id, "t1"]);
-                let second_turn_id = stable_id("conversation-turn", &[&second_session_id, "t1"]);
-                let first_question_id = stable_id(
-                    "conversation-question",
-                    &[&first_session_id, &first_turn_id],
-                );
-                sqlx::query(
-                    "DELETE FROM conversation_question_turns WHERE tenant_id = ?1 AND turn_id = ?2",
-                )
-                .bind(TEST_TENANT_ID)
-                .bind(&second_turn_id)
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                sqlx::query(
-                    r#"
+            let first_session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let second_session_id = stable_id("conversation-session", &[&source.id, "session-2"]);
+            let first_turn_id = stable_id("conversation-turn", &[&first_session_id, "t1"]);
+            let second_turn_id = stable_id("conversation-turn", &[&second_session_id, "t1"]);
+            let first_question_id = stable_id(
+                "conversation-question",
+                &[&first_session_id, &first_turn_id],
+            );
+            sqlx::query(
+                "DELETE FROM conversation_question_turns WHERE tenant_id = ?1 AND turn_id = ?2",
+            )
+            .bind(TEST_TENANT_ID)
+            .bind(&second_turn_id)
+            .execute(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                r#"
                     INSERT INTO conversation_question_turns (
                         tenant_id, question_id, turn_id, turn_order,
                         assignment_origin, assigned_at, updated_at
                     )
                     VALUES (?1, ?2, ?3, 0, 'imported', ?4, ?4)
                     "#,
-                )
-                .bind(TEST_TENANT_ID)
-                .bind(&first_question_id)
-                .bind(&second_turn_id)
-                .bind("2026-08-25T00:00:00Z")
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
+            )
+            .bind(TEST_TENANT_ID)
+            .bind(&first_question_id)
+            .bind(&second_turn_id)
+            .bind("2026-08-25T00:00:00Z")
+            .execute(database.pool())
+            .await
+            .map_err(AppError::external)?;
 
-                let result = import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await;
-                Ok::<_, AppError>(
-                    result.expect_err("cross-session membership must block the write"),
-                )
-            })
-            .expect("validate cross-session membership");
+            let result = import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await;
+            Ok::<_, AppError>(result.expect_err("cross-session membership must block the write"))
+        }
+        .await
+        .expect("validate cross-session membership");
 
         assert!(error.to_string().contains("cross_session"));
-        let audit_count = database
-            .block_on(async {
+        let audit_count = async {
                 sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM conversation_question_turn_audits WHERE tenant_id = ?1 AND record_kind = 'session' AND reason = 'cross_session'",
                 )
@@ -6757,20 +7091,20 @@ mod tests {
                 .fetch_one(database.pool())
                 .await
                 .map_err(AppError::external)
-            })
+            }.await
             .expect("persist cross-session audit");
         assert_eq!(audit_count, 1);
         drop(database);
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_import_skips_unchanged_fingerprinted_sessions() {
+    #[tokio::test]
+    async fn sqlx_import_skips_unchanged_fingerprinted_sessions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-skip-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-skip-external",
             ConversationAdapterKind::External,
@@ -6780,43 +7114,42 @@ mod tests {
         let mut session = fixture_session("v1");
         session.source_fingerprint = Some("unchanged".to_string());
 
-        let imported_at = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[session.clone()],
-                    false,
-                )
-                .await?;
-                sqlx::query(
-                    "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[session],
-                    false,
-                )
-                .await?;
-                sqlx::query_scalar::<_, String>(
-                    "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(AppError::external)
-            })
-            .expect("import unchanged fingerprinted session through SQLx");
+        let imported_at = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[session.clone()],
+                false,
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+            )
+            .bind(&source.id)
+            .execute(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[session],
+                false,
+            )
+            .await?;
+            sqlx::query_scalar::<_, String>(
+                "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
+            )
+            .bind(&source.id)
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)
+        }
+        .await
+        .expect("import unchanged fingerprinted session through SQLx");
 
         assert_eq!(imported_at, "preserved");
 
@@ -6824,13 +7157,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_import_rewrites_session_when_normalized_parts_change() {
+    #[tokio::test]
+    async fn sqlx_import_rewrites_session_when_normalized_parts_change() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-refresh-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-refresh-external",
             ConversationAdapterKind::External,
@@ -6845,21 +7178,19 @@ mod tests {
         refreshed_session.turns[0].parts[0].metadata_json =
             Some(r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string());
 
-        let (result, imported_at, metadata_json, part_ids_before, part_ids_after) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[old_session],
-                    false,
-                )
-                .await?;
-                let part_ids_before = sqlx::query_as::<_, (String, i64)>(
-                    r#"
+        let (result, imported_at, metadata_json, part_ids_before, part_ids_after) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[old_session],
+                false,
+            )
+            .await?;
+            let part_ids_before = sqlx::query_as::<_, (String, i64)>(
+                r#"
                     SELECT p.id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
@@ -6867,35 +7198,35 @@ mod tests {
                     WHERE s.source_id = ?1
                     ORDER BY t.turn_index ASC, p.part_index ASC
                     "#,
-                )
-                .bind(&source.id)
-                .fetch_all(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                sqlx::query(
-                    "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                let result = import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[refreshed_session],
-                    false,
-                )
-                .await?;
-                let imported_at = sqlx::query_scalar::<_, String>(
-                    "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                let metadata_json = sqlx::query_scalar::<_, Option<String>>(
-                    r#"
+            )
+            .bind(&source.id)
+            .fetch_all(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            sqlx::query(
+                "UPDATE conversation_sessions SET imported_at = 'preserved' WHERE source_id = ?1",
+            )
+            .bind(&source.id)
+            .execute(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            let result = import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[refreshed_session],
+                false,
+            )
+            .await?;
+            let imported_at = sqlx::query_scalar::<_, String>(
+                "SELECT imported_at FROM conversation_sessions WHERE source_id = ?1",
+            )
+            .bind(&source.id)
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            let metadata_json = sqlx::query_scalar::<_, Option<String>>(
+                r#"
                     SELECT p.metadata_json
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
@@ -6904,13 +7235,13 @@ mod tests {
                     ORDER BY p.part_index ASC
                     LIMIT 1
                     "#,
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                let part_ids_after = sqlx::query_as::<_, (String, i64)>(
-                    r#"
+            )
+            .bind(&source.id)
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            let part_ids_after = sqlx::query_as::<_, (String, i64)>(
+                r#"
                     SELECT p.id, p.part_index
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
@@ -6918,20 +7249,21 @@ mod tests {
                     WHERE s.source_id = ?1
                     ORDER BY t.turn_index ASC, p.part_index ASC
                     "#,
-                )
-                .bind(&source.id)
-                .fetch_all(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                Ok::<_, AppError>((
-                    result,
-                    imported_at,
-                    metadata_json,
-                    part_ids_before,
-                    part_ids_after,
-                ))
-            })
-            .expect("refresh normalized parts through SQLx");
+            )
+            .bind(&source.id)
+            .fetch_all(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            Ok::<_, AppError>((
+                result,
+                imported_at,
+                metadata_json,
+                part_ids_before,
+                part_ids_after,
+            ))
+        }
+        .await
+        .expect("refresh normalized parts through SQLx");
 
         assert_eq!(result.skipped_session_count, 0);
         assert_ne!(imported_at, "preserved");
@@ -6946,13 +7278,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_import_prunes_turns_removed_by_external_adapter() {
+    #[tokio::test]
+    async fn sqlx_import_prunes_turns_removed_by_external_adapter() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-prune-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-prune-external",
             ConversationAdapterKind::External,
@@ -6963,49 +7295,46 @@ mod tests {
         pruned_session.turns.truncate(1);
         pruned_session.source_fingerprint = Some("pruned-source".to_string());
 
-        let (detail, stale_parts) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v2")],
-                    false,
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[pruned_session],
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                let stale_parts = sqlx::query_scalar::<_, i64>(
-                    r#"
+        let (detail, stale_parts) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v2")],
+                false,
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[pruned_session],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let detail =
+                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                    .await?;
+            let stale_parts = sqlx::query_scalar::<_, i64>(
+                r#"
                     SELECT COUNT(*)
                     FROM conversation_parts p
                     JOIN conversation_turns t ON t.id = p.turn_id
                     WHERE t.session_id = ?1
                       AND t.external_id IN ('t2', 't3')
                     "#,
-                )
-                .bind(&session_id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                Ok::<_, AppError>((detail, stale_parts))
-            })
-            .expect("prune stale turns through SQLx");
+            )
+            .bind(&session_id)
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            Ok::<_, AppError>((detail, stale_parts))
+        }
+        .await
+        .expect("prune stale turns through SQLx");
 
         assert_eq!(detail.questions.len(), 1);
         assert_eq!(detail.questions[0].turns.len(), 1);
@@ -7017,13 +7346,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_import_marks_sessions_missing_when_external_adapter_omits_them() {
+    #[tokio::test]
+    async fn sqlx_import_marks_sessions_missing_when_external_adapter_omits_them() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-missing-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-missing-external",
             ConversationAdapterKind::External,
@@ -7035,47 +7364,46 @@ mod tests {
         removed_session.external_id = "removed-session".to_string();
         removed_session.title = Some("Removed fixture".to_string());
 
-        let (listed, missing_count) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[current_session.clone(), removed_session],
-                    false,
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[current_session],
-                    false,
-                )
-                .await?;
-                let listed = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    None,
-                    20,
-                    0,
-                )
-                .await?;
-                let missing_count = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM conversation_sessions WHERE source_id = ?1 AND missing = 1",
-                )
-                .bind(&source.id)
-                .fetch_one(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                Ok::<_, AppError>((listed, missing_count))
-            })
-            .expect("mark omitted sessions missing through SQLx");
+        let (listed, missing_count) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[current_session.clone(), removed_session],
+                false,
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[current_session],
+                false,
+            )
+            .await?;
+            let listed = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                None,
+                20,
+                0,
+            )
+            .await?;
+            let missing_count = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM conversation_sessions WHERE source_id = ?1 AND missing = 1",
+            )
+            .bind(&source.id)
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            Ok::<_, AppError>((listed, missing_count))
+        }
+        .await
+        .expect("mark omitted sessions missing through SQLx");
 
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].session.external_id, "session-1");
@@ -7085,13 +7413,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_incremental_import_preserves_and_recovers_discovered_sessions() {
+    #[tokio::test]
+    async fn sqlx_incremental_import_preserves_and_recovers_discovered_sessions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-import-incremental-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "import-incremental-external",
             ConversationAdapterKind::External,
@@ -7107,50 +7435,44 @@ mod tests {
             retained_session.external_id.clone(),
         ]);
 
-        let listed = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[current_session, retained_session],
-                    false,
-                )
+        let listed = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[current_session, retained_session],
+                false,
+            )
+            .await?;
+
+            // Reproduce the damaged state created by the old incremental path.
+            import_conversation_sessions_sqlx(database.pool(), TEST_TENANT_ID, &source, &[], false)
                 .await?;
 
-                // Reproduce the damaged state created by the old incremental path.
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[],
-                    false,
-                )
-                .await?;
-
-                import_incremental_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[],
-                    &discovered_external_ids,
-                    false,
-                )
-                .await?;
-                list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    None,
-                    20,
-                    0,
-                )
-                .await
-            })
-            .expect("preserve discovered sessions during incremental import");
+            import_incremental_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[],
+                &discovered_external_ids,
+                false,
+            )
+            .await?;
+            list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                None,
+                20,
+                0,
+            )
+            .await
+        }
+        .await
+        .expect("preserve discovered sessions during incremental import");
 
         assert_eq!(listed.len(), 2);
         assert!(listed.iter().all(|item| !item.session.missing));
@@ -7159,13 +7481,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_conversation_reads_and_filters_questions() {
+    #[tokio::test]
+    async fn sqlx_conversation_reads_and_filters_questions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-read-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "read-external",
             ConversationAdapterKind::External,
@@ -7202,52 +7524,52 @@ mod tests {
             metadata_json: content_card_metadata("result"),
         });
 
-        let (sessions, detail, filtered_questions, question) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[session],
-                    false,
-                )
-                .await?;
-                let sessions = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some("answer for t3"),
-                    20,
-                    0,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &sessions[0].session.id,
-                )
-                .await?;
-                let filtered_questions = list_conversation_question_details_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &sessions[0].session.id,
-                    Some("answer for t3"),
-                    20,
-                    0,
-                )
-                .await?;
-                let question = load_conversation_question_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &filtered_questions[0].question.id,
-                )
-                .await?;
-                Ok::<_, AppError>((sessions, detail, filtered_questions, question))
-            })
-            .expect("read conversations through SQLx");
+        let (sessions, detail, filtered_questions, question) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[session],
+                false,
+            )
+            .await?;
+            let sessions = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                Some("answer for t3"),
+                20,
+                0,
+            )
+            .await?;
+            let detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &sessions[0].session.id,
+            )
+            .await?;
+            let filtered_questions = list_conversation_question_details_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &sessions[0].session.id,
+                Some("answer for t3"),
+                20,
+                0,
+            )
+            .await?;
+            let question = load_conversation_question_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &filtered_questions[0].question.id,
+            )
+            .await?;
+            Ok::<_, AppError>((sessions, detail, filtered_questions, question))
+        }
+        .await
+        .expect("read conversations through SQLx");
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].question_count, 2);
@@ -7288,13 +7610,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
+    #[tokio::test]
+    async fn sqlx_conversation_lists_sessions_by_display_id_fragment() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-id-fragment-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "id-fragment-external",
             ConversationAdapterKind::External,
@@ -7302,23 +7624,22 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let (fragment_matches, direct_fragment_matches, full_matches) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let fragment = crate::backend::models::conversation_id_fragment(&session_id);
-                let collision_id = format!("conversation-session-{fragment}{}", "0".repeat(56));
-                sqlx::query(
-                    r#"
+        let (fragment_matches, direct_fragment_matches, full_matches) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let fragment = crate::backend::models::conversation_id_fragment(&session_id);
+            let collision_id = format!("conversation-session-{fragment}{}", "0".repeat(56));
+            sqlx::query(
+                r#"
                     INSERT INTO conversation_sessions (
                         tenant_id, id, source_id, adapter_id, external_id, title, project_path,
                         started_at, updated_at, source_locator, source_fingerprint, missing,
@@ -7330,47 +7651,48 @@ mod tests {
                     FROM conversation_sessions
                     WHERE tenant_id = ?2 AND id = ?3
                     "#,
-                )
-                .bind(&collision_id)
-                .bind(TEST_TENANT_ID)
-                .bind(&session_id)
-                .execute(database.pool())
-                .await
-                .map_err(AppError::external)?;
-                let fragment_matches = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some(&fragment),
-                    20,
-                    0,
-                )
-                .await?;
-                let direct_fragment_matches = list_conversation_sessions_by_id_fragment_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session,
-                    None,
-                    Some(&source.id),
-                    &fragment,
-                    20,
-                    0,
-                )
-                .await?;
-                let full_matches = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some(&session_id),
-                    20,
-                    0,
-                )
-                .await?;
-                Ok::<_, AppError>((fragment_matches, direct_fragment_matches, full_matches))
-            })
-            .expect("list conversation sessions by display id fragment");
+            )
+            .bind(&collision_id)
+            .bind(TEST_TENANT_ID)
+            .bind(&session_id)
+            .execute(database.pool())
+            .await
+            .map_err(AppError::external)?;
+            let fragment_matches = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                Some(&fragment),
+                20,
+                0,
+            )
+            .await?;
+            let direct_fragment_matches = list_conversation_sessions_by_id_fragment_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session,
+                None,
+                Some(&source.id),
+                &fragment,
+                20,
+                0,
+            )
+            .await?;
+            let full_matches = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                Some(&session_id),
+                20,
+                0,
+            )
+            .await?;
+            Ok::<_, AppError>((fragment_matches, direct_fragment_matches, full_matches))
+        }
+        .await
+        .expect("list conversation sessions by display id fragment");
 
         assert_eq!(fragment_matches.len(), 2);
         assert_eq!(direct_fragment_matches.len(), 2);
@@ -7381,13 +7703,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
+    #[tokio::test]
+    async fn sqlx_merge_and_split_conversation_questions_preserve_grouping() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-mutation-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "mutation-external",
             ConversationAdapterKind::External,
@@ -7395,109 +7717,109 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let (detail, original_part_ids) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &stable_id("conversation-session", &[&source.id, "session-1"]),
-                )
-                .await?;
-                let question_ids = detail
-                    .questions
-                    .iter()
-                    .map(|question| question.question.id.clone())
-                    .collect::<Vec<_>>();
-                let original_part_ids = detail
-                    .questions
-                    .iter()
-                    .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
-                    .collect::<BTreeSet<_>>();
-                let dry_run = merge_conversation_questions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &question_ids,
-                    true,
-                )
-                .await?;
-                assert!(dry_run.dry_run);
-                assert_eq!(
-                    load_conversation_session_detail_sqlx(
-                        database.pool(),
-                        TEST_TENANT_ID,
-                        &detail.session.id,
-                    )
-                    .await?
-                    .questions
-                    .len(),
-                    2
-                );
-                let merged = merge_conversation_questions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &question_ids,
-                    false,
-                )
-                .await?;
-                let repeated_merge = merge_conversation_questions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &question_ids,
-                    false,
-                )
-                .await?;
-                assert_eq!(repeated_merge.questions.len(), 1);
-                assert_eq!(repeated_merge.questions[0].turns.len(), 3);
-                let first_turn_error = split_conversation_question_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &merged.questions[0].question.id,
-                    &merged.questions[0].turns[0].id,
-                    false,
-                )
-                .await
-                .expect_err("split at first turn should fail");
-                assert!(first_turn_error.contains("must not be the first turn"));
-                let split_turn_id = merged.questions[0].turns[2].id.clone();
-                let split = split_conversation_question_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &merged.questions[0].question.id,
-                    &split_turn_id,
-                    false,
-                )
-                .await?;
-                let repeated_split = split_conversation_question_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &merged.questions[0].question.id,
-                    &split_turn_id,
-                    false,
-                )
-                .await?;
-                assert_eq!(
-                    split.affected_question_ids,
-                    repeated_split.affected_question_ids
-                );
-                let final_detail = load_conversation_session_detail_sqlx(
+        let (detail, original_part_ids) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await?;
+            let detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &stable_id("conversation-session", &[&source.id, "session-1"]),
+            )
+            .await?;
+            let question_ids = detail
+                .questions
+                .iter()
+                .map(|question| question.question.id.clone())
+                .collect::<Vec<_>>();
+            let original_part_ids = detail
+                .questions
+                .iter()
+                .flat_map(|question| question.parts.iter().map(|part| part.id.clone()))
+                .collect::<BTreeSet<_>>();
+            let dry_run = merge_conversation_questions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &question_ids,
+                true,
+            )
+            .await?;
+            assert!(dry_run.dry_run);
+            assert_eq!(
+                load_conversation_session_detail_sqlx(
                     database.pool(),
                     TEST_TENANT_ID,
                     &detail.session.id,
                 )
-                .await?;
-                Ok::<_, AppError>((final_detail, original_part_ids))
-            })
-            .expect("merge and split through SQLx");
+                .await?
+                .questions
+                .len(),
+                2
+            );
+            let merged = merge_conversation_questions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &question_ids,
+                false,
+            )
+            .await?;
+            let repeated_merge = merge_conversation_questions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &question_ids,
+                false,
+            )
+            .await?;
+            assert_eq!(repeated_merge.questions.len(), 1);
+            assert_eq!(repeated_merge.questions[0].turns.len(), 3);
+            let first_turn_error = split_conversation_question_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &merged.questions[0].question.id,
+                &merged.questions[0].turns[0].id,
+                false,
+            )
+            .await
+            .expect_err("split at first turn should fail");
+            assert!(first_turn_error.contains("must not be the first turn"));
+            let split_turn_id = merged.questions[0].turns[2].id.clone();
+            let split = split_conversation_question_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &merged.questions[0].question.id,
+                &split_turn_id,
+                false,
+            )
+            .await?;
+            let repeated_split = split_conversation_question_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &merged.questions[0].question.id,
+                &split_turn_id,
+                false,
+            )
+            .await?;
+            assert_eq!(
+                split.affected_question_ids,
+                repeated_split.affected_question_ids
+            );
+            let final_detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &detail.session.id,
+            )
+            .await?;
+            Ok::<_, AppError>((final_detail, original_part_ids))
+        }
+        .await
+        .expect("merge and split through SQLx");
 
         assert_eq!(detail.questions.len(), 2);
         assert_eq!(detail.questions[0].turns.len(), 2);
@@ -7535,13 +7857,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_searches_session_and_web_conversation_cards() {
+    #[tokio::test]
+    async fn sqlx_searches_session_and_web_conversation_cards() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-search-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let session_adapter = test_conversation_adapter(
             "search-session-external",
             ConversationAdapterKind::External,
@@ -7561,105 +7883,102 @@ mod tests {
         web_session.external_id = "web-session".to_string();
         web_session.started_at = Some("2026-04-02T10:00:00Z".to_string());
 
-        let (session_page, web_page, fragment_page, fragment_session_ids) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &session_adapter)
-                    .await?;
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &web_adapter)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &session_source)
-                    .await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &web_source)
-                    .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &session_source,
-                    &[session],
-                    false,
-                )
+        let (session_page, web_page, fragment_page, fragment_session_ids) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &session_adapter)
                 .await?;
-                super::super::web_record_repo::import_web_record_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &web_source,
-                    &[web_session],
-                    false,
-                )
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &web_adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &session_source)
                 .await?;
-                let session_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session,
-                    Some(&session_adapter.id),
-                    Some(&session_source.id),
-                    Some("/tmp/project"),
-                    "answer for t1",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    Some("2026-03-01"),
-                    Some("2026-03-31"),
-                    true,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                let web_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Web,
-                    Some(&web_adapter.id),
-                    Some(&web_source.id),
-                    None,
-                    "answer for t3",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                let session_id =
-                    stable_id("conversation-session", &[&session_source.id, "session-1"]);
-                let fragment = crate::backend::models::conversation_id_fragment(&session_id);
-                let fragment_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session,
-                    Some(&session_adapter.id),
-                    Some(&session_source.id),
-                    Some("/tmp/project"),
-                    &fragment,
-                    &[],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                let fragment_session_ids = load_search_session_ids_by_id_fragment_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session.tables(),
-                    &fragment,
-                )
-                .await?;
-                Ok::<_, AppError>((session_page, web_page, fragment_page, fragment_session_ids))
-            })
-            .expect("search session and web records through SQLx");
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &web_source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &session_source,
+                &[session],
+                false,
+            )
+            .await?;
+            super::super::web_record_repo::import_web_record_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &web_source,
+                &[web_session],
+                false,
+            )
+            .await?;
+            let session_page = search_conversation_cards_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session,
+                Some(&session_adapter.id),
+                Some(&session_source.id),
+                Some("/tmp/project"),
+                "answer for t1",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                Some("2026-03-01"),
+                Some("2026-03-31"),
+                true,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            let web_page = search_conversation_cards_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Web,
+                Some(&web_adapter.id),
+                Some(&web_source.id),
+                None,
+                "answer for t3",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&session_source.id, "session-1"]);
+            let fragment = crate::backend::models::conversation_id_fragment(&session_id);
+            let fragment_page = search_conversation_cards_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session,
+                Some(&session_adapter.id),
+                Some(&session_source.id),
+                Some("/tmp/project"),
+                &fragment,
+                &[],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            let fragment_session_ids = load_search_session_ids_by_id_fragment_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session.tables(),
+                &fragment,
+            )
+            .await?;
+            Ok::<_, AppError>((session_page, web_page, fragment_page, fragment_session_ids))
+        }
+        .await
+        .expect("search session and web records through SQLx");
 
         assert_eq!(session_page.total_count, 1);
         assert_eq!(
@@ -7689,13 +8008,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_search_and_aggregates_only_declared_content_cards() {
+    #[tokio::test]
+    async fn sqlx_search_and_aggregates_only_declared_content_cards() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-declared-cards-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "declared-card-external",
             ConversationAdapterKind::External,
@@ -7719,87 +8038,87 @@ mod tests {
             turns: vec![undeclared_turn, declared_turn],
         };
 
-        let (detail, undeclared_list, undeclared_page, declared_page) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[session],
-                    false,
-                )
-                .await?;
-                let sessions = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    None,
-                    20,
-                    0,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &sessions[0].session.id,
-                )
-                .await?;
-                let undeclared_list = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    None,
-                    Some(&source.id),
-                    Some("undeclared answer"),
-                    20,
-                    0,
-                )
-                .await?;
-                let undeclared_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session,
-                    Some(&adapter.id),
-                    Some(&source.id),
-                    None,
-                    "undeclared answer",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                let declared_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    ConversationRecordKind::Session,
-                    Some(&adapter.id),
-                    Some(&source.id),
-                    None,
-                    "declared answer",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                Ok::<_, AppError>((detail, undeclared_list, undeclared_page, declared_page))
-            })
-            .expect("search declared content cards through SQLx");
+        let (detail, undeclared_list, undeclared_page, declared_page) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[session],
+                false,
+            )
+            .await?;
+            let sessions = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                None,
+                20,
+                0,
+            )
+            .await?;
+            let detail = load_conversation_session_detail_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &sessions[0].session.id,
+            )
+            .await?;
+            let undeclared_list = list_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                None,
+                Some(&source.id),
+                Some("undeclared answer"),
+                20,
+                0,
+            )
+            .await?;
+            let undeclared_page = search_conversation_cards_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session,
+                Some(&adapter.id),
+                Some(&source.id),
+                None,
+                "undeclared answer",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            let declared_page = search_conversation_cards_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                ConversationRecordKind::Session,
+                Some(&adapter.id),
+                Some(&source.id),
+                None,
+                "declared answer",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            Ok::<_, AppError>((detail, undeclared_list, undeclared_page, declared_page))
+        }
+        .await
+        .expect("search declared content cards through SQLx");
 
         assert!(!detail.questions[0]
             .projected_content_nodes
@@ -7821,13 +8140,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_conversation_records_are_isolated_by_tenant() {
+    #[tokio::test]
+    async fn sqlx_conversation_records_are_isolated_by_tenant() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-tenant-isolation-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let tenant_alpha = "tenant-alpha";
         let tenant_beta = "tenant-beta";
         let adapter = test_conversation_adapter(
@@ -7841,106 +8160,100 @@ mod tests {
         let mut beta_session = fixture_session("v1");
         beta_session.turns[0].parts[0].text = Some("beta tenant answer".to_string());
 
-        let (session_id, alpha_detail, beta_detail, alpha_page, beta_page) = database
-            .block_on(async {
-                for tenant_id in [tenant_alpha, tenant_beta] {
-                    upsert_conversation_adapter_sqlx(database.pool(), tenant_id, &adapter).await?;
-                    upsert_conversation_source_sqlx(database.pool(), tenant_id, &source).await?;
-                }
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    tenant_alpha,
-                    &source,
-                    &[alpha_session],
-                    false,
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    tenant_beta,
-                    &source,
-                    &[beta_session],
-                    false,
-                )
-                .await?;
+        let (session_id, alpha_detail, beta_detail, alpha_page, beta_page) = async {
+            for tenant_id in [tenant_alpha, tenant_beta] {
+                upsert_conversation_adapter_sqlx(database.pool(), tenant_id, &adapter).await?;
+                upsert_conversation_source_sqlx(database.pool(), tenant_id, &source).await?;
+            }
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                tenant_alpha,
+                &source,
+                &[alpha_session],
+                false,
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                tenant_beta,
+                &source,
+                &[beta_session],
+                false,
+            )
+            .await?;
 
-                let alpha_sessions = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    tenant_alpha,
-                    None,
-                    Some(&source.id),
-                    Some("alpha tenant"),
-                    20,
-                    0,
-                )
-                .await?;
-                let beta_sessions = list_conversation_sessions_sqlx(
-                    database.pool(),
-                    tenant_beta,
-                    None,
-                    Some(&source.id),
-                    Some("beta tenant"),
-                    20,
-                    0,
-                )
-                .await?;
-                let session_id = alpha_sessions[0].session.id.clone();
-                assert_eq!(beta_sessions[0].session.id, session_id);
-                let alpha_detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    tenant_alpha,
-                    &session_id,
-                )
-                .await?;
-                let beta_detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    tenant_beta,
-                    &session_id,
-                )
-                .await?;
-                let alpha_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    tenant_alpha,
-                    ConversationRecordKind::Session,
-                    Some(&adapter.id),
-                    Some(&source.id),
-                    None,
-                    "beta tenant answer",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                let beta_page = search_conversation_cards_sqlx(
-                    database.pool(),
-                    tenant_beta,
-                    ConversationRecordKind::Session,
-                    Some(&adapter.id),
-                    Some(&source.id),
-                    None,
-                    "alpha tenant answer",
-                    &[ConversationSearchCardType::answer()],
-                    &[],
-                    false,
-                    true,
-                    None,
-                    None,
-                    false,
-                    20,
-                    0,
-                    None,
-                )
-                .await?;
-                Ok::<_, AppError>((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
-            })
-            .expect("isolate conversation records by tenant");
+            let alpha_sessions = list_conversation_sessions_sqlx(
+                database.pool(),
+                tenant_alpha,
+                None,
+                Some(&source.id),
+                Some("alpha tenant"),
+                20,
+                0,
+            )
+            .await?;
+            let beta_sessions = list_conversation_sessions_sqlx(
+                database.pool(),
+                tenant_beta,
+                None,
+                Some(&source.id),
+                Some("beta tenant"),
+                20,
+                0,
+            )
+            .await?;
+            let session_id = alpha_sessions[0].session.id.clone();
+            assert_eq!(beta_sessions[0].session.id, session_id);
+            let alpha_detail =
+                load_conversation_session_detail_sqlx(database.pool(), tenant_alpha, &session_id)
+                    .await?;
+            let beta_detail =
+                load_conversation_session_detail_sqlx(database.pool(), tenant_beta, &session_id)
+                    .await?;
+            let alpha_page = search_conversation_cards_sqlx(
+                database.pool(),
+                tenant_alpha,
+                ConversationRecordKind::Session,
+                Some(&adapter.id),
+                Some(&source.id),
+                None,
+                "beta tenant answer",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            let beta_page = search_conversation_cards_sqlx(
+                database.pool(),
+                tenant_beta,
+                ConversationRecordKind::Session,
+                Some(&adapter.id),
+                Some(&source.id),
+                None,
+                "alpha tenant answer",
+                &[ConversationSearchCardType::answer()],
+                &[],
+                false,
+                true,
+                None,
+                None,
+                false,
+                20,
+                0,
+                None,
+            )
+            .await?;
+            Ok::<_, AppError>((session_id, alpha_detail, beta_detail, alpha_page, beta_page))
+        }
+        .await
+        .expect("isolate conversation records by tenant");
 
         assert_eq!(alpha_detail.session.id, session_id);
         assert_eq!(beta_detail.session.id, session_id);
@@ -7963,13 +8276,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_round_trips_structured_cards_and_preserves_translation_on_reclassification() {
+    #[tokio::test]
+    async fn sqlx_round_trips_structured_cards_and_preserves_translation_on_reclassification() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-card-persistence-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let mut adapter = test_conversation_adapter(
             "fixture-cards",
             ConversationAdapterKind::External,
@@ -8006,54 +8319,48 @@ mod tests {
         second.turns[0].parts[0].content_card.as_mut().unwrap().kind =
             "fixture-cards.analysis".to_string();
 
-        let (stored_adapter, part_id, detail) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[first],
-                    false,
-                )
-                .await?;
-                let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
-                let initial = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                let part_id = initial.questions[0].parts[0].id.clone();
-                update_conversation_part_translation_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &part_id,
-                    "译文",
-                )
-                .await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[second],
-                    false,
-                )
-                .await?;
-                let detail = load_conversation_session_detail_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &session_id,
-                )
-                .await?;
-                let stored_adapter =
-                    load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
-                        .await?
-                        .expect("stored adapter");
-                Ok::<_, AppError>((stored_adapter, part_id, detail))
-            })
-            .expect("round trip structured card");
+        let (stored_adapter, part_id, detail) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[first],
+                false,
+            )
+            .await?;
+            let session_id = stable_id("conversation-session", &[&source.id, "session-1"]);
+            let initial =
+                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                    .await?;
+            let part_id = initial.questions[0].parts[0].id.clone();
+            update_conversation_part_translation_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &part_id,
+                "译文",
+            )
+            .await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[second],
+                false,
+            )
+            .await?;
+            let detail =
+                load_conversation_session_detail_sqlx(database.pool(), TEST_TENANT_ID, &session_id)
+                    .await?;
+            let stored_adapter =
+                load_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter.id)
+                    .await?
+                    .expect("stored adapter");
+            Ok::<_, AppError>((stored_adapter, part_id, detail))
+        }
+        .await
+        .expect("round trip structured card");
 
         let part = &detail.questions[0].parts[0];
         assert_eq!(part.id, part_id);
@@ -8077,13 +8384,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_versions() {
+    #[tokio::test]
+    async fn sqlx_adapter_or_card_contract_change_invalidates_incremental_hydration_versions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-card-hydration-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let descriptors = vec![
             crate::backend::conversations::ConversationSessionDescriptor {
                 external_id: "session-1".to_string(),
@@ -8094,68 +8401,68 @@ mod tests {
         ];
         let hydrated = BTreeSet::from(["session-1".to_string()]);
 
-        let (same, adapter_changed, contract_changed, payload_policy_changed) = database
-            .block_on(async {
-                persist_conversation_session_observations_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    "source-1",
-                    ConversationRecordKind::Session,
-                    &descriptors,
-                    &hydrated,
-                    Some("adapter-hash-v1"),
-                    Some(1),
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                let same = load_conversation_session_versions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    "source-1",
-                    ConversationRecordKind::Session,
-                    Some("adapter-hash-v1"),
-                    Some(1),
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                let adapter_changed = load_conversation_session_versions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    "source-1",
-                    ConversationRecordKind::Session,
-                    Some("adapter-hash-v2"),
-                    Some(1),
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                let contract_changed = load_conversation_session_versions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    "source-1",
-                    ConversationRecordKind::Session,
-                    Some("adapter-hash-v1"),
-                    Some(2),
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                let payload_policy_changed = load_conversation_session_versions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    "source-1",
-                    ConversationRecordKind::Session,
-                    Some("adapter-hash-v1"),
-                    Some(1),
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION + 1,
-                )
-                .await?;
-                Ok::<_, AppError>((
-                    same,
-                    adapter_changed,
-                    contract_changed,
-                    payload_policy_changed,
-                ))
-            })
-            .expect("compare hydration identity");
+        let (same, adapter_changed, contract_changed, payload_policy_changed) = async {
+            persist_conversation_session_observations_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                &descriptors,
+                &hydrated,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            let same = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            let adapter_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v2"),
+                Some(1),
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            let contract_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(2),
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            let payload_policy_changed = load_conversation_session_versions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                "source-1",
+                ConversationRecordKind::Session,
+                Some("adapter-hash-v1"),
+                Some(1),
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION + 1,
+            )
+            .await?;
+            Ok::<_, AppError>((
+                same,
+                adapter_changed,
+                contract_changed,
+                payload_policy_changed,
+            ))
+        }
+        .await
+        .expect("compare hydration identity");
 
         assert_eq!(same.get("session-1").map(String::as_str), Some("source-v1"));
         assert!(adapter_changed.is_empty());
@@ -8166,13 +8473,13 @@ mod tests {
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_payload_policy_state_requests_one_reparse_for_existing_records() {
+    #[tokio::test]
+    async fn sqlx_payload_policy_state_requests_one_reparse_for_existing_records() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-payload-policy-state-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = Database::open(&db_path).expect("open database");
+        let database = Database::open_async(&db_path).await.expect("open database");
         let adapter = test_conversation_adapter(
             "payload-policy-state-external",
             ConversationAdapterKind::External,
@@ -8180,39 +8487,39 @@ mod tests {
         );
         let source = test_conversation_source(&adapter.id);
 
-        let (required_before, required_after) = database
-            .block_on(async {
-                upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                import_conversation_sessions_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    &source,
-                    &[fixture_session("v1")],
-                    false,
-                )
-                .await?;
-                let required_before = conversation_payload_policy_reparse_required_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                mark_conversation_payload_policy_applied_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                let required_after = conversation_payload_policy_reparse_required_sqlx(
-                    database.pool(),
-                    TEST_TENANT_ID,
-                    crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
-                )
-                .await?;
-                Ok::<_, AppError>((required_before, required_after))
-            })
-            .expect("track payload policy reparse state");
+        let (required_before, required_after) = async {
+            upsert_conversation_adapter_sqlx(database.pool(), TEST_TENANT_ID, &adapter).await?;
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            import_conversation_sessions_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                &source,
+                &[fixture_session("v1")],
+                false,
+            )
+            .await?;
+            let required_before = conversation_payload_policy_reparse_required_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            mark_conversation_payload_policy_applied_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            let required_after = conversation_payload_policy_reparse_required_sqlx(
+                database.pool(),
+                TEST_TENANT_ID,
+                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION,
+            )
+            .await?;
+            Ok::<_, AppError>((required_before, required_after))
+        }
+        .await
+        .expect("track payload policy reparse state");
 
         assert!(required_before);
         assert!(!required_after);
@@ -8328,13 +8635,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn conversation_source_locations_normalize_absolute_home_paths() {
+    #[tokio::test]
+    async fn conversation_source_locations_normalize_absolute_home_paths() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-conversation-source-home-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let mut source = test_conversation_source("codex");
         source.location = dirs::home_dir()
             .expect("home directory")
@@ -8342,13 +8651,13 @@ mod tests {
             .to_string_lossy()
             .to_string();
 
-        let loaded = database
-            .block_on(async {
-                upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
-                load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id).await
-            })
-            .expect("round trip conversation source")
-            .expect("stored source");
+        let loaded = async {
+            upsert_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source).await?;
+            load_conversation_source_sqlx(database.pool(), TEST_TENANT_ID, &source.id).await
+        }
+        .await
+        .expect("round trip conversation source")
+        .expect("stored source");
 
         assert_eq!(loaded.location, "~/.codex");
         drop(database);

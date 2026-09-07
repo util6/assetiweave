@@ -16,7 +16,7 @@ pub(crate) enum AppError {
     #[error("{0}")]
     Db(#[from] sqlx::Error),
     #[error("{0}")]
-    Canceled(String),
+    Codec(#[from] crate::backend::store::CodecError),
     #[error("{0}")]
     Cancelled(String),
     #[allow(dead_code)]
@@ -28,6 +28,7 @@ pub(crate) enum AppError {
     Process(String),
     #[error("{0}")]
     External(String),
+    #[allow(dead_code)]
     #[error("{0}")]
     Extension(String),
     #[error("{message}")]
@@ -76,8 +77,10 @@ impl AppError {
             Self::Validation(_) => "validation_error".to_string(),
             Self::NotFound(_) => "not_found".to_string(),
             Self::Conflict(_) => "conflict".to_string(),
-            Self::Io(_) | Self::Db(_) | Self::Storage(_) => "storage_error".to_string(),
-            Self::Canceled(_) | Self::Cancelled(_) => "cancelled".to_string(),
+            Self::Io(_) | Self::Db(_) | Self::Codec(_) | Self::Storage(_) => {
+                "storage_error".to_string()
+            }
+            Self::Cancelled(_) => "cancelled".to_string(),
             Self::Timeout(_) => "timeout".to_string(),
             Self::Process(_) => "process_error".to_string(),
             Self::External(_) => "external_error".to_string(),
@@ -97,13 +100,13 @@ impl AppError {
 
     fn public_message(&self) -> String {
         match self {
-            Self::Io(_) | Self::Db(_) | Self::Storage(_) => {
+            Self::Io(_) | Self::Db(_) | Self::Codec(_) | Self::Storage(_) => {
                 "The application could not access local storage.".to_string()
             }
             Self::Process(_) => "The external process failed.".to_string(),
             Self::External(_) => "An external operation failed.".to_string(),
             Self::Extension(_) => "An extension operation failed.".to_string(),
-            Self::Canceled(_) | Self::Cancelled(_) => "The operation was cancelled.".to_string(),
+            Self::Cancelled(_) => "The operation was cancelled.".to_string(),
             Self::Timeout(_) => "The operation timed out.".to_string(),
             Self::Validation(message)
             | Self::NotFound(message)
@@ -118,7 +121,7 @@ impl AppError {
             Self::Conflict(_)
             | Self::Io(_)
             | Self::Db(_)
-            | Self::Canceled(_)
+            | Self::Codec(_)
             | Self::Cancelled(_)
             | Self::Timeout(_)
             | Self::Storage(_)
@@ -147,12 +150,15 @@ pub(crate) fn sanitize_public_message(message: &str) -> String {
         word.starts_with('/')
             || word.starts_with("~/")
             || word.get(1..3).is_some_and(|drive| {
-                drive.starts_with(':') && word.as_bytes().get(2) == Some(&b'\\')
+                drive.starts_with(':')
+                    && (word.as_bytes().get(2) == Some(&b'\\')
+                        || word.as_bytes().get(2) == Some(&b'/'))
             })
     });
     if contains_absolute_path
         || lower.contains("sql")
         || lower.contains("token")
+        || lower.contains("secret")
         || lower.contains("authorization")
         || lower.contains("password")
         || lower.contains("prompt=")
@@ -208,7 +214,7 @@ impl From<io::ErrorKind> for AppError {
 impl From<tokio::task::JoinError> for AppError {
     fn from(error: tokio::task::JoinError) -> Self {
         if error.is_cancelled() {
-            Self::Canceled("后台任务已取消".to_string())
+            Self::Cancelled("后台任务已取消".to_string())
         } else {
             Self::External(format!("后台任务异常退出: {error}"))
         }
@@ -226,10 +232,104 @@ impl From<WireError> for AppError {
     }
 }
 
+impl From<&AppError> for WireError {
+    fn from(error: &AppError) -> Self {
+        error.view()
+    }
+}
+
+impl From<AppError> for WireError {
+    fn from(error: AppError) -> Self {
+        error.view()
+    }
+}
+
+impl From<crate::backend::projection::error::ProjectionError> for AppError {
+    fn from(error: crate::backend::projection::error::ProjectionError) -> Self {
+        use crate::backend::projection::error::ProjectionError;
+        match error {
+            ProjectionError::InvalidPersistedCardJson(source) => {
+                Self::Codec(crate::backend::store::CodecError::Decode(source))
+            }
+            ProjectionError::UnsupportedSchemaVersion { .. }
+            | ProjectionError::MissingCardKind
+            | ProjectionError::InvalidCardKind { .. }
+            | ProjectionError::UndeclaredCardKind { .. }
+            | ProjectionError::UnsupportedRenderer { .. }
+            | ProjectionError::RendererNotAllowed { .. }
+            | ProjectionError::MissingContractVersion { .. }
+            | ProjectionError::AmbiguousLegacySemanticRole { .. }
+            | ProjectionError::LegacyConflict { .. }
+            | ProjectionError::ManifestValidation(_) => Self::Validation(error.to_string()),
+            ProjectionError::Other(message) => Self::Validation(message),
+        }
+    }
+}
+
+impl From<crate::backend::logs::LogAccessError> for AppError {
+    fn from(error: crate::backend::logs::LogAccessError) -> Self {
+        use crate::backend::logs::LogAccessError;
+        match error {
+            LogAccessError::Io { source, .. } => Self::Io(source),
+            LogAccessError::OpenDirectory(source) => Self::Io(source),
+            LogAccessError::PathEscape(path) => {
+                Self::Validation(format!("非法日志路径访问: {path}"))
+            }
+            LogAccessError::InvalidLogLevel(level) => {
+                Self::Validation(format!("不支持的日志级别: {level}"))
+            }
+            LogAccessError::FileNotFound(file_name) => {
+                Self::NotFound(format!("未找到指定日志文件: {file_name}"))
+            }
+            LogAccessError::NoAvailableLogFiles => Self::NotFound("未找到可用日志文件".to_string()),
+            LogAccessError::RuntimeConfig(message) => Self::External(message),
+            LogAccessError::PanicLogFailed(message) => Self::Storage(message),
+            LogAccessError::Other(message) => Self::External(message),
+        }
+    }
+}
+
 impl fmt::Display for AppErrorView {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.code, self.message)
     }
+}
+
+pub(crate) fn validation_error(errors: validator::ValidationErrors) -> AppError {
+    fn collect_codes(prefix: &str, errors: &validator::ValidationErrors, out: &mut Vec<String>) {
+        for (field, kind) in errors.errors() {
+            let path = if prefix.is_empty() {
+                field.to_string()
+            } else {
+                format!("{prefix}.{field}")
+            };
+            match kind {
+                validator::ValidationErrorsKind::Field(errs) => {
+                    for err in errs {
+                        out.push(format!("{path}: {}", err.code));
+                    }
+                }
+                validator::ValidationErrorsKind::Struct(nested) => {
+                    collect_codes(&path, nested, out);
+                }
+                validator::ValidationErrorsKind::List(items) => {
+                    for (index, nested) in items {
+                        collect_codes(&format!("{path}[{index}]"), nested, out);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut details = Vec::new();
+    collect_codes("", &errors, &mut details);
+    details.sort();
+    let message = if details.is_empty() {
+        "validation failed".to_string()
+    } else {
+        format!("validation failed: {}", details.join(", "))
+    };
+    AppError::Validation(message)
 }
 
 #[cfg(test)]
@@ -297,5 +397,282 @@ mod tests {
         assert!(!serde_json::to_string(&view)
             .unwrap()
             .contains("/Users/util6"));
+    }
+
+    #[test]
+    fn io_error_keeps_source_while_wire_message_is_sanitized() {
+        use std::error::Error;
+        let error = AppError::from(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "/private/token-file",
+        ));
+        assert!(error.source().is_some());
+        let wire = error.view();
+        assert_eq!(wire.code, "storage_error");
+        assert!(!wire.message.contains("token-file"));
+    }
+
+    #[test]
+    fn ai_execution_error_uses_derive_instead_of_manual_error_impl() {
+        let source = include_str!("../ai_execution/error.rs");
+        assert!(!source.contains(concat!("impl fmt::Display for ", "AiExecutionError")));
+        assert!(source.contains("thiserror::Error"));
+    }
+
+    #[test]
+    fn validation_error_maps_controlled_field_codes_without_leaking_params() {
+        use validator::ValidationError;
+        let mut err = ValidationError::new("length_bytes");
+        err.add_param(std::borrow::Cow::Borrowed("secret"), &"token=12345");
+        let mut errors = validator::ValidationErrors::new();
+        errors.add("display_name", err);
+
+        let app_err = validation_error(errors);
+        let wire = app_err.view();
+        assert_eq!(wire.code, "validation_error");
+        assert_eq!(
+            wire.message,
+            "validation failed: display_name: length_bytes"
+        );
+        assert!(!wire.message.contains("12345"));
+        assert!(!wire.message.contains("token"));
+    }
+
+    #[test]
+    fn cancellation_wire_parity_asserts_code_retryable_and_safe_message() {
+        let err = AppError::Cancelled("sensitive internal reason token=123".to_string());
+        assert_eq!(err.code(), "cancelled");
+        assert!(err.retryable());
+        let view = err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
+        assert_eq!(view.details, None);
+
+        let json = serde_json::to_value(&view).expect("serializes to wire error");
+        assert_eq!(json["code"], "cancelled");
+        assert_eq!(json["message"], "The operation was cancelled.");
+        assert_eq!(json["retryable"], true);
+        assert!(json["details"].is_null());
+        assert!(!serde_json::to_string(&json).unwrap().contains("sensitive"));
+        assert!(!serde_json::to_string(&json).unwrap().contains("token"));
+    }
+
+    #[test]
+    fn host_process_cancellation_maps_to_cancelled_wire_parity() {
+        let host_err = crate::backend::host_process::HostProcessError::Cancelled;
+        let app_err: AppError = host_err.into();
+        assert!(matches!(app_err, AppError::Cancelled(_)));
+        assert_eq!(app_err.code(), "cancelled");
+        assert!(app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
+    }
+
+    #[tokio::test]
+    async fn task_runtime_join_cancellation_maps_to_cancelled_wire_parity() {
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        });
+        handle.abort();
+        let join_err = handle.await.unwrap_err();
+        assert!(join_err.is_cancelled());
+        let app_err = AppError::from(join_err);
+        assert!(matches!(app_err, AppError::Cancelled(_)));
+        assert_eq!(app_err.code(), "cancelled");
+        assert!(app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "cancelled");
+        assert_eq!(view.message, "The operation was cancelled.");
+        assert!(view.retryable);
+    }
+
+    #[tokio::test]
+    async fn sqlx_row_error_preserves_database_source_and_wire_code() {
+        use std::error::Error;
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory sqlite");
+        let query_err = sqlx::query_as::<_, (i32,)>("SELECT 'not_an_integer' AS count")
+            .fetch_one(&pool)
+            .await
+            .unwrap_err();
+        let app_err = AppError::from(query_err);
+        assert_eq!(app_err.code(), "storage_error");
+        assert!(app_err.retryable());
+        let mut found_sqlx = false;
+        let mut cur: Option<&(dyn Error + 'static)> = app_err.source();
+        while let Some(e) = cur {
+            if e.is::<sqlx::Error>() {
+                found_sqlx = true;
+                break;
+            }
+            cur = e.source();
+        }
+        assert!(found_sqlx, "source chain must contain sqlx::Error");
+        let view = app_err.view();
+        assert_eq!(view.code, "storage_error");
+        assert!(!view.message.to_ascii_lowercase().contains("select"));
+        assert!(!view.message.contains("not_an_integer"));
+    }
+
+    #[test]
+    fn projection_and_log_error_wire_parity() {
+        use crate::backend::logs::LogAccessError;
+        use crate::backend::projection::error::ProjectionError;
+        use std::error::Error;
+
+        // 1. 未知 card schema (UnsupportedSchemaVersion) -> Validation, wire code validation_error, non-retryable
+        let proj_schema_err = ProjectionError::UnsupportedSchemaVersion {
+            expected: 1,
+            actual: Some(999),
+        };
+        let app_err = AppError::from(proj_schema_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("schema_version"));
+        assert!(view.message.contains("1"));
+
+        // 2. 非法 renderer (UnsupportedRenderer) -> Validation, wire code validation_error, non-retryable
+        let proj_renderer_err = ProjectionError::UnsupportedRenderer {
+            renderer: "unknown_3d_canvas".to_string(),
+        };
+        let app_err = AppError::from(proj_renderer_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("unknown_3d_canvas"));
+
+        // 3. 日志路径逃逸 (PathEscape) -> Validation, wire code validation_error, non-retryable
+        let log_escape_err = LogAccessError::PathEscape("../../etc/passwd".to_string());
+        let app_err = AppError::from(log_escape_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("非法日志路径访问"));
+
+        // 4. 日志读取 I/O (Io) -> Io, wire code storage_error, retryable, 保留 std::io::Error source
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
+        let log_io_err = LogAccessError::Io {
+            action: "打开日志文件",
+            path: Some(std::path::PathBuf::from("/var/log/app.log")),
+            source: io_err,
+        };
+        let app_err = AppError::from(log_io_err);
+        assert!(matches!(app_err, AppError::Io(_)));
+        assert_eq!(app_err.code(), "storage_error");
+        assert!(app_err.retryable());
+        assert!(app_err.source().is_some(), "source must be preserved");
+        let root_source = app_err.source().unwrap();
+        assert!(root_source.is::<std::io::Error>());
+        let view = app_err.view();
+        assert_eq!(view.code, "storage_error");
+        assert!(view.retryable);
+        assert_eq!(
+            view.message,
+            "The application could not access local storage."
+        );
+    }
+
+    #[test]
+    fn sanitization_redacts_sensitive_keywords_in_public_message_and_details() {
+        use serde_json::json;
+
+        // 1. 绝对路径 (Unix, Tilde, Windows)
+        assert_eq!(
+            sanitize_public_message("error at /var/data/users.json occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at ~/Documents/keys.pem occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at C:\\Users\\Admin\\config.ini occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at C:/Users/Admin/config.ini occurred"),
+            "The operation failed."
+        );
+
+        // 2. SQL
+        assert_eq!(
+            sanitize_public_message("SQL error near SELECT * FROM users"),
+            "The operation failed."
+        );
+
+        // 3. Token
+        assert_eq!(
+            sanitize_public_message("invalid bearer token=xyz123"),
+            "The operation failed."
+        );
+
+        // 4. Secret
+        assert_eq!(
+            sanitize_public_message("leaked secret value in header"),
+            "The operation failed."
+        );
+
+        // 5. Password
+        assert_eq!(
+            sanitize_public_message("invalid password provided for user"),
+            "The operation failed."
+        );
+
+        // 6. Prompt
+        assert_eq!(
+            sanitize_public_message("invalid syntax in prompt=system_prompt"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("missing prompt: user_input"),
+            "The operation failed."
+        );
+
+        // 7. Environment
+        assert_eq!(
+            sanitize_public_message("failed to read environment variable PATH"),
+            "The operation failed."
+        );
+
+        // 8. Safe messages are preserved
+        assert_eq!(
+            sanitize_public_message("file not found: item-42"),
+            "file not found: item-42"
+        );
+
+        // 9. Details object sanitization
+        let details = json!({
+            "secret": "hidden123",
+            "token": "tok456",
+            "password": "pass",
+            "prompt": "my prompt text",
+            "environment": "production",
+            "safe_field": "safe_value",
+            "path_field": "/etc/shadow",
+        });
+        let sanitized = sanitize_details(&details).expect("sanitized object");
+        assert!(sanitized.get("secret").is_none());
+        assert!(sanitized.get("token").is_none());
+        assert!(sanitized.get("password").is_none());
+        assert!(sanitized.get("prompt").is_none());
+        assert!(sanitized.get("environment").is_none());
+        assert_eq!(sanitized["safe_field"], "safe_value");
+        assert_eq!(sanitized["path_field"], "<redacted>");
     }
 }

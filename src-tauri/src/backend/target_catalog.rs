@@ -137,7 +137,7 @@ impl TargetCatalog {
         })
     }
 
-    fn target_path_conflict_key(path: &str) -> AppResult<String> {
+    pub(crate) fn target_path_conflict_key(path: &str) -> AppResult<String> {
         let expanded = crate::backend::path_utils::expand_path(path)?;
         let mut normalized = std::path::PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
         for component in expanded.components() {
@@ -150,7 +150,11 @@ impl TargetCatalog {
                 std::path::Component::Normal(value) => normalized.push(value),
             }
         }
-        Ok(normalized.to_string_lossy().to_string())
+        normalized.to_str().map(|s| s.to_string()).ok_or_else(|| {
+            crate::backend::runtime::AppError::Validation(format!(
+                "target path contains invalid UTF-8 characters: {path}"
+            ))
+        })
     }
 
     #[cfg(test)]

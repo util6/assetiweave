@@ -1,4 +1,5 @@
 use super::prelude::*;
+use sqlx::SqlitePool;
 
 pub(crate) fn target_profile_from_input(input: TargetProfileInput) -> AppResult<TargetProfile> {
     let name = input.name.trim().to_string();
@@ -76,8 +77,8 @@ pub(crate) fn normalize_target_profile_paths(
     Ok(profile)
 }
 
-pub(crate) fn ensure_profile_can_be_deleted_sqlx(
-    db: &crate::backend::store::Database,
+pub(crate) async fn ensure_profile_can_be_deleted_sqlx(
+    pool: &SqlitePool,
     tenant_id: &str,
     profile_id: &str,
 ) -> AppResult<()> {
@@ -87,21 +88,17 @@ pub(crate) fn ensure_profile_can_be_deleted_sqlx(
         )));
     }
 
-    let deployment_count = db.block_on(async {
-        crate::backend::store::count_deployment_state_by_profile_sqlx(
-            db.pool(),
-            tenant_id,
-            profile_id,
-        )
-        .await
-    })?;
+    let deployment_count =
+        crate::backend::store::count_deployment_state_by_profile_sqlx(pool, tenant_id, profile_id)
+            .await?;
     if deployment_count > 0 {
         return Err(AppError::Conflict(format!(
             "profile has managed deployments: {profile_id}"
         )));
     }
 
-    if scan_asset_mount_statuses_sqlx(db, tenant_id, None)?
+    if scan_asset_mount_statuses_sqlx(pool, tenant_id, None)
+        .await?
         .iter()
         .any(|status| {
             status.profile_id == profile_id && status.state == PhysicalMountStateDto::Mounted

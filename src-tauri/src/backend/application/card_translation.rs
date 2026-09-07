@@ -5,8 +5,7 @@ impl AppService {
     pub(crate) fn check_opencode_translation_availability(
         &self,
     ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         Ok(
             crate::backend::card_translation::check_opencode_translation_availability_with_settings(
                 self.agent_runtime()?.as_ref(),
@@ -18,8 +17,7 @@ impl AppService {
     pub(crate) fn check_prompt_optimization_availability(
         &self,
     ) -> RuntimeAppResult<crate::backend::card_translation::ActionAvailability> {
-        let settings =
-            crate::backend::app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         Ok(
             crate::backend::card_translation::check_prompt_optimization_availability_with_settings(
                 self.agent_runtime()?.as_ref(),
@@ -28,7 +26,7 @@ impl AppService {
         )
     }
 
-    pub(crate) fn translate_conversation_card_with_opencode(
+    pub(crate) async fn translate_conversation_card_with_opencode(
         &self,
         params: crate::backend::card_translation::OpencodeTranslationRequest,
     ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
@@ -36,11 +34,12 @@ impl AppService {
             crate::backend::card_translation::translate_conversation_card_with_opencode(
                 self.agent_runtime()?,
                 params,
-            )?,
+            )
+            .await?,
         )
     }
 
-    pub(crate) fn translate_conversation_card(
+    pub(crate) async fn translate_conversation_card(
         &self,
         params: crate::backend::card_translation::ConversationTranslationRequest,
     ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationResult> {
@@ -48,21 +47,22 @@ impl AppService {
             crate::backend::card_translation::translate_conversation_card(
                 self.agent_runtime()?,
                 params,
-            )?,
+            )
+            .await?,
         )
     }
 
-    pub(crate) fn optimize_prompt(
+    pub(crate) async fn optimize_prompt(
         &self,
         params: crate::backend::card_translation::PromptOptimizationRequest,
     ) -> RuntimeAppResult<crate::backend::card_translation::PromptOptimizationResult> {
-        Ok(crate::backend::card_translation::optimize_prompt(
-            self.agent_runtime()?,
-            params,
-        )?)
+        Ok(
+            crate::backend::card_translation::optimize_prompt(self.agent_runtime()?, params)
+                .await?,
+        )
     }
 
-    pub(crate) fn test_conversation_translation_connection(
+    pub(crate) async fn test_conversation_translation_connection(
         &self,
         params: crate::backend::card_translation::ConversationTranslationConnectionRequest,
     ) -> RuntimeAppResult<crate::backend::card_translation::OpencodeTranslationAvailability> {
@@ -70,7 +70,8 @@ impl AppService {
             crate::backend::card_translation::test_conversation_translation_connection(
                 self.agent_runtime()?,
                 params,
-            ),
+            )
+            .await,
         )
     }
 
@@ -131,8 +132,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn app_service_translation_uses_the_injected_runtime() {
+    #[tokio::test]
+    async fn app_service_translation_uses_the_injected_runtime() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-translation-service-{}",
             uuid::Uuid::new_v4()
@@ -143,6 +144,7 @@ mod tests {
         });
         let service =
             AppService::open_with_db_path_and_runtime(root.join("app.db"), runtime.clone())
+                .await
                 .unwrap();
 
         let result = service
@@ -153,6 +155,7 @@ mod tests {
                 model: "model/a".to_string(),
                 prompt: "translate".to_string(),
             })
+            .await
             .unwrap();
 
         assert_eq!(result.translated_text, "译文");

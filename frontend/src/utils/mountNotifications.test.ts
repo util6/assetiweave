@@ -89,7 +89,11 @@ describe("mount notification helpers", () => {
   });
 });
 
-function status(assetId: string, profileId: string, state: AssetMountStatus["state"]): AssetMountStatus {
+function status(
+  assetId: string,
+  profileId: string,
+  state: AssetMountStatus["state"],
+): AssetMountStatus {
   return {
     asset_id: assetId,
     profile_id: profileId,

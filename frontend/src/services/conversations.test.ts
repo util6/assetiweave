@@ -31,17 +31,25 @@ import {
   syncConversations,
   startConversationSearchIndexRebuild,
   uninstallConversationAdapterPackage,
+  subscribeConversationScriptInstallTask,
+  SCRIPT_INSTALL_TASK_UPDATED_EVENT,
 } from "./conversations";
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const listenMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: listenMock,
+}));
+
 describe("conversation services", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    listenMock.mockReset().mockResolvedValue(vi.fn());
   });
 
   afterEach(() => {
@@ -52,14 +60,18 @@ describe("conversation services", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockRejectedValueOnce(new Error("merge failed"));
 
-    await expect(mergeConversationQuestions(["question-1", "question-2"])).rejects.toThrow("merge failed");
+    await expect(
+      mergeConversationQuestions(["question-1", "question-2"]),
+    ).rejects.toThrow("merge failed");
   });
 
   it("keeps fallback behavior for non-Tauri previews", async () => {
     vi.stubGlobal("window", {});
     invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
 
-    await expect(mergeConversationQuestions(["preview-question-1", "preview-question-2"])).resolves.toMatchObject({
+    await expect(
+      mergeConversationQuestions(["preview-question-1", "preview-question-2"]),
+    ).resolves.toMatchObject({
       dry_run: false,
       affected_question_ids: ["preview-question-1", "preview-question-2"],
     });
@@ -69,19 +81,23 @@ describe("conversation services", () => {
     vi.stubGlobal("window", {});
     invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
 
-    await expect(searchConversationRecords({
-      content_types: ["command"],
-      include_cards: true,
-      include_questions: false,
-      limit: 20,
-      query: "sync --source",
-      record_kind: "session",
-    })).resolves.toMatchObject({
-      hits: [expect.objectContaining({
-        block_id: "preview-part-2",
-        card_type: "command",
-        part_id: "preview-part-2",
-      })],
+    await expect(
+      searchConversationRecords({
+        content_types: ["command"],
+        include_cards: true,
+        include_questions: false,
+        limit: 20,
+        query: "sync --source",
+        record_kind: "session",
+      }),
+    ).resolves.toMatchObject({
+      hits: [
+        expect.objectContaining({
+          block_id: "preview-part-2",
+          card_type: "command",
+          part_id: "preview-part-2",
+        }),
+      ],
       total_count: 1,
     });
   });
@@ -90,14 +106,23 @@ describe("conversation services", () => {
     vi.stubGlobal("window", {});
 
     await expect(listConversationAdapterRuntimeStatuses()).resolves.toEqual([
-      expect.objectContaining({ available: true, kind: "node", program: "node", required_version: ">=20" }),
+      expect.objectContaining({
+        available: true,
+        kind: "node",
+        program: "node",
+        required_version: ">=20",
+      }),
       expect.objectContaining({
         available: false,
         hint: expect.stringContaining("Python 3.10"),
         kind: "python",
         program: "python3",
       }),
-      expect.objectContaining({ available: true, kind: "bash", program: "bash" }),
+      expect.objectContaining({
+        available: true,
+        kind: "bash",
+        program: "bash",
+      }),
     ]);
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -116,7 +141,9 @@ describe("conversation services", () => {
       error: null,
     });
 
-    await expect(syncConversations({ source_id: null, dry_run: false })).resolves.toMatchObject({
+    await expect(
+      syncConversations({ source_id: null, dry_run: false }),
+    ).resolves.toMatchObject({
       id: "sync-1",
       status: "running",
     });
@@ -141,7 +168,11 @@ describe("conversation services", () => {
       error: null,
     });
 
-    await syncConversations({ mode: "full", record_kind: null, dry_run: false });
+    await syncConversations({
+      mode: "full",
+      record_kind: null,
+      dry_run: false,
+    });
 
     expect(invokeMock).toHaveBeenCalledWith("sync_conversations", {
       params: { mode: "full", record_kind: null, dry_run: false },
@@ -152,22 +183,32 @@ describe("conversation services", () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce([]);
 
-    await expect(listConversationScriptCatalog("https://example.test/catalog.json")).resolves.toEqual([]);
+    await expect(
+      listConversationScriptCatalog("https://example.test/catalog.json"),
+    ).resolves.toEqual([]);
 
-    expect(invokeMock).toHaveBeenCalledWith("list_conversation_script_catalog", {
-      params: { catalog_url: "https://example.test/catalog.json" },
-    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "list_conversation_script_catalog",
+      {
+        params: { catalog_url: "https://example.test/catalog.json" },
+      },
+    );
   });
 
   it("loads conversation adapter packages with an optional catalog URL", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock.mockResolvedValueOnce([]);
 
-    await expect(listConversationAdapterPackages("https://example.test/catalog.json")).resolves.toEqual([]);
+    await expect(
+      listConversationAdapterPackages("https://example.test/catalog.json"),
+    ).resolves.toEqual([]);
 
-    expect(invokeMock).toHaveBeenCalledWith("list_conversation_adapter_packages", {
-      params: { catalog_url: "https://example.test/catalog.json" },
-    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "list_conversation_adapter_packages",
+      {
+        params: { catalog_url: "https://example.test/catalog.json" },
+      },
+    );
   });
 
   it("includes explicit version direction in preview package entries", async () => {
@@ -175,11 +216,19 @@ describe("conversation services", () => {
     invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
 
     const entries = await listConversationAdapterPackages();
-    const zcodeEntry = entries.find((entry) => entry.item.adapter_id === "zcode");
+    const zcodeEntry = entries.find(
+      (entry) => entry.item.adapter_id === "zcode",
+    );
 
     expect(entries.length).toBeGreaterThan(0);
-    expect(entries.every((entry) => typeof entry.ahead_of_release === "boolean")).toBe(true);
-    expect(entries.every((entry) => !(entry.update_available && entry.ahead_of_release))).toBe(true);
+    expect(
+      entries.every((entry) => typeof entry.ahead_of_release === "boolean"),
+    ).toBe(true);
+    expect(
+      entries.every(
+        (entry) => !(entry.update_available && entry.ahead_of_release),
+      ),
+    ).toBe(true);
     expect(zcodeEntry).toMatchObject({
       ahead_of_release: false,
       status: "update_available",
@@ -192,9 +241,13 @@ describe("conversation services", () => {
     invokeMock.mockRejectedValueOnce(new Error("preview backend missing"));
 
     const entries = await listConversationAdapterPackages();
-    const codexEntry = entries.find((entry) => entry.item.adapter_id === "codex");
+    const codexEntry = entries.find(
+      (entry) => entry.item.adapter_id === "codex",
+    );
 
-    const repositoryCodexEntry = repositoryConversationCatalog.items.find((item) => item.adapter_id === "codex");
+    const repositoryCodexEntry = repositoryConversationCatalog.items.find(
+      (item) => item.adapter_id === "codex",
+    );
     expect(codexEntry?.item.version).toBe(repositoryCodexEntry?.version);
   });
 
@@ -203,41 +256,94 @@ describe("conversation services", () => {
     invokeMock.mockResolvedValue([]);
 
     await listInstalledConversationAdapterPackageVersions("io.example.adapter");
-    await switchConversationAdapterPackageVersion({ packageId: "io.example.adapter", version: "1.2.0", confirmed: true });
-    await rollbackConversationAdapterPackageVersion({ packageId: "io.example.adapter", confirmed: true });
-    await deleteConversationAdapterPackageVersion({ packageId: "io.example.adapter", version: "1.1.0", confirmed: true });
+    await switchConversationAdapterPackageVersion({
+      packageId: "io.example.adapter",
+      version: "1.2.0",
+      confirmed: true,
+    });
+    await rollbackConversationAdapterPackageVersion({
+      packageId: "io.example.adapter",
+      confirmed: true,
+    });
+    await deleteConversationAdapterPackageVersion({
+      packageId: "io.example.adapter",
+      version: "1.1.0",
+      confirmed: true,
+    });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_installed_conversation_adapter_package_versions", {
-      params: { package_id: "io.example.adapter" },
-    });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "switch_conversation_adapter_package_version", {
-      params: { package_id: "io.example.adapter", version: "1.2.0", dry_run: false, yes: true },
-    });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "rollback_conversation_adapter_package_version", {
-      params: { package_id: "io.example.adapter", version: null, dry_run: false, yes: true },
-    });
-    expect(invokeMock).toHaveBeenNthCalledWith(4, "delete_conversation_adapter_package_version", {
-      params: { package_id: "io.example.adapter", version: "1.1.0", dry_run: false, yes: true },
-    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "list_installed_conversation_adapter_package_versions",
+      {
+        params: { package_id: "io.example.adapter" },
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "switch_conversation_adapter_package_version",
+      {
+        params: {
+          package_id: "io.example.adapter",
+          version: "1.2.0",
+          dry_run: false,
+          yes: true,
+        },
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      3,
+      "rollback_conversation_adapter_package_version",
+      {
+        params: {
+          package_id: "io.example.adapter",
+          version: null,
+          dry_run: false,
+          yes: true,
+        },
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      4,
+      "delete_conversation_adapter_package_version",
+      {
+        params: {
+          package_id: "io.example.adapter",
+          version: "1.1.0",
+          dry_run: false,
+          yes: true,
+        },
+      },
+    );
   });
 
   it("persists the selected package update policy", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    invokeMock.mockResolvedValueOnce({ package_id: "io.example.adapter", update_policy: "follow_beta" });
+    invokeMock.mockResolvedValueOnce({
+      package_id: "io.example.adapter",
+      update_policy: "follow_beta",
+    });
 
     await setConversationAdapterPackageUpdatePolicy({
       packageId: "io.example.adapter",
       updatePolicy: "follow_beta",
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("set_conversation_adapter_package_update_policy", {
-      params: { package_id: "io.example.adapter", update_policy: "follow_beta" },
-    });
+    expect(invokeMock).toHaveBeenCalledWith(
+      "set_conversation_adapter_package_update_policy",
+      {
+        params: {
+          package_id: "io.example.adapter",
+          update_policy: "follow_beta",
+        },
+      },
+    );
   });
 
   it("checks updates explicitly and uninstalls only the registered runtime", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
-    invokeMock.mockResolvedValueOnce([]).mockResolvedValueOnce({ status: "running" });
+    invokeMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ status: "running" });
 
     await checkConversationAdapterPackageUpdates({ force: true });
     await uninstallConversationAdapterPackage({
@@ -245,12 +351,20 @@ describe("conversation services", () => {
       confirmed: true,
     });
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "check_conversation_adapter_package_updates", {
-      params: { catalog_url: null, force: true },
-    });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "uninstall_conversation_adapter_package", {
-      params: { package_id: "io.example.adapter", dry_run: false, yes: true },
-    });
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      1,
+      "check_conversation_adapter_package_updates",
+      {
+        params: { catalog_url: null, force: true },
+      },
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "uninstall_conversation_adapter_package",
+      {
+        params: { package_id: "io.example.adapter", dry_run: false, yes: true },
+      },
+    );
   });
 
   it("returns the bundled script catalog fallback for browser previews", async () => {
@@ -268,11 +382,11 @@ describe("conversation services", () => {
       "qwen-web",
       "gemini-web",
     ]);
-    expect(entries.filter((entry) => entry.item.record_kind === "web").map((entry) => entry.item.adapter_id)).toEqual([
-      "chatgpt-web",
-      "qwen-web",
-      "gemini-web",
-    ]);
+    expect(
+      entries
+        .filter((entry) => entry.item.record_kind === "web")
+        .map((entry) => entry.item.adapter_id),
+    ).toEqual(["chatgpt-web", "qwen-web", "gemini-web"]);
   });
 
   it("starts conversation script installs as background tasks", async () => {
@@ -289,7 +403,9 @@ describe("conversation services", () => {
       error: null,
     });
 
-    await expect(installConversationScript({ itemId: "codex-session" })).resolves.toMatchObject({
+    await expect(
+      installConversationScript({ itemId: "codex-session" }),
+    ).resolves.toMatchObject({
       id: "install-1",
       status: "running",
     });
@@ -320,24 +436,29 @@ describe("conversation services", () => {
       error: null,
     });
 
-    await expect(installConversationAdapterPackage({
-      packageId: "codex-session",
-      confirmed: true,
-    })).resolves.toMatchObject({
+    await expect(
+      installConversationAdapterPackage({
+        packageId: "codex-session",
+        confirmed: true,
+      }),
+    ).resolves.toMatchObject({
       id: "install-1",
       package_id: "codex-session",
       status: "running",
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("install_conversation_adapter_package", {
-      params: {
-        catalog_url: null,
-        dry_run: false,
-        package_id: "codex-session",
-        version: null,
-        yes: true,
+    expect(invokeMock).toHaveBeenCalledWith(
+      "install_conversation_adapter_package",
+      {
+        params: {
+          catalog_url: null,
+          dry_run: false,
+          package_id: "codex-session",
+          version: null,
+          yes: true,
+        },
       },
-    });
+    );
   });
 
   it("preflights package changes without auto-confirming them", async () => {
@@ -360,13 +481,16 @@ describe("conversation services", () => {
       packageId: "codex-session",
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("prepare_conversation_adapter_package_change", {
-      params: {
-        action: "install",
-        adapter_id: null,
-        package_id: "codex-session",
+    expect(invokeMock).toHaveBeenCalledWith(
+      "prepare_conversation_adapter_package_change",
+      {
+        params: {
+          action: "install",
+          adapter_id: null,
+          package_id: "codex-session",
+        },
       },
-    });
+    );
   });
 
   it("lists Catalog v2 releases for an exact package", async () => {
@@ -378,13 +502,16 @@ describe("conversation services", () => {
       refresh: true,
     });
 
-    expect(invokeMock).toHaveBeenCalledWith("list_conversation_adapter_package_releases", {
-      params: {
-        catalog_url: null,
-        package_id: "io.github.util6.codex-session",
-        refresh: true,
+    expect(invokeMock).toHaveBeenCalledWith(
+      "list_conversation_adapter_package_releases",
+      {
+        params: {
+          catalog_url: null,
+          package_id: "io.github.util6.codex-session",
+          refresh: true,
+        },
       },
-    });
+    );
   });
 
   it("polls the conversation adapter package task", async () => {
@@ -393,7 +520,9 @@ describe("conversation services", () => {
 
     await expect(getConversationAdapterPackageTask()).resolves.toBeNull();
 
-    expect(invokeMock).toHaveBeenCalledWith("get_conversation_adapter_package_task");
+    expect(invokeMock).toHaveBeenCalledWith(
+      "get_conversation_adapter_package_task",
+    );
   });
 
   it("imports a conversation source by validating the adapter, adding the source, then starting background sync", async () => {
@@ -484,27 +613,39 @@ describe("conversation services", () => {
       "upsert_conversation_source",
       "sync_conversations",
     ]);
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "register_conversation_adapter", {
-      params: {
-        dry_run: false,
-        manifest_path: "/tmp/adapter/conversation-adapter.json",
-        yes: false,
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      2,
+      "register_conversation_adapter",
+      {
+        params: {
+          dry_run: false,
+          manifest_path: "/tmp/adapter/conversation-adapter.json",
+          yes: false,
+        },
       },
-    });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "upsert_conversation_source", {
-      params: {
-        dry_run: false,
-        source: expect.objectContaining({
-          adapter_id: "medical-web",
-          id: "medical-web-export",
-          kind: "directory",
-          location: "/tmp/export",
-          name: "医保网页记录",
-        }),
+    );
+    expect(invokeMock).toHaveBeenNthCalledWith(
+      3,
+      "upsert_conversation_source",
+      {
+        params: {
+          dry_run: false,
+          source: expect.objectContaining({
+            adapter_id: "medical-web",
+            id: "medical-web-export",
+            kind: "directory",
+            location: "/tmp/export",
+            name: "医保网页记录",
+          }),
+        },
       },
-    });
+    );
     expect(invokeMock).toHaveBeenNthCalledWith(4, "sync_conversations", {
-      params: { dry_run: false, record_kind: "web", source_id: "medical-web-export" },
+      params: {
+        dry_run: false,
+        record_kind: "web",
+        source_id: "medical-web-export",
+      },
     });
   });
 
@@ -579,9 +720,15 @@ describe("conversation services", () => {
       .mockResolvedValueOnce({ id: "index-1", status: "running" })
       .mockResolvedValueOnce({ id: "index-1", status: "completed" });
 
-    await expect(getConversationSearchIndexStatus()).resolves.toMatchObject({ health: "ready" });
-    await expect(startConversationSearchIndexRebuild()).resolves.toMatchObject({ status: "running" });
-    await expect(getConversationSearchIndexTask()).resolves.toMatchObject({ status: "completed" });
+    await expect(getConversationSearchIndexStatus()).resolves.toMatchObject({
+      health: "ready",
+    });
+    await expect(startConversationSearchIndexRebuild()).resolves.toMatchObject({
+      status: "running",
+    });
+    await expect(getConversationSearchIndexTask()).resolves.toMatchObject({
+      status: "completed",
+    });
     expect(invokeMock.mock.calls.map(([method]) => method)).toEqual([
       "get_conversation_search_index_status",
       "start_conversation_search_index_rebuild",
@@ -616,10 +763,24 @@ describe("conversation services", () => {
   it("starts and controls conversation data maintenance tasks", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
     invokeMock
-      .mockResolvedValueOnce({ id: "audit-1", status: "running", operation: "audit" })
-      .mockResolvedValueOnce({ id: "repair-1", status: "running", operation: "repair" })
-      .mockResolvedValueOnce([{ id: "repair-1", status: "completed", operation: "repair" }])
-      .mockResolvedValueOnce({ id: "repair-1", status: "cancelling", operation: "repair" });
+      .mockResolvedValueOnce({
+        id: "audit-1",
+        status: "running",
+        operation: "audit",
+      })
+      .mockResolvedValueOnce({
+        id: "repair-1",
+        status: "running",
+        operation: "repair",
+      })
+      .mockResolvedValueOnce([
+        { id: "repair-1", status: "completed", operation: "repair" },
+      ])
+      .mockResolvedValueOnce({
+        id: "repair-1",
+        status: "cancelling",
+        operation: "repair",
+      });
 
     await auditConversationData({ record_kind: "session" });
     await repairConversationData({ dry_run: true, resync: true });
@@ -630,7 +791,10 @@ describe("conversation services", () => {
       ["audit_conversation_data", { params: { record_kind: "session" } }],
       ["repair_conversation_data", { params: { dry_run: true, resync: true } }],
       ["list_conversation_data_maintenance_tasks"],
-      ["cancel_conversation_data_maintenance", { params: { task_id: "repair-1" } }],
+      [
+        "cancel_conversation_data_maintenance",
+        { params: { task_id: "repair-1" } },
+      ],
     ]);
   });
 
@@ -646,8 +810,18 @@ describe("conversation services", () => {
         finished_at: "2026-06-15T00:00:05Z",
         result: {
           results: [
-            { session_count: 10, skipped_session_count: 7, turn_count: 15, warning_count: 1 },
-            { session_count: 2, skipped_session_count: 0, turn_count: 3, warning_count: 0 },
+            {
+              session_count: 10,
+              skipped_session_count: 7,
+              turn_count: 15,
+              warning_count: 1,
+            },
+            {
+              session_count: 2,
+              skipped_session_count: 0,
+              turn_count: 3,
+              warning_count: 0,
+            },
           ],
           errors: [{ source_id: "bad-source" }],
         },
@@ -676,15 +850,17 @@ describe("conversation services", () => {
       started_at: "2026-07-16T00:00:00Z",
       finished_at: "2026-07-16T00:00:01Z",
       result: {
-        results: [{
-          incremental: true,
-          session_count: 20,
-          active_session_count: 2,
-          skipped_session_count: 18,
-          retained_session_count: 3,
-          turn_count: 4,
-          warning_count: 0,
-        }],
+        results: [
+          {
+            incremental: true,
+            session_count: 20,
+            active_session_count: 2,
+            skipped_session_count: 18,
+            retained_session_count: 3,
+            turn_count: 4,
+            warning_count: 0,
+          },
+        ],
         errors: [],
       },
       error: null,
@@ -697,5 +873,26 @@ describe("conversation services", () => {
       skippedSessionCount: 18,
       retainedSessionCount: 3,
     });
+  });
+
+  it("subscribes to script install task updates in Tauri runtime", async () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+    const listener = vi.fn();
+    await subscribeConversationScriptInstallTask(listener);
+
+    expect(listenMock).toHaveBeenCalledWith(
+      SCRIPT_INSTALL_TASK_UPDATED_EVENT,
+      expect.any(Function),
+    );
+    const callback = listenMock.mock.calls[0][1];
+    const fakeSnapshot = {
+      task_id: "task-1",
+      status: "running",
+      progress_percent: 50,
+      message: "installing",
+      error: null,
+    };
+    callback({ payload: fakeSnapshot });
+    expect(listener).toHaveBeenCalledWith(fakeSnapshot);
   });
 });

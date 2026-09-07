@@ -37,7 +37,12 @@ export const assetFormatValues = [
   "unknown",
 ] as const satisfies readonly AssetFormat[];
 
-export const sourceKindValues = ["local", "git_checkout", "import", "custom"] as const satisfies readonly SourceKind[];
+export const sourceKindValues = [
+  "local",
+  "git_checkout",
+  "import",
+  "custom",
+] as const satisfies readonly SourceKind[];
 
 export const sourceScannerKindValues = [
   "skill",
@@ -96,7 +101,11 @@ export const deploymentActionTypeValues = [
   "conflict",
 ] as const satisfies readonly DeploymentActionType[];
 
-export const riskLevelValues = ["low", "medium", "high"] as const satisfies readonly RiskLevel[];
+export const riskLevelValues = [
+  "low",
+  "medium",
+  "high",
+] as const satisfies readonly RiskLevel[];
 
 export const assetKindSchema = z.enum(assetKindValues);
 export const assetFormatSchema = z.enum(assetFormatValues);
@@ -114,19 +123,53 @@ export const deploymentActionTypeSchema = z.enum(deploymentActionTypeValues);
 export const riskLevelSchema = z.enum(riskLevelValues);
 
 type ExactType<Actual, Expected> =
-  (<Value>() => Value extends Actual ? 1 : 2) extends <Value>() => Value extends Expected ? 1 : 2
-    ? (<Value>() => Value extends Expected ? 1 : 2) extends <Value>() => Value extends Actual ? 1 : 2
+  (<Value>() => Value extends Actual ? 1 : 2) extends <
+    Value,
+  >() => Value extends Expected ? 1 : 2
+    ? (<Value>() => Value extends Expected ? 1 : 2) extends <
+        Value,
+      >() => Value extends Actual ? 1 : 2
       ? true
       : never
     : never;
 
-const _assetKindMatchesType: ExactType<z.infer<typeof assetKindSchema>, AssetKind> = true;
-const _assetFormatMatchesType: ExactType<z.infer<typeof assetFormatSchema>, AssetFormat> = true;
-const _sourceKindMatchesType: ExactType<z.infer<typeof sourceKindSchema>, SourceKind> = true;
-const _sourceScannerKindMatchesType: ExactType<z.infer<typeof sourceScannerKindSchema>, SourceScannerKind> = true;
-const _sourceOriginMatchesType: ExactType<z.infer<typeof sourceOriginSchema>, SourceOrigin> = true;
-const _appKindMatchesType: ExactType<z.infer<typeof appKindSchema>, AppKind> = true;
-const _deploymentStrategyMatchesType: ExactType<z.infer<typeof deploymentStrategySchema>, DeploymentStrategy> = true;
-const _physicalMountStateMatchesType: ExactType<z.infer<typeof physicalMountStateSchema>, PhysicalMountState> = true;
-const _deploymentActionTypeMatchesType: ExactType<z.infer<typeof deploymentActionTypeSchema>, DeploymentActionType> = true;
-const _riskLevelMatchesType: ExactType<z.infer<typeof riskLevelSchema>, RiskLevel> = true;
+const _assetKindMatchesType: ExactType<
+  z.infer<typeof assetKindSchema>,
+  AssetKind
+> = true;
+const _assetFormatMatchesType: ExactType<
+  z.infer<typeof assetFormatSchema>,
+  AssetFormat
+> = true;
+const _sourceKindMatchesType: ExactType<
+  z.infer<typeof sourceKindSchema>,
+  SourceKind
+> = true;
+const _sourceScannerKindMatchesType: ExactType<
+  z.infer<typeof sourceScannerKindSchema>,
+  SourceScannerKind
+> = true;
+const _sourceOriginMatchesType: ExactType<
+  z.infer<typeof sourceOriginSchema>,
+  SourceOrigin
+> = true;
+const _appKindMatchesType: ExactType<
+  z.infer<typeof appKindSchema>,
+  AppKind
+> = true;
+const _deploymentStrategyMatchesType: ExactType<
+  z.infer<typeof deploymentStrategySchema>,
+  DeploymentStrategy
+> = true;
+const _physicalMountStateMatchesType: ExactType<
+  z.infer<typeof physicalMountStateSchema>,
+  PhysicalMountState
+> = true;
+const _deploymentActionTypeMatchesType: ExactType<
+  z.infer<typeof deploymentActionTypeSchema>,
+  DeploymentActionType
+> = true;
+const _riskLevelMatchesType: ExactType<
+  z.infer<typeof riskLevelSchema>,
+  RiskLevel
+> = true;

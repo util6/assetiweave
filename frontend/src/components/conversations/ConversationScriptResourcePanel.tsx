@@ -1,4 +1,3 @@
-import { listen } from "@tauri-apps/api/event";
 import clsx from "clsx";
 import {
   CircleAlert,
@@ -32,6 +31,7 @@ import {
   rollbackConversationAdapterPackageVersion,
   setConversationAdapterPackageUpdatePolicy,
   switchConversationAdapterPackageVersion,
+  subscribeConversationScriptInstallTask,
   unregisterConversationAdapter,
   uninstallConversationAdapterPackage,
   updateConversationAdapterPackage,
@@ -43,14 +43,16 @@ import {
   type ConversationAdapterPackageVersion,
   type ConversationScriptInstallTaskSnapshot,
 } from "../../services/conversations";
-import type { ConversationPackageUpdatePolicy, ConversationRecordKind } from "../../types";
+import type {
+  ConversationPackageUpdatePolicy,
+  ConversationRecordKind,
+} from "../../types";
 import type { NotificationMessage } from "../notifications/NotificationBanner";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { Badge } from "../foundation/Badge";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
 
-const SCRIPT_INSTALL_TASK_UPDATED_EVENT = "conversation-script-install-task-updated";
 const SCRIPT_INSTALL_POLL_INTERVAL_MS = 1000;
 
 type ScriptResourceNotification = Omit<NotificationMessage, "id">;
@@ -71,23 +73,34 @@ export function ConversationScriptResourcePanel({
   recordKind: ConversationRecordKind;
 }) {
   const { t } = useI18n();
-  const [entries, setEntries] = useState<ConversationAdapterPackageCatalogEntry[]>([]);
-  const [activeView, setActiveView] = useState<"connected" | "updates" | "discover">("connected");
+  const [entries, setEntries] = useState<
+    ConversationAdapterPackageCatalogEntry[]
+  >([]);
+  const [activeView, setActiveView] = useState<
+    "connected" | "updates" | "discover"
+  >("connected");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [installTask, setInstallTask] = useState<ConversationScriptInstallTaskSnapshot | null>(null);
+  const [installTask, setInstallTask] =
+    useState<ConversationScriptInstallTaskSnapshot | null>(null);
   const [pendingChange, setPendingChange] = useState<{
     action: PackageChangeAction;
     entry: ConversationAdapterPackageCatalogEntry;
     preflight: ConversationAdapterPackageChangePreflight;
   } | null>(null);
   const [confirmingChange, setConfirmingChange] = useState(false);
-  const [detailEntry, setDetailEntry] = useState<ConversationAdapterPackageCatalogEntry | null>(null);
-  const [detailInspection, setDetailInspection] = useState<ConversationAdapterPackageInspection | null>(null);
-  const [detailReleases, setDetailReleases] = useState<ConversationAdapterCatalogRelease[]>([]);
-  const [installedVersions, setInstalledVersions] = useState<ConversationAdapterPackageVersion[]>([]);
+  const [detailEntry, setDetailEntry] =
+    useState<ConversationAdapterPackageCatalogEntry | null>(null);
+  const [detailInspection, setDetailInspection] =
+    useState<ConversationAdapterPackageInspection | null>(null);
+  const [detailReleases, setDetailReleases] = useState<
+    ConversationAdapterCatalogRelease[]
+  >([]);
+  const [installedVersions, setInstalledVersions] = useState<
+    ConversationAdapterPackageVersion[]
+  >([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [selectedVersion, setSelectedVersion] = useState<string>("");
@@ -141,20 +154,13 @@ export function ConversationScriptResourcePanel({
   }, []);
 
   useEffect(() => {
-    if (!isTauriRuntime()) {
-      return;
-    }
-
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<ConversationScriptInstallTaskSnapshot>(
-      SCRIPT_INSTALL_TASK_UPDATED_EVENT,
-      (event) => {
-        if (!cancelled) {
-          setInstallTask(event.payload);
-        }
-      },
-    )
+    void subscribeConversationScriptInstallTask((snapshot) => {
+      if (!cancelled) {
+        setInstallTask(snapshot);
+      }
+    })
       .then((removeListener) => {
         if (cancelled) {
           removeListener();
@@ -202,12 +208,18 @@ export function ConversationScriptResourcePanel({
       if (!current) {
         return current;
       }
-      return entries.find((entry) => entry.item.id === current.item.id) ?? current;
+      return (
+        entries.find((entry) => entry.item.id === current.item.id) ?? current
+      );
     });
   }, [entries]);
 
   useEffect(() => {
-    if (!installTask || installTask.status === "running" || handledInstallTaskIds.current.has(installTask.id)) {
+    if (
+      !installTask ||
+      installTask.status === "running" ||
+      handledInstallTaskIds.current.has(installTask.id)
+    ) {
       return;
     }
     handledInstallTaskIds.current.add(installTask.id);
@@ -226,8 +238,19 @@ export function ConversationScriptResourcePanel({
       return;
     }
 
-    onNotifyError(installTask.error?.message || t(packageTaskFailedLabel(installTask.action)));
-  }, [installTask, loadCatalog, onInstalled, onManifestSelect, onNotify, onNotifyError, t]);
+    onNotifyError(
+      installTask.error?.message ||
+        t(packageTaskFailedLabel(installTask.action)),
+    );
+  }, [
+    installTask,
+    loadCatalog,
+    onInstalled,
+    onManifestSelect,
+    onNotify,
+    onNotifyError,
+    t,
+  ]);
 
   const recordEntries = useMemo(
     () => entries.filter((entry) => entry.item.record_kind === recordKind),
@@ -303,7 +326,9 @@ export function ConversationScriptResourcePanel({
   async function handleCheckUpdates() {
     setCheckingUpdates(true);
     try {
-      const statuses = await checkConversationAdapterPackageUpdates({ force: true });
+      const statuses = await checkConversationAdapterPackageUpdates({
+        force: true,
+      });
       await loadCatalog("refresh");
       setActiveView("updates");
       onNotify({
@@ -325,10 +350,7 @@ export function ConversationScriptResourcePanel({
   ) {
     try {
       const preflight = await prepareConversationAdapterPackageChange({
-        action:
-          action === "repair"
-            ? "update"
-            : action,
+        action: action === "repair" ? "update" : action,
         packageId: entry.item.id,
         adapterId: entry.installed_adapter?.id ?? entry.item.adapter_id ?? null,
       });
@@ -382,17 +404,18 @@ export function ConversationScriptResourcePanel({
         detailEntry?.item.id === entry.item.id && selectedVersion
           ? selectedVersion
           : undefined;
-      const task = action === "update" || action === "repair"
-        ? await updateConversationAdapterPackage({
-            packageId: entry.item.id,
-            version,
-            confirmed: true,
-          })
-        : await installConversationAdapterPackage({
-            packageId: entry.item.id,
-            version,
-            confirmed: true,
-          });
+      const task =
+        action === "update" || action === "repair"
+          ? await updateConversationAdapterPackage({
+              packageId: entry.item.id,
+              version,
+              confirmed: true,
+            })
+          : await installConversationAdapterPackage({
+              packageId: entry.item.id,
+              version,
+              confirmed: true,
+            });
       setPendingChange(null);
       setInstallTask(task);
       if (task.status === "running") {
@@ -408,7 +431,9 @@ export function ConversationScriptResourcePanel({
     }
   }
 
-  async function openPackageDetail(entry: ConversationAdapterPackageCatalogEntry) {
+  async function openPackageDetail(
+    entry: ConversationAdapterPackageCatalogEntry,
+  ) {
     setDetailEntry(entry);
     setDetailInspection(null);
     setDetailReleases([]);
@@ -421,7 +446,8 @@ export function ConversationScriptResourcePanel({
         entry.installed
           ? inspectConversationAdapterPackage({
               packageId: entry.installed_package?.package_id ?? null,
-              adapterId: entry.installed_adapter?.id ?? entry.item.adapter_id ?? null,
+              adapterId:
+                entry.installed_adapter?.id ?? entry.item.adapter_id ?? null,
             }).catch(() => null)
           : Promise.resolve(null),
         listConversationAdapterPackageReleases({
@@ -429,7 +455,9 @@ export function ConversationScriptResourcePanel({
           refresh: false,
         }).catch(() => []),
         entry.installed_package?.origin === "managed_release"
-          ? listInstalledConversationAdapterPackageVersions(packageId).catch(() => [])
+          ? listInstalledConversationAdapterPackageVersions(packageId).catch(
+              () => [],
+            )
           : Promise.resolve([]),
       ]);
       setDetailInspection(inspection);
@@ -443,23 +471,44 @@ export function ConversationScriptResourcePanel({
     }
   }
 
-  async function mutateInstalledVersion(action: "switch" | "rollback" | "delete", version?: string) {
+  async function mutateInstalledVersion(
+    action: "switch" | "rollback" | "delete",
+    version?: string,
+  ) {
     if (!detailEntry?.installed_package) {
       return;
     }
     const packageId = detailEntry.installed_package.package_id;
     const mutationKey = `${action}:${version ?? "previous"}`;
-    if (action === "delete" && !window.confirm(t("conversation.scriptMarket.deleteVersionConfirm", { version: version ?? "" }))) {
+    if (
+      action === "delete" &&
+      !window.confirm(
+        t("conversation.scriptMarket.deleteVersionConfirm", {
+          version: version ?? "",
+        }),
+      )
+    ) {
       return;
     }
     setVersionMutation(mutationKey);
     try {
       if (action === "switch" && version) {
-        await switchConversationAdapterPackageVersion({ packageId, version, confirmed: true });
+        await switchConversationAdapterPackageVersion({
+          packageId,
+          version,
+          confirmed: true,
+        });
       } else if (action === "rollback") {
-        await rollbackConversationAdapterPackageVersion({ packageId, confirmed: true });
+        await rollbackConversationAdapterPackageVersion({
+          packageId,
+          confirmed: true,
+        });
       } else if (action === "delete" && version) {
-        await deleteConversationAdapterPackageVersion({ packageId, version, confirmed: true });
+        await deleteConversationAdapterPackageVersion({
+          packageId,
+          version,
+          confirmed: true,
+        });
       }
       const [nextVersions] = await Promise.all([
         listInstalledConversationAdapterPackageVersions(packageId),
@@ -469,7 +518,10 @@ export function ConversationScriptResourcePanel({
       if (action !== "delete" || nextVersions.length === 0) {
         setDetailEntry(null);
       }
-      onNotify({ message: t("conversation.scriptMarket.versionActionCompleted"), tone: "success" });
+      onNotify({
+        message: t("conversation.scriptMarket.versionActionCompleted"),
+        tone: "success",
+      });
     } catch (mutationError) {
       onNotifyError(errorMessage(mutationError));
     } finally {
@@ -477,7 +529,9 @@ export function ConversationScriptResourcePanel({
     }
   }
 
-  async function changeUpdatePolicy(updatePolicy: ConversationPackageUpdatePolicy) {
+  async function changeUpdatePolicy(
+    updatePolicy: ConversationPackageUpdatePolicy,
+  ) {
     if (!detailEntry?.installed_package) {
       return;
     }
@@ -487,8 +541,13 @@ export function ConversationScriptResourcePanel({
         packageId: detailEntry.installed_package.package_id,
         updatePolicy,
       });
-      setDetailEntry((current) => current ? { ...current, installed_package: updated } : current);
-      onNotify({ message: t("conversation.scriptMarket.policySaved"), tone: "success" });
+      setDetailEntry((current) =>
+        current ? { ...current, installed_package: updated } : current,
+      );
+      onNotify({
+        message: t("conversation.scriptMarket.policySaved"),
+        tone: "success",
+      });
     } catch (policyError) {
       onNotifyError(errorMessage(policyError));
     } finally {
@@ -515,16 +574,28 @@ export function ConversationScriptResourcePanel({
             onClick={() => void loadCatalog("refresh")}
             type="button"
           >
-            <RefreshCw className={clsx(refreshing && "animate-spin")} size={15} />
+            <RefreshCw
+              className={clsx(refreshing && "animate-spin")}
+              size={15}
+            />
             <span>{t("common.refresh")}</span>
           </button>
           <Button
-            disabled={disabled || loading || refreshing || checkingUpdates || installRunning}
+            disabled={
+              disabled ||
+              loading ||
+              refreshing ||
+              checkingUpdates ||
+              installRunning
+            }
             onClick={() => void handleCheckUpdates()}
             type="button"
             variant="outline"
           >
-            <ShieldCheck className={clsx(checkingUpdates && "animate-pulse")} size={15} />
+            <ShieldCheck
+              className={clsx(checkingUpdates && "animate-pulse")}
+              size={15}
+            />
             {checkingUpdates
               ? t("conversation.scriptMarket.checkingUpdates")
               : t("conversation.scriptMarket.checkUpdates")}
@@ -532,13 +603,18 @@ export function ConversationScriptResourcePanel({
         </div>
       </div>
 
-      <div className="conversation-pill-tabs mt-3 flex items-center gap-1" role="tablist">
+      <div
+        className="conversation-pill-tabs mt-3 flex items-center gap-1"
+        role="tablist"
+      >
         {(["connected", "updates", "discover"] as const).map((view) => (
           <button
             aria-selected={activeView === view}
             className={clsx(
               "rounded-xl px-3 py-2 text-body-sm transition-[transform,background-color,color] duration-200 hover:-translate-y-px active:translate-y-0",
-              activeView === view ? "text-on-surface" : "text-on-surface-variant hover:bg-theme-control-hover/70 hover:text-on-surface",
+              activeView === view
+                ? "text-on-surface"
+                : "text-on-surface-variant hover:bg-theme-control-hover/70 hover:text-on-surface",
             )}
             data-active={activeView === view}
             key={view}
@@ -555,7 +631,8 @@ export function ConversationScriptResourcePanel({
         <div className="mt-3 flex items-center gap-2 rounded-xl border border-status-update/35 bg-status-update/10 px-3 py-2 text-body-sm text-status-update">
           <Loader2 className="shrink-0 animate-spin" size={15} />
           <span className="truncate">
-            {t(packageTaskRunningLabel(installTask.action))} - {installTask.package_id ?? installTask.item_id}
+            {t(packageTaskRunningLabel(installTask.action))} -{" "}
+            {installTask.package_id ?? installTask.item_id}
           </span>
         </div>
       ) : null}
@@ -576,7 +653,10 @@ export function ConversationScriptResourcePanel({
             <span>{t("conversation.scriptMarket.loading")}</span>
           </div>
           {Array.from({ length: 2 }).map((_, index) => (
-            <div className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3" key={index}>
+            <div
+              className="rounded-xl border border-theme-card-border bg-theme-control/40 p-3"
+              key={index}
+            >
               <Skeleton className="h-4 w-48 max-w-full rounded" />
               <Skeleton className="mt-2 h-3 w-full max-w-lg rounded" />
             </div>
@@ -612,7 +692,11 @@ export function ConversationScriptResourcePanel({
           contentClassName="grid gap-4"
           footer={
             <>
-              <Button onClick={() => setDetailEntry(null)} type="button" variant="outline">
+              <Button
+                onClick={() => setDetailEntry(null)}
+                type="button"
+                variant="outline"
+              >
                 {t("common.close")}
               </Button>
               {packageLifecycleAction(detailEntry) ? (
@@ -631,7 +715,10 @@ export function ConversationScriptResourcePanel({
                 </Button>
               ) : null}
               {packageActionForEntry(detailEntry) ? (
-                <Button onClick={() => void handleInstall(detailEntry)} type="button">
+                <Button
+                  onClick={() => void handleInstall(detailEntry)}
+                  type="button"
+                >
                   <Download size={15} />
                   {t(actionLabelKey(packageActionForEntry(detailEntry)!))}
                 </Button>
@@ -645,7 +732,9 @@ export function ConversationScriptResourcePanel({
         >
           {detailLoading ? (
             <div aria-busy="true" className="grid gap-2" role="status">
-              <span className="sr-only">{t("conversation.scriptMarket.loading")}</span>
+              <span className="sr-only">
+                {t("conversation.scriptMarket.loading")}
+              </span>
               <Skeleton className="h-5 w-52 rounded" />
               <Skeleton className="h-32 rounded" />
             </div>
@@ -656,18 +745,94 @@ export function ConversationScriptResourcePanel({
           ) : (
             <>
               <div className="grid gap-2 rounded-xl border border-theme-card-border bg-theme-card/65 p-3 sm:grid-cols-2">
-                <DetailField label={t("conversation.scriptMarket.packageId")} value={detailEntry.installed_package?.package_id ?? detailEntry.item.id} />
-                <DetailField label={t("conversation.scriptMarket.adapterId")} value={detailEntry.installed_adapter?.id ?? detailEntry.item.adapter_id ?? "-"} />
-                <DetailField label={t("conversation.scriptMarket.origin")} value={detailInspection?.origin ?? detailEntry.installed_package?.origin ?? detailEntry.item.provider ?? "-"} />
-                <DetailField label={t("conversation.scriptMarket.publisher")} value={detailReleases[0]?.publisher ?? detailEntry.item.provider ?? "-"} />
-                <DetailField label={t("conversation.scriptMarket.currentVersion")} value={detailEntry.installed_package?.version ?? detailEntry.installed_adapter?.version ?? t("conversation.scriptMarket.notInstalled")} />
-                <DetailField label={t("conversation.scriptMarket.latestVersion")} value={detailReleases[0]?.version ?? detailEntry.item.version} />
-                <DetailField label={t("conversation.scriptMarket.runtimeGate")} value={detailEntry.installed_package?.runtime_gate_status ?? detailEntry.status} />
-                <DetailField label={t("conversation.scriptMarket.recordKind")} value={detailEntry.item.record_kind} />
-                <DetailField label={t("conversation.scriptMarket.path")} value={detailEntry.display_install_path ?? detailEntry.installed_package?.install_dir ?? detailEntry.install_path ?? "-"} wide />
-                <DetailField label={t("conversation.scriptMarket.manifest")} value={manifestDisplayPathForEntry(detailEntry) ?? "-"} wide />
-                <DetailField label={t("conversation.scriptMarket.contentHash")} value={detailEntry.installed_package?.installed_content_hash ?? detailEntry.installed_adapter?.content_hash ?? "-"} wide />
-                <DetailField label={t("conversation.scriptMarket.trustedHash")} value={detailEntry.installed_package?.trusted_package_hash ?? detailEntry.installed_adapter?.trusted_hash ?? "-"} wide />
+                <DetailField
+                  label={t("conversation.scriptMarket.packageId")}
+                  value={
+                    detailEntry.installed_package?.package_id ??
+                    detailEntry.item.id
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.adapterId")}
+                  value={
+                    detailEntry.installed_adapter?.id ??
+                    detailEntry.item.adapter_id ??
+                    "-"
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.origin")}
+                  value={
+                    detailInspection?.origin ??
+                    detailEntry.installed_package?.origin ??
+                    detailEntry.item.provider ??
+                    "-"
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.publisher")}
+                  value={
+                    detailReleases[0]?.publisher ??
+                    detailEntry.item.provider ??
+                    "-"
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.currentVersion")}
+                  value={
+                    detailEntry.installed_package?.version ??
+                    detailEntry.installed_adapter?.version ??
+                    t("conversation.scriptMarket.notInstalled")
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.latestVersion")}
+                  value={detailReleases[0]?.version ?? detailEntry.item.version}
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.runtimeGate")}
+                  value={
+                    detailEntry.installed_package?.runtime_gate_status ??
+                    detailEntry.status
+                  }
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.recordKind")}
+                  value={detailEntry.item.record_kind}
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.path")}
+                  value={
+                    detailEntry.display_install_path ??
+                    detailEntry.installed_package?.install_dir ??
+                    detailEntry.install_path ??
+                    "-"
+                  }
+                  wide
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.manifest")}
+                  value={manifestDisplayPathForEntry(detailEntry) ?? "-"}
+                  wide
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.contentHash")}
+                  value={
+                    detailEntry.installed_package?.installed_content_hash ??
+                    detailEntry.installed_adapter?.content_hash ??
+                    "-"
+                  }
+                  wide
+                />
+                <DetailField
+                  label={t("conversation.scriptMarket.trustedHash")}
+                  value={
+                    detailEntry.installed_package?.trusted_package_hash ??
+                    detailEntry.installed_adapter?.trusted_hash ??
+                    "-"
+                  }
+                  wide
+                />
               </div>
 
               {detailEntry.installed_package?.origin === "dev_override" ? (
@@ -683,7 +848,10 @@ export function ConversationScriptResourcePanel({
                   </h4>
                   <ul className="mt-2 grid gap-1 text-body-sm text-on-surface-variant">
                     {detailInspection.affected_sources.map((source) => (
-                      <li className="rounded-md border border-theme-card-border px-2 py-1.5" key={source.id}>
+                      <li
+                        className="rounded-md border border-theme-card-border px-2 py-1.5"
+                        key={source.id}
+                      >
                         {source.name} · {source.id}
                       </li>
                     ))}
@@ -694,18 +862,34 @@ export function ConversationScriptResourcePanel({
               {detailEntry.installed_package?.origin === "managed_release" ? (
                 <section>
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-control/40 p-3">
-                    <label className="text-body-sm font-medium text-on-surface" htmlFor="conversation-package-update-policy">
+                    <label
+                      className="text-body-sm font-medium text-on-surface"
+                      htmlFor="conversation-package-update-policy"
+                    >
                       {t("conversation.scriptMarket.updatePolicy")}
                     </label>
                     <select
                       className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
                       disabled={policySaving}
                       id="conversation-package-update-policy"
-                      onChange={(event) => void changeUpdatePolicy(event.target.value as ConversationPackageUpdatePolicy)}
+                      onChange={(event) =>
+                        void changeUpdatePolicy(
+                          event.target.value as ConversationPackageUpdatePolicy,
+                        )
+                      }
                       value={detailEntry.installed_package.update_policy}
                     >
-                      {(["manual", "follow_stable", "follow_beta", "pin_exact"] as const).map((policy) => (
-                        <option key={policy} value={policy}>{t(`conversation.scriptMarket.policy.${policy}`)}</option>
+                      {(
+                        [
+                          "manual",
+                          "follow_stable",
+                          "follow_beta",
+                          "pin_exact",
+                        ] as const
+                      ).map((policy) => (
+                        <option key={policy} value={policy}>
+                          {t(`conversation.scriptMarket.policy.${policy}`)}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -713,7 +897,12 @@ export function ConversationScriptResourcePanel({
                     <h4 className="text-body-sm font-semibold text-on-surface">
                       {t("conversation.scriptMarket.installedVersions")}
                     </h4>
-                    {detailEntry.runtime_ready && installedVersions.some((version) => version.version !== detailEntry.installed_package?.version) ? (
+                    {detailEntry.runtime_ready &&
+                    installedVersions.some(
+                      (version) =>
+                        version.version !==
+                        detailEntry.installed_package?.version,
+                    ) ? (
                       <Button
                         disabled={Boolean(versionMutation)}
                         onClick={() => void mutateInstalledVersion("rollback")}
@@ -726,30 +915,70 @@ export function ConversationScriptResourcePanel({
                     ) : null}
                   </div>
                   <p className="mt-1 text-body-xs text-on-surface-variant">
-                    {t(detailEntry.runtime_ready
-                      ? "conversation.scriptMarket.deleteRunningVersionHelp"
-                      : "conversation.scriptMarket.deleteVersionHelp")}
+                    {t(
+                      detailEntry.runtime_ready
+                        ? "conversation.scriptMarket.deleteRunningVersionHelp"
+                        : "conversation.scriptMarket.deleteVersionHelp",
+                    )}
                   </p>
                   <div className="mt-2 grid gap-2">
                     {installedVersions.map((version) => {
-                      const active = detailEntry.runtime_ready
-                        && version.version === detailEntry.installed_package?.version;
+                      const active =
+                        detailEntry.runtime_ready &&
+                        version.version ===
+                          detailEntry.installed_package?.version;
                       return (
-                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-card/55 p-3" key={version.version}>
+                        <div
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-theme-card-border bg-theme-card/55 p-3"
+                          key={version.version}
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="font-mono text-body-sm font-semibold text-on-surface">{version.version}</span>
-                            {active ? <Badge tone="primary">{t("conversation.scriptMarket.activeVersion")}</Badge> : null}
-                            <span className="text-body-xs text-on-surface-variant">{version.runtime_gate_status}</span>
+                            <span className="font-mono text-body-sm font-semibold text-on-surface">
+                              {version.version}
+                            </span>
+                            {active ? (
+                              <Badge tone="primary">
+                                {t("conversation.scriptMarket.activeVersion")}
+                              </Badge>
+                            ) : null}
+                            <span className="text-body-xs text-on-surface-variant">
+                              {version.runtime_gate_status}
+                            </span>
                           </div>
                           {!active ? (
                             <div className="flex gap-2">
-                              <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("switch", version.version)} type="button" variant="outline">
-                                {versionMutation === `switch:${version.version}` ? <Loader2 className="animate-spin" size={15} /> : null}
-                                {t(detailEntry.status === "uninstalled"
-                                  ? "conversation.scriptMarket.registerVersion"
-                                  : "conversation.scriptMarket.switchVersion")}
+                              <Button
+                                disabled={Boolean(versionMutation)}
+                                onClick={() =>
+                                  void mutateInstalledVersion(
+                                    "switch",
+                                    version.version,
+                                  )
+                                }
+                                type="button"
+                                variant="outline"
+                              >
+                                {versionMutation ===
+                                `switch:${version.version}` ? (
+                                  <Loader2 className="animate-spin" size={15} />
+                                ) : null}
+                                {t(
+                                  detailEntry.status === "uninstalled"
+                                    ? "conversation.scriptMarket.registerVersion"
+                                    : "conversation.scriptMarket.switchVersion",
+                                )}
                               </Button>
-                              <Button disabled={Boolean(versionMutation)} onClick={() => void mutateInstalledVersion("delete", version.version)} type="button" variant="destructive">
+                              <Button
+                                disabled={Boolean(versionMutation)}
+                                onClick={() =>
+                                  void mutateInstalledVersion(
+                                    "delete",
+                                    version.version,
+                                  )
+                                }
+                                type="button"
+                                variant="destructive"
+                              >
                                 <Trash2 size={15} />
                                 {t("conversation.scriptMarket.deleteVersion")}
                               </Button>
@@ -766,12 +995,19 @@ export function ConversationScriptResourcePanel({
                     {t("conversation.scriptMarket.installedVersions")}
                   </h4>
                   <p className="mt-1 text-body-sm text-on-surface-variant">
-                    {t(isBuiltInEntry(detailEntry)
-                      ? "conversation.scriptMarket.builtInDeleteUnavailable"
-                      : "conversation.scriptMarket.externalDeleteUnavailable")}
+                    {t(
+                      isBuiltInEntry(detailEntry)
+                        ? "conversation.scriptMarket.builtInDeleteUnavailable"
+                        : "conversation.scriptMarket.externalDeleteUnavailable",
+                    )}
                   </p>
                   {!isBuiltInEntry(detailEntry) ? (
-                    <Button className="mt-3" disabled type="button" variant="destructive">
+                    <Button
+                      className="mt-3"
+                      disabled
+                      type="button"
+                      variant="destructive"
+                    >
                       <Trash2 size={15} />
                       {t("conversation.scriptMarket.deleteVersion")}
                     </Button>
@@ -789,7 +1025,9 @@ export function ConversationScriptResourcePanel({
                     <select
                       aria-label={t("conversation.scriptMarket.selectVersion")}
                       className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
-                      onChange={(event) => setSelectedVersion(event.target.value)}
+                      onChange={(event) =>
+                        setSelectedVersion(event.target.value)
+                      }
                       value={selectedVersion}
                     >
                       {detailReleases.map((release) => (
@@ -807,13 +1045,28 @@ export function ConversationScriptResourcePanel({
                 ) : (
                   <div className="mt-2 grid gap-2">
                     {detailReleases.map((release) => (
-                      <article className="rounded-xl border border-theme-card-border bg-theme-card/55 p-3" key={release.version}>
+                      <article
+                        className="rounded-xl border border-theme-card-border bg-theme-card/55 p-3"
+                        key={release.version}
+                      >
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-body-sm font-semibold text-on-surface">{release.version}</span>
-                          <Badge tone={release.breaking_change ? "remove" : "primary"}>{release.channel}</Badge>
-                          <span className="text-body-xs text-on-surface-variant">Core {release.core_compatibility}</span>
+                          <span className="font-mono text-body-sm font-semibold text-on-surface">
+                            {release.version}
+                          </span>
+                          <Badge
+                            tone={
+                              release.breaking_change ? "remove" : "primary"
+                            }
+                          >
+                            {release.channel}
+                          </Badge>
+                          <span className="text-body-xs text-on-surface-variant">
+                            Core {release.core_compatibility}
+                          </span>
                         </div>
-                        <pre className="mt-2 whitespace-pre-wrap font-sans text-body-sm leading-6 text-on-surface-variant">{release.changelog_markdown}</pre>
+                        <pre className="mt-2 whitespace-pre-wrap font-sans text-body-sm leading-6 text-on-surface-variant">
+                          {release.changelog_markdown}
+                        </pre>
                       </article>
                     ))}
                   </div>
@@ -826,7 +1079,9 @@ export function ConversationScriptResourcePanel({
 
       <ConfirmDialog
         busy={confirmingChange}
-        confirmLabel={pendingChange ? t(actionLabelKey(pendingChange.action)) : undefined}
+        confirmLabel={
+          pendingChange ? t(actionLabelKey(pendingChange.action)) : undefined
+        }
         message={
           pendingChange
             ? t("conversation.scriptMarket.confirmMessage", {
@@ -862,7 +1117,9 @@ export function ConversationScriptResourcePanel({
                 </p>
                 <ul className="mt-1 space-y-1 font-mono">
                   {pendingChange.preflight.managed_paths.map((path) => (
-                    <li className="break-all" key={path}>{path}</li>
+                    <li className="break-all" key={path}>
+                      {path}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -898,22 +1155,34 @@ function ScriptResourceRow({
     <article className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-theme-card-border bg-theme-card px-3 py-2 max-[640px]:grid-cols-1">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h4 className="min-w-0 truncate text-body-sm font-semibold text-on-surface">{entry.item.name}</h4>
-          <Badge tone={statusBadgeTone(entry.status)}>{t(statusLabelKey(entry.status))}</Badge>
+          <h4 className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
+            {entry.item.name}
+          </h4>
+          <Badge tone={statusBadgeTone(entry.status)}>
+            {t(statusLabelKey(entry.status))}
+          </Badge>
           {entry.update_available && entry.status !== "update_available" ? (
-            <Badge tone="conflict">{t("conversation.scriptMarket.updateAvailable")}</Badge>
+            <Badge tone="conflict">
+              {t("conversation.scriptMarket.updateAvailable")}
+            </Badge>
           ) : null}
           {entry.ahead_of_release && entry.status !== "ahead_of_release" ? (
-            <Badge tone="create">{t("conversation.scriptMarket.aheadOfRelease")}</Badge>
+            <Badge tone="create">
+              {t("conversation.scriptMarket.aheadOfRelease")}
+            </Badge>
           ) : null}
         </div>
         {entry.item.description ? (
-          <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">{entry.item.description}</p>
+          <p className="mt-1 line-clamp-2 text-body-sm text-on-surface-variant">
+            {entry.item.description}
+          </p>
         ) : null}
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-body-xs text-on-surface-variant">
           <span>{entry.item.provider ?? entry.item.id}</span>
           <span>{entry.item.version}</span>
-          {manifestDisplayPath ? <span className="max-w-sm truncate">{manifestDisplayPath}</span> : null}
+          {manifestDisplayPath ? (
+            <span className="max-w-sm truncate">{manifestDisplayPath}</span>
+          ) : null}
           {entry.item.repository_url ? (
             <a
               className="inline-flex items-center gap-1 text-primary hover:underline"
@@ -994,7 +1263,9 @@ function ScriptResourceRow({
 type PackageAction = "install" | "update" | "repair";
 type PackageChangeAction = PackageAction | "unregister" | "uninstall";
 
-function packageActionForEntry(entry: ConversationAdapterPackageCatalogEntry): PackageAction | null {
+function packageActionForEntry(
+  entry: ConversationAdapterPackageCatalogEntry,
+): PackageAction | null {
   const origin = entry.installed_package?.origin;
   if (entry.status === "uninstalled") {
     return "install";
@@ -1021,10 +1292,12 @@ function packageActionForEntry(entry: ConversationAdapterPackageCatalogEntry): P
 }
 
 function isBuiltInEntry(entry: ConversationAdapterPackageCatalogEntry) {
-  return entry.status === "built_in"
-    || entry.installed_package?.origin === "built_in"
-    || entry.installed_adapter?.trust_state === "built_in"
-    || entry.item.provider === "built_in";
+  return (
+    entry.status === "built_in" ||
+    entry.installed_package?.origin === "built_in" ||
+    entry.installed_adapter?.trust_state === "built_in" ||
+    entry.item.provider === "built_in"
+  );
 }
 
 function packageLifecycleAction(
@@ -1036,20 +1309,22 @@ function packageLifecycleAction(
   if (entry.status === "uninstalled" || !entry.runtime_ready) {
     return null;
   }
-  return entry.installed_package?.origin === "managed_release" ? "uninstall" : "unregister";
+  return entry.installed_package?.origin === "managed_release"
+    ? "uninstall"
+    : "unregister";
 }
 
 function isUpdateOrRepairEntry(entry: ConversationAdapterPackageCatalogEntry) {
   return Boolean(
     entry.update_available ||
-      [
-        "update_available",
-        "runtime_missing",
-        "verification_failed",
-        "hash_mismatch",
-        "manifest_invalid",
-        "core_incompatible",
-      ].includes(entry.status),
+    [
+      "update_available",
+      "runtime_missing",
+      "verification_failed",
+      "hash_mismatch",
+      "manifest_invalid",
+      "core_incompatible",
+    ].includes(entry.status),
   );
 }
 
@@ -1129,7 +1404,9 @@ function actionLabelKey(action: PackageChangeAction) {
   }
 }
 
-function packageTaskRunningLabel(action?: ConversationScriptInstallTaskSnapshot["action"]) {
+function packageTaskRunningLabel(
+  action?: ConversationScriptInstallTaskSnapshot["action"],
+) {
   switch (action) {
     case "update":
       return "conversation.scriptMarket.updating";
@@ -1141,7 +1418,9 @@ function packageTaskRunningLabel(action?: ConversationScriptInstallTaskSnapshot[
   }
 }
 
-function packageTaskCompletedLabel(action?: ConversationScriptInstallTaskSnapshot["action"]) {
+function packageTaskCompletedLabel(
+  action?: ConversationScriptInstallTaskSnapshot["action"],
+) {
   switch (action) {
     case "update":
       return "conversation.scriptMarket.updateCompleted";
@@ -1153,7 +1432,9 @@ function packageTaskCompletedLabel(action?: ConversationScriptInstallTaskSnapsho
   }
 }
 
-function packageTaskFailedLabel(action?: ConversationScriptInstallTaskSnapshot["action"]) {
+function packageTaskFailedLabel(
+  action?: ConversationScriptInstallTaskSnapshot["action"],
+) {
   switch (action) {
     case "update":
       return "conversation.scriptMarket.updateFailed";
@@ -1176,8 +1457,12 @@ function DetailField({
 }) {
   return (
     <div className={clsx("min-w-0", wide && "sm:col-span-2")}>
-      <p className="text-body-xs font-medium text-on-surface-variant">{label}</p>
-      <p className="mt-0.5 break-all font-mono text-body-xs text-on-surface">{value}</p>
+      <p className="text-body-xs font-medium text-on-surface-variant">
+        {label}
+      </p>
+      <p className="mt-0.5 break-all font-mono text-body-xs text-on-surface">
+        {value}
+      </p>
     </div>
   );
 }
@@ -1192,11 +1477,14 @@ function manifestPathForEntry(entry: ConversationAdapterPackageCatalogEntry) {
   if (!entry.install_path) {
     return null;
   }
-  const manifestFile = entry.item.manifest_file?.trim() || "conversation-adapter.json";
+  const manifestFile =
+    entry.item.manifest_file?.trim() || "conversation-adapter.json";
   return `${entry.install_path.replace(/\/$/, "")}/${manifestFile}`;
 }
 
-function manifestDisplayPathForEntry(entry: ConversationAdapterPackageCatalogEntry) {
+function manifestDisplayPathForEntry(
+  entry: ConversationAdapterPackageCatalogEntry,
+) {
   return entry.display_manifest_path ?? manifestPathForEntry(entry);
 }
 

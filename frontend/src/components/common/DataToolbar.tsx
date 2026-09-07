@@ -19,7 +19,9 @@ import { toolbarIconRecipe, toolbarSurfaceRecipe } from "../../theme/recipes";
 
 export type ToolbarViewMode = "list" | "columns" | "grid";
 
-export interface ToolbarViewOption<Value extends ToolbarViewMode = ToolbarViewMode> {
+export interface ToolbarViewOption<
+  Value extends ToolbarViewMode = ToolbarViewMode,
+> {
   icon: ReactNode;
   label: string;
   value: Value;
@@ -62,12 +64,18 @@ export function DataToolbar({
       data-toolbar-root=""
     >
       <div
-        className={clsx("toolbar-overflow-viewport flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto overflow-y-hidden", compact && "gap-2")}
+        className={clsx(
+          "toolbar-overflow-viewport flex min-w-0 flex-nowrap items-center gap-3 overflow-x-auto overflow-y-hidden",
+          compact && "gap-2",
+        )}
         data-toolbar-leading=""
       >
         {leading}
       </div>
-      <div className="flex min-w-max shrink-0 flex-nowrap items-center justify-end gap-1.5" data-toolbar-actions="">
+      <div
+        className="flex min-w-max shrink-0 flex-nowrap items-center justify-end gap-1.5"
+        data-toolbar-actions=""
+      >
         {actions}
       </div>
     </section>
@@ -229,7 +237,10 @@ export function DebouncedToolbarSearch({
     }, commitDelayMs);
   }
 
-  function handleChange(nextValue: string, event: ChangeEvent<HTMLInputElement>) {
+  function handleChange(
+    nextValue: string,
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
     draftRef.current = nextValue;
     if (composingRef.current || inputEventIsComposing(event)) {
       clearDebouncedSearchTimer(timerRef);
@@ -279,13 +290,20 @@ export function DebouncedToolbarSearch({
         submitLabel ? (
           <button
             aria-label={submitLabel}
-            className={toolbarIconRecipe({ className: "size-7 shrink-0 text-on-surface-muted disabled:cursor-wait" })}
+            className={toolbarIconRecipe({
+              className:
+                "size-7 shrink-0 text-on-surface-muted disabled:cursor-wait",
+            })}
             disabled={searching}
             onClick={commitCurrentDraft}
             title={submitLabel}
             type="button"
           >
-            {showSearching ? <RefreshCw className="animate-spin" size={15} /> : <Search size={15} />}
+            {showSearching ? (
+              <RefreshCw className="animate-spin" size={15} />
+            ) : (
+              <Search size={15} />
+            )}
           </button>
         ) : undefined
       }
@@ -315,7 +333,14 @@ export function ToolbarViewToggle<Value extends ToolbarViewMode>({
   value: Value;
 }) {
   return (
-    <div aria-label={ariaLabel} className={toolbarSurfaceRecipe({ tone: "container", className: "flex h-10 shrink-0 items-center gap-0.5 p-1" })} role="group">
+    <div
+      aria-label={ariaLabel}
+      className={toolbarSurfaceRecipe({
+        tone: "container",
+        className: "flex h-10 shrink-0 items-center gap-0.5 p-1",
+      })}
+      role="group"
+    >
       {options.map((option) => (
         <button
           aria-label={option.label}
@@ -439,9 +464,15 @@ export function ToolbarMultiSelectDropdown<Value extends string>({
       <DropdownMenuPrimitive.Portal>
         <ToolbarDropdownContent>
           <div className="flex max-h-[min(22rem,var(--radix-dropdown-menu-content-available-height))] flex-col gap-1 overflow-y-auto pr-1">
-            <ToolbarDropdownCheckItem checked={selectedCount === 0} label={allLabel} onChange={onClear} />
+            <ToolbarDropdownCheckItem
+              checked={selectedCount === 0}
+              label={allLabel}
+              onChange={onClear}
+            />
             {options.length === 0 ? (
-              <div className="px-2 py-2 text-body-sm text-outline">{emptyLabel}</div>
+              <div className="px-2 py-2 text-body-sm text-outline">
+                {emptyLabel}
+              </div>
             ) : (
               options.map((option) => (
                 <ToolbarDropdownCheckItem
@@ -486,7 +517,10 @@ export function ToolbarSingleSelectDropdown<Value extends string>({
   value: Value;
 }) {
   const [open, setOpen] = useState(false);
-  const selectedOption = useMemo(() => options.find((option) => option.value === value) ?? null, [options, value]);
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) ?? null,
+    [options, value],
+  );
 
   return (
     <DropdownMenuPrimitive.Root onOpenChange={setOpen} open={open}>
@@ -543,7 +577,9 @@ export function ToolbarSortDirectionButton({
   return (
     <button
       aria-label={label}
-      className={toolbarSurfaceRecipe({ className: "h-10 w-9 px-0 text-body-sm font-semibold" })}
+      className={toolbarSurfaceRecipe({
+        className: "h-10 w-9 px-0 text-body-sm font-semibold",
+      })}
       data-toolbar-control="sort-direction"
       onClick={onClick}
       title={title}
@@ -555,24 +591,31 @@ export function ToolbarSortDirectionButton({
 }
 
 export function ToolbarSeparator() {
-  return <span className="mx-1 h-6 w-px shrink-0 bg-theme-control-border" aria-hidden="true" />;
+  return (
+    <span
+      className="mx-1 h-6 w-px shrink-0 bg-theme-control-border"
+      aria-hidden="true"
+    />
+  );
 }
 
-const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButtonProps>(function ToolbarDropdownButton({
-  active,
-  ariaLabel,
-  expanded,
-  icon,
-  label,
-  ...buttonProps
-}, ref) {
+const ToolbarDropdownButton = forwardRef<
+  HTMLButtonElement,
+  ToolbarDropdownButtonProps
+>(function ToolbarDropdownButton(
+  { active, ariaLabel, expanded, icon, label, ...buttonProps },
+  ref,
+) {
   return (
     <button
       {...buttonProps}
       aria-label={ariaLabel}
       className={toolbarSurfaceRecipe({
         tone: active ? "active" : "neutral",
-        className: clsx("h-10 max-w-[11.5rem] gap-1.5 px-2.5", buttonProps.className),
+        className: clsx(
+          "h-10 max-w-[11.5rem] gap-1.5 px-2.5",
+          buttonProps.className,
+        ),
       })}
       data-toolbar-control="dropdown"
       ref={ref}
@@ -580,12 +623,21 @@ const ToolbarDropdownButton = forwardRef<HTMLButtonElement, ToolbarDropdownButto
     >
       {icon}
       <span className="min-w-0 truncate">{label}</span>
-      <ChevronDown className={clsx("shrink-0 transition-transform", expanded && "rotate-180")} size={15} />
+      <ChevronDown
+        className={clsx(
+          "shrink-0 transition-transform",
+          expanded && "rotate-180",
+        )}
+        size={15}
+      />
     </button>
   );
 });
 
-interface ToolbarDropdownButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
+interface ToolbarDropdownButtonProps extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "children"
+> {
   active: boolean;
   ariaLabel: string;
   expanded: boolean;
@@ -593,11 +645,7 @@ interface ToolbarDropdownButtonProps extends Omit<ButtonHTMLAttributes<HTMLButto
   label: string;
 }
 
-function ToolbarDropdownContent({
-  children,
-}: {
-  children: ReactNode;
-}) {
+function ToolbarDropdownContent({ children }: { children: ReactNode }) {
   return (
     <DropdownMenuPrimitive.Content
       align="start"
@@ -626,7 +674,9 @@ function ToolbarDropdownCheckItem({
       checked={checked}
       className={clsx(
         "grid h-9 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 text-body-sm outline-none transition-[background-color,color] duration-200",
-        checked ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]" : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
+        checked
+          ? "bg-theme-control-hover text-primary shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.16)]"
+          : "text-on-surface-variant hover:bg-theme-control-hover hover:text-on-surface",
       )}
       onCheckedChange={onChange}
       onSelect={(event) => event.preventDefault()}
@@ -640,7 +690,10 @@ function ToolbarDropdownCheckItem({
         {swatchClassName ? (
           <span
             aria-hidden="true"
-            className={clsx("size-2.5 shrink-0 rounded-full border", swatchClassName)}
+            className={clsx(
+              "size-2.5 shrink-0 rounded-full border",
+              swatchClassName,
+            )}
             data-toolbar-option-swatch=""
           />
         ) : null}

@@ -32,6 +32,7 @@ describe("AssetRow", () => {
 
     expect(html).toContain("https://github.com/anthropics/skills.git");
     expect(html).not.toContain("hash-like-source-id");
+    expect(html).not.toContain("backdrop-blur");
   });
 
   it("renders the repository source as a browser link", () => {
@@ -73,7 +74,8 @@ const asset: Asset = {
   repository: {
     root_path: "/Users/util6/fork-code/skills-fork/claude-skills",
     remote_url: "https://github.com/anthropics/skills.git",
-    web_url: "https://github.com/anthropics/skills/tree/main/packages/claude-skills",
+    web_url:
+      "https://github.com/anthropics/skills/tree/main/packages/claude-skills",
   },
 };
 

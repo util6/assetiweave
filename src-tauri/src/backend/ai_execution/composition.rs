@@ -61,25 +61,22 @@ pub(crate) fn resolve_agent_for(
     settings: &Value,
 ) -> Result<(AgentId, Option<String>), AppError> {
     resolve_action(action)?;
-    let assignments = settings.get("agentAssignments").and_then(Value::as_object);
-    let assignment = assignments
-        .and_then(|values| values.get(action.as_str()))
-        .and_then(Value::as_object)
+    let backend_settings = crate::backend::app_settings::BackendSettings::from_value(settings)?;
+    let (agent_id_str, model) = backend_settings
+        .resolve_agent_for_action(action.as_str())
         .ok_or_else(|| {
             AppError::Validation(format!("missing Agent assignment: {}", action.as_str()))
         })?;
-    let configured_agent_id = assignment
-        .get("agentId")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let agent_id = AgentId::parse(configured_agent_id.ok_or_else(|| {
-        AppError::Validation(format!("invalid Agent assignment: {}", action.as_str()))
-    })?)
-    .map_err(|error| AppError::Validation(error.to_string()))?;
-    let model = assignment
-        .get("modelId")
-        .and_then(Value::as_str)
+    let trimmed = agent_id_str.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation(format!(
+            "invalid Agent assignment: {}",
+            action.as_str()
+        )));
+    }
+    let agent_id =
+        AgentId::parse(trimmed).map_err(|error| AppError::Validation(error.to_string()))?;
+    let model = model
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);

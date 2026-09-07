@@ -88,10 +88,13 @@ fn definition_with_mode(record: &Path, mode: Option<&str>) -> AgentDefinition {
         installation_id: Some("fixture-installation".to_string()),
         display_name: "Antigravity Fixture".to_string(),
         protocol: AgentProtocol::Native,
-        command: Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("test-fixtures/fake-antigravity-agent")
-            .to_string_lossy()
-            .into_owned(),
+        command: {
+            let base =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-antigravity-agent");
+            #[cfg(windows)]
+            let base = base.with_extension("cmd");
+            base.to_string_lossy().into_owned()
+        },
         args: Vec::new(),
         env,
         declared_capabilities: DeclaredAgentCapabilities {
@@ -591,11 +594,9 @@ async fn executor_does_not_overwrite_store_after_failed_empty_id_turn() {
     fs::create_dir_all(&root).unwrap();
     let record = root.join("argv.ndjson");
     let database_path = root.join("bindings.sqlite");
-    let database =
-        tokio::task::spawn_blocking(move || crate::backend::store::Database::open(&database_path))
-            .await
-            .expect("database open task")
-            .expect("temporary provider store");
+    let database = crate::backend::store::Database::open_async(&database_path)
+        .await
+        .expect("temporary provider store");
     let store = Arc::new(crate::backend::ai_execution::PersistentBindingStore::new(
         database.pool().clone(),
     ));

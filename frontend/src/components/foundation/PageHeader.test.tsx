@@ -29,7 +29,9 @@ describe("PageHeader", () => {
     expect(html).toContain("场景分组");
     expect(html).toContain("分组管理");
     expect(html).toContain('aria-label="打开当前页面使用手册"');
-    expect(html.indexOf("分组管理")).toBeLessThan(html.indexOf("打开当前页面使用手册"));
+    expect(html.indexOf("分组管理")).toBeLessThan(
+      html.indexOf("打开当前页面使用手册"),
+    );
   });
 
   it("keeps the header in a single horizontal row when width is constrained", () => {

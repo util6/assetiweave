@@ -56,9 +56,24 @@ describe("filterAssets", () => {
 
   it("sorts assets by updated time and name with stable fallbacks", () => {
     const assets: Asset[] = [
-      { ...baseAsset, id: "alpha", name: "Alpha", updated_at: "2026-01-02T00:00:00Z" },
-      { ...baseAsset, id: "charlie", name: "Charlie", updated_at: "2026-01-03T00:00:00Z" },
-      { ...baseAsset, id: "bravo", name: "Bravo", updated_at: "2026-01-03T00:00:00Z" },
+      {
+        ...baseAsset,
+        id: "alpha",
+        name: "Alpha",
+        updated_at: "2026-01-02T00:00:00Z",
+      },
+      {
+        ...baseAsset,
+        id: "charlie",
+        name: "Charlie",
+        updated_at: "2026-01-03T00:00:00Z",
+      },
+      {
+        ...baseAsset,
+        id: "bravo",
+        name: "Bravo",
+        updated_at: "2026-01-03T00:00:00Z",
+      },
     ];
 
     expect(

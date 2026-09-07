@@ -22,7 +22,8 @@ export function TenantSwitcher({
   open: boolean;
 }) {
   const { t } = useI18n();
-  const activeTenantName = activeTenant?.name ?? (loading ? t("tenant.loading") : t("tenant.label"));
+  const activeTenantName =
+    activeTenant?.name ?? (loading ? t("tenant.loading") : t("tenant.label"));
   const triggerLabel = t("tenant.open");
 
   return (
@@ -36,7 +37,9 @@ export function TenantSwitcher({
           : "border-transparent text-on-surface-variant/75 hover:border-theme-nav-active-border hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
       )}
       onClick={onOpen}
-      title={activeTenant ? `${triggerLabel}: ${activeTenant.name}` : triggerLabel}
+      title={
+        activeTenant ? `${triggerLabel}: ${activeTenant.name}` : triggerLabel
+      }
       type="button"
     >
       <span className="relative grid size-5 shrink-0 place-items-center">
@@ -48,7 +51,10 @@ export function TenantSwitcher({
         ) : null}
       </span>
       {expanded ? (
-        <span className="min-w-0 truncate text-left text-body-sm font-medium" data-side-rail-label="">
+        <span
+          className="min-w-0 truncate text-left text-body-sm font-medium"
+          data-side-rail-label=""
+        >
           {activeTenantName}
         </span>
       ) : null}
@@ -86,7 +92,8 @@ export function TenantSwitcherDialog({
 
   const disabled = loading || busy;
   const activeTenantId = activeTenant?.id ?? "";
-  const displayedTenants = tenants.length > 0 ? tenants : activeTenant ? [activeTenant] : [];
+  const displayedTenants =
+    tenants.length > 0 ? tenants : activeTenant ? [activeTenant] : [];
   const errorText = localError ?? error ?? null;
 
   async function handleSwitch(nextTenantId: string) {
@@ -140,7 +147,10 @@ export function TenantSwitcherDialog({
     >
       <div className="grid gap-5">
         <section className="grid gap-2">
-          <label className="text-body-sm font-semibold text-on-surface" htmlFor={selectId}>
+          <label
+            className="text-body-sm font-semibold text-on-surface"
+            htmlFor={selectId}
+          >
             {t("tenant.switchAria")}
           </label>
           <div className="flex items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3">
@@ -153,19 +163,33 @@ export function TenantSwitcherDialog({
               ref={selectRef}
               value={activeTenantId}
             >
-              {loading && displayedTenants.length === 0 ? <option value="">{t("tenant.loading")}</option> : null}
+              {loading && displayedTenants.length === 0 ? (
+                <option value="">{t("tenant.loading")}</option>
+              ) : null}
               {displayedTenants.map((tenant) => (
                 <option key={tenant.id} value={tenant.id}>
                   {tenant.name}
                 </option>
               ))}
             </select>
-            {busy ? <Loader2 size={15} className="animate-spin text-outline" aria-hidden="true" /> : null}
+            {busy ? (
+              <Loader2
+                size={15}
+                className="animate-spin text-outline"
+                aria-hidden="true"
+              />
+            ) : null}
           </div>
         </section>
 
-        <form className="grid gap-4 border-t border-theme-card-border pt-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
-          <h3 className="text-body-md font-semibold text-on-surface">{t("tenant.createTitle")}</h3>
+        <form
+          className="grid gap-4 border-t border-theme-card-border pt-5"
+          id={formId}
+          onSubmit={(event) => void handleSubmit(event)}
+        >
+          <h3 className="text-body-md font-semibold text-on-surface">
+            {t("tenant.createTitle")}
+          </h3>
           <Field label={t("tenant.name")} required>
             <input
               className="h-9 rounded-lg border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none focus:border-theme-focus"
@@ -192,7 +216,10 @@ export function TenantSwitcherDialog({
         </form>
 
         {errorText ? (
-          <p className="rounded-lg border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-body-sm text-status-danger" role="alert">
+          <p
+            className="rounded-lg border border-status-danger/30 bg-status-danger/10 px-3 py-2 text-body-sm text-status-danger"
+            role="alert"
+          >
             {errorText}
           </p>
         ) : null}
@@ -201,7 +228,15 @@ export function TenantSwitcherDialog({
   );
 }
 
-function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+function Field({
+  children,
+  label,
+  required = false,
+}: {
+  children: ReactNode;
+  label: string;
+  required?: boolean;
+}) {
   return (
     <label className="grid gap-1.5 text-body-sm font-semibold text-on-surface">
       <span>

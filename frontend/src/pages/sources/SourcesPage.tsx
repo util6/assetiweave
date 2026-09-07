@@ -1,12 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
 import { useCatalogTasks } from "../../app/backgroundTasks/CatalogTaskProvider";
-import { ArrowDownWideNarrow, Columns3, DatabaseZap, DownloadCloud, Filter, FolderPlus, LayoutList, Power, RefreshCw, Settings } from "lucide-react";
+import {
+  ArrowDownWideNarrow,
+  Columns3,
+  DatabaseZap,
+  DownloadCloud,
+  Filter,
+  FolderPlus,
+  LayoutList,
+  Power,
+  RefreshCw,
+  Settings,
+} from "lucide-react";
 import { AssetDeleteDialog } from "../../components/assets/AssetDeleteDialog";
 import { AssetEditDialog } from "../../components/assets/AssetEditDialog";
-import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
+import {
+  AssetToolbar,
+  type AssetToolbarViewMode,
+} from "../../components/assets/AssetToolbar";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
-import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
+import {
+  ToolbarMultiSelectDropdown,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
+} from "../../components/common/DataToolbar";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { AppSkeleton } from "../../components/foundation/skeleton";
 import { SourceEditDialog } from "../../components/sources/SourceEditDialog";
@@ -25,7 +43,15 @@ import {
   setSkillGroupManualMembers,
   updateAssetDescription,
 } from "../../services/catalog";
-import type { AppShortcut, Asset, AssetGroupDetail, AssetMountStatus, Source, SourceKind, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetGroupDetail,
+  AssetMountStatus,
+  Source,
+  SourceKind,
+  TargetProfile,
+} from "../../types";
 import { getBackupableSkillAssets } from "../../utils/skillBackup";
 import { isManagedSkillSource } from "../../utils/sourcePolicy";
 
@@ -68,7 +94,11 @@ export function SourcesPage({
   onRefreshMountStatus: () => Promise<void>;
   onRemoveAsset: (assetId: string) => void;
   onReady?: () => void;
-  onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSourceMountProfile: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleAsset: (assetId: string) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
@@ -77,7 +107,11 @@ export function SourcesPage({
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
   const { sourceScan, startSourceScan } = useCatalogTasks();
-  const sources = useSourcesController(onCatalogRefresh, startSourceScan, sourceScan);
+  const sources = useSourcesController(
+    onCatalogRefresh,
+    startSourceScan,
+    sourceScan,
+  );
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [acquireDialogOpen, setAcquireDialogOpen] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
@@ -92,7 +126,9 @@ export function SourcesPage({
   const [sortBy, setSortBy] = useState<SourceSortBy>("priority");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const currentEditingAsset = editingAsset
-    ? (sources.sourceAssets.find((asset) => asset.id === editingAsset.id) ?? assets.find((asset) => asset.id === editingAsset.id) ?? editingAsset)
+    ? (sources.sourceAssets.find((asset) => asset.id === editingAsset.id) ??
+      assets.find((asset) => asset.id === editingAsset.id) ??
+      editingAsset)
     : null;
 
   useEffect(() => {
@@ -110,28 +146,45 @@ export function SourcesPage({
         sources: sources.filteredSources,
         statusFilters,
       }),
-    [kindFilters, sortBy, sortDirection, sources.assetCounts, sources.filteredSources, statusFilters],
+    [
+      kindFilters,
+      sortBy,
+      sortDirection,
+      sources.assetCounts,
+      sources.filteredSources,
+      statusFilters,
+    ],
   );
   const sourceKindOptions = useMemo(() => {
     const countByKind = new Map<SourceKind, number>();
-    sources.sources.forEach((source) => countByKind.set(source.kind, (countByKind.get(source.kind) ?? 0) + 1));
+    sources.sources.forEach((source) =>
+      countByKind.set(source.kind, (countByKind.get(source.kind) ?? 0) + 1),
+    );
     return [...countByKind.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([kind, count]) => ({ label: `${sourceKindLabel(kind, t)} (${count})`, value: kind }));
+      .map(([kind, count]) => ({
+        label: `${sourceKindLabel(kind, t)} (${count})`,
+        value: kind,
+      }));
   }, [sources.sources, t]);
   const sourceStatusOptions = useMemo(
     () => [
       {
-        label: t("toolbar.filter.enabled", { count: sources.sources.filter((source) => source.enabled).length }),
+        label: t("toolbar.filter.enabled", {
+          count: sources.sources.filter((source) => source.enabled).length,
+        }),
         value: "enabled" as const,
       },
       {
-        label: t("toolbar.filter.disabled", { count: sources.sources.filter((source) => !source.enabled).length }),
+        label: t("toolbar.filter.disabled", {
+          count: sources.sources.filter((source) => !source.enabled).length,
+        }),
         value: "disabled" as const,
       },
       {
         label: t("toolbar.filter.issue", {
-          count: sources.sources.filter((source) => hasSourceIssue(source)).length,
+          count: sources.sources.filter((source) => hasSourceIssue(source))
+            .length,
         }),
         value: "issue" as const,
       },
@@ -142,7 +195,11 @@ export function SourcesPage({
     if (!editingSource) {
       return [];
     }
-    return getBackupableSkillAssets(sources.sourceAssets.filter((asset) => asset.source_id === editingSource.id));
+    return getBackupableSkillAssets(
+      sources.sourceAssets.filter(
+        (asset) => asset.source_id === editingSource.id,
+      ),
+    );
   }, [editingSource, sources.sourceAssets]);
 
   useEffect(() => {
@@ -154,7 +211,10 @@ export function SourcesPage({
   }, [editingAsset]);
 
   useEffect(() => {
-    if (editingAsset && !sources.sourceAssets.some((asset) => asset.id === editingAsset.id)) {
+    if (
+      editingAsset &&
+      !sources.sourceAssets.some((asset) => asset.id === editingAsset.id)
+    ) {
       setEditingAsset(null);
     }
   }, [editingAsset, sources.sourceAssets]);
@@ -192,7 +252,10 @@ export function SourcesPage({
 
     setAssetActionBusy(true);
     try {
-      const savedAsset = await updateAssetDescription(editingAsset.id, description);
+      const savedAsset = await updateAssetDescription(
+        editingAsset.id,
+        description,
+      );
       const nextAsset = { ...editingAsset, ...savedAsset };
       onApplyAssetUpdate(nextAsset);
       sources.applySourceAssetUpdate(nextAsset);
@@ -248,7 +311,10 @@ export function SourcesPage({
     }
   }
 
-  async function handleSetAssetGroupMembership(group: AssetGroupDetail, enabled: boolean) {
+  async function handleSetAssetGroupMembership(
+    group: AssetGroupDetail,
+    enabled: boolean,
+  ) {
     if (!editingAsset) {
       return;
     }
@@ -262,9 +328,13 @@ export function SourcesPage({
 
     setAssetActionBusy(true);
     try {
-      const savedGroup = await setSkillGroupManualMembers(group.group.id, [...manualAssetIds]);
+      const savedGroup = await setSkillGroupManualMembers(group.group.id, [
+        ...manualAssetIds,
+      ]);
       setAssetGroups((current) =>
-        current.map((candidate) => (candidate.group.id === savedGroup.group.id ? savedGroup : candidate)),
+        current.map((candidate) =>
+          candidate.group.id === savedGroup.group.id ? savedGroup : candidate,
+        ),
       );
     } catch (error) {
       onNotifyError(errorMessage(error));
@@ -338,33 +408,45 @@ export function SourcesPage({
               label: t("toolbar.refreshMountStatus"),
               onClick: () => void onRefreshMountStatus(),
             },
-            { icon: <Settings size={17} />, label: t("toolbar.settings"), onClick: onOpenSettings },
+            {
+              icon: <Settings size={17} />,
+              label: t("toolbar.settings"),
+              onClick: onOpenSettings,
+            },
           ],
         ]}
         ariaLabel={t("source.page.title")}
         filterControls={
           <>
             <ToolbarMultiSelectDropdown
-              allLabel={t("toolbar.filter.kindAll", { count: sources.sources.length })}
+              allLabel={t("toolbar.filter.kindAll", {
+                count: sources.sources.length,
+              })}
               ariaLabel={t("source.toolbar.kindFilter")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<Filter size={15} />}
               label={t("source.toolbar.kindFilter")}
               onClear={() => setKindFilters([])}
-              onToggleValue={(value) => setKindFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setKindFilters((current) => toggleFilterValue(current, value))
+              }
               options={sourceKindOptions}
               selectedValues={kindFilters}
             />
             <ToolbarMultiSelectDropdown
-              allLabel={t("toolbar.filter.statusAll", { count: sources.sources.length })}
+              allLabel={t("toolbar.filter.statusAll", {
+                count: sources.sources.length,
+              })}
               ariaLabel={t("source.toolbar.statusFilter")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<Power size={15} />}
               label={t("source.toolbar.statusFilter")}
               onClear={() => setStatusFilters([])}
-              onToggleValue={(value) => setStatusFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setStatusFilters((current) => toggleFilterValue(current, value))
+              }
               options={sourceStatusOptions}
               selectedValues={statusFilters}
             />
@@ -375,16 +457,30 @@ export function SourcesPage({
               options={[
                 { label: t("source.toolbar.sort.priority"), value: "priority" },
                 { label: t("toolbar.sort.name"), value: "name" },
-                { label: t("source.toolbar.sort.assetCount"), value: "asset-count" },
-                { label: t("source.toolbar.sort.lastScanned"), value: "last-scanned" },
+                {
+                  label: t("source.toolbar.sort.assetCount"),
+                  value: "asset-count",
+                },
+                {
+                  label: t("source.toolbar.sort.lastScanned"),
+                  value: "last-scanned",
+                },
               ]}
               value={sortBy}
             />
             <ToolbarSortDirectionButton
               direction={sortDirection}
               label={t("toolbar.sort.direction.label")}
-              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+              onClick={() =>
+                setSortDirection((current) =>
+                  current === "desc" ? "asc" : "desc",
+                )
+              }
+              title={t(
+                sortDirection === "desc"
+                  ? "toolbar.sort.direction.descTitle"
+                  : "toolbar.sort.direction.ascTitle",
+              )}
             />
           </>
         }
@@ -399,13 +495,26 @@ export function SourcesPage({
         viewAriaLabel={t("toolbar.view.aria")}
         viewMode={viewMode}
         viewOptions={[
-          { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
-          { icon: <Columns3 size={17} />, label: t("toolbar.view.columns"), value: "columns" },
+          {
+            icon: <LayoutList size={17} />,
+            label: t("toolbar.view.list"),
+            value: "list",
+          },
+          {
+            icon: <Columns3 size={17} />,
+            label: t("toolbar.view.columns"),
+            value: "columns",
+          },
         ]}
       />
 
       {sources.loading ? (
-        <AppSkeleton label={t("common.loading")} layout="list" layoutProps={{ rows: 6 }} scope="content" />
+        <AppSkeleton
+          label={t("common.loading")}
+          layout="list"
+          layoutProps={{ rows: 6 }}
+          scope="content"
+        />
       ) : (
         <SourceList
           appShortcuts={appShortcuts}
@@ -434,7 +543,9 @@ export function SourcesPage({
         busy={sources.busy}
         onClose={() => setImportDialogOpen(false)}
         onNotifyError={onNotifyError}
-        onPickRootPath={() => selectSourceDirectory(t("source.import.dialogTitle"))}
+        onPickRootPath={() =>
+          selectSourceDirectory(t("source.import.dialogTitle"))
+        }
         onSubmit={sources.importSource}
         open={importDialogOpen}
         suggestedPriority={sources.nextPriority}
@@ -453,14 +564,20 @@ export function SourcesPage({
         onClose={() => setEditingSource(null)}
         onBackup={handleBackupSourceAssets}
         onNotifyError={onNotifyError}
-        onPickRootPath={() => selectSourceDirectory(t("source.import.dialogTitle"))}
+        onPickRootPath={() =>
+          selectSourceDirectory(t("source.import.dialogTitle"))
+        }
         onSubmit={handleSaveSource}
         source={editingSource}
       />
       <ConfirmDialog
         busy={sources.busy}
         confirmLabel={t("common.delete")}
-        message={deletingSource ? t("source.deleteDialog.message", { name: deletingSource.name }) : ""}
+        message={
+          deletingSource
+            ? t("source.deleteDialog.message", { name: deletingSource.name })
+            : ""
+        }
         onClose={() => setDeletingSource(null)}
         onConfirm={() => void handleDeleteSource()}
         open={Boolean(deletingSource)}
@@ -483,7 +600,9 @@ export function SourcesPage({
         onSubmit={handleSaveAssetDescription}
         onToggleMount={handleToggleAssetMount}
         profiles={profiles}
-        source={sources.sources.find((source) => source.id === editingAsset?.source_id)}
+        source={sources.sources.find(
+          (source) => source.id === editingAsset?.source_id,
+        )}
       />
       <AssetDeleteDialog
         asset={deletingAsset}
@@ -536,7 +655,9 @@ function filterAndSortSources({
         (statusSet.has("issue") && hasSourceIssue(source))
       );
     })
-    .sort((left, right) => compareSources(left, right, sortBy, sortDirection, assetCounts));
+    .sort((left, right) =>
+      compareSources(left, right, sortBy, sortDirection, assetCounts),
+    );
 }
 
 function compareSources(
@@ -570,7 +691,10 @@ function hasSourceIssue(source: Source) {
   return source.last_scan_status?.startsWith("error:") ?? false;
 }
 
-function compareOptionalDate(left: string | null | undefined, right: string | null | undefined) {
+function compareOptionalDate(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
   const leftTime = left ? Date.parse(left) : Number.NaN;
   const rightTime = right ? Date.parse(right) : Number.NaN;
   if (!Number.isFinite(leftTime) && !Number.isFinite(rightTime)) return 0;
@@ -579,7 +703,10 @@ function compareOptionalDate(left: string | null | undefined, right: string | nu
   return leftTime - rightTime;
 }
 
-function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+function toggleFilterValue<Value extends string>(
+  current: Value[],
+  value: Value,
+) {
   if (current.includes(value)) {
     return current.filter((item) => item !== value);
   }

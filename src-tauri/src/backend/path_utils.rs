@@ -1,7 +1,6 @@
 use crate::backend::host_paths::HostPathResolver;
 use crate::backend::{
     dto::GitRepositoryInfo,
-    host_process::configure_background_process,
     runtime::{AppError, AppResult},
 };
 use crate::backend::{models::AppKind, target_catalog::TargetCatalog};
@@ -9,23 +8,27 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::Path, path::PathBuf, process::Command};
 use walkdir::WalkDir;
 
-pub(crate) fn app_db_path() -> AppResult<PathBuf> {
-    if let Some(path) = std::env::var_os("ASSETIWEAVE_DB_PATH").filter(|path| !path.is_empty()) {
-        let path = PathBuf::from(path);
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent)?;
-        }
-        return Ok(path);
-    }
+#[cfg(windows)]
+pub(crate) fn configure_background_process(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+}
 
-    let mut data_dir =
-        dirs::data_dir().ok_or_else(|| AppError::NotFound("无法确定系统数据目录".to_string()))?;
-    data_dir.push("AssetIWeave");
-    fs::create_dir_all(&data_dir)?;
-    Ok(data_dir.join("app.db"))
+#[cfg(not(windows))]
+pub(crate) fn configure_background_process(_command: &mut Command) {}
+
+pub(crate) fn app_db_path() -> AppResult<PathBuf> {
+    let path = crate::backend::runtime::config::runtime_config()?
+        .db_path
+        .clone();
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(path)
 }
 
 pub(crate) fn ensure_app_library_dirs() -> AppResult<()> {
@@ -56,15 +59,10 @@ pub(crate) fn legacy_skill_backup_root() -> AppResult<PathBuf> {
 }
 
 pub(crate) fn memory_legacy_archive_root() -> AppResult<PathBuf> {
-    if let Some(home) = std::env::var_os("ASSETIWEAVE_HOME").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(home).join("library").join("memory-legacy"));
-    }
-    let home =
-        dirs::home_dir().ok_or_else(|| AppError::NotFound("无法确定用户主目录".to_string()))?;
-    Ok(home
-        .join(".assetiweave")
-        .join("library")
-        .join("memory-legacy"))
+    let home = crate::backend::runtime::config::runtime_config()?
+        .home_dir
+        .clone();
+    Ok(home.join("library").join("memory-legacy"))
 }
 
 pub(crate) fn default_database_backup_root() -> AppResult<PathBuf> {
@@ -85,6 +83,15 @@ pub(crate) fn expand_path(path: &str) -> AppResult<PathBuf> {
 pub(crate) fn normalize_path_for_storage(path: &str) -> AppResult<String> {
     let resolver = HostPathResolver::current()?;
     Ok(resolver.normalize_input(path)?.as_str().to_string())
+}
+
+pub(crate) fn normalize_std_path_for_storage(path: &Path) -> AppResult<String> {
+    let path_str = path.to_str().ok_or_else(|| {
+        AppError::Validation(format!(
+            "path contains invalid UTF-8 characters and cannot be stored: {path:?}"
+        ))
+    })?;
+    normalize_path_for_storage(path_str)
 }
 
 pub(crate) fn display_path(path: &str) -> AppResult<String> {
@@ -120,7 +127,7 @@ pub(crate) fn git_repository_for_path(path: &Path) -> Option<GitRepositoryInfo> 
     let web_url = remote_url
         .as_deref()
         .and_then(|remote| git_browser_url(remote, &root, path));
-    let root_path = root.to_string_lossy().to_string();
+    let root_path = camino::Utf8Path::from_path(&root)?.as_str().to_string();
     let display_root_path = display_path(&root_path).unwrap_or_else(|_| root_path.clone());
     Some(GitRepositoryInfo {
         root_path,
@@ -300,10 +307,14 @@ pub(crate) fn is_app_library_path(path: &Path) -> bool {
 }
 
 pub(crate) fn normalize_relative_path(path: &Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+    if let Some(utf8_path) = camino::Utf8Path::from_path(path) {
+        return utf8_path
+            .components()
+            .map(|component| component.as_str())
+            .collect::<Vec<_>>()
+            .join("/");
+    }
+    path.display().to_string().replace('\\', "/")
 }
 
 fn safe_tenant_path_segment(tenant_id: &str) -> String {
@@ -410,7 +421,9 @@ mod tests {
             app_kind_compat: Some(AppKind::Custom),
             default_targets: vec![TargetPathRule {
                 asset_kind: AssetKind::Skill,
-                path: target.to_string_lossy().to_string(),
+                path: camino::Utf8Path::from_path(&target)
+                    .expect("valid utf8 target path")
+                    .to_string(),
             }],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
@@ -437,7 +450,9 @@ mod tests {
             app_kind_compat: Some(AppKind::Custom),
             default_targets: vec![TargetPathRule {
                 asset_kind: AssetKind::Skill,
-                path: path.to_string_lossy().to_string(),
+                path: camino::Utf8Path::from_path(path)
+                    .expect("valid utf8 path")
+                    .to_string(),
             }],
             supported_kinds: vec![AssetKind::Skill],
             deployment_strategy: DeploymentStrategy::SymlinkToSource,
@@ -540,5 +555,64 @@ mod tests {
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
         std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn non_utf8_paths_never_alias_identity_or_persistence_keys() {
+        use crate::backend::runtime::AppError;
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        // 1. Filesystem identity comparison must remain lossless and never alias.
+        // Two paths differing only by distinct non-UTF-8 bytes:
+        let non_utf8_a = PathBuf::from(OsStr::from_bytes(b"/tmp/assetiweave_test_\xFF_repo"));
+        let non_utf8_b = PathBuf::from(OsStr::from_bytes(b"/tmp/assetiweave_test_\xFE_repo"));
+        assert_ne!(non_utf8_a, non_utf8_b);
+
+        // Recent root sorting/comparison via Path::cmp must preserve strict ordering
+        let mut sorted_paths = vec![non_utf8_b.clone(), non_utf8_a.clone()];
+        sorted_paths.sort();
+        assert_eq!(sorted_paths, vec![non_utf8_b.clone(), non_utf8_a.clone()]); // \xFE < \xFF
+
+        // Candidate comparison (such as in skills.rs) against Path must be exact and lossless
+        let candidate_path_lossy = non_utf8_a.to_string_lossy().to_string();
+        // In the buggy lossy conversion: candidate_path_lossy == non_utf8_b.to_string_lossy() is TRUE (aliased!)
+        assert_eq!(
+            non_utf8_a.to_string_lossy(),
+            non_utf8_b.to_string_lossy(),
+            "sanity check: lossy string conversion would alias distinct non-UTF-8 paths"
+        );
+        // But with lossless &Path comparison:
+        assert_ne!(
+            Path::new(&candidate_path_lossy),
+            non_utf8_a.as_path(),
+            "lossy string candidate cannot match original raw byte path"
+        );
+        assert_ne!(non_utf8_a.as_path(), non_utf8_b.as_path());
+
+        // 2. Persistence / Storage boundary must fail with AppError::Validation rather than alias
+        let storage_result_a = super::normalize_std_path_for_storage(&non_utf8_a);
+        let storage_result_b = super::normalize_std_path_for_storage(&non_utf8_b);
+        assert!(
+            matches!(storage_result_a, Err(AppError::Validation(_))),
+            "storage normalization must return Validation error on non-utf8 path, got: {storage_result_a:?}"
+        );
+        assert!(
+            matches!(storage_result_b, Err(AppError::Validation(_))),
+            "storage normalization must return Validation error on non-utf8 path, got: {storage_result_b:?}"
+        );
+
+        // 3. Target Catalog conflict key helper must reject non-UTF-8 components
+        let mut target_normalized = std::path::PathBuf::from(std::path::MAIN_SEPARATOR.to_string());
+        target_normalized.push(OsStr::from_bytes(b"target_\xFF"));
+        let conflict_key_result = target_normalized
+            .to_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| AppError::Validation("path contains invalid UTF-8".to_string()));
+        assert!(
+            matches!(conflict_key_result, Err(AppError::Validation(_))),
+            "target conflict key must reject non-utf8 components"
+        );
     }
 }

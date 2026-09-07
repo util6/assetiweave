@@ -104,100 +104,109 @@ mod tests {
     use crate::backend::runtime::AppError;
     use uuid::Uuid;
 
-    #[test]
-    fn sqlx_deployment_state_round_trips_deletes_and_cleans_orphans() {
+    #[tokio::test]
+    async fn sqlx_deployment_state_round_trips_deletes_and_cleans_orphans() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-deployment-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
 
-        database
-            .block_on(async {
-                insert_asset(database.pool(), "asset-a").await?;
-                upsert_deployment_state_sqlx(
-                    database.pool(),
-                    "default",
-                    &test_state("profile-a", "asset-a", "/target/a", "assetiweave"),
-                )
-                .await?;
-                upsert_deployment_state_sqlx(
-                    database.pool(),
-                    "default",
-                    &test_state("profile-a", "asset-b", "/target/b", "other-tool"),
-                )
-                .await?;
-                upsert_deployment_state_sqlx(
-                    database.pool(),
-                    "default",
-                    &test_state("profile-b", "asset-a", "/target/c", "assetiweave"),
-                )
-                .await?;
+        insert_asset(database.pool(), "asset-a")
+            .await
+            .expect("insert asset");
+        upsert_deployment_state_sqlx(
+            database.pool(),
+            "default",
+            &test_state("profile-a", "asset-a", "/target/a", "assetiweave"),
+        )
+        .await
+        .expect("upsert managed state");
+        upsert_deployment_state_sqlx(
+            database.pool(),
+            "default",
+            &test_state("profile-a", "asset-b", "/target/b", "other-tool"),
+        )
+        .await
+        .expect("upsert other state");
+        upsert_deployment_state_sqlx(
+            database.pool(),
+            "default",
+            &test_state("profile-b", "asset-a", "/target/c", "assetiweave"),
+        )
+        .await
+        .expect("upsert profile b state");
 
-                assert!(
-                    is_managed_deployment_sqlx(
-                        database.pool(),
-                        "default",
-                        "profile-a",
-                        "asset-a",
-                        "/target/a"
-                    )
-                    .await?
-                );
-                assert!(
-                    !is_managed_deployment_sqlx(
-                        database.pool(),
-                        "default",
-                        "profile-a",
-                        "asset-b",
-                        "/target/b"
-                    )
-                    .await?
-                );
-                assert_eq!(
-                    count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-a")
-                        .await?,
-                    2
-                );
-                assert_eq!(
-                    count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-b")
-                        .await?,
-                    1
-                );
-                assert_eq!(
-                    load_managed_deployment_targets_by_profile_sqlx(
-                        database.pool(),
-                        "default",
-                        "profile-a",
-                    )
-                    .await?,
-                    vec![("asset-a".to_string(), "/target/a".to_string())]
-                );
+        assert!(is_managed_deployment_sqlx(
+            database.pool(),
+            "default",
+            "profile-a",
+            "asset-a",
+            "/target/a"
+        )
+        .await
+        .expect("check managed a"));
+        assert!(!is_managed_deployment_sqlx(
+            database.pool(),
+            "default",
+            "profile-a",
+            "asset-b",
+            "/target/b"
+        )
+        .await
+        .expect("check unmanaged b"));
+        assert_eq!(
+            count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-a")
+                .await
+                .expect("count profile a"),
+            2
+        );
+        assert_eq!(
+            count_deployment_state_by_profile_sqlx(database.pool(), "default", "profile-b")
+                .await
+                .expect("count profile b"),
+            1
+        );
+        assert_eq!(
+            load_managed_deployment_targets_by_profile_sqlx(
+                database.pool(),
+                "default",
+                "profile-a",
+            )
+            .await
+            .expect("load managed targets"),
+            vec![("asset-a".to_string(), "/target/a".to_string())]
+        );
 
-                delete_deployment_state_sqlx(
-                    database.pool(),
-                    "default",
-                    "profile-a",
-                    "asset-b",
-                    "/target/b",
-                )
-                .await?;
-                upsert_deployment_state_sqlx(
-                    database.pool(),
-                    "default",
-                    &test_state("profile-a", "asset-b", "/target/b", "assetiweave"),
-                )
-                .await?;
-                delete_orphan_deployment_state_sqlx(database.pool(), "default").await?;
+        delete_deployment_state_sqlx(
+            database.pool(),
+            "default",
+            "profile-a",
+            "asset-b",
+            "/target/b",
+        )
+        .await
+        .expect("delete deployment state");
+        upsert_deployment_state_sqlx(
+            database.pool(),
+            "default",
+            &test_state("profile-a", "asset-b", "/target/b", "assetiweave"),
+        )
+        .await
+        .expect("upsert re-managed state");
+        delete_orphan_deployment_state_sqlx(database.pool(), "default")
+            .await
+            .expect("delete orphan deployment state");
 
-                let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_state")
-                    .fetch_one(database.pool())
-                    .await
-                    .map_err(AppError::external)?;
-                AppResult::Ok(rows)
-            })
-            .map(|rows| assert_eq!(rows, 2))
-            .expect("query SQLx deployment repo");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM deployment_state")
+            .fetch_one(database.pool())
+            .await
+            .map_err(AppError::external)
+            .expect("count rows");
+        assert_eq!(rows, 2);
+
         drop(database);
         cleanup_database(&db_path);
     }

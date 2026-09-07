@@ -1,9 +1,18 @@
-import { AlertCircle, CheckCircle2, DownloadCloud, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  DownloadCloud,
+  RefreshCw,
+} from "lucide-react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { cn } from "../../lib/utils";
 import { useAppUpdater, type AppUpdateStatus } from "./AppUpdateProvider";
 
-const attentionStatuses = new Set<AppUpdateStatus>(["available", "ready", "error"]);
+const attentionStatuses = new Set<AppUpdateStatus>([
+  "available",
+  "ready",
+  "error",
+]);
 
 export function AppUpdateButton() {
   const { t } = useI18n();
@@ -13,7 +22,10 @@ export function AppUpdateButton() {
     return null;
   }
 
-  const busy = state.status === "checking" || state.status === "downloading" || state.status === "installing";
+  const busy =
+    state.status === "checking" ||
+    state.status === "downloading" ||
+    state.status === "installing";
   const label = getUpdateButtonLabel(state.status, t);
   const Icon = getUpdateButtonIcon(state.status);
 
@@ -31,8 +43,10 @@ export function AppUpdateButton() {
       aria-label={label}
       className={cn(
         "relative grid size-9 place-items-center rounded-xl border border-theme-control-border bg-theme-control/95 text-theme-control-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.42)] transition-colors hover:bg-theme-control-hover hover:text-on-surface",
-        attentionStatuses.has(state.status) && "border-status-update/45 bg-status-update/15 text-status-update",
-        state.status === "error" && "border-status-remove/45 bg-status-remove/15 text-status-remove",
+        attentionStatuses.has(state.status) &&
+          "border-status-update/45 bg-status-update/15 text-status-update",
+        state.status === "error" &&
+          "border-status-remove/45 bg-status-remove/15 text-status-remove",
       )}
       onClick={handleClick}
       title={label}
@@ -59,7 +73,19 @@ function getUpdateButtonIcon(status: AppUpdateStatus) {
   return RefreshCw;
 }
 
-function getUpdateButtonLabel(status: AppUpdateStatus, t: (key: "update.button.check" | "update.button.checking" | "update.button.available" | "update.button.downloading" | "update.button.installing" | "update.button.ready" | "update.button.error") => string) {
+function getUpdateButtonLabel(
+  status: AppUpdateStatus,
+  t: (
+    key:
+      | "update.button.check"
+      | "update.button.checking"
+      | "update.button.available"
+      | "update.button.downloading"
+      | "update.button.installing"
+      | "update.button.ready"
+      | "update.button.error",
+  ) => string,
+) {
   if (status === "checking") {
     return t("update.button.checking");
   }

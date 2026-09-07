@@ -9,6 +9,9 @@ use schemars::{generate::SchemaSettings, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use std::future::Future;
+use std::pin::Pin;
+
 /// Engine 命令风险等级定义
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -61,6 +64,9 @@ pub(crate) struct ParamSpec {
     aliases: &'static [&'static str],
 }
 
+pub(crate) type DispatchFuture = Pin<Box<dyn Future<Output = DispatchResult> + Send>>;
+pub(crate) type CommandHandler = fn(Value) -> DispatchFuture;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CommandSpec {
     pub(crate) method: &'static str,
@@ -72,15 +78,15 @@ pub(crate) struct CommandSpec {
     params: &'static [ParamSpec],
     params_schema: fn() -> Value,
     validate_typed_params: fn(&Value) -> Result<(), String>,
-    handler: fn(Value) -> DispatchResult,
+    handler: CommandHandler,
     cli: Option<&'static str>,
     since: &'static str,
     deprecated: bool,
 }
 
 impl CommandSpec {
-    pub(crate) fn dispatch(&self, params: Value) -> DispatchResult {
-        (self.handler)(params)
+    pub(crate) async fn dispatch(&self, params: Value) -> DispatchResult {
+        (self.handler)(params).await
     }
 }
 
@@ -137,6 +143,7 @@ struct TeamGetParams {
 struct TeamDeleteParams {
     team_id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     yes: bool,
 }
 
@@ -285,6 +292,41 @@ macro_rules! command {
         $exposure:ident,
         $dry_run:expr,
         $params_type:ty,
+        ServiceAsync => |$service:ident, $typed_params:ident| $handler:expr,
+        $params:expr,
+        $cli:expr
+        $(, since: $since:literal, deprecated: $deprecated:expr)?
+    ) => {
+        command!(@build
+            method: $method,
+            canonical_method: $canonical,
+            description: $description,
+            risk: CommandRisk::$risk,
+            exposure: CommandExposure::$exposure,
+            supports_dry_run: $dry_run,
+            params_type: $params_type,
+            params: $params,
+            handler: command!(@service_handler $exposure,
+                |params| dispatch_service_async(
+                    params,
+                    |$service: AppService, $typed_params: $params_type| {
+                        Box::pin(async move { $handler })
+                    },
+                )
+            ),
+            cli: $cli,
+            since: command!(@since $($since)?),
+            deprecated: command!(@deprecated $($deprecated)?),
+        )
+    };
+    (
+        $method:literal,
+        $canonical:literal,
+        $description:literal,
+        $risk:ident,
+        $exposure:ident,
+        $dry_run:expr,
+        $params_type:ty,
         System => |$typed_params:ident| $handler:expr,
         $params:expr,
         $cli:expr
@@ -375,7 +417,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.overview(),
+        ServiceAsync => |service, _params| service.overview().await,
         &[],
         Some("assetiweave-cli overview")
     ),
@@ -387,7 +429,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_tenants(),
+        ServiceAsync => |service, _params| service.list_tenants().await,
         &[],
         Some("assetiweave-cli tenant list")
     ),
@@ -399,7 +441,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.active_tenant(),
+        ServiceAsync => |service, _params| service.active_tenant().await,
         &[],
         Some("assetiweave-cli tenant active")
     ),
@@ -411,7 +453,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::TenantCreateParams,
-        Service => |service, params| service.create_tenant(params),
+        ServiceAsync => |service, params| service.create_tenant(params).await,
         &[
             param!("name", "Tenant display name"),
             param!("slug", "Tenant stable slug"),
@@ -427,7 +469,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.switch_tenant(params.id),
+        ServiceAsync => |service, params| service.switch_tenant(params.id).await,
         &[param!("id", "Tenant identifier")],
         Some("assetiweave-cli tenant switch <tenant-id>")
     ),
@@ -439,7 +481,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_sources(),
+        ServiceAsync => |service, _params| service.list_sources().await,
         &[],
         Some("assetiweave-cli source list")
     ),
@@ -451,7 +493,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceAddParams,
-        Service => |service, params| service.add_source_with_options(params),
+        ServiceAsync => |service, params| service.add_source_with_options(params).await,
         &[
             param!("name", "Source display name"),
             param!("kind", "Source kind"),
@@ -482,7 +524,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceRemoveParams,
-        Service => |service, params| service.remove_source(params),
+        ServiceAsync => |service, params| service.remove_source(params).await,
         &[
             param!("id", "Source identifier"),
             param!("dry_run", "Preview without removing", ["dryRun"]),
@@ -498,7 +540,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SourceScanParams,
-        Service => |service, params| service.scan_sources(params),
+        ServiceAsync => |service, params| service.scan_sources(params).await,
         &[
             param!("kind", "Optional asset kind filter"),
             param!(
@@ -517,7 +559,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_profiles(),
+        ServiceAsync => |service, _params| service.list_profiles().await,
         &[],
         Some("assetiweave-cli profile list")
     ),
@@ -542,7 +584,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.refresh_target_profile_descriptors(),
+        ServiceAsync => |service, _params| service.refresh_target_profile_descriptors().await,
         &[],
         None,
         since: "0.6.1", deprecated: false
@@ -555,7 +597,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::RecentConversationSessionListParams,
-        Service => |service, params| service.list_recent_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
         &[
             param!("view", "project or time ordering"),
             param!("limit", "Maximum number of sessions"),
@@ -572,7 +614,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.get_recent_memory_event_target(params.id),
+        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
         &[param!("id", "Recent Memory event identifier")],
         None,
         since: "0.6.1", deprecated: false
@@ -585,7 +627,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryContextResolveParams,
-        Service => |service, params| service.resolve_memory_context(params),
+        ServiceAsync => |service, params| service.resolve_memory_context(params).await,
         &[
             param!("project_path", "Optional registered project path", ["projectPath"]),
             param!("query", "Optional query for relevance ordering"),
@@ -602,7 +644,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryProjectGetParams,
-        Service => |service, params| service.get_memory_project(params),
+        ServiceAsync => |service, params| service.get_memory_project(params).await,
         &[param!("project_path", "Registered project path", ["projectPath"])],
         Some("assetiweave-cli memory project get <project-path>"),
         since: "0.6.1", deprecated: false
@@ -615,7 +657,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryScopeRebuildParams,
-        Service => |service, params| service.rebuild_memory_scope(params),
+        ServiceAsync => |service, params| service.rebuild_memory_scope(params).await,
         &[param!("scope", "Optional Memory scope")],
         Some("assetiweave-cli memory rebuild"),
         since: "0.6.1", deprecated: false
@@ -667,7 +709,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryTaskRetryParams,
-        Service => |service, params| service.retry_memory_task(params),
+        ServiceAsync => |service, params| service.retry_memory_task(params).await,
         &[param!("task_id", "Memory task identifier", ["taskId"])],
         Some("assetiweave-cli memory task retry <task-id>"),
         since: "0.6.1", deprecated: false
@@ -680,7 +722,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSearchParams,
-        Service => |service, params| service.search_memory_recall(params),
+        ServiceAsync => |service, params| service.search_memory_recall(params).await,
         &[
             param!("query", "Search query"),
             param!("scope", "Optional Memory scope"),
@@ -698,7 +740,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSessionCreateParams,
-        Service => |service, params| service.create_memory_recall_session(params),
+        ServiceAsync => |service, params| service.create_memory_recall_session(params).await,
         &[param!("scope", "Optional Memory scope")],
         Some("assetiweave-cli memory recall session create"),
         since: "0.6.1", deprecated: false
@@ -711,7 +753,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallSessionGetParams,
-        Service => |service, params| service.get_memory_recall_session(params),
+        ServiceAsync => |service, params| service.get_memory_recall_session(params).await,
         &[param!("session_id", "Recall session identifier", ["sessionId"])],
         Some("assetiweave-cli memory recall session get <session-id>"),
         since: "0.6.1", deprecated: false
@@ -724,7 +766,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallTurnSendParams,
-        Service => |service, params| service.send_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.send_memory_recall_turn(params).await,
         &[
             param!("session_id", "Recall session identifier", ["sessionId"]),
             param!("query", "Recall question"),
@@ -740,7 +782,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::MemoryRecallTurnCancelParams,
-        Service => |service, params| service.cancel_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.cancel_memory_recall_turn(params).await,
         &[param!("turn_id", "Recall turn identifier", ["turnId"])],
         Some("assetiweave-cli memory recall turn cancel <turn-id>"),
         since: "0.6.1", deprecated: false
@@ -753,7 +795,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_teams(),
+        ServiceAsync => |service, _params| service.list_teams().await,
         &[],
         Some("assetiweave-cli team list")
     ),
@@ -765,7 +807,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamGetParams,
-        Service => |service, params| service.get_team(&params.team_id),
+        ServiceAsync => |service, params| service.get_team(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         Some("assetiweave-cli team get <team-id>")
     ),
@@ -777,7 +819,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::CreateTeamInput,
-        Service => |service, params| service.create_team(params),
+        ServiceAsync => |service, params| service.create_team(params).await,
         &[
             param!("id", "Optional team identifier"),
             param!("name", "Team name"),
@@ -794,7 +836,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::UpdateTeamInput,
-        Service => |service, params| service.update_team(params),
+        ServiceAsync => |service, params| service.update_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("name", "Team name"),
@@ -811,7 +853,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamDeleteParams,
-        Service => |service, params| service.delete_team(&params.team_id),
+        ServiceAsync => |service, params| service.delete_team(&params.team_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("yes", "Confirm deletion of team"),
@@ -826,7 +868,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamLeaderChatInput,
-        Service => |service, params| service.leader_chat(params),
+        ServiceAsync => |service, params| service.leader_chat(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("message", "Leader message"),
@@ -842,7 +884,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamDraftInput,
-        Service => |service, params| service.draft_team(params),
+        ServiceAsync => |service, params| service.draft_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("leader_message", "Leader request", ["leaderMessage"]),
@@ -857,7 +899,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.get_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.get_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         Some("assetiweave-cli team run get <run-id>")
     ),
@@ -869,7 +911,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.restore_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.restore_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         Some("assetiweave-cli team run restore <run-id>")
     ),
@@ -881,7 +923,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamReviewInput,
-        Service => |service, params| service.review_team_run(params),
+        ServiceAsync => |service, params| service.review_team_run(params).await,
         &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision"), param!("tasks", "Reviewed ordered task assignments")],
         Some("assetiweave-cli team run review <run-id> --tasks <json>")
     ),
@@ -893,7 +935,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::models::TeamConfirmInput,
-        Service => |service, params| service.confirm_team_run(params),
+        ServiceAsync => |service, params| service.confirm_team_run(params).await,
         &[param!("run_id", "Run identifier", ["runId"]), param!("revision", "Run revision")],
         Some("assetiweave-cli team run confirm <run-id> --revision <revision> --yes")
     ),
@@ -905,7 +947,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolTaskListParams,
-        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        ServiceAsync => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
         Some("assetiweave-cli team tool tasks --credential <credential>")
     ),
@@ -917,7 +959,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolTaskUpdateParams,
-        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        ServiceAsync => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }).await,
         &[param!("credential", "Scoped Team tool credential"), param!("task_id", "Task identifier", ["taskId"]), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
         Some("assetiweave-cli team task update <task-id> --credential <credential>")
     ),
@@ -929,7 +971,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolMailboxSendParams,
-        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_send_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
         Some("assetiweave-cli team mailbox send <run-id> --credential <credential>")
     ),
@@ -941,7 +983,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         TeamToolMailboxReadParams,
-        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_read_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
         Some("assetiweave-cli team mailbox read <run-id> --credential <credential>")
     ),
@@ -953,7 +995,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolCredentialIssueParams,
-        Service => |service, params| service.issue_team_tool_credential(crate::backend::models::TeamToolCredentialInput { team_id: params.team_id, run_id: params.run_id, member_id: params.member_id, ttl_seconds: params.ttl_seconds }),
+        ServiceAsync => |service, params| service.issue_team_tool_credential(crate::backend::models::TeamToolCredentialInput { team_id: params.team_id, run_id: params.run_id, member_id: params.member_id, ttl_seconds: params.ttl_seconds }).await,
         &[param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Teammate identifier", ["memberId"]), param!("ttl_seconds", "Credential lifetime", ["ttlSeconds"])],
         None
     ),
@@ -965,7 +1007,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolTaskListParams,
-        Service => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id),
+        ServiceAsync => |service, params| service.team_tool_list_tasks(&params.credential, crate::backend::models::TeamToolTaskListInput { team_id: params.team_id, run_id: params.run_id }, &params.member_id).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("member_id", "Authenticated member", ["memberId"])],
         None
     ),
@@ -977,7 +1019,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolTaskUpdateParams,
-        Service => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }),
+        ServiceAsync => |service, params| service.team_tool_update_task(&params.credential, crate::backend::models::TeamTaskUpdateInput { team_id: params.team_id, run_id: params.run_id, task_id: params.task_id, member_id: params.member_id, state: params.state, result: params.result, error_code: params.error_code }).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("task_id", "Task identifier", ["taskId"]), param!("member_id", "Authenticated member", ["memberId"]), param!("state", "Task state"), param!("result", "Task result"), param!("error_code", "Task error code", ["errorCode"])],
         None
     ),
@@ -989,7 +1031,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolMailboxSendParams,
-        Service => |service, params| service.team_tool_send_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_send_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("sender_member_id", "Sender member", ["senderMemberId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("message_type", "Message type", ["messageType"]), param!("body", "Message body"), param!("idempotency_key", "Idempotency key", ["idempotencyKey"])],
         None
     ),
@@ -1001,7 +1043,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamToolMailboxReadParams,
-        Service => |service, params| service.team_tool_read_mailbox(&params.credential, params.input),
+        ServiceAsync => |service, params| service.team_tool_read_mailbox(&params.credential, params.input).await,
         &[param!("credential", "Scoped Team tool credential"), param!("team_id", "Team identifier", ["teamId"]), param!("run_id", "Run identifier", ["runId"]), param!("recipient_member_id", "Recipient member", ["recipientMemberId"]), param!("ack", "Acknowledge messages")],
         None
     ),
@@ -1013,7 +1055,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ListAssetsParams,
-        Service => |service, params| service.list_assets(params),
+        ServiceAsync => |service, params| service.list_assets(params).await,
         &[param!("kind", "Optional asset kind filter")],
         Some("assetiweave-cli asset list")
     ),
@@ -1025,7 +1067,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skills(),
+        ServiceAsync => |service, _params| service.list_skills().await,
         &[],
         Some("assetiweave-cli skill list")
     ),
@@ -1037,7 +1079,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ImportSkillParams,
-        Service => |service, params| service.import_skill(params),
+        ServiceAsync => |service, params| service.import_skill(params).await,
         &[
             param!("from", "Directory containing SKILL.md"),
             param!("name", "Optional imported Skill name"),
@@ -1069,7 +1111,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillAcquireParams,
-        Service => |service, params| service.acquire_skill(params),
+        ServiceAsync => |service, params| service.acquire_skill(params).await,
         &[
             param!("url", "GitHub repository or tree URL"),
             param!("branch", "Git branch override"),
@@ -1088,7 +1130,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_remote_sources(),
+        ServiceAsync => |service, _params| service.list_skill_remote_sources().await,
         &[],
         Some("assetiweave-cli skill remote list")
     ),
@@ -1100,7 +1142,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillRemoteCheckParams,
-        Service => |service, params| service.check_skill_remote_sources(params),
+        ServiceAsync => |service, params| service.check_skill_remote_sources(params).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         Some("assetiweave-cli skill remote check [asset-id]")
     ),
@@ -1112,7 +1154,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::RequiredAssetIdParams,
-        Service => |service, params| service.backup_skill(params.asset_id),
+        ServiceAsync => |service, params| service.backup_skill(params.asset_id).await,
         &[param!("asset_id", "Asset identifier", ["assetId"])],
         Some("assetiweave-cli skill backup <asset-id>")
     ),
@@ -1124,7 +1166,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.delete_skill(params),
+        ServiceAsync => |service, params| service.delete_skill(params).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Optional target profile", ["profileId"]),
@@ -1142,7 +1184,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.mount_skill(params, true),
+        ServiceAsync => |service, params| service.mount_skill(params, true).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1158,7 +1200,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::AssetRefParams,
-        Service => |service, params| service.mount_skill(params, false),
+        ServiceAsync => |service, params| service.mount_skill(params, false).await,
         &[
             param!("asset_ref", "Asset identifier or name", ["assetRef"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1174,7 +1216,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_groups(),
+        ServiceAsync => |service, _params| service.list_skill_groups().await,
         &[],
         Some("assetiweave-cli skill group list")
     ),
@@ -1186,7 +1228,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.get_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.get_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         Some("assetiweave-cli skill group show <group-id>")
     ),
@@ -1198,7 +1240,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::CreateSkillGroupParams,
-        Service => |service, params| service.create_skill_group(params.input),
+        ServiceAsync => |service, params| service.create_skill_group(params.input).await,
         &[param!("input", "Skill group input")],
         Some("assetiweave-cli skill group create --name <name>")
     ),
@@ -1210,7 +1252,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::UpdateSkillGroupParams,
-        Service => |service, params| service.update_skill_group(params.group),
+        ServiceAsync => |service, params| service.update_skill_group(params.group).await,
         &[param!("group", "Complete Skill group record")],
         Some("assetiweave-cli skill group update <group-id> --json <json>")
     ),
@@ -1222,7 +1264,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.delete_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.delete_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         Some("assetiweave-cli skill group delete <group-id> --yes")
     ),
@@ -1234,7 +1276,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SetSkillGroupManualMembersParams,
-        Service => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids),
+        ServiceAsync => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("asset_ids", "Manual member asset identifiers", ["assetIds"]),
@@ -1249,7 +1291,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillGroupMountParams,
-        Service => |service, params| service.mount_skill_group(params, true),
+        ServiceAsync => |service, params| service.mount_skill_group(params, true).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1265,7 +1307,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::SkillGroupMountParams,
-        Service => |service, params| service.mount_skill_group(params, false),
+        ServiceAsync => |service, params| service.mount_skill_group(params, false).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -1282,7 +1324,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.preview_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.preview_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         Some("assetiweave-cli skill group exclusive preview --group <group-id> --profile <profile-id>")
     ),
@@ -1294,7 +1336,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.apply_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.apply_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         Some("assetiweave-cli skill group exclusive apply --group <group-id> --profile <profile-id> --yes")
     ),
@@ -1350,7 +1392,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        ServiceAsync => |service, _params| service.list_conversation_adapter_runtime_statuses().await,
         &[],
         None
     ),
@@ -1362,7 +1404,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::conversations::ExternalAdapterRegisterParams,
-        Service => |service, params| service.register_conversation_adapter(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1378,7 +1420,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterUnregisterParams,
-        Service => |service, params| service.unregister_conversation_adapter(params),
+        ServiceAsync => |service, params| service.unregister_conversation_adapter(params).await,
         &[
             param!("adapter_id", "Adapter identifier", ["adapterId"]),
             param!("dry_run", "Preview without unregistering", ["dryRun"]),
@@ -1394,7 +1436,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::conversations::ExternalAdapterTryRunParams,
-        Service => |service, params| service.try_run_conversation_adapter(params),
+        ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("method", "Adapter method to run"),
@@ -1412,7 +1454,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_sources(),
+        ServiceAsync => |service, _params| service.list_conversation_sources().await,
         &[],
         Some("assetiweave-cli conversation source list")
     ),
@@ -1424,7 +1466,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1439,7 +1481,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -1454,7 +1496,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSourceDisableParams,
-        Service => |service, params| service.disable_conversation_source(params),
+        ServiceAsync => |service, params| service.disable_conversation_source(params).await,
         &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
@@ -1469,7 +1511,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationScriptCatalogParams,
-        Service => |service, params| service.list_conversation_script_catalog(params),
+        ServiceAsync => |service, params| service.list_conversation_script_catalog(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -1485,7 +1527,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationScriptInstallParams,
-        Service => |service, params| service.install_conversation_script(params),
+        ServiceAsync => |service, params| service.install_conversation_script(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1506,7 +1548,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterLocalRegisterParams,
-        Service => |service, params| service.register_conversation_adapter_local(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter_local(params).await,
         &[
             param!("package_dir", "Existing local package directory", ["packageDir"]),
             param!("origin", "Local package origin"),
@@ -1526,7 +1568,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterWorkspaceUpgradeParams,
-        Service => |service, params| service.upgrade_conversation_adapter_workspace(params),
+        ServiceAsync => |service, params| service.upgrade_conversation_adapter_workspace(params).await,
         &[
             param!("package_dir", "Optional adapter workspace directory", ["packageDir"]),
             param!("developer", "Use builtin-assets/adapters from the current repository"),
@@ -1542,7 +1584,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageInspectParams,
-        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.inspect_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Optional package identifier", ["packageId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -1557,7 +1599,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageChangeParams,
-        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        ServiceAsync => |service, params| service.prepare_conversation_adapter_package_change(params).await,
         &[
             param!("action", "Lifecycle action to preview"),
             param!("package_id", "Optional package identifier", ["packageId"]),
@@ -1573,7 +1615,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageCatalogParams,
-        Service => |service, params| service.list_conversation_adapter_packages(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_packages(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -1589,7 +1631,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageReleaseListParams,
-        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_package_releases(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("package_id", "Package identifier", ["packageId"]),
@@ -1605,7 +1647,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        ServiceAsync => |service, params| service.list_installed_conversation_adapter_package_versions(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"])],
         None
     ),
@@ -1617,7 +1659,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.switch_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
         None
     ),
@@ -1629,7 +1671,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.rollback_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
         None
     ),
@@ -1641,7 +1683,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.delete_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
         None
     ),
@@ -1653,7 +1695,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterCatalogRefreshParams,
-        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        ServiceAsync => |service, params| service.refresh_conversation_adapter_catalogs(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Ignore the 24 hour cache window"),
@@ -1668,7 +1710,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
-        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        ServiceAsync => |service, params| service.check_conversation_adapter_package_updates(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
@@ -1683,7 +1725,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
-        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        ServiceAsync => |service, params| service.set_conversation_adapter_package_update_policy(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
@@ -1695,7 +1737,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.install_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.install_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1717,7 +1759,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.update_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.update_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -1739,7 +1781,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationAdapterPackageUninstallParams,
-        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.uninstall_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Installed package identifier", ["packageId"]),
             param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
@@ -1755,7 +1797,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSyncParams,
-        Service => |service, params| service.sync_conversations(params),
+        ServiceAsync => |service, params| service.sync_conversations(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -1772,7 +1814,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationDataAuditParams,
-        Service => |service, params| service.audit_conversation_data(params),
+        ServiceAsync => |service, params| service.audit_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -1788,7 +1830,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationDataRepairParams,
-        Service => |service, params| service.repair_conversation_data(params),
+        ServiceAsync => |service, params| service.repair_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -1806,7 +1848,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationDataRollbackParams,
-        Service => |service, params| service.rollback_conversation_data(params),
+        ServiceAsync => |service, params| service.rollback_conversation_data(params).await,
         &[
             param!("backup_path", "Verified database backup path", ["backupPath"]),
             param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
@@ -1822,7 +1864,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_conversation_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -1840,7 +1882,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::conversations::ConversationCommandProjectionParams,
-        Service => |service, params| service.project_conversation_command_parts(params),
+        ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
             param!("parts", "Stored raw command blocks to project"),
@@ -1855,7 +1897,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSearchParams,
-        Service => |service, params| service.search_conversation_records(params),
+        ServiceAsync => |service, params| service.search_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -1880,7 +1922,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationIncrementalSearchParams,
-        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        ServiceAsync => |service, params| service.search_recent_incremental_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -1903,7 +1945,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.get_conversation_search_index_status(),
+        ServiceAsync => |service, _params| service.get_conversation_search_index_status().await,
         &[],
         Some("assetiweave-cli conversation search index status")
     ),
@@ -1915,7 +1957,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.rebuild_conversation_search_index(),
+        ServiceAsync => |service, _params| service.rebuild_conversation_search_index().await,
         &[],
         Some("assetiweave-cli conversation search index rebuild")
     ),
@@ -1927,7 +1969,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_conversation_session(params),
+        ServiceAsync => |service, params| service.get_conversation_session(params).await,
         &[param!("session_id", "Session identifier", ["sessionId"])],
         Some("assetiweave-cli conversation session get <session-id>")
     ),
@@ -1939,7 +1981,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_conversation_session(params),
+        ServiceAsync => |service, params| service.export_conversation_session(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -1970,7 +2012,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_web_record_sessions(params),
+        ServiceAsync => |service, params| service.list_web_record_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -1988,7 +2030,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_web_record_session(params),
+        ServiceAsync => |service, params| service.get_web_record_session(params).await,
         &[param!("session_id", "Web record identifier", ["sessionId"])],
         Some("assetiweave-cli conversation web-record get <record-id>")
     ),
@@ -2000,7 +2042,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_web_record_session(params),
+        ServiceAsync => |service, params| service.export_web_record_session(params).await,
         &[
             param!("session_id", "Web record identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -2031,7 +2073,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationQuestionListParams,
-        Service => |service, params| service.list_conversation_questions(params),
+        ServiceAsync => |service, params| service.list_conversation_questions(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("query", "Search query"),
@@ -2048,7 +2090,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationQuestionGetParams,
-        Service => |service, params| service.get_conversation_question(params),
+        ServiceAsync => |service, params| service.get_conversation_question(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         Some("assetiweave-cli conversation question get <question-id>")
     ),
@@ -2060,7 +2102,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationBlockListParams,
-        Service => |service, params| service.list_conversation_blocks(params),
+        ServiceAsync => |service, params| service.list_conversation_blocks(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         Some("assetiweave-cli conversation block list <question-id>")
     ),
@@ -2072,7 +2114,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationBlockGetParams,
-        Service => |service, params| service.get_conversation_block(params),
+        ServiceAsync => |service, params| service.get_conversation_block(params).await,
         &[param!("block_id", "Block identifier", ["blockId"])],
         Some("assetiweave-cli conversation block get <block-id>")
     ),
@@ -2084,7 +2126,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationQuestionMergeParams,
-        Service => |service, params| service.merge_conversation_questions(params),
+        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
         &[
             param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
             param!("dry_run", "Preview without merging", ["dryRun"]),
@@ -2099,7 +2141,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         true,
         crate::backend::application::ConversationQuestionSplitParams,
-        Service => |service, params| service.split_conversation_question(params),
+        ServiceAsync => |service, params| service.split_conversation_question(params).await,
         &[
             param!("question_id", "Question identifier", ["questionId"]),
             param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
@@ -2115,7 +2157,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::application::ConversationPartTranslationUpdateParams,
-        Service => |service, params| service.update_conversation_part_translation(params),
+        ServiceAsync => |service, params| service.update_conversation_part_translation(params).await,
         &[
             param!("record_kind", "Conversation record table family", ["recordKind"]),
             param!("part_id", "Conversation part identifier", ["partId"]),
@@ -2131,7 +2173,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         NoParams,
-        Service => |service, _params| service.run_doctor(),
+        ServiceAsync => |service, _params| service.run_doctor().await,
         &[],
         Some("assetiweave-cli doctor")
     ),
@@ -2179,7 +2221,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.overview(),
+        ServiceAsync => |service, _params| service.overview().await,
         &[],
         None
     ),
@@ -2191,7 +2233,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_tenants(),
+        ServiceAsync => |service, _params| service.list_tenants().await,
         &[],
         None
     ),
@@ -2203,7 +2245,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.active_tenant(),
+        ServiceAsync => |service, _params| service.active_tenant().await,
         &[],
         None
     ),
@@ -2215,7 +2257,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::TenantCreateParams,
-        Service => |service, params| service.create_tenant(params),
+        ServiceAsync => |service, params| service.create_tenant(params).await,
         &[
             param!("name", "Tenant display name"),
             param!("slug", "Tenant stable slug"),
@@ -2231,7 +2273,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.switch_tenant(params.id),
+        ServiceAsync => |service, params| service.switch_tenant(params.id).await,
         &[param!("id", "Tenant identifier")],
         None
     ),
@@ -2243,7 +2285,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_app_settings(),
+        ServiceAsync => |service, _params| service.get_app_settings().await,
         &[],
         Some("assetiweave-cli settings show")
     ),
@@ -2255,9 +2297,21 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SaveAppSettingsParams,
-        Service => |service, params| service.save_app_settings(Value::Object(params.settings.into_iter().collect())),
+        ServiceAsync => |service, params| service.save_app_settings(Value::Object(params.settings.into_iter().collect())).await,
         &[param!("settings", "Normalized application settings object")],
         Some("assetiweave-cli settings save --json <json>")
+    ),
+    command!(
+        "initialize_app_locale_if_unset",
+        "settings.locale.initialize",
+        "Initialize the application locale if not yet set",
+        Write,
+        App,
+        false,
+        crate::backend::application::InitializeAppLocaleParams,
+        ServiceAsync => |service, params| service.initialize_app_locale_if_unset(params.locale).await,
+        &[param!("locale", "Application locale (zh or en)")],
+        None
     ),
     command!(
         "list_memory_recent",
@@ -2267,7 +2321,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::RecentConversationSessionListParams,
-        Service => |service, params| service.list_recent_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
         &[
             param!("view", "project or time ordering"),
             param!("limit", "Maximum number of sessions"),
@@ -2284,7 +2338,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.get_recent_memory_event_target(params.id),
+        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
         &[param!("id", "Recent Memory event identifier")],
         None,
         since: "0.6.1", deprecated: false
@@ -2297,7 +2351,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryContextResolveParams,
-        Service => |service, params| service.resolve_memory_context(params),
+        ServiceAsync => |service, params| service.resolve_memory_context(params).await,
         &[
             param!("project_path", "Optional registered project path", ["projectPath"]),
             param!("query", "Optional query for relevance ordering"),
@@ -2314,7 +2368,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryProjectGetParams,
-        Service => |service, params| service.get_memory_project(params),
+        ServiceAsync => |service, params| service.get_memory_project(params).await,
         &[param!("project_path", "Registered project path", ["projectPath"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2327,7 +2381,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryScopeRebuildParams,
-        Service => |service, params| service.rebuild_memory_scope(params),
+        ServiceAsync => |service, params| service.rebuild_memory_scope(params).await,
         &[param!("scope", "Optional Memory scope")],
         None,
         since: "0.6.1", deprecated: false
@@ -2379,7 +2433,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryTaskRetryParams,
-        Service => |service, params| service.retry_memory_task(params),
+        ServiceAsync => |service, params| service.retry_memory_task(params).await,
         &[param!("task_id", "Memory task identifier", ["taskId"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2392,7 +2446,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSearchParams,
-        Service => |service, params| service.search_memory_recall(params),
+        ServiceAsync => |service, params| service.search_memory_recall(params).await,
         &[
             param!("query", "Search query"),
             param!("scope", "Optional Memory scope"),
@@ -2410,7 +2464,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSessionCreateParams,
-        Service => |service, params| service.create_memory_recall_session(params),
+        ServiceAsync => |service, params| service.create_memory_recall_session(params).await,
         &[param!("scope", "Optional Memory scope")],
         None,
         since: "0.6.1", deprecated: false
@@ -2423,7 +2477,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallSessionGetParams,
-        Service => |service, params| service.get_memory_recall_session(params),
+        ServiceAsync => |service, params| service.get_memory_recall_session(params).await,
         &[param!("session_id", "Recall session identifier", ["sessionId"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2436,7 +2490,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallTurnSendParams,
-        Service => |service, params| service.send_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.send_memory_recall_turn(params).await,
         &[
             param!("session_id", "Recall session identifier", ["sessionId"]),
             param!("query", "Recall question"),
@@ -2452,7 +2506,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::MemoryRecallTurnCancelParams,
-        Service => |service, params| service.cancel_memory_recall_turn(params),
+        ServiceAsync => |service, params| service.cancel_memory_recall_turn(params).await,
         &[param!("turn_id", "Recall turn identifier", ["turnId"])],
         None,
         since: "0.6.1", deprecated: false
@@ -2465,7 +2519,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ListAssetsParams,
-        Service => |service, params| service.list_assets(params),
+        ServiceAsync => |service, params| service.list_assets(params).await,
         &[param!("kind", "Optional asset kind filter")],
         None
     ),
@@ -2477,7 +2531,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_skill_backup_settings(),
+        ServiceAsync => |service, _params| service.get_skill_backup_settings().await,
         &[],
         None
     ),
@@ -2489,7 +2543,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSkillBackupSettingsParams,
-        Service => |service, params| service.update_skill_backup_settings(params),
+        ServiceAsync => |service, params| service.update_skill_backup_settings(params).await,
         &[
             param!("root_path", "Backup library root path", ["rootPath"]),
             param!("migrate", "Migrate existing backup files"),
@@ -2504,7 +2558,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::RequiredAssetIdParams,
-        Service => |service, params| service.backup_skill(params.asset_id),
+        ServiceAsync => |service, params| service.backup_skill(params.asset_id).await,
         &[param!("asset_id", "Asset identifier", ["assetId"])],
         None
     ),
@@ -2516,7 +2570,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillBackupTaskParams,
-        Service => |service, params| service.backup_skills(params.asset_ids),
+        ServiceAsync => |service, params| service.backup_skills(params.asset_ids).await,
         &[param!("asset_ids", "Asset identifiers", ["assetIds"])],
         None
     ),
@@ -2544,7 +2598,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         true,
         crate::backend::application::SkillAcquireParams,
-        Service => |service, params| service.acquire_skill(params),
+        ServiceAsync => |service, params| service.acquire_skill(params).await,
         &[
             param!("url", "GitHub repository or tree URL"),
             param!("branch", "Git branch override"),
@@ -2563,7 +2617,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_remote_sources(),
+        ServiceAsync => |service, _params| service.list_skill_remote_sources().await,
         &[],
         Some("assetiweave-cli skill remote list")
     ),
@@ -2575,7 +2629,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillRemoteCheckParams,
-        Service => |service, params| service.check_skill_remote_sources(params),
+        ServiceAsync => |service, params| service.check_skill_remote_sources(params).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         Some("assetiweave-cli skill remote check [asset-id]")
     ),
@@ -2587,7 +2641,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_sources(),
+        ServiceAsync => |service, _params| service.list_sources().await,
         &[],
         None
     ),
@@ -2599,7 +2653,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_sources(),
+        ServiceAsync => |service, _params| service.list_skill_sources().await,
         &[],
         None
     ),
@@ -2611,7 +2665,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateSourceParams,
-        Service => |service, params| service.add_source(params.source),
+        ServiceAsync => |service, params| service.add_source(params.source).await,
         &[param!("source", "Source input")],
         None
     ),
@@ -2623,7 +2677,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSourceParams,
-        Service => |service, params| service.update_source(params.source),
+        ServiceAsync => |service, params| service.update_source(params.source).await,
         &[param!("source", "Complete source record")],
         None
     ),
@@ -2635,7 +2689,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.delete_source(params.id),
+        ServiceAsync => |service, params| service.delete_source(params.id).await,
         &[param!("id", "Source identifier")],
         None
     ),
@@ -2647,7 +2701,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateAssetDescriptionParams,
-        Service => |service, params| service.update_asset_description(params.asset_id, params.description),
+        ServiceAsync => |service, params| service.update_asset_description(params.asset_id, params.description).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("description", "New description"),
@@ -2662,7 +2716,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::DeleteAssetParams,
-        Service => |service, params| service.delete_asset(params.asset_id, params.unmount),
+        ServiceAsync => |service, params| service.delete_asset(params.asset_id, params.unmount).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("unmount", "Unmount managed targets before deleting"),
@@ -2677,7 +2731,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_profiles(),
+        ServiceAsync => |service, _params| service.list_profiles().await,
         &[],
         None
     ),
@@ -2689,7 +2743,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateProfileParams,
-        Service => |service, params| service.create_profile(params.input),
+        ServiceAsync => |service, params| service.create_profile(params.input).await,
         &[param!("input", "Target profile input")],
         None
     ),
@@ -2701,7 +2755,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateProfileParams,
-        Service => |service, params| service.update_profile(params.profile),
+        ServiceAsync => |service, params| service.update_profile(params.profile).await,
         &[param!("profile", "Complete target profile record")],
         None
     ),
@@ -2713,7 +2767,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::IdParams,
-        Service => |service, params| service.delete_profile(params.id),
+        ServiceAsync => |service, params| service.delete_profile(params.id).await,
         &[param!("id", "Target profile identifier")],
         None
     ),
@@ -2725,7 +2779,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.navigation_model(),
+        ServiceAsync => |service, _params| service.navigation_model().await,
         &[],
         None
     ),
@@ -2737,7 +2791,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateNavigationModelParams,
-        Service => |service, params| service.update_navigation_model(params.model),
+        ServiceAsync => |service, params| service.update_navigation_model(params.model).await,
         &[param!("model", "Navigation model")],
         None
     ),
@@ -2749,7 +2803,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_app_shortcuts(),
+        ServiceAsync => |service, _params| service.list_app_shortcuts().await,
         &[],
         None
     ),
@@ -2761,7 +2815,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_app_shortcut_settings(),
+        ServiceAsync => |service, _params| service.list_app_shortcut_settings().await,
         &[],
         None
     ),
@@ -2773,7 +2827,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateAppShortcutsParams,
-        Service => |service, params| service.update_app_shortcuts(params.shortcuts),
+        ServiceAsync => |service, params| service.update_app_shortcuts(params.shortcuts).await,
         &[param!("shortcuts", "App shortcut records")],
         None
     ),
@@ -2785,7 +2839,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.list_asset_mounts(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.list_asset_mounts(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2797,7 +2851,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.list_asset_mount_statuses(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.list_asset_mount_statuses(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2809,7 +2863,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetIdParams,
-        Service => |service, params| service.refresh_asset_mount_statuses(params.asset_id.as_deref()),
+        ServiceAsync => |service, params| service.refresh_asset_mount_statuses(params.asset_id.as_deref()).await,
         &[param!("asset_id", "Optional asset identifier", ["assetId"])],
         None
     ),
@@ -2821,7 +2875,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_skill_groups(),
+        ServiceAsync => |service, _params| service.list_skill_groups().await,
         &[],
         None
     ),
@@ -2833,7 +2887,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::CreateSkillGroupParams,
-        Service => |service, params| service.create_skill_group(params.input),
+        ServiceAsync => |service, params| service.create_skill_group(params.input).await,
         &[param!("input", "Skill group input")],
         None
     ),
@@ -2845,7 +2899,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::UpdateSkillGroupParams,
-        Service => |service, params| service.update_skill_group(params.group),
+        ServiceAsync => |service, params| service.update_skill_group(params.group).await,
         &[param!("group", "Complete Skill group record")],
         None
     ),
@@ -2857,7 +2911,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::GroupIdParams,
-        Service => |service, params| service.delete_skill_group(params.group_id),
+        ServiceAsync => |service, params| service.delete_skill_group(params.group_id).await,
         &[param!("group_id", "Skill group identifier", ["groupId"])],
         None
     ),
@@ -2869,7 +2923,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SetSkillGroupManualMembersParams,
-        Service => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids),
+        ServiceAsync => |service, params| service.set_skill_group_manual_members(params.group_id, params.asset_ids).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("asset_ids", "Manual member asset identifiers", ["assetIds"]),
@@ -2884,7 +2938,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ApplySkillGroupMountParams,
-        Service => |service, params| service.apply_skill_group_mount(&params.group_id, &params.profile_id, params.enabled),
+        ServiceAsync => |service, params| service.apply_skill_group_mount(&params.group_id, &params.profile_id, params.enabled).await,
         &[
             param!("group_id", "Skill group identifier", ["groupId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2900,7 +2954,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.preview_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.preview_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         None
     ),
@@ -2912,7 +2966,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SkillGroupExclusiveMountParams,
-        Service => |service, params| service.apply_skill_group_exclusive_mount(params.input),
+        ServiceAsync => |service, params| service.apply_skill_group_exclusive_mount(params.input).await,
         &[param!("input", "Exclusive mount input")],
         None
     ),
@@ -2924,7 +2978,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.toggle_asset_mount(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.toggle_asset_mount(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2939,7 +2993,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.mount_asset_by_id(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.mount_asset_by_id(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2954,7 +3008,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::AssetProfileParams,
-        Service => |service, params| service.unmount_asset_by_id(&params.asset_id, &params.profile_id),
+        ServiceAsync => |service, params| service.unmount_asset_by_id(&params.asset_id, &params.profile_id).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2969,7 +3023,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::SetAssetMountParams,
-        Service => |service, params| service.set_asset_mount(&params.asset_id, &params.profile_id, params.enabled, params.strategy),
+        ServiceAsync => |service, params| service.set_asset_mount(&params.asset_id, &params.profile_id, params.enabled, params.strategy).await,
         &[
             param!("asset_id", "Asset identifier", ["assetId"]),
             param!("profile_id", "Target profile identifier", ["profileId"]),
@@ -2986,7 +3040,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         true,
         crate::backend::application::SourceScanParams,
-        Service => |service, params| service.scan_sources(params),
+        ServiceAsync => |service, params| service.scan_sources(params).await,
         &[
             param!("kind", "Optional asset kind filter"),
             param!(
@@ -3005,7 +3059,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.scan_skill_sources(),
+        ServiceAsync => |service, _params| service.scan_skill_sources().await,
         &[],
         None
     ),
@@ -3061,7 +3115,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_adapter_runtime_statuses(),
+        ServiceAsync => |service, _params| service.list_conversation_adapter_runtime_statuses().await,
         &[],
         None
     ),
@@ -3073,7 +3127,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::card_translation::ConversationTranslationRequest,
-        Service => |service, params| service.translate_conversation_card(params),
+        ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),
@@ -3090,7 +3144,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::card_translation::PromptOptimizationRequest,
-        Service => |service, params| service.optimize_prompt(params),
+        ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
             param!("cli", "CLI Agent when provider is cli"),
@@ -3131,7 +3185,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agent_market::types::AgentMarketListRequest,
-        Service => |service, params| service.list_agent_market(params),
+        ServiceAsync => |service, params| service.list_agent_market(params).await,
         &[
             param!("query", "Optional Agent search query"),
             param!("protocol", "Optional Agent protocol filter"),
@@ -3147,7 +3201,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentMarketInspectParams,
-        Service => |service, params| service.inspect_agent_market_item(params.agent_id),
+        ServiceAsync => |service, params| service.inspect_agent_market_item(params.agent_id).await,
         &[param!("agentId", "Curated Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent market inspect")
     ),
@@ -3171,7 +3225,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agent_market::types::AgentInstallPreviewRequest,
-        Service => |service, params| service.preview_agent_installation(params),
+        ServiceAsync => |service, params| service.preview_agent_installation(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
             param!("distributionId", "Optional distribution identifier", ["distribution_id"]),
@@ -3187,7 +3241,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_installed_agents(),
+        ServiceAsync => |service, _params| service.list_installed_agents().await,
         &[],
         Some("assetiweave-cli agent installed")
     ),
@@ -3199,7 +3253,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentInstalledGetParams,
-        Service => |service, params| service.get_installed_agent(params.agent_id),
+        ServiceAsync => |service, params| service.get_installed_agent(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent installed get")
     ),
@@ -3211,7 +3265,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentUninstallPreviewParams,
-        Service => |service, params| service.preview_agent_uninstall(params.agent_id),
+        ServiceAsync => |service, params| service.preview_agent_uninstall(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent uninstall preview")
     ),
@@ -3223,7 +3277,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::agent_market::types::AgentInstallStartRequest,
-        Service => |service, params| service.install_agent(params),
+        ServiceAsync => |service, params| service.install_agent(params).await,
         &[
             param!("agentId", "Curated Agent identifier", ["agent_id"]),
             param!("action", "install, update or reinstall"),
@@ -3242,7 +3296,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         Friendly,
         false,
         crate::backend::agent_market::types::AgentUninstallStartRequest,
-        Service => |service, params| service.uninstall_agent(params),
+        ServiceAsync => |service, params| service.uninstall_agent(params).await,
         &[
             param!("agentId", "Installed Agent identifier", ["agent_id"]),
             param!("clearCapabilityAssignments", "Explicit capability assignments to clear", ["clear_capability_assignments"]),
@@ -3258,7 +3312,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentToggleParams,
-        Service => |service, params| service.set_agent_enabled(params.agent_id, true),
+        ServiceAsync => |service, params| service.set_agent_enabled(params.agent_id, true).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent enable <agent-id>")
     ),
@@ -3270,7 +3324,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentToggleParams,
-        Service => |service, params| service.set_agent_enabled(params.agent_id, false),
+        ServiceAsync => |service, params| service.set_agent_enabled(params.agent_id, false).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent disable <agent-id>")
     ),
@@ -3282,7 +3336,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agents::types::AgentConnectionCheckRequest,
-        Service => |service, params| service.check_agent_connection(params),
+        ServiceAsync => |service, params| service.check_agent_connection(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"]),
             param!("mode", "Probe mode: installation or connection")
@@ -3297,7 +3351,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         AgentRuntimeCheckParams,
-        Service => |service, params| service.check_agent_runtime(params.agent_id),
+        ServiceAsync => |service, params| service.check_agent_runtime(params.agent_id).await,
         &[param!("agentId", "Installed Agent identifier", ["agent_id"])],
         Some("assetiweave-cli agent check")
     ),
@@ -3309,7 +3363,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::agents::types::AgentModelsRequest,
-        Service => |service, params| service.list_agent_models(params),
+        ServiceAsync => |service, params| service.list_agent_models(params).await,
         &[
             param!("agent_id", "Registered Agent identifier", ["agentId"])
         ],
@@ -3335,7 +3389,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::OpencodeTranslationRequest,
-        Service => |service, params| service.translate_conversation_card_with_opencode(params),
+        ServiceAsync => |service, params| service.translate_conversation_card_with_opencode(params).await,
         &[param!("prompt", "Rendered translation prompt passed to the OpenCode ACP agent")],
         None
     ),
@@ -3347,7 +3401,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::ConversationTranslationRequest,
-        Service => |service, params| service.translate_conversation_card(params),
+        ServiceAsync => |service, params| service.translate_conversation_card(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),
@@ -3364,7 +3418,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::PromptOptimizationRequest,
-        Service => |service, params| service.optimize_prompt(params),
+        ServiceAsync => |service, params| service.optimize_prompt(params).await,
         &[
             param!("provider", "AI provider family"),
             param!("cli", "CLI Agent when provider is cli"),
@@ -3393,7 +3447,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::card_translation::ConversationTranslationConnectionRequest,
-        Service => |service, params| service.test_conversation_translation_connection(params),
+        ServiceAsync => |service, params| service.test_conversation_translation_connection(params).await,
         &[
             param!("provider", "Translation provider family"),
             param!("cli", "CLI translator when provider is cli"),
@@ -3425,7 +3479,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ExternalAdapterRegisterParams,
-        Service => |service, params| service.register_conversation_adapter(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -3441,7 +3495,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterUnregisterParams,
-        Service => |service, params| service.unregister_conversation_adapter(params),
+        ServiceAsync => |service, params| service.unregister_conversation_adapter(params).await,
         &[
             param!("adapter_id", "Adapter identifier", ["adapterId"]),
             param!("dry_run", "Preview without unregistering", ["dryRun"]),
@@ -3457,7 +3511,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ExternalAdapterTryRunParams,
-        Service => |service, params| service.try_run_conversation_adapter(params),
+        ServiceAsync => |service, params| service.try_run_conversation_adapter(params).await,
         &[
             param!("manifest_path", "Adapter manifest path", ["manifestPath"]),
             param!("method", "Adapter method to run"),
@@ -3475,7 +3529,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_conversation_sources(),
+        ServiceAsync => |service, _params| service.list_conversation_sources().await,
         &[],
         None
     ),
@@ -3487,7 +3541,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSourceUpsertParams,
-        Service => |service, params| service.upsert_conversation_source(params),
+        ServiceAsync => |service, params| service.upsert_conversation_source(params).await,
         &[
             param!("source", "Conversation source record"),
             param!("dry_run", "Preview without persisting", ["dryRun"]),
@@ -3502,7 +3556,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSourceDisableParams,
-        Service => |service, params| service.disable_conversation_source(params),
+        ServiceAsync => |service, params| service.disable_conversation_source(params).await,
         &[
             param!("id", "Conversation source identifier"),
             param!("dry_run", "Preview without disabling", ["dryRun"]),
@@ -3517,7 +3571,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationScriptCatalogParams,
-        Service => |service, params| service.list_conversation_script_catalog(params),
+        ServiceAsync => |service, params| service.list_conversation_script_catalog(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -3533,7 +3587,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterLocalRegisterParams,
-        Service => |service, params| service.register_conversation_adapter_local(params),
+        ServiceAsync => |service, params| service.register_conversation_adapter_local(params).await,
         &[
             param!("package_dir", "Existing local package directory", ["packageDir"]),
             param!("origin", "Local package origin"),
@@ -3553,7 +3607,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInspectParams,
-        Service => |service, params| service.inspect_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.inspect_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Optional package identifier", ["packageId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -3568,7 +3622,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageChangeParams,
-        Service => |service, params| service.prepare_conversation_adapter_package_change(params),
+        ServiceAsync => |service, params| service.prepare_conversation_adapter_package_change(params).await,
         &[
             param!("action", "Lifecycle action to preview"),
             param!("package_id", "Optional package identifier", ["packageId"]),
@@ -3584,7 +3638,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageCatalogParams,
-        Service => |service, params| service.list_conversation_adapter_packages(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_packages(params).await,
         &[param!(
             "catalog_url",
             "Optional catalog JSON URL or local path",
@@ -3600,7 +3654,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageReleaseListParams,
-        Service => |service, params| service.list_conversation_adapter_package_releases(params),
+        ServiceAsync => |service, params| service.list_conversation_adapter_package_releases(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("package_id", "Package identifier", ["packageId"]),
@@ -3616,7 +3670,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.list_installed_conversation_adapter_package_versions(params),
+        ServiceAsync => |service, params| service.list_installed_conversation_adapter_package_versions(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"])],
         None
     ),
@@ -3628,7 +3682,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.switch_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.switch_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Installed version"), param!("dry_run", "Preview activation", ["dryRun"]), param!("yes", "Confirm activation")],
         None
     ),
@@ -3640,7 +3694,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.rollback_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.rollback_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("dry_run", "Preview rollback", ["dryRun"]), param!("yes", "Confirm rollback")],
         None
     ),
@@ -3652,7 +3706,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageVersionChangeParams,
-        Service => |service, params| service.delete_conversation_adapter_package_version(params),
+        ServiceAsync => |service, params| service.delete_conversation_adapter_package_version(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("version", "Inactive installed version"), param!("dry_run", "Preview deletion", ["dryRun"]), param!("yes", "Confirm deletion")],
         None
     ),
@@ -3664,7 +3718,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterCatalogRefreshParams,
-        Service => |service, params| service.refresh_conversation_adapter_catalogs(params),
+        ServiceAsync => |service, params| service.refresh_conversation_adapter_catalogs(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Ignore the 24 hour cache window"),
@@ -3679,7 +3733,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUpdateCheckParams,
-        Service => |service, params| service.check_conversation_adapter_package_updates(params),
+        ServiceAsync => |service, params| service.check_conversation_adapter_package_updates(params).await,
         &[
             param!("catalog_url", "Optional Catalog v2 index URL or local path", ["catalogUrl"]),
             param!("force", "Force a remote Catalog v2 refresh"),
@@ -3694,7 +3748,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUpdatePolicyParams,
-        Service => |service, params| service.set_conversation_adapter_package_update_policy(params),
+        ServiceAsync => |service, params| service.set_conversation_adapter_package_update_policy(params).await,
         &[param!("package_id", "Installed package identifier", ["packageId"]), param!("update_policy", "manual, follow_stable, follow_beta, or pin_exact", ["updatePolicy"])],
         None
     ),
@@ -3706,7 +3760,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.install_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.install_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3728,7 +3782,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageInstallParams,
-        Service => |service, params| service.update_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.update_conversation_adapter_package(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3750,7 +3804,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationAdapterPackageUninstallParams,
-        Service => |service, params| service.uninstall_conversation_adapter_package(params),
+        ServiceAsync => |service, params| service.uninstall_conversation_adapter_package(params).await,
         &[
             param!("package_id", "Installed package identifier", ["packageId"]),
             param!("dry_run", "Preview uninstall without changing state", ["dryRun"]),
@@ -3766,7 +3820,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationScriptInstallParams,
-        Service => |service, params| service.install_conversation_script(params),
+        ServiceAsync => |service, params| service.install_conversation_script(params).await,
         &[
             param!(
                 "catalog_url",
@@ -3787,7 +3841,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSyncParams,
-        Service => |service, params| service.sync_conversations(params),
+        ServiceAsync => |service, params| service.sync_conversations(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("adapter_id", "Optional adapter identifier", ["adapterId"]),
@@ -3804,7 +3858,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataAuditParams,
-        Service => |service, params| service.audit_conversation_data(params),
+        ServiceAsync => |service, params| service.audit_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -3820,7 +3874,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataRepairParams,
-        Service => |service, params| service.repair_conversation_data(params),
+        ServiceAsync => |service, params| service.repair_conversation_data(params).await,
         &[
             param!("source_id", "Optional source identifier", ["sourceId"]),
             param!("record_kind", "Optional conversation record kind", ["recordKind"]),
@@ -3838,7 +3892,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationDataRollbackParams,
-        Service => |service, params| service.rollback_conversation_data(params),
+        ServiceAsync => |service, params| service.rollback_conversation_data(params).await,
         &[
             param!("backup_path", "Verified database backup path", ["backupPath"]),
             param!("dry_run", "Preview rollback without replacing the database", ["dryRun"]),
@@ -3854,7 +3908,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_conversation_sessions(params),
+        ServiceAsync => |service, params| service.list_conversation_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -3872,7 +3926,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::conversations::ConversationCommandProjectionParams,
-        Service => |service, params| service.project_conversation_command_parts(params),
+        ServiceAsync => |service, params| service.project_conversation_command_parts(params).await,
         &[
             param!("adapter_id", "Source conversation adapter identifier", ["adapterId"]),
             param!("parts", "Stored raw command blocks to project"),
@@ -3887,7 +3941,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_conversation_session(params),
+        ServiceAsync => |service, params| service.get_conversation_session(params).await,
         &[param!("session_id", "Session identifier", ["sessionId"])],
         None
     ),
@@ -3899,7 +3953,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_conversation_session(params),
+        ServiceAsync => |service, params| service.export_conversation_session(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -3930,7 +3984,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionListParams,
-        Service => |service, params| service.list_web_record_sessions(params),
+        ServiceAsync => |service, params| service.list_web_record_sessions(params).await,
         &[
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
             param!("source_id", "Optional source filter", ["sourceId"]),
@@ -3948,7 +4002,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionGetParams,
-        Service => |service, params| service.get_web_record_session(params),
+        ServiceAsync => |service, params| service.get_web_record_session(params).await,
         &[param!("session_id", "Web record identifier", ["sessionId"])],
         None
     ),
@@ -3960,7 +4014,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSearchParams,
-        Service => |service, params| service.search_conversation_records(params),
+        ServiceAsync => |service, params| service.search_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -3985,7 +4039,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationIncrementalSearchParams,
-        Service => |service, params| service.search_recent_incremental_conversation_records(params),
+        ServiceAsync => |service, params| service.search_recent_incremental_conversation_records(params).await,
         &[
             param!("record_kind", "Conversation record kind", ["recordKind"]),
             param!("adapter_id", "Optional adapter filter", ["adapterId"]),
@@ -4008,7 +4062,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.get_conversation_search_index_status(),
+        ServiceAsync => |service, _params| service.get_conversation_search_index_status().await,
         &[],
         None
     ),
@@ -4020,7 +4074,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.rebuild_conversation_search_index(),
+        ServiceAsync => |service, _params| service.rebuild_conversation_search_index().await,
         &[],
         None
     ),
@@ -4032,7 +4086,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationSessionExportParams,
-        Service => |service, params| service.export_web_record_session(params),
+        ServiceAsync => |service, params| service.export_web_record_session(params).await,
         &[
             param!("session_id", "Web record identifier", ["sessionId"]),
             param!("output_root", "Output root directory", ["outputRoot"]),
@@ -4063,7 +4117,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionListParams,
-        Service => |service, params| service.list_conversation_questions(params),
+        ServiceAsync => |service, params| service.list_conversation_questions(params).await,
         &[
             param!("session_id", "Session identifier", ["sessionId"]),
             param!("query", "Search query"),
@@ -4080,7 +4134,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionGetParams,
-        Service => |service, params| service.get_conversation_question(params),
+        ServiceAsync => |service, params| service.get_conversation_question(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         None
     ),
@@ -4092,7 +4146,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationBlockListParams,
-        Service => |service, params| service.list_conversation_blocks(params),
+        ServiceAsync => |service, params| service.list_conversation_blocks(params).await,
         &[param!("question_id", "Question identifier", ["questionId"])],
         None
     ),
@@ -4104,7 +4158,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationBlockGetParams,
-        Service => |service, params| service.get_conversation_block(params),
+        ServiceAsync => |service, params| service.get_conversation_block(params).await,
         &[param!("block_id", "Block identifier", ["blockId"])],
         None
     ),
@@ -4116,7 +4170,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionMergeParams,
-        Service => |service, params| service.merge_conversation_questions(params),
+        ServiceAsync => |service, params| service.merge_conversation_questions(params).await,
         &[
             param!("question_ids", "Adjacent question identifiers in session order", ["questionIds"]),
             param!("dry_run", "Preview without merging", ["dryRun"]),
@@ -4131,7 +4185,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationQuestionSplitParams,
-        Service => |service, params| service.split_conversation_question(params),
+        ServiceAsync => |service, params| service.split_conversation_question(params).await,
         &[
             param!("question_id", "Question identifier", ["questionId"]),
             param!("before_turn_id", "Turn identifier that starts the new question", ["beforeTurnId"]),
@@ -4147,7 +4201,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ConversationPartTranslationUpdateParams,
-        Service => |service, params| service.update_conversation_part_translation(params),
+        ServiceAsync => |service, params| service.update_conversation_part_translation(params).await,
         &[
             param!("record_kind", "Conversation record table family", ["recordKind"]),
             param!("part_id", "Conversation part identifier", ["partId"]),
@@ -4163,7 +4217,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ProfileIdParams,
-        Service => |service, params| service.create_plan(params.profile_id.as_deref()),
+        ServiceAsync => |service, params| service.create_plan(params.profile_id.as_deref()).await,
         &[param!(
             "profile_id",
             "Optional target profile identifier",
@@ -4179,7 +4233,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::application::ExecutePlanParams,
-        Service => |service, params| service.execute_plan(params.plan, params.action_ids),
+        ServiceAsync => |service, params| service.execute_plan(params.plan, params.action_ids).await,
         &[
             param!("plan", "Deployment plan"),
             param!(
@@ -4254,7 +4308,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::CreateTeamInput,
-        Service => |service, params| service.create_team(params),
+        ServiceAsync => |service, params| service.create_team(params).await,
         &[
             param!("id", "Optional team identifier"),
             param!("name", "Team name"),
@@ -4271,7 +4325,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamGetParams,
-        Service => |service, params| service.get_team(&params.team_id),
+        ServiceAsync => |service, params| service.get_team(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         None
     ),
@@ -4283,7 +4337,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         NoParams,
-        Service => |service, _params| service.list_teams(),
+        ServiceAsync => |service, _params| service.list_teams().await,
         &[],
         None
     ),
@@ -4295,7 +4349,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::UpdateTeamInput,
-        Service => |service, params| service.update_team(params),
+        ServiceAsync => |service, params| service.update_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("name", "Team name"),
@@ -4312,7 +4366,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamDeleteParams,
-        Service => |service, params| service.delete_team(&params.team_id),
+        ServiceAsync => |service, params| service.delete_team(&params.team_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("yes", "Confirm deletion of team"),
@@ -4327,7 +4381,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMemberTurnInput,
-        Service => |service, params| service.start_team_member_turn(params),
+        ServiceAsync => |service, params| service.start_team_member_turn(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4344,7 +4398,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberScopeParams,
-        Service => |service, params| service.start_member_replay(&params.team_id, &params.member_id),
+        ServiceAsync => |service, params| service.start_member_replay(&params.team_id, &params.member_id).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4359,11 +4413,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberStreamParams,
-        Service => |service, params| service.get_member_stream(
+        ServiceAsync => |service, params| service.get_member_stream(
             &params.team_id,
             &params.member_id,
             &params.execution_id,
-        ),
+        ).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4403,11 +4457,11 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamMemberStreamParams,
-        Service => |service, params| service.cancel_member_turn(
+        ServiceAsync => |service, params| service.cancel_member_turn(
             &params.team_id,
             &params.member_id,
             &params.execution_id,
-        ),
+        ).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("member_id", "Member identifier", ["memberId"]),
@@ -4423,7 +4477,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamLeaderChatInput,
-        Service => |service, params| service.leader_chat(params),
+        ServiceAsync => |service, params| service.leader_chat(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("message", "Leader message"),
@@ -4439,7 +4493,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamDraftInput,
-        Service => |service, params| service.draft_team(params),
+        ServiceAsync => |service, params| service.draft_team(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("leader_message", "Leader request", ["leaderMessage"]),
@@ -4454,7 +4508,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.get_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.get_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         None
     ),
@@ -4466,7 +4520,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamGetParams,
-        Service => |service, params| service.latest_team_run(&params.team_id),
+        ServiceAsync => |service, params| service.latest_team_run(&params.team_id).await,
         &[param!("team_id", "Team identifier", ["teamId"])],
         None
     ),
@@ -4478,7 +4532,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         TeamRunGetParams,
-        Service => |service, params| service.restore_team_run(&params.run_id),
+        ServiceAsync => |service, params| service.restore_team_run(&params.run_id).await,
         &[param!("run_id", "Run identifier", ["runId"])],
         None
     ),
@@ -4502,7 +4556,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamReviewInput,
-        Service => |service, params| service.review_team_run(params),
+        ServiceAsync => |service, params| service.review_team_run(params).await,
         &[
             param!("run_id", "Run identifier", ["runId"]),
             param!("revision", "Run revision"),
@@ -4518,7 +4572,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamConfirmInput,
-        Service => |service, params| service.confirm_team_run(params),
+        ServiceAsync => |service, params| service.confirm_team_run(params).await,
         &[
             param!("run_id", "Run identifier", ["runId"]),
             param!("revision", "Run revision"),
@@ -4533,7 +4587,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamTaskUpdateInput,
-        Service => |service, params| service.update_team_task(params),
+        ServiceAsync => |service, params| service.update_team_task(params).await,
         &[
             param!("task_id", "Task identifier", ["taskId"]),
             param!("team_id", "Team identifier", ["teamId"]),
@@ -4553,7 +4607,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMailboxSendInput,
-        Service => |service, params| service.send_team_mailbox(params),
+        ServiceAsync => |service, params| service.send_team_mailbox(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("run_id", "Run identifier", ["runId"]),
@@ -4573,7 +4627,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         App,
         false,
         crate::backend::models::TeamMailboxReadInput,
-        Service => |service, params| service.read_team_mailbox(params),
+        ServiceAsync => |service, params| service.read_team_mailbox(params).await,
         &[
             param!("team_id", "Team identifier", ["teamId"]),
             param!("run_id", "Run identifier", ["runId"]),
@@ -4825,30 +4879,58 @@ fn validate_typed_params<T: DeserializeOwned>(params: &Value) -> Result<(), Stri
         .map_err(|error| format!("params do not match the Rust request type: {error}"))
 }
 
+fn dispatch_service_async<P, T, E>(
+    params: Value,
+    handler: fn(AppService, P) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send>>,
+) -> DispatchFuture
+where
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    E: Into<AppError> + Send + 'static,
+{
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        let service = AppService::open_for_engine()
+            .await
+            .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
+        let result = handler(service, params).await;
+        serialize_dispatch_result(result.map_err(|error| DispatchFailure::App(error.into()))?)
+    })
+}
+
 fn dispatch_service<P, T, E>(
     params: Value,
     handler: fn(&AppService, P) -> Result<T, E>,
-) -> DispatchResult
+) -> DispatchFuture
 where
-    P: DeserializeOwned,
-    T: Serialize,
-    E: Into<AppError>,
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
+    E: Into<AppError> + Send + 'static,
 {
-    let params = deserialize_dispatch_params(params)?;
-    let service = AppService::open_for_engine()
-        .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
-    serialize_dispatch_result(
-        handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
-    )
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        let service = AppService::open_for_engine()
+            .await
+            .map_err(|error| DispatchFailure::OpenService(error.to_string()))?;
+        tokio::task::spawn_blocking(move || {
+            serialize_dispatch_result(
+                handler(&service, params).map_err(|error| DispatchFailure::App(error.into()))?,
+            )
+        })
+        .await
+        .map_err(|join_err| DispatchFailure::OpenService(join_err.to_string()))?
+    })
 }
 
-fn dispatch_system<P, T>(params: Value, handler: fn(P) -> T) -> DispatchResult
+fn dispatch_system<P, T>(params: Value, handler: fn(P) -> T) -> DispatchFuture
 where
-    P: DeserializeOwned,
-    T: Serialize,
+    P: DeserializeOwned + Send + 'static,
+    T: Serialize + Send + 'static,
 {
-    let params = deserialize_dispatch_params(params)?;
-    serialize_dispatch_result(handler(params))
+    Box::pin(async move {
+        let params = deserialize_dispatch_params(params)?;
+        serialize_dispatch_result(handler(params))
+    })
 }
 
 fn deserialize_dispatch_params<T: DeserializeOwned>(params: Value) -> Result<T, DispatchFailure> {

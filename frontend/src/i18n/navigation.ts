@@ -1,4 +1,9 @@
-import type { HeaderTabItem, LocalizedNavigationLabels, RailMenuItem, SubNavItem } from "../router/types";
+import type {
+  HeaderTabItem,
+  LocalizedNavigationLabels,
+  RailMenuItem,
+  SubNavItem,
+} from "../router/types";
 import type { Translator } from "./I18nProvider";
 import type { Locale, TranslationKey } from "./messages";
 
@@ -107,15 +112,40 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {
-  return translateByKey(railLabelKeys[item.id], item.label, item.labels, t, locale, railDefaultLabels[item.id]);
+  return translateByKey(
+    railLabelKeys[item.id],
+    item.label,
+    item.labels,
+    t,
+    locale,
+    railDefaultLabels[item.id],
+  );
 }
 
-export function headerTabLabel(item: HeaderTabItem, t: Translator, locale: Locale) {
-  return translateByKey(headerLabelKeys[item.id], item.label, item.labels, t, locale, headerDefaultLabels[item.id]);
+export function headerTabLabel(
+  item: HeaderTabItem,
+  t: Translator,
+  locale: Locale,
+) {
+  return translateByKey(
+    headerLabelKeys[item.id],
+    item.label,
+    item.labels,
+    t,
+    locale,
+    headerDefaultLabels[item.id],
+  );
 }
 
 export function subNavLabel(item: SubNavItem, t: Translator, locale: Locale) {
-  return translateByKey(subNavLabelKeys[item.routeKey], item.label, item.labels, t, locale, subNavDefaultLabels[item.routeKey]);
+  return translateByKey(
+    subNavLabelKeys[item.routeKey],
+    item.label,
+    item.labels,
+    t,
+    locale,
+    subNavDefaultLabels[item.routeKey],
+  );
 }
 
 function translateByKey(

@@ -2,7 +2,10 @@
 
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentCatalogIcon, resolveAgentIconAccentColor } from "./AgentCatalogIcon";
+import {
+  AgentCatalogIcon,
+  resolveAgentIconAccentColor,
+} from "./AgentCatalogIcon";
 import { agentCatalog } from "./agentCatalog";
 
 afterEach(() => {
@@ -23,10 +26,16 @@ describe("AgentCatalogIcon", () => {
       enabled: true,
     };
 
-    expect(resolveAgentIconAccentColor(agent!, [configuredShortcut])).toBe("#123456");
+    expect(resolveAgentIconAccentColor(agent!, [configuredShortcut])).toBe(
+      "#123456",
+    );
 
-    const { container } = render(<AgentCatalogIcon agent={agent!} appShortcuts={[configuredShortcut]} />);
-    expect(container.querySelector("svg")?.getAttribute("style")).toContain("color: rgb(18, 52, 86)");
+    const { container } = render(
+      <AgentCatalogIcon agent={agent!} appShortcuts={[configuredShortcut]} />,
+    );
+    expect(container.querySelector("svg")?.getAttribute("style")).toContain(
+      "color: rgb(18, 52, 86)",
+    );
   });
 
   it("falls back to the shared built-in APP color when no shortcut override exists", () => {
@@ -35,7 +44,9 @@ describe("AgentCatalogIcon", () => {
 
     expect(resolveAgentIconAccentColor(agent!, [])).toBeTruthy();
     const { container } = render(<AgentCatalogIcon agent={agent!} />);
-    expect(container.querySelector("svg")?.getAttribute("style")).toContain("color:");
+    expect(container.querySelector("svg")?.getAttribute("style")).toContain(
+      "color:",
+    );
   });
 
   it("uses the shared fallback class for agents without a registered APP icon", () => {
@@ -43,6 +54,8 @@ describe("AgentCatalogIcon", () => {
     expect(agent).toBeTruthy();
 
     const { container } = render(<AgentCatalogIcon agent={agent!} />);
-    expect(container.querySelector("svg")?.classList.contains("text-primary")).toBe(true);
+    expect(
+      container.querySelector("svg")?.classList.contains("text-primary"),
+    ).toBe(true);
   });
 });

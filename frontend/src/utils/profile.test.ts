@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { TargetProfile } from "../types";
 import { isDefaultAppProfileId } from "./defaultApps";
-import { buildTargetProfileInput, deriveProfileId, hasProfileIdConflict, targetProfileFromInput } from "./profile";
+import {
+  buildTargetProfileInput,
+  deriveProfileId,
+  hasProfileIdConflict,
+  targetProfileFromInput,
+} from "./profile";
 
 describe("profile helpers", () => {
   it("derives stable profile ids from app names", () => {
@@ -52,9 +57,21 @@ function profile(id: string): TargetProfile {
     app_kind: "custom",
     deployment_strategy: "symlink_to_source",
     enabled: true,
-    exclude: { groups: [], kinds: ["unclassified"], path_patterns: [], sources: [], tags: [] },
+    exclude: {
+      groups: [],
+      kinds: ["unclassified"],
+      path_patterns: [],
+      sources: [],
+      tags: [],
+    },
     id,
-    include: { groups: [], kinds: ["skill"], path_patterns: [], sources: [], tags: [] },
+    include: {
+      groups: [],
+      kinds: ["skill"],
+      path_patterns: [],
+      sources: [],
+      tags: [],
+    },
     name: id,
     safety: { allow_overwrite: false, allow_remove: false },
     supported_kinds: ["skill"],

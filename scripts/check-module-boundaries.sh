@@ -27,6 +27,10 @@ check_max() {
   fi
 }
 
+# C-PROCESS-01 & B2-P03C: host_process must not retain sync runner primitives
+check_absent 'libc::kill|process_group\(0\)|std::thread::spawn|thread::sleep|std::process::Command' \
+  "$ROOT/src-tauri/src/backend/host_process.rs"
+
 # Tauri wrappers must reuse the process runtime and keyed locks, not reopen a
 # database or serialize all commands behind the removed global mutex.
 check_absent 'state\.lock|AppService::open_with_db_path' "$ROOT/src-tauri/src/adapters"
@@ -130,10 +134,9 @@ check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/app_paths.rs
 check_max 0 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/defaults.rs"
 check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application"
 
-# Monotonic migration baselines from SPEC-01/SPEC-02. These values match the
-# current origin/main legacy bridge inventory; Team uses AppRuntime::run_sync
-# and therefore does not increase the application bridge count.
-check_max 366 'block_on' "$ROOT/src-tauri/src"
+# Monotonic migration baselines from SPEC-01/SPEC-02.
+# In B2-R14, all backend modules have been fully migrated to async with 0 block_on.
+check_max 20 'block_on' "$ROOT/src-tauri/src"
 check_max 0 'Legacy\(' "$ROOT/src-tauri/src"
 check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
   "$ROOT/src-tauri/src"
@@ -147,27 +150,69 @@ check_absent 'type (AppResult|LegacyResult)<T> = Result<T, String>' \
   "$ROOT/src-tauri/src/backend/dto"
 
 # Keep synchronous bridges monotonic per module, not only in the aggregate.
-# This prevents deleting one bridge in one directory and adding a new bridge
-# elsewhere while preserving the global total.
+# All backend modules are strictly zero.
 while IFS='|' read -r scope baseline; do
   [ -z "$scope" ] && continue
   case "$scope" in '#'*) continue ;; esac
   check_max "$baseline" 'block_on' "$ROOT/$scope"
 done <<'EOF'
-src-tauri/src/adapters|13
-src-tauri/src/backend/agent_market|4
-src-tauri/src/backend/ai_execution|6
-src-tauri/src/backend/application|187
-src-tauri/src/backend/capabilities|27
-src-tauri/src/backend/data_backup.rs|2
-src-tauri/src/backend/events|13
-src-tauri/src/backend/runtime|16
-src-tauri/src/backend/search|6
-src-tauri/src/backend/store|91
+src-tauri/src/adapters|10
+src-tauri/src/backend/agent_market|0
+src-tauri/src/backend/ai_execution|0
+src-tauri/src/backend/application|0
+src-tauri/src/backend/capabilities|0
+src-tauri/src/backend/data_backup.rs|0
+src-tauri/src/backend/events|0
+src-tauri/src/backend/runtime|0
+src-tauri/src/backend/search|0
+src-tauri/src/backend/store|0
 src-tauri/src/backend/target_catalog.rs|0
 EOF
+
+# Monotonic error flow guards (Issue #2 / ERR-00)
+# 1. Global bounds prevent untyped and string-mapped error expansion
+check_max 80 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src"
+check_max 850 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
+check_max 77 'AppError::External\([^)]*\.to_string\(\)' "$ROOT/src-tauri/src/backend"
+
+# 2. Runtime layer must not introduce cross-module String results
+check_absent 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src/backend/runtime"
+
+# 3. Runtime layer must not expand map_err(AppError::external), and runtime core forbids it entirely
+check_max 13 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime"
+check_absent 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime/app_runtime.rs"
+check_absent 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime/error.rs"
+
+# 4. Known typed errors must not be mapped to string losing source
+check_absent '(sqlx::Error|io::Error|HostProcessError).*to_string\(\)' "$ROOT/src-tauri/src/backend/runtime"
+
+# Frontend architecture boundaries: enforce services-only Tauri IPC via ESLint
+if [ -f "$ROOT/package.json" ]; then
+  if ! (cd "$ROOT" && node scripts/lint-architecture.mjs); then
+    fail=1
+  fi
+fi
+
+# Runtime bridge zero-match check (Issue #24 / B2-R14)
+# 1. Backend code must never contain runtime bridges (block_on/run_sync/Tokio Runtime)
+BACKEND_BRIDGE_HITS=$(grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src/backend" 2>/dev/null || true)
+if [ -n "$BACKEND_BRIDGE_HITS" ]; then
+  printf '%s\n' "RUNTIME BRIDGE VIOLATION: backend code contains runtime bridges (zero-tolerance):"
+  printf '%s\n' "$BACKEND_BRIDGE_HITS"
+  fail=1
+fi
+
+# 2. Non-entry files must not construct Tokio Runtime or call block_on/run_sync
+NON_ENTRY_BRIDGE_HITS=$(grep -R -n -E --include='*.rs' '\.(block_on|run_sync)\(|tokio::runtime::Runtime' "$ROOT/src-tauri/src" 2>/dev/null \
+  | grep -v -E "src-tauri/src/(lib|main)\.rs" || true)
+if [ -n "$NON_ENTRY_BRIDGE_HITS" ]; then
+  printf '%s\n' "RUNTIME BRIDGE VIOLATION: non-entry files contain runtime bridges:"
+  printf '%s\n' "$NON_ENTRY_BRIDGE_HITS"
+  fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 printf '%s\n' 'module boundary checks passed'
+

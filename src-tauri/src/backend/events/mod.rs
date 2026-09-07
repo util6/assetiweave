@@ -16,7 +16,9 @@ mod consumers;
 mod dispatcher;
 
 pub(crate) use consumers::{SearchIndexAdvanceConsumer, SessionMemoryConsumer};
-pub(crate) use dispatcher::{EventDispatcher, EventDispatcherHandle};
+pub(crate) use dispatcher::{
+    EventDispatcher, EventDispatcherHandle, EventDispatcherShutdownReport,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event_type", rename_all = "snake_case")]
@@ -137,9 +139,11 @@ pub(crate) struct SequencedEvent {
     pub(crate) event: DomainEvent,
 }
 
+pub(crate) type ConsumerFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), AppError>> + Send + 'a>>;
+
 #[derive(Clone)]
 pub(crate) struct ConsumerCx {
-    pub(crate) database: crate::backend::store::Database,
     pub(crate) pool: sqlx::SqlitePool,
     pub(crate) db_path: PathBuf,
     pub(crate) consumer_id: String,
@@ -166,14 +170,16 @@ pub(crate) trait DomainEventConsumer: Send + Sync {
     /// `BackfillThenCutoff` until the domain's backfill and cutoff migration
     /// are supplied, rather than degrading it to `last_seq = 0`.
     fn initial_position(&self) -> InitialPosition;
-    fn backfill(&self, _cx: &ConsumerCx) -> Result<(), AppError> {
-        Err(AppError::Conflict(format!(
-            "consumer {} requires a backfill-and-cutoff registration",
-            self.id()
-        )))
+    fn backfill<'a>(&'a self, _cx: &'a ConsumerCx) -> ConsumerFuture<'a> {
+        Box::pin(async move {
+            Err(AppError::Conflict(format!(
+                "consumer {} requires a backfill-and-cutoff registration",
+                self.id()
+            )))
+        })
     }
     fn interested(&self, event: &DomainEvent) -> bool;
-    fn handle(&self, batch: &[SequencedEvent], cx: &ConsumerCx) -> Result<(), AppError>;
+    fn handle<'a>(&'a self, batch: &'a [SequencedEvent], cx: &'a ConsumerCx) -> ConsumerFuture<'a>;
 }
 
 #[cfg(test)]

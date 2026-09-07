@@ -1,4 +1,5 @@
 use super::conversation_cards::ConversationCard;
+use super::error::ProjectionError;
 use crate::backend::dto::{
     ConversationCardRenderer, ConversationContentNode, ConversationContentNodeLocator,
 };
@@ -106,9 +107,9 @@ pub(crate) fn project_conversation_content_nodes<F>(
     question_turns: &[ConversationQuestionTurn],
     parts: &[ConversationPart],
     mut candidates_for_part: F,
-) -> Result<Vec<ConversationContentNode>, String>
+) -> Result<Vec<ConversationContentNode>, ProjectionError>
 where
-    F: FnMut(&ConversationPart) -> Result<Vec<ConversationContentNodeCandidate>, String>,
+    F: FnMut(&ConversationPart) -> Result<Vec<ConversationContentNodeCandidate>, ProjectionError>,
 {
     let turn_orders = question_turns
         .iter()

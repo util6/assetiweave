@@ -4,7 +4,6 @@ import {
   DEFAULT_SKILL_EXCLUDE_GLOBS,
   DEFAULT_SKILL_INCLUDE_GLOBS,
   deriveSourceName,
-  validateSourceImportForm,
 } from "./sourceImport";
 
 describe("source import helpers", () => {
@@ -54,25 +53,11 @@ describe("source import helpers", () => {
     });
   });
 
-  it("reports missing path and invalid priority before submit", () => {
-    expect(
-      validateSourceImportForm({
-        enabled: true,
-        excludeGlobsText: "",
-        includeGlobsText: "",
-        name: "",
-        priority: "1.5",
-        rootPath: "",
-      }),
-    ).toEqual({
-      priority: "invalid",
-      rootPath: "required",
-    });
-  });
-
   it("derives readable names across common path formats", () => {
     expect(deriveSourceName("~/code/skills/")).toBe("skills");
-    expect(deriveSourceName("/Users/util6/code-space/util6-agents")).toBe("util6-agents");
+    expect(deriveSourceName("/Users/util6/code-space/util6-agents")).toBe(
+      "util6-agents",
+    );
     expect(deriveSourceName("C:\\Users\\util6\\skills")).toBe("skills");
   });
 });

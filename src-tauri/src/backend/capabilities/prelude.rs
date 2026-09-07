@@ -17,10 +17,6 @@ pub(super) use crate::backend::{
         DeploymentState, DeploymentStrategy, ProfileSafety, RuleSet, Source, SourceKind,
         SourceOrigin, SourceScannerKind, TargetProfile,
     },
-    operation_log::{
-        asset_log_fields, log_error, log_info, log_warn, profile_log_fields, source_log_fields,
-        LogField,
-    },
     path_utils::{
         default_skill_backup_root_for_tenant, display_path, display_path_or_original, expand_path,
         find_git_root, git_browser_url, git_repository_for_path, normalize_path_for_storage,

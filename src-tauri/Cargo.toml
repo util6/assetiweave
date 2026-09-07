@@ -17,14 +17,20 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 agent-client-protocol = { version = "=2.0.0", default-features = false }
+anyhow = "=1.0.104"
 arc-swap = "1.7"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+config = { version = "=0.15.25", default-features = false }
+camino = { version = "=1.2.5", features = ["serde1"] }
+directories = "=6.0.0"
 dirs = "6"
+
 globset = "0.4"
 libc = "0.2"
 rusqlite = { version = "0.37", features = ["bundled"] }
 regex = "1"
+reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json", "rustls", "gzip"] }
 schemars = "1.2.1"
 semver = "1"
 signal-hook = "0.3"
@@ -40,15 +46,20 @@ tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2.10.0"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
-tokio-util = { version = "0.7", features = ["compat"] }
-ureq = { version = "2", features = ["json"] }
+tokio-util = { version = "0.7", features = ["compat", "rt"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+tracing-appender = "=0.2.5"
 url = "2"
 tar = "0.4"
 thiserror = "2"
 flate2 = "1"
 bzip2 = "0.6"
 uuid = { version = "1", features = ["v4", "serde"] }
+validator = { version = "=0.21.0", features = ["derive"] }
 walkdir = "2"
+process-wrap = { version = "=10.0.0", features = ["tokio1"] }
+which = "=8.0.6"
 zip = { version = "4", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

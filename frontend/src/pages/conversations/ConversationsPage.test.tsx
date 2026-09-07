@@ -1,6 +1,12 @@
 /* @vitest-environment jsdom */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { Profiler, useState, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,7 +27,7 @@ import { DebouncedToolbarSearch } from "../../components/common/DataToolbar";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Translator } from "../../i18n/I18nProvider";
 import { messages, type TranslationParams } from "../../i18n/messages";
-import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/AppSettingsProvider";
+import { DEFAULT_CONVERSATION_CONTENT_CARD_COLORS } from "../../store/settings/settingsSchema";
 import * as conversationCommandProjectionService from "../../services/conversationCommandProjection";
 import type {
   AppShortcut,
@@ -64,7 +70,11 @@ type TestConversationContentCardsProps = Omit<
   nodes?: ComponentProps<typeof ProductionConversationContentCards>["nodes"];
 };
 
-function ConversationContentCards({ blocks = [], nodes, ...props }: TestConversationContentCardsProps) {
+function ConversationContentCards({
+  blocks = [],
+  nodes,
+  ...props
+}: TestConversationContentCardsProps) {
   return (
     <ProductionConversationContentCards
       {...props}
@@ -152,8 +162,8 @@ describe("MarkdownContent", () => {
 
     expect(html.match(/data-conversation-diff="unified"/g)).toHaveLength(2);
     expect(html).toContain('data-diff-file="frontend/src/App.tsx"');
-    expect(html).toContain('diff-code-delete');
-    expect(html).toContain('diff-code-insert');
+    expect(html).toContain("diff-code-delete");
+    expect(html).toContain("diff-code-insert");
     expect(html).toContain("OldView");
     expect(html).toContain("NewView");
     expect(html).not.toContain("<code>diff --git");
@@ -204,7 +214,9 @@ describe("MarkdownContent", () => {
     expect(html).toContain("管理费率");
     expect(html).toContain("1.20%（前端）");
     expect(html).toContain("沪深300指数收益率*95%+活期存款利率（税后）*5%");
-    expect(html).toContain('href="http://help.1234567.com.cn/question_795.html"');
+    expect(html).toContain(
+      'href="http://help.1234567.com.cn/question_795.html"',
+    );
     expect(html).toContain("投资目标");
     expect(html).toContain("<li>内地依法发行上市的股票</li>");
     expect(html).not.toContain("\\n");
@@ -295,10 +307,18 @@ describe("MarkdownContent", () => {
       parts: [],
     };
 
-    expect(preferredConversationQuestionId([emptyImportedQuestion, questionDetail], null))
-      .toBe(questionDetail.question.id);
-    expect(preferredConversationQuestionId([emptyImportedQuestion, questionDetail], emptyImportedQuestion.question.id))
-      .toBe(questionDetail.question.id);
+    expect(
+      preferredConversationQuestionId(
+        [emptyImportedQuestion, questionDetail],
+        null,
+      ),
+    ).toBe(questionDetail.question.id);
+    expect(
+      preferredConversationQuestionId(
+        [emptyImportedQuestion, questionDetail],
+        emptyImportedQuestion.question.id,
+      ),
+    ).toBe(questionDetail.question.id);
   });
 
   it("lets users choose the inline question export output root", async () => {
@@ -345,7 +365,9 @@ describe("MarkdownContent", () => {
       },
     ]);
 
-    expect(groups.map((group) => [group.app.id, group.sessions.length])).toEqual([
+    expect(
+      groups.map((group) => [group.app.id, group.sessions.length]),
+    ).toEqual([
       ["codex", 1],
       ["opencode", 1],
       ["claude-code", 0],
@@ -379,7 +401,12 @@ describe("MarkdownContent", () => {
       },
     ]);
 
-    expect(groups[0].projectGroups.map((group) => [group.projectPath, group.sessions.length])).toEqual([
+    expect(
+      groups[0].projectGroups.map((group) => [
+        group.projectPath,
+        group.sessions.length,
+      ]),
+    ).toEqual([
       ["/Users/util6/code-space/assetiweave", 2],
       [null, 1],
     ]);
@@ -395,14 +422,18 @@ describe("MarkdownContent", () => {
       question_count: 1,
       turn_count: 1,
     }));
-    const listSessions = vi.fn(async ({ limit = 100, offset = 0 }) => allSessions.slice(offset, offset + limit));
+    const listSessions = vi.fn(async ({ limit = 100, offset = 0 }) =>
+      allSessions.slice(offset, offset + limit),
+    );
 
     const sessions = await loadAllConversationSessionPages(listSessions, null);
 
     expect(sessions).toHaveLength(153);
     expect(sessions[sessions.length - 1]?.id).toBe("session-153");
     expect(listSessions).toHaveBeenCalledTimes(2);
-    expect(listSessions.mock.calls.map(([params]) => params.offset)).toEqual([0, 100]);
+    expect(listSessions.mock.calls.map(([params]) => params.offset)).toEqual([
+      0, 100,
+    ]);
   });
 
   it("uses shared sticky split controls for session browsing", () => {
@@ -431,15 +462,19 @@ describe("MarkdownContent", () => {
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");
-    expect(html).toContain("min-h-[620px]");
+    expect(html).not.toContain("min-h-[620px]");
+    expect(html).toContain("min-h-0 flex-1");
   });
 
   it("shows the session summary as separate chips", () => {
-    vi.stubGlobal("ResizeObserver", class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
 
     render(
       <AppSessionBrowser
@@ -466,7 +501,9 @@ describe("MarkdownContent", () => {
     expect(hashId.className).toContain("font-mono");
     expect(screen.getByText("1 个问题").className).toContain("rounded-xl");
     expect(screen.getByText("2 个 Turn").className).toContain("rounded-xl");
-    expect(hashId.parentElement?.getAttribute("aria-label")).toBe("1 个问题 · 2 个 Turn");
+    expect(hashId.parentElement?.getAttribute("aria-label")).toBe(
+      "1 个问题 · 2 个 Turn",
+    );
     expect(screen.queryByText(/Hash ID/)).toBeNull();
     expect(screen.queryByText(/abcdef123/)).toBeNull();
   });
@@ -492,7 +529,9 @@ describe("MarkdownContent", () => {
 
     render(
       <ConversationContentSearchResults
-        appMetaById={new Map([["codex", { accentColor: "#10b981", name: "Codex" }]])}
+        appMetaById={
+          new Map([["codex", { accentColor: "#10b981", name: "Codex" }]])
+        }
         contentCardColors={DEFAULT_CONVERSATION_CONTENT_CARD_COLORS}
         includeQuestions={false}
         loading={false}
@@ -599,11 +638,14 @@ describe("MarkdownContent", () => {
   });
 
   it("opens sessions only from the explicit action so card text can be selected", () => {
-    vi.stubGlobal("ResizeObserver", class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
     const onSessionOpen = vi.fn();
 
     render(
@@ -633,18 +675,25 @@ describe("MarkdownContent", () => {
 
     expect(onSessionOpen).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "打开 Session Conversation fixture" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "打开 Session Conversation fixture" }),
+    );
 
     expect(onSessionOpen).toHaveBeenCalledTimes(1);
-    expect(onSessionOpen).toHaveBeenCalledWith("conversation-session-abcdef1234567890abcdef1234567890");
+    expect(onSessionOpen).toHaveBeenCalledWith(
+      "conversation-session-abcdef1234567890abcdef1234567890",
+    );
   });
 
   it("does not re-render the session browser for unrelated parent search updates", () => {
-    vi.stubGlobal("ResizeObserver", class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
     const groups = groupConversationSessionsByApp(adapters, [
       {
         ...sessionDetail.session,
@@ -688,7 +737,9 @@ describe("MarkdownContent", () => {
 
     translateCallCount = 0;
 
-    fireEvent.click(screen.getByRole("button", { name: "Update search draft" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Update search draft" }),
+    );
 
     expect(translateCallCount).toBe(0);
   });
@@ -700,9 +751,12 @@ describe("MarkdownContent", () => {
       let renderCount = 0;
 
       render(
-        <Profiler id="content-search" onRender={() => {
-          renderCount += 1;
-        }}>
+        <Profiler
+          id="content-search"
+          onRender={() => {
+            renderCount += 1;
+          }}
+        >
           <DebouncedToolbarSearch
             commitDelayMs={220}
             onChange={onChange}
@@ -712,7 +766,9 @@ describe("MarkdownContent", () => {
         </Profiler>,
       );
 
-      const searchInput = screen.getByPlaceholderText("Search content") as HTMLInputElement;
+      const searchInput = screen.getByPlaceholderText(
+        "Search content",
+      ) as HTMLInputElement;
       renderCount = 0;
 
       fireEvent.compositionStart(searchInput);
@@ -744,7 +800,11 @@ describe("MarkdownContent", () => {
   it("splits commands and execution results into independently filterable cards", () => {
     const blocks = buildConversationContentBlocks(questionDetail.parts);
 
-    expect(blocks.map((block) => block.type)).toEqual(["answer", "command", "result"]);
+    expect(blocks.map((block) => block.type)).toEqual([
+      "answer",
+      "command",
+      "result",
+    ]);
 
     const html = renderToStaticMarkup(
       <ConversationContentCards
@@ -779,7 +839,9 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    expect(commandOnlyHtml).toContain("assetiweave-cli conversation sync --dry-run");
+    expect(commandOnlyHtml).toContain(
+      "assetiweave-cli conversation sync --dry-run",
+    );
     expect(commandOnlyHtml).not.toContain("tests passed");
     expect(commandOnlyHtml).not.toContain("completed");
     expect(commandOnlyHtml).toContain("退出码 0");
@@ -809,7 +871,9 @@ describe("MarkdownContent", () => {
     fireEvent.click(screen.getByRole("button", { name: "复制命令执行" }));
 
     await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith("assetiweave-cli conversation sync --dry-run"),
+      expect(writeText).toHaveBeenCalledWith(
+        "assetiweave-cli conversation sync --dry-run",
+      ),
     );
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "已复制" })).toBeTruthy();
@@ -869,7 +933,8 @@ describe("MarkdownContent", () => {
   });
 
   it("shows the derived turn fragment on the user question card", () => {
-    const turnId = "conversation-turn-abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+    const turnId =
+      "conversation-turn-abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
     const question = {
       ...questionDetail,
       turns: [{ ...questionDetail.turns[0], id: turnId }],
@@ -898,27 +963,33 @@ describe("MarkdownContent", () => {
     ["command", "part-2-node-0"],
     ["code", "part-3-node-0"],
     ["result", "part-2-result-node-0"],
-  ] as const)("highlights the exact %s card for Memory evidence navigation", (_cardType, blockId) => {
-    render(
-      <QuestionPreview
-        activeSearchTarget={{
-          blockId,
-          cardType: _cardType,
-          questionId: richQuestionDetail.question.id,
-          sessionId: sessionDetail.session.id,
-        }}
-        onExport={async () => undefined}
-        onPickOutputRoot={async () => null}
-        outputRoot="/tmp/conversation-export"
-        question={richQuestionDetail}
-        session={{ ...sessionDetail, questions: [richQuestionDetail] }}
-        setOutputRoot={vi.fn()}
-        t={t}
-      />,
-    );
+  ] as const)(
+    "highlights the exact %s card for Memory evidence navigation",
+    (_cardType, blockId) => {
+      render(
+        <QuestionPreview
+          activeSearchTarget={{
+            blockId,
+            cardType: _cardType,
+            questionId: richQuestionDetail.question.id,
+            sessionId: sessionDetail.session.id,
+          }}
+          onExport={async () => undefined}
+          onPickOutputRoot={async () => null}
+          outputRoot="/tmp/conversation-export"
+          question={richQuestionDetail}
+          session={{ ...sessionDetail, questions: [richQuestionDetail] }}
+          setOutputRoot={vi.fn()}
+          t={t}
+        />,
+      );
 
-    expect(document.querySelector(`[data-conversation-card-id="${blockId}"]`)?.className).toContain("ring-2");
-  });
+      expect(
+        document.querySelector(`[data-conversation-card-id="${blockId}"]`)
+          ?.className,
+      ).toContain("ring-2");
+    },
+  );
 
   it("preserves and restores line breaks in command result previews", () => {
     const html = renderToStaticMarkup(
@@ -934,7 +1005,7 @@ describe("MarkdownContent", () => {
               "Output:",
               "./agent-docs/feature-plans/runtime-extension-refactor/00-overview.md:69:- App 快捷入口支持真实应用图标",
               "./cli/internal/errlint/legacy_exit_test.go:23: got := summarizeBySymbol(violations)",
-              "./src-tauri/src/path_utils.rs:166: &[\"symbolic-ref\", \"--short\"]",
+              './src-tauri/src/path_utils.rs:166: &["symbolic-ref", "--short"]',
             ].join("\n"),
             type: "result",
           },
@@ -952,7 +1023,9 @@ describe("MarkdownContent", () => {
 
     expect(html).toContain("<pre");
     expect(html).toContain("whitespace-pre-wrap");
-    expect(html).toContain("Output:\n./agent-docs/feature-plans/runtime-extension-refactor/00-overview.md:69");
+    expect(html).toContain(
+      "Output:\n./agent-docs/feature-plans/runtime-extension-refactor/00-overview.md:69",
+    );
     expect(html).toContain("\n./cli/internal/errlint/legacy_exit_test.go:23");
     expect(html).toContain("\n./src-tauri/src/path_utils.rs:166");
   });
@@ -964,7 +1037,9 @@ describe("MarkdownContent", () => {
           {
             id: "long-result",
             role: "tool",
-            text: ["line one", "line two", "line three", "line four"].join("\n"),
+            text: ["line one", "line two", "line three", "line four"].join(
+              "\n",
+            ),
             type: "result",
           },
         ]}
@@ -980,30 +1055,61 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    expect(screen.getByText((_content, element) =>
-      element?.tagName.toLowerCase() === "code" &&
-      element.textContent === "line one\nline two",
-    )).toBeTruthy();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName.toLowerCase() === "code" &&
+          element.textContent === "line one\nline two",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByText(/line three/)).toBeNull();
     expect(screen.getByText("显示 2 / 4 行")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "展开全部" }));
 
-    expect(screen.getByText((_content, element) =>
-      element?.tagName.toLowerCase() === "code" &&
-      element.textContent === "line one\nline two\nline three\nline four",
-    )).toBeTruthy();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName.toLowerCase() === "code" &&
+          element.textContent === "line one\nline two\nline three\nline four",
+      ),
+    ).toBeTruthy();
     expect(screen.getByText("显示 4 / 4 行")).toBeTruthy();
     expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
   });
 
   it("applies the preview collapse to every text-based card renderer", () => {
     const renderers = [
-      { id: "answer-card", renderer: "markdown" as const, type: "answer", prefix: "answer" },
-      { id: "tool-card", renderer: "plain" as const, type: "tool", prefix: "tool" },
-      { id: "command-card", renderer: "command" as const, type: "command", prefix: "command" },
-      { id: "code-card", renderer: "code" as const, type: "code", prefix: "code" },
-      { id: "result-card", renderer: "terminal_output" as const, type: "result", prefix: "result" },
+      {
+        id: "answer-card",
+        renderer: "markdown" as const,
+        type: "answer",
+        prefix: "answer",
+      },
+      {
+        id: "tool-card",
+        renderer: "plain" as const,
+        type: "tool",
+        prefix: "tool",
+      },
+      {
+        id: "command-card",
+        renderer: "command" as const,
+        type: "command",
+        prefix: "command",
+      },
+      {
+        id: "code-card",
+        renderer: "code" as const,
+        type: "code",
+        prefix: "code",
+      },
+      {
+        id: "result-card",
+        renderer: "terminal_output" as const,
+        type: "result",
+        prefix: "result",
+      },
     ];
     render(
       <ConversationContentCards
@@ -1011,12 +1117,23 @@ describe("MarkdownContent", () => {
           id,
           renderer,
           role: "assistant" as const,
-          text: [`${prefix} one`, `${prefix} two`, `${prefix} three`, `${prefix} four`].join("\n"),
+          text: [
+            `${prefix} one`,
+            `${prefix} two`,
+            `${prefix} three`,
+            `${prefix} four`,
+          ].join("\n"),
           type,
         }))}
         resultPreviewLineLimit={2}
         t={t}
-        visibility={{ answer: true, code: true, command: true, result: true, tool: true }}
+        visibility={{
+          answer: true,
+          code: true,
+          command: true,
+          result: true,
+          tool: true,
+        }}
       />,
     );
 
@@ -1026,7 +1143,9 @@ describe("MarkdownContent", () => {
     expandButtons.forEach((button) => fireEvent.click(button));
 
     expect(screen.getAllByText("显示 4 / 4 行")).toHaveLength(renderers.length);
-    expect(screen.getAllByRole("button", { name: "收起" })).toHaveLength(renderers.length);
+    expect(screen.getAllByRole("button", { name: "收起" })).toHaveLength(
+      renderers.length,
+    );
   });
 
   it("renders switches only for card types available in the current content scope", () => {
@@ -1071,25 +1190,27 @@ describe("MarkdownContent", () => {
   });
 
   it("derives filter types from only the cards present in the selected question", () => {
-    const types = conversationContentTypesForQuestions([{
-      ...questionDetail,
-      projected_content_nodes: [
-        createProjectedNode({
-          content: "Answer",
-          nodeType: "codex.answer",
-          partId: "part-answer",
-          semanticRole: "answer",
-          turnId: "turn-1",
-        }),
-        createProjectedNode({
-          content: "/tmp/test-skill/SKILL.md",
-          nodeType: "codex.skill",
-          partId: "part-skill",
-          semanticRole: "skill",
-          turnId: "turn-1",
-        }),
-      ],
-    }]);
+    const types = conversationContentTypesForQuestions([
+      {
+        ...questionDetail,
+        projected_content_nodes: [
+          createProjectedNode({
+            content: "Answer",
+            nodeType: "codex.answer",
+            partId: "part-answer",
+            semanticRole: "answer",
+            turnId: "turn-1",
+          }),
+          createProjectedNode({
+            content: "/tmp/test-skill/SKILL.md",
+            nodeType: "codex.skill",
+            partId: "part-skill",
+            semanticRole: "skill",
+            turnId: "turn-1",
+          }),
+        ],
+      },
+    ]);
 
     expect(types).toEqual(["answer", "codex.skill"]);
     expect(types).not.toContain("command");
@@ -1097,13 +1218,25 @@ describe("MarkdownContent", () => {
   });
 
   it("projects all command Parts for the visible Question through one service boundary", async () => {
-    const projector = vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
-      .mockResolvedValueOnce([{
-        part_id: "part-2",
-        schema_version: 1,
-        projector_version: "shell-projector-v1",
-        nodes: [{ display_order: 0, command: "git status --short", command_label: "status" }],
-      }]);
+    const projector = vi
+      .spyOn(
+        conversationCommandProjectionService,
+        "projectConversationCommandParts",
+      )
+      .mockResolvedValueOnce([
+        {
+          part_id: "part-2",
+          schema_version: 1,
+          projector_version: "shell-projector-v1",
+          nodes: [
+            {
+              display_order: 0,
+              command: "git status --short",
+              command_label: "status",
+            },
+          ],
+        },
+      ]);
     render(
       <QuestionPreview
         adapterVersion="1.0.0"
@@ -1117,23 +1250,31 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText("git status --short")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("git status --short")).toBeTruthy(),
+    );
     expect(projector).toHaveBeenCalledTimes(1);
     expect(projector).toHaveBeenCalledWith({
       adapterId: "codex",
       adapterVersion: "1.0.0",
-      parts: [{
-        partId: "part-2",
-        command: "assetiweave-cli conversation sync --dry-run",
-        commandLabel: undefined,
-      }],
+      parts: [
+        {
+          partId: "part-2",
+          command: "assetiweave-cli conversation sync --dry-run",
+          commandLabel: undefined,
+        },
+      ],
     });
-    expect(document.querySelector('[data-command-label="status"]')).toBeTruthy();
+    expect(
+      document.querySelector('[data-command-label="status"]'),
+    ).toBeTruthy();
   });
 
   it("keeps the complete raw command visible and reports a projector failure", async () => {
-    vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
-      .mockRejectedValueOnce(new Error("projector exited"));
+    vi.spyOn(
+      conversationCommandProjectionService,
+      "projectConversationCommandParts",
+    ).mockRejectedValueOnce(new Error("projector exited"));
     const onCopyError = vi.fn();
     render(
       <QuestionPreview
@@ -1149,20 +1290,26 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    expect(screen.getByText("assetiweave-cli conversation sync --dry-run")).toBeTruthy();
-    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(
-      "命令展示解析失败，已保留原始命令：projector exited",
-    ));
+    expect(
+      screen.getByText("assetiweave-cli conversation sync --dry-run"),
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(onCopyError).toHaveBeenCalledWith(
+        "命令展示解析失败，已保留原始命令：projector exited",
+      ),
+    );
   });
 
   it("reports the message from a structured Tauri projector error", async () => {
-    vi.spyOn(conversationCommandProjectionService, "projectConversationCommandParts")
-      .mockRejectedValueOnce({
-        code: "external_error",
-        message: "An external operation failed.",
-        retryable: true,
-        details: null,
-      });
+    vi.spyOn(
+      conversationCommandProjectionService,
+      "projectConversationCommandParts",
+    ).mockRejectedValueOnce({
+      code: "external_error",
+      message: "An external operation failed.",
+      retryable: true,
+      details: null,
+    });
     const onCopyError = vi.fn();
     render(
       <QuestionPreview
@@ -1178,9 +1325,11 @@ describe("MarkdownContent", () => {
       />,
     );
 
-    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(
-      "命令展示解析失败，已保留原始命令：An external operation failed.",
-    ));
+    await waitFor(() =>
+      expect(onCopyError).toHaveBeenCalledWith(
+        "命令展示解析失败，已保留原始命令：An external operation failed.",
+      ),
+    );
   });
 
   it("renders question checkboxes for batch export selection", () => {
@@ -1204,7 +1353,10 @@ describe("MarkdownContent", () => {
         questions={[questionDetail, richQuestionDetail]}
         selectedQuestionId={richQuestionDetail.question.id}
         selectedQuestionIds={new Set([richQuestionDetail.question.id])}
-        session={{ ...sessionDetail, questions: [questionDetail, richQuestionDetail] }}
+        session={{
+          ...sessionDetail,
+          questions: [questionDetail, richQuestionDetail],
+        }}
         setOutputRoot={vi.fn()}
         t={t}
         visibility={{
@@ -1292,11 +1444,14 @@ describe("MarkdownContent", () => {
   });
 
   it("collapses the question list so the selected question preview can use the full width", () => {
-    vi.stubGlobal("ResizeObserver", class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
 
     render(
       <SessionQuestionWorkspace
@@ -1330,14 +1485,22 @@ describe("MarkdownContent", () => {
     );
 
     expect(screen.getByRole("heading", { name: "问题" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "预览问题 同步流程" })).toBeTruthy();
-    expect(screen.getByRole("scrollbar", { name: "水平浏览分栏" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "预览问题 同步流程" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("scrollbar", { name: "水平浏览分栏" }),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "收起问题列表" }));
 
     expect(screen.queryByRole("heading", { name: "问题" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "预览问题 同步流程" })).toBeNull();
-    expect(screen.queryByRole("scrollbar", { name: "水平浏览分栏" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "预览问题 同步流程" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("scrollbar", { name: "水平浏览分栏" }),
+    ).toBeNull();
     expect(screen.getByRole("button", { name: "展开问题列表" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "展开问题列表" }));
@@ -1432,7 +1595,9 @@ describe("MarkdownContent", () => {
 
     await waitFor(() => {
       expect(onPickOutputRoot).toHaveBeenCalledTimes(1);
-      expect(onOutputRootChange).toHaveBeenCalledWith("/tmp/selected-export-root");
+      expect(onOutputRootChange).toHaveBeenCalledWith(
+        "/tmp/selected-export-root",
+      );
     });
   });
 
@@ -1463,7 +1628,8 @@ describe("MarkdownContent", () => {
         state={{
           phase: "importing",
           sourceLabel: "ChatGPT Web",
-          summary: "本次新增/更新 3 条网页记录、18 条内容，跳过 7 条未变化记录，覆盖 2 个来源。",
+          summary:
+            "本次新增/更新 3 条网页记录、18 条内容，跳过 7 条未变化记录，覆盖 2 个来源。",
         }}
         t={t}
       />,
@@ -1484,7 +1650,8 @@ describe("MarkdownContent", () => {
         state={{
           phase: "completed",
           sourceLabel: "全部来源",
-          summary: "本次新增/更新 3 个 Session、18 条内容，跳过 7 个未变化 Session，覆盖 2 个来源。",
+          summary:
+            "本次新增/更新 3 个 Session、18 条内容，跳过 7 个未变化 Session，覆盖 2 个来源。",
         }}
         t={t}
       />,
@@ -1500,14 +1667,15 @@ describe("MarkdownContent", () => {
 
     render(
       <I18nProvider>
-        <ConversationImportDialog
-          onClose={vi.fn()}
-          recordKind="web"
-        />
+        <ConversationImportDialog onClose={vi.fn()} recordKind="web" />
       </I18nProvider>,
     );
 
-    expect(screen.getByText("需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "需要解析器时可从市场注册（下载并安装）；卸载只停止后续同步并保留插件文件与历史记录。",
+      ),
+    ).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "导入表单" })).toBeNull();
     expect(screen.queryByLabelText("插件 manifest")).toBeNull();
     expect(screen.getByRole("tab", { name: /已接入/ })).toBeTruthy();
@@ -1561,14 +1729,20 @@ function createProjectedNode({
   turnId: string;
 }): ConversationContentNode {
   const resolvedNodeId = nodeId ?? `${partId}-node-0`;
-  const role = semanticRole === "command" || semanticRole === "result" || semanticRole === "tool" ? "tool" : "assistant";
-  const renderer = semanticRole === "command"
-    ? "command"
-    : semanticRole === "result"
-      ? "terminal_output"
-      : semanticRole === "code"
-        ? "code"
-        : "markdown";
+  const role =
+    semanticRole === "command" ||
+    semanticRole === "result" ||
+    semanticRole === "tool"
+      ? "tool"
+      : "assistant";
+  const renderer =
+    semanticRole === "command"
+      ? "command"
+      : semanticRole === "result"
+        ? "terminal_output"
+        : semanticRole === "code"
+          ? "code"
+          : "markdown";
   return {
     node_id: resolvedNodeId,
     locator: {
@@ -1599,11 +1773,14 @@ function createProjectedNode({
   };
 }
 
-const t: Translator = (key, params) => interpolate(messages.zh[key] ?? key, params);
+const t: Translator = (key, params) =>
+  interpolate(messages.zh[key] ?? key, params);
 
 function interpolate(template: string, params?: TranslationParams) {
   if (!params) return template;
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
+    String(params[key] ?? ""),
+  );
 }
 
 function createMockLocalStorage(): Storage {
@@ -1628,27 +1805,33 @@ describe("conversation navigation compatibility", () => {
   it("resolves a legacy type anchor to the stable namespaced card id", () => {
     const namespaced: ConversationSessionDetail = {
       ...sessionDetail,
-      questions: [{
-        ...questionDetail,
-        projected_content_nodes: [createProjectedNode({
-          content: "Visible answer",
-          legacyAnchorIds: ["part-1-claude-code.answer", "part-1-answer"],
-          nodeId: "part-1",
-          nodeType: "claude-code.answer",
-          partId: "part-1",
-          semanticRole: "answer",
-          turnId: "turn-1",
-        })],
-      }],
+      questions: [
+        {
+          ...questionDetail,
+          projected_content_nodes: [
+            createProjectedNode({
+              content: "Visible answer",
+              legacyAnchorIds: ["part-1-claude-code.answer", "part-1-answer"],
+              nodeId: "part-1",
+              nodeType: "claude-code.answer",
+              partId: "part-1",
+              semanticRole: "answer",
+              turnId: "turn-1",
+            }),
+          ],
+        },
+      ],
     };
 
-    expect(resolveConversationNavigationTarget(namespaced, {
-      blockId: "part-1-answer",
-      nonce: "legacy-anchor",
-      questionId: "question-1",
-      recordKind: "session",
-      sessionId: "session-1",
-    })).toMatchObject({
+    expect(
+      resolveConversationNavigationTarget(namespaced, {
+        blockId: "part-1-answer",
+        nonce: "legacy-anchor",
+        questionId: "question-1",
+        recordKind: "session",
+        sessionId: "session-1",
+      }),
+    ).toMatchObject({
       blockFound: true,
       blockId: "part-1",
       cardType: "claude-code.answer",
@@ -1693,7 +1876,9 @@ const questionDetail: ConversationQuestionDetail = {
       part_index: 0,
       role: "assistant",
       kind: "text",
-      text: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join("\n"),
+      text: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join(
+        "\n",
+      ),
       metadata_json: JSON.stringify({
         content_card: { type: "answer", format: "markdown" },
       }),
@@ -1743,7 +1928,9 @@ const questionDetail: ConversationQuestionDetail = {
   ],
   projected_content_nodes: [
     createProjectedNode({
-      content: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join("\n"),
+      content: ["# 同步流程", "", "- 按 Session 导入", "- 按用户问题预览"].join(
+        "\n",
+      ),
       legacyAnchorIds: ["part-1-answer"],
       nodeType: "answer",
       partId: "part-1",
@@ -1841,7 +2028,8 @@ const adapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/codex/conversation-adapter.json",
     executable_path: "~/.assetiweave/conversation-adapters/codex/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
@@ -1855,8 +2043,10 @@ const adapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/opencode/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/opencode/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
     input_kinds: ["sqlite"],
@@ -1869,8 +2059,10 @@ const adapters: ConversationAdapter[] = [
     kind: "external",
     version: "1.0.0",
     enabled: true,
-    manifest_path: "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
-    executable_path: "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
+    manifest_path:
+      "~/.assetiweave/conversation-adapters/claude-code/conversation-adapter.json",
+    executable_path:
+      "~/.assetiweave/conversation-adapters/claude-code/adapter.mjs",
     trust_state: "built_in",
     capabilities: [],
     input_kinds: ["directory"],

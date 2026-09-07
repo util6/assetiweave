@@ -1,6 +1,4 @@
-pub(super) use super::external::{
-    discover_external_adapter_sessions, read_external_adapter_sessions,
-};
+pub(super) use super::external::read_external_adapter_sessions;
 #[cfg(test)]
 pub(super) use super::external::{
     parse_external_adapter_output, parse_external_adapter_output_with_manifest,

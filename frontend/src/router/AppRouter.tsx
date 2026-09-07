@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { RouterProvider } from "@tanstack/react-router";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
 import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
 import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
@@ -6,58 +7,41 @@ import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
 import { useMemoryTasks } from "../app/backgroundTasks/MemoryTaskProvider";
 import { useOptionalTeamTasks } from "../app/backgroundTasks/TeamTaskProvider";
 import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
-import { ConversationsPageSkeleton } from "../components/conversations/ConversationSkeleton";
 import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
-import { AppSkeleton, type SkeletonLayoutName } from "../components/foundation/skeleton";
-import { useCatalogController, type CatalogController } from "../hooks/catalog/useCatalogController";
+import { AppSkeleton } from "../components/foundation/skeleton";
+import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
-import { headerTabLabel, subNavLabel } from "../i18n/navigation";
 import { AppLayout } from "../layouts/app/AppLayout";
-import { UnderConstructionPage } from "../pages/under-construction/UnderConstructionPage";
-import { resolveAppRoute, type AppRouteId } from "./routes";
+import { createAppRouter } from "./createAppRouter";
+import { navigationPath } from "./navigationPath";
 import {
-  loadCatalogPage,
-  loadConversationsPage,
-  loadLogViewerModal,
-  loadManualPage,
-  loadMemoryPage,
-  loadPromptOverviewPage,
-  loadSkillGroupsPage,
-  loadSkillMountsPage,
-  preloadRoute,
-  loadSourcesPage,
-  loadTeamPage,
-  routeRegistry,
-} from "./routeLoaders";
-import {
-  RouteTransitionOverlay,
-  useRouteTransition,
-  type RouteTransitionKind,
-} from "./RouteTransition";
+  WorkspaceContext,
+  type WorkspaceContextValue,
+} from "./WorkspaceContext";
 import type { HeaderTabItem, NavigationModel } from "./types";
-import type { SettingsPanelId } from "../store/settings/AppSettingsProvider";
+import type { SettingsPanelId } from "../store/settings/settingsSchema";
 import type { MemoryNavigationTarget } from "../types/memory";
 import {
   conversationSubNavId,
   createConversationNavigationTarget,
   type ConversationNavigationTarget,
 } from "./navigationTargets";
+import { useAppUiStore } from "../store/ui/appUiStore";
 
-const CatalogPage = lazy(loadCatalogPage);
-const ConversationsPage = lazy(loadConversationsPage);
+const LogViewerModal = lazy(() =>
+  import("../components/logs/LogViewerModal").then((module) => ({
+    default: module.LogViewerModal,
+  })),
+);
 
-const LogViewerModal = lazy(loadLogViewerModal);
-const ManualPage = lazy(loadManualPage);
-const MemoryPage = lazy(loadMemoryPage);
-const TeamPage = lazy(loadTeamPage);
-
-const SkillGroupsPage = lazy(loadSkillGroupsPage);
-const PromptOverviewPage = lazy(loadPromptOverviewPage);
-const SkillMountsPage = lazy(loadSkillMountsPage);
-const SourcesPage = lazy(loadSourcesPage);
+const ManualPage = lazy(() =>
+  import("../manuals/ManualPage").then((module) => ({
+    default: module.ManualPage,
+  })),
+);
 
 export function AppRouter() {
-  const { locale, t } = useI18n();
+  const { t } = useI18n();
   const { tasks: conversationSyncTasks } = useConversationSync();
   const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
@@ -67,22 +51,41 @@ export function AppRouter() {
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
   const runningSkillBackupTaskIds = useRef(new Set<string>());
-  const [activeSubNavId, setActiveSubNavId] = useState(catalog.navigationModel.activeSubNavId);
-  const [logViewerOpen, setLogViewerOpen] = useState(false);
+  const [activeSubNavId, setActiveSubNavId] = useState(
+    catalog.navigationModel.activeSubNavId,
+  );
   const [manualRouteKey, setManualRouteKey] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPanel, setSettingsPanel] = useState<SettingsPanelId>("general.appearance");
-  const [conversationNavigationTarget, setConversationNavigationTarget] = useState<ConversationNavigationTarget | null>(null);
-  const {
-    completeTransition: completeRouteTransition,
-    startTransition: startRouteTransition,
-    transition: routeTransition,
-  } = useRouteTransition();
+  const [conversationNavigationTarget, setConversationNavigationTarget] =
+    useState<ConversationNavigationTarget | null>(null);
+  const logViewerOpen = useAppUiStore((state) => state.logViewerOpen);
+  const setLogViewerOpen = useAppUiStore((state) => state.setLogViewerOpen);
+  const openSettings = useAppUiStore((state) => state.openSettings);
+
+  const initialPath = useMemo(
+    () =>
+      navigationPath(
+        catalog.navigationModel,
+        catalog.navigationModel.activeSubNavId,
+      ),
+    [],
+  );
+  const router = useMemo(() => createAppRouter(initialPath), [initialPath]);
 
   useEffect(() => {
     setActiveSubNavId(catalog.navigationModel.activeSubNavId);
     setManualRouteKey(null);
-  }, [catalog.navigationModel.activeHeaderTabId, catalog.navigationModel.activeSubNavId]);
+    const targetPath = navigationPath(
+      catalog.navigationModel,
+      catalog.navigationModel.activeSubNavId,
+    );
+    if (router.state.location.pathname !== targetPath) {
+      void router.navigate({ to: targetPath });
+    }
+  }, [
+    catalog.navigationModel.activeHeaderTabId,
+    catalog.navigationModel.activeSubNavId,
+    router,
+  ]);
 
   useEffect(() => {
     if (!skillBackupTask) {
@@ -121,7 +124,10 @@ export function AppRouter() {
           tone: "error",
           messageKey: "backup.notification.failed",
           messageParams: {
-            message: skillBackupTask.error?.message ?? skillBackupTask.errors[0]?.error.message ?? "Unknown error",
+            message:
+              skillBackupTask.error?.message ??
+              skillBackupTask.errors[0]?.error.message ??
+              "Unknown error",
           },
         });
         return;
@@ -135,43 +141,43 @@ export function AppRouter() {
     })();
   }, [skillBackupTask?.id, skillBackupTask?.status]);
 
-  const routeId = resolveAppRoute(catalog.navigationModel, activeSubNavId);
-  const activeHeaderTab = catalog.navigationModel.headerTabs.find((tab) => tab.id === catalog.navigationModel.activeHeaderTabId);
-  const activeSubNavItem = catalog.navigationModel.subNavItems[catalog.navigationModel.activeHeaderTabId]?.find(
-    (item) => item.id === activeSubNavId,
-  );
-  const activeHeaderLabel = activeHeaderTab ? headerTabLabel(activeHeaderTab, t, locale) : "";
-  const activeSubNavLabel = activeSubNavItem ? subNavLabel(activeSubNavItem, t, locale) : "";
-  const underConstructionFeatureLabel = [activeHeaderLabel, activeSubNavLabel].filter(Boolean).join(" / ") || undefined;
-  const activeRouteKey = activeSubNavItem?.routeKey ?? `${catalog.navigationModel.activeHeaderTabId}.${activeSubNavId}`;
+  const activeSubNavItem = catalog.navigationModel.subNavItems[
+    catalog.navigationModel.activeHeaderTabId
+  ]?.find((item) => item.id === activeSubNavId);
+  const activeRouteKey =
+    activeSubNavItem?.routeKey ??
+    `${catalog.navigationModel.activeHeaderTabId}.${activeSubNavId}`;
   const tenantRouteKey = catalog.activeTenant?.id ?? "tenant-loading";
 
   function handleHeaderTabSelect(tab: HeaderTabItem) {
-    const nextSubNavId = catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)?.id ?? "overview";
-    if (tab.id === catalog.navigationModel.activeHeaderTabId && nextSubNavId === activeSubNavId) {
+    const nextSubNavId =
+      catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)
+        ?.id ?? "overview";
+    if (
+      tab.id === catalog.navigationModel.activeHeaderTabId &&
+      nextSubNavId === activeSubNavId
+    ) {
       return;
     }
-    startNavigationTransition(tab.id, nextSubNavId);
-    setActiveSubNavId(nextSubNavId);
-    setManualRouteKey(null);
-    setConversationNavigationTarget(null);
-    persistNavigationModel({
+    const nextModel: NavigationModel = {
       ...catalog.navigationModel,
       activeHeaderTabId: tab.id,
       activeSubNavId: nextSubNavId,
-    });
-  }
-
-  function openSettings(panel: SettingsPanelId = "general.appearance") {
-    setSettingsPanel(panel);
-    setSettingsOpen(true);
+    };
+    const targetPath = navigationPath(nextModel, nextSubNavId);
+    void router.navigate({ to: targetPath });
+    setActiveSubNavId(nextSubNavId);
+    setManualRouteKey(null);
+    setConversationNavigationTarget(null);
+    persistNavigationModel(nextModel);
   }
 
   function handleSubNavSelect(id: string) {
     if (id === activeSubNavId) {
       return;
     }
-    startNavigationTransition(catalog.navigationModel.activeHeaderTabId, id);
+    const targetPath = navigationPath(catalog.navigationModel, id);
+    void router.navigate({ to: targetPath });
     setManualRouteKey(null);
     setConversationNavigationTarget(null);
     setActiveSubNavId(id);
@@ -183,13 +189,20 @@ export function AppRouter() {
 
   function handleMemoryNavigation(memoryTarget: MemoryNavigationTarget) {
     const target = createConversationNavigationTarget({
-      blockId: memoryTarget.block_id ?? memoryTarget.turn_id ?? memoryTarget.session_id,
+      blockId:
+        memoryTarget.block_id ??
+        memoryTarget.turn_id ??
+        memoryTarget.session_id,
       questionId: memoryTarget.question_id ?? undefined,
       recordKind: memoryTarget.record_kind,
       sessionId: memoryTarget.session_id,
     });
     const nextSubNavId = conversationSubNavId(target.recordKind);
-    startNavigationTransition("conversations", nextSubNavId);
+    const targetPath =
+      target.recordKind === "web"
+        ? "/conversations/web-records"
+        : "/conversations/sessions";
+    void router.navigate({ to: targetPath });
     setConversationNavigationTarget(target);
     setManualRouteKey(null);
     setActiveSubNavId(nextSubNavId);
@@ -205,19 +218,19 @@ export function AppRouter() {
   }
 
   function handleHeaderTabPrefetch(tab: HeaderTabItem) {
-    const nextSubNavId = catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)?.id ?? "overview";
-    preloadRoute(resolveNavigationRoute(catalog.navigationModel, tab.id, nextSubNavId));
+    const nextSubNavId =
+      catalog.navigationModel.subNavItems[tab.id]?.find((item) => item.enabled)
+        ?.id ?? "overview";
+    const path = navigationPath(
+      { ...catalog.navigationModel, activeHeaderTabId: tab.id },
+      nextSubNavId,
+    );
+    void router.preloadRoute({ to: path });
   }
 
   function handleSubNavPrefetch(id: string) {
-    preloadRoute(resolveNavigationRoute(catalog.navigationModel, catalog.navigationModel.activeHeaderTabId, id));
-  }
-
-  function startNavigationTransition(headerTabId: string, subNavId: string) {
-    const kind = routeTransitionKind(headerTabId, subNavId, catalog.navigationModel);
-    if (kind) {
-      startRouteTransition(kind, t("common.loading"));
-    }
+    const path = navigationPath(catalog.navigationModel, id);
+    void router.preloadRoute({ to: path });
   }
 
   function persistNavigationModel(nextNavigationModel: NavigationModel) {
@@ -228,27 +241,36 @@ export function AppRouter() {
     void catalog.saveNavigationModel(nextNavigationModel);
   }
 
+  const workspaceContextValue: WorkspaceContextValue = {
+    activeSubNavId,
+    catalog,
+    conversationNavigationTarget,
+    handleMemoryNavigation,
+    onManualOpen: openCurrentManual,
+    onOpenSettings: (panel?: SettingsPanelId) =>
+      openSettings(panel ?? "general.appearance"),
+    setConversationNavigationTarget,
+  };
+
   return (
     <>
       <AppLayout
         activeSubNavId={activeSubNavId}
         appShortcuts={catalog.appShortcuts}
-        logViewerOpen={logViewerOpen}
         navigationModel={catalog.navigationModel}
         notification={catalog.notification}
-        onAppShortcutsChange={(shortcuts) => void catalog.saveAppShortcuts(shortcuts)}
+        onAppShortcutsChange={(shortcuts) =>
+          void catalog.saveAppShortcuts(shortcuts)
+        }
         onDismissNotification={catalog.dismissNotification}
         onHeaderTabSelect={handleHeaderTabSelect}
         onHeaderTabPrefetch={handleHeaderTabPrefetch}
-        onLogViewerOpen={() => setLogViewerOpen(true)}
-        onNavigationModelChange={(navigationModel) => void catalog.saveNavigationModel(navigationModel)}
+        onNavigationModelChange={(navigationModel) =>
+          void catalog.saveNavigationModel(navigationModel)
+        }
         onSkillBackupLibraryChange={() => catalog.refreshOverview()}
-        onSettingsClose={() => setSettingsOpen(false)}
-        onSettingsOpen={() => openSettings()}
         onSubNavSelect={handleSubNavSelect}
         onSubNavPrefetch={handleSubNavPrefetch}
-        settingsPanel={settingsPanel}
-        settingsOpen={settingsOpen}
         tenantControls={{
           activeTenant: catalog.activeTenant,
           busy: catalog.tenantBusy,
@@ -261,269 +283,87 @@ export function AppRouter() {
       >
         <div className="contents" key={tenantRouteKey}>
           <div className="relative min-h-0 flex-1">
-            <RouteTransitionOverlay transition={routeTransition} />
             {manualRouteKey ? (
-              <Suspense fallback={<RouteLoadingState layout="list" />}>
-                <ManualPage routeKey={manualRouteKey} onBack={() => setManualRouteKey(null)} />
+              <Suspense
+                fallback={
+                  <AppSkeleton label={t("common.loading")} layout="list" />
+                }
+              >
+                <ManualPage
+                  routeKey={manualRouteKey}
+                  onBack={() => setManualRouteKey(null)}
+                />
               </Suspense>
             ) : (
-              routeRenderers[routeId]({
-                activeRouteKey,
-                activeSubNavId,
-                appShortcuts: catalog.appShortcuts,
-                catalog,
-                conversationNavigationTarget,
-                completeRouteTransition,
-                handleMemoryNavigation,
-                loadingLabel: t("common.loading"),
-                onManualOpen: openCurrentManual,
-                onOpenSettings: openSettings,
-                routeTransitionId: routeTransition?.id,
-                setConversationNavigationTarget,
-                underConstructionFeatureLabel,
-              })
+              <WorkspaceContext.Provider value={workspaceContextValue}>
+                <RouterProvider router={router} />
+              </WorkspaceContext.Provider>
             )}
           </div>
         </div>
       </AppLayout>
       {logViewerOpen ? (
         <Suspense fallback={null}>
-          <LogViewerModal open={logViewerOpen} onClose={() => setLogViewerOpen(false)} />
+          <LogViewerModal
+            open={logViewerOpen}
+            onClose={() => setLogViewerOpen(false)}
+          />
         </Suspense>
       ) : null}
       <AppUpdateDialog />
       <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
-        {teamTasks.filter((task) => ["Pending", "Running", "Cancelling"].includes(task.state)).map((task) => (
-          <div
-            className="rounded-lg border border-primary/30 bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
-            key={task.task_id}
-          >
-            <div className="font-medium">{t("team.task.global")}</div>
-            <div className="mt-1 text-on-surface-variant">
-              {task.progress ? `${task.progress.current}/${task.progress.total ?? "?"}` : t("team.task.active")}
-              {task.progress?.note ? ` · ${task.progress.note}` : ""}
+        {teamTasks
+          .filter((task) =>
+            ["Pending", "Running", "Cancelling"].includes(task.state),
+          )
+          .map((task) => (
+            <div
+              className="rounded-lg border border-primary/30 bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
+              key={task.task_id}
+            >
+              <div className="font-medium">{t("team.task.global")}</div>
+              <div className="mt-1 text-on-surface-variant">
+                {task.progress
+                  ? `${task.progress.current}/${task.progress.total ?? "?"}`
+                  : t("team.task.active")}
+                {task.progress?.note ? ` · ${task.progress.note}` : ""}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
         {searchIndexTask?.status === "running" ? (
           <div className="aurora-task-indicator rounded-xl border px-4 py-3 text-body-sm text-on-surface">
             {t("conversation.searchIndex.building")}
           </div>
         ) : null}
         {conversationSyncTasks.map((task) => (
-          <ConversationBackgroundTaskIndicator key={task.id} task={task} t={t} />
-        ))}
-        {memoryTasks.filter((task) => ["pending", "running", "cancelling"].includes(task.status)).map((task) => (
-          <div
-            className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
+          <ConversationBackgroundTaskIndicator
             key={task.id}
-          >
-            <div className="font-medium">{t("memory.task.running")}</div>
-            <div className="mt-1 text-on-surface-variant">
-              {task.progress?.note ?? task.kind} · {task.progress?.current ?? 0}/{task.progress?.total ?? "?"}
-            </div>
-          </div>
+            task={task}
+            t={t}
+          />
         ))}
+        {memoryTasks
+          .filter((task) =>
+            ["pending", "running", "cancelling"].includes(task.status),
+          )
+          .map((task) => (
+            <div
+              className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
+              key={task.id}
+            >
+              <div className="font-medium">{t("memory.task.running")}</div>
+              <div className="mt-1 text-on-surface-variant">
+                {task.progress?.note ?? task.kind} ·{" "}
+                {task.progress?.current ?? 0}/{task.progress?.total ?? "?"}
+              </div>
+            </div>
+          ))}
         <SkillBackupBackgroundTaskIndicator task={skillBackupTask} t={t} />
       </div>
     </>
   );
 }
 
-function RouteLoadingState({ layout }: { layout: SkeletonLayoutName }) {
-  const { t } = useI18n();
-
-  return <AppSkeleton label={t("common.loading")} layout={layout} />;
-}
-
-interface RouteRenderContext {
-  activeRouteKey: string;
-  activeSubNavId: string;
-  appShortcuts: CatalogController["appShortcuts"];
-  catalog: CatalogController;
-  conversationNavigationTarget: ConversationNavigationTarget | null;
-  completeRouteTransition: (id?: number) => void;
-  handleMemoryNavigation: (target: MemoryNavigationTarget) => void;
-  loadingLabel: string;
-  onManualOpen: () => void;
-  onOpenSettings: (panel?: SettingsPanelId) => void;
-  routeTransitionId?: number;
-  setConversationNavigationTarget: (
-    updater: (current: ConversationNavigationTarget | null) => ConversationNavigationTarget | null,
-  ) => void;
-  underConstructionFeatureLabel?: string;
-}
-
-const routeRenderers: Record<AppRouteId, (context: RouteRenderContext) => ReactNode> = {
-  catalog: (context) => (
-    <RouteSuspense layout={routeRegistry.catalog.skeleton}>
-      <CatalogPage
-        catalog={context.catalog}
-        onManualOpen={context.onManualOpen}
-        onOpenSettings={() => context.onOpenSettings("general.appearance")}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-      />
-    </RouteSuspense>
-  ),
-  conversations: (context) => renderConversationRoute(context, "session"),
-  "web-records": (context) => renderConversationRoute(context, "web"),
-  "skill-mounts": (context) => (
-    <RouteSuspense layout={routeRegistry["skill-mounts"].skeleton}>
-      <SkillMountsPage
-        appShortcuts={context.appShortcuts}
-        assetMountStatuses={context.catalog.assetMountStatuses}
-        assets={context.catalog.assets}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-        onCatalogRefresh={context.catalog.refreshOverview}
-        onManualOpen={context.onManualOpen}
-        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
-        onOpenSettings={() => context.onOpenSettings("general.storage")}
-        onRefreshMountStatus={context.catalog.refreshMountStatus}
-        onRefreshProfiles={context.catalog.refreshProfiles}
-        onRevealPath={(path) => void context.catalog.revealPath(path)}
-        onSaveAppShortcuts={context.catalog.saveAppShortcuts}
-        onSetSkillMountProfiles={context.catalog.setMountProfiles}
-        onToggleMount={context.catalog.toggleMountProfile}
-        profiles={context.catalog.profiles}
-        refreshingMountStatus={context.catalog.refreshingMountStatus}
-        sources={context.catalog.sources}
-      />
-    </RouteSuspense>
-  ),
-  "skill-groups": (context) => (
-    <RouteSuspense layout={routeRegistry["skill-groups"].skeleton}>
-      <SkillGroupsPage
-        appShortcuts={context.appShortcuts}
-        assetMountStatuses={context.catalog.assetMountStatuses}
-        assets={context.catalog.assets}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-        expandedAssetIds={context.catalog.expandedIds}
-        onManualOpen={context.onManualOpen}
-        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
-        onOpenSettings={() => context.onOpenSettings("general.storage")}
-        onApplyGroupExclusiveMount={context.catalog.applyGroupExclusiveMount}
-        onPreviewGroupExclusiveMount={context.catalog.previewGroupExclusiveMount}
-        onRefreshMountStatus={context.catalog.refreshMountStatus}
-        onRevealPath={(path) => void context.catalog.revealPath(path)}
-        onSetGroupMountProfile={context.catalog.setGroupMountProfile}
-        onSetSkillMountProfiles={context.catalog.setMountProfiles}
-        onToggleAsset={context.catalog.toggleAsset}
-        onToggleMount={context.catalog.toggleMountProfile}
-        profiles={context.catalog.profiles}
-        refreshingMountStatus={context.catalog.refreshingMountStatus}
-        sources={context.catalog.sources}
-      />
-    </RouteSuspense>
-  ),
-  "prompts-overview": (context) => (
-    <RouteSuspense layout={routeRegistry["prompts-overview"].skeleton}>
-      <PromptOverviewPage
-        onManualOpen={context.onManualOpen}
-        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-      />
-    </RouteSuspense>
-  ),
-  sources: (context) => (
-    <RouteSuspense layout={routeRegistry.sources.skeleton}>
-      <SourcesPage
-        appShortcuts={context.appShortcuts}
-        assetMountStatuses={context.catalog.assetMountStatuses}
-        assets={context.catalog.assets}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-        expandedAssetIds={context.catalog.expandedIds}
-        onAssetReveal={(path) => void context.catalog.revealPath(path)}
-        onApplyAssetUpdate={context.catalog.applyAssetUpdate}
-        onCatalogRefresh={context.catalog.refreshOverview}
-        onClearDeploymentPlan={context.catalog.clearDeploymentPlan}
-        onManualOpen={context.onManualOpen}
-        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
-        onOpenSettings={() => context.onOpenSettings("workspace.menu")}
-        onRefreshMountStatus={context.catalog.refreshMountStatus}
-        onRemoveAsset={context.catalog.removeAsset}
-        onSetSourceMountProfile={context.catalog.setMountProfiles}
-        onToggleAsset={context.catalog.toggleAsset}
-        onToggleMount={context.catalog.toggleMountProfile}
-        profiles={context.catalog.profiles}
-        refreshingMountStatus={context.catalog.refreshingMountStatus}
-      />
-    </RouteSuspense>
-  ),
-  memory: (context) => (
-    <Suspense fallback={<RouteLoadingState layout={memorySkeletonLayout(context.activeSubNavId)} />}>
-      <MemoryPage activeSubNavId={context.activeSubNavId} onNavigate={context.handleMemoryNavigation} />
-    </Suspense>
-  ),
-  team: () => (
-    <Suspense fallback={<RouteLoadingState layout="columns" />}>
-      <TeamPage />
-    </Suspense>
-  ),
-  "under-construction": (context) => (
-    <UnderConstructionPage
-      featureLabel={context.underConstructionFeatureLabel}
-      onManualOpen={context.onManualOpen}
-      routeKey={context.activeRouteKey}
-    />
-  ),
-};
-
-function renderConversationRoute(context: RouteRenderContext, recordKind: "session" | "web") {
-  return (
-    <Suspense fallback={<ConversationsPageSkeleton label={context.loadingLabel} />}>
-      <ConversationsPage
-        activeSubNavId={context.activeSubNavId}
-        appShortcuts={context.appShortcuts}
-        onReady={() => context.completeRouteTransition(context.routeTransitionId)}
-        onManualOpen={context.onManualOpen}
-        navigationTarget={context.conversationNavigationTarget?.recordKind === recordKind
-          ? context.conversationNavigationTarget
-          : null}
-        onNavigationTargetConsumed={(nonce) =>
-          context.setConversationNavigationTarget((current) => current?.nonce === nonce ? null : current)
-        }
-        onNotify={(notification) => context.catalog.showNotification(notification)}
-        onNotifyError={(message) => context.catalog.showNotification({ tone: "error", message })}
-        onOpenSettings={context.onOpenSettings}
-        recordKind={recordKind}
-      />
-    </Suspense>
-  );
-}
-
-function RouteSuspense({
-  children,
-  layout,
-}: {
-  children: ReactNode;
-  layout: SkeletonLayoutName;
-}) {
-  return (
-    <Suspense fallback={<RouteLoadingState layout={layout} />}>
-      {children}
-    </Suspense>
-  );
-}
-
-function memorySkeletonLayout(activeSubNavId: string): SkeletonLayoutName {
-  void activeSubNavId;
-  return "columns";
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function resolveNavigationRoute(navigationModel: NavigationModel, headerTabId: string, subNavId: string) {
-  return resolveAppRoute({ ...navigationModel, activeHeaderTabId: headerTabId }, subNavId);
-}
-
-function routeTransitionKind(
-  headerTabId: string,
-  subNavId: string,
-  navigationModel: NavigationModel,
-): RouteTransitionKind | null {
-  const routeId = resolveNavigationRoute(navigationModel, headerTabId, subNavId);
-  const transition = routeRegistry[routeId]?.transition;
-  return transition === "memory" ? memorySkeletonLayout(subNavId) : transition;
 }

@@ -3,15 +3,24 @@ import { useState } from "react";
 import { useCatalogTasks } from "./CatalogTaskProvider";
 
 export function CatalogTaskIndicator() {
-  const { sourceScan, batchMount, cancelSourceScan, cancelBatchMount } = useCatalogTasks();
+  const { sourceScan, batchMount, cancelSourceScan, cancelBatchMount } =
+    useCatalogTasks();
   const [cancelling, setCancelling] = useState(false);
   const active = [sourceScan, batchMount]
-    .filter((task) => task?.status === "running" || task?.status === "cancelling")
-    .sort((left, right) => (right?.started_at ?? "").localeCompare(left?.started_at ?? ""))[0];
+    .filter(
+      (task) => task?.status === "running" || task?.status === "cancelling",
+    )
+    .sort((left, right) =>
+      (right?.started_at ?? "").localeCompare(left?.started_at ?? ""),
+    )[0];
 
   if (!active) return null;
-  const sourceTask = sourceScan && sourceScan.id === active.id ? sourceScan : null;
-  const batchTask = !sourceTask && batchMount && batchMount.id === active.id ? batchMount : null;
+  const sourceTask =
+    sourceScan && sourceScan.id === active.id ? sourceScan : null;
+  const batchTask =
+    !sourceTask && batchMount && batchMount.id === active.id
+      ? batchMount
+      : null;
   const task = sourceTask ?? batchTask;
   if (!task) return null;
   const taskId = task.id;
@@ -45,7 +54,9 @@ export function CatalogTaskIndicator() {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-body-sm font-semibold">{label}</span>
-        <span className="mt-0.5 block text-code-sm text-on-surface-variant">{task.progress.phase} · {progress}</span>
+        <span className="mt-0.5 block text-code-sm text-on-surface-variant">
+          {task.progress.phase} · {progress}
+        </span>
       </span>
       <button
         aria-label="Cancel task"

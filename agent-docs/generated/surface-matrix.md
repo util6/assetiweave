@@ -124,6 +124,7 @@
 | `set_asset_mount` | `set_asset_mount` | — | `set_asset_mount` | `high-risk-write` | `true` |
 | `set_skill_group_manual_members` | `set_skill_group_manual_members` | — | `set_skill_group_manual_members` | `write` | `false` |
 | `settings.get` | `get_app_settings` | `assetiweave-cli settings show` | `get_app_settings` | `read` | `false` |
+| `settings.locale.initialize` | `initialize_app_locale_if_unset` | — | `initialize_app_locale_if_unset` | `write` | `false` |
 | `settings.save` | `save_app_settings` | `assetiweave-cli settings save --json <json>` | `save_app_settings` | `write` | `false` |
 | `skill.acquire` | `acquire_skill`<br>`skill.acquire` | `assetiweave-cli skill acquire --url <github-url> --yes` | `acquire_skill` | `high-risk-write` | `true` |
 | `skill.backup` | `backup_skill`<br>`skill.backup` | `assetiweave-cli skill backup <asset-id>` | `backup_skill` | `write` | `false` |

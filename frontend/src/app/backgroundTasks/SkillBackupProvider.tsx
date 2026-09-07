@@ -1,71 +1,106 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  type ReactNode,
-} from "react";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getSkillBackupTask,
   startSkillBackupTask,
   subscribeSkillBackupTasks,
   type SkillBackupTaskSnapshot,
 } from "../../services/catalog";
-import { useBackgroundTaskRuntime, type BackgroundTaskRuntimeAdapter } from "./BackgroundTaskRuntime";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
-interface SkillBackupRuntimeEvent {
-  snapshot: SkillBackupTaskSnapshot;
+export function skillBackupQueryOptions(scope: QueryScope) {
+  return queryOptions<SkillBackupTaskSnapshot | null>({
+    queryKey: taskKeys.resource(scope, "skill-backup"),
+    queryFn: getSkillBackupTask,
+    structuralSharing: (oldData, newData) =>
+      mergeSkillBackupTask(
+        oldData as SkillBackupTaskSnapshot | null | undefined,
+        newData as SkillBackupTaskSnapshot | null,
+      ),
+    staleTime: 1000,
+  });
 }
 
-interface SkillBackupContextValue {
+export interface SkillBackupContextValue {
   startBackup: (assetIds: string[]) => Promise<SkillBackupTaskSnapshot>;
   task: SkillBackupTaskSnapshot | null;
 }
 
-const SkillBackupContext = createContext<SkillBackupContextValue | null>(null);
+export function SkillBackupProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = taskKeys.resource(activeScope, "skill-backup");
 
-export function SkillBackupProvider({ children }: { children: ReactNode }) {
-  const adapter = useMemo<BackgroundTaskRuntimeAdapter<SkillBackupTaskSnapshot | null, SkillBackupRuntimeEvent>>(
-    () => ({
-      initialState: null,
-      isRunning: (state) => state?.status === "running",
-      merge: (current, incoming) => {
-        if (isSkillBackupRuntimeEvent(incoming)) {
-          return incoming.snapshot;
-        }
-        return current?.status === "running" && !incoming ? current : incoming;
-      },
-      refresh: () => getSkillBackupTask(),
-      subscribe: (listener) => subscribeSkillBackupTasks((snapshot) => listener({ snapshot })),
-    }),
-    [],
+  useQuery({
+    ...skillBackupQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 1000 : 10000,
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<SkillBackupTaskSnapshot | null, SkillBackupTaskSnapshot>
+        merge={(current, snapshot) => mergeSkillBackupTask(current, snapshot)}
+        queryKey={queryKey}
+        subscribe={subscribeSkillBackupTasks}
+      />
+      {children ?? null}
+    </>
   );
-  const { merge, state: task } = useBackgroundTaskRuntime(adapter);
-
-  const startBackup = useCallback(async (assetIds: string[]) => {
-    const snapshot = await startSkillBackupTask(assetIds);
-    merge({ snapshot });
-    return snapshot;
-  }, [merge]);
-
-  const value = useMemo<SkillBackupContextValue>(
-    () => ({ startBackup, task }),
-    [startBackup, task],
-  );
-
-  return <SkillBackupContext.Provider value={value}>{children}</SkillBackupContext.Provider>;
 }
 
-export function useSkillBackup() {
-  const context = useContext(SkillBackupContext);
-  if (!context) {
-    throw new Error("useSkillBackup must be used inside SkillBackupProvider");
+export function useSkillBackup(): SkillBackupContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "skill-backup");
+
+  const query = useQuery({
+    ...skillBackupQueryOptions(activeScope),
+  });
+
+  const startBackup = useCallback(
+    async (assetIds: string[]) => {
+      const snapshot = await startSkillBackupTask(assetIds);
+      queryClient.setQueryData<SkillBackupTaskSnapshot | null>(
+        queryKey,
+        (current) => mergeSkillBackupTask(current, snapshot),
+      );
+      return snapshot;
+    },
+    [queryClient, queryKey],
+  );
+
+  return {
+    startBackup,
+    task: query.data ?? null,
+  };
+}
+
+export function mergeSkillBackupTask(
+  current: SkillBackupTaskSnapshot | null | undefined,
+  incoming: SkillBackupTaskSnapshot | null,
+): SkillBackupTaskSnapshot | null {
+  if (!incoming) {
+    return current?.status === "running" ? current : null;
   }
-  return context;
-}
-
-function isSkillBackupRuntimeEvent(
-  incoming: SkillBackupTaskSnapshot | SkillBackupRuntimeEvent | null,
-): incoming is SkillBackupRuntimeEvent {
-  return Boolean(incoming && "snapshot" in incoming);
+  if (!current) {
+    return incoming;
+  }
+  if (current.id === incoming.id) {
+    if (current.status !== "running" && incoming.status === "running") {
+      return current;
+    }
+    return incoming;
+  }
+  return incoming;
 }

@@ -1,4 +1,13 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
 import {
   checkForAppUpdate,
@@ -17,13 +26,22 @@ import {
   UPDATE_CHECK_RETRY_DELAYS_MS,
   UPDATE_DOWNLOAD_RETRY_DELAYS_MS,
 } from "../../utils/updaterRetry";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 
 const AUTO_CHECK_DELAY_MS = 5000;
 const AUTO_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 export type AppUpdateSource = "auto" | "manual";
 export type AppUpdateDialogMode = "intro" | "update";
-export type AppUpdateStatus = "idle" | "checking" | "available" | "upToDate" | "downloading" | "installing" | "ready" | "error";
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "upToDate"
+  | "downloading"
+  | "installing"
+  | "ready"
+  | "error";
 
 export interface AppUpdateState {
   currentVersion?: string;
@@ -63,20 +81,26 @@ function createInitialState(): AppUpdateState {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
-  const [dialogMode, setDialogMode] = useState<AppUpdateDialogMode>("update");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [state, setStateValue] = useState<AppUpdateState>(() => createInitialState());
+  const updateDialogMode = useAppUiStore((state) => state.updateDialogMode);
+  const openUpdateDialog = useAppUiStore((state) => state.openUpdateDialog);
+  const closeUpdateDialog = useAppUiStore((state) => state.closeUpdateDialog);
+  const [state, setStateValue] = useState<AppUpdateState>(() =>
+    createInitialState(),
+  );
   const stateRef = useRef(state);
   const updateRef = useRef<Update | null>(null);
   const requestIdRef = useRef(0);
 
-  const setState = useCallback((next: AppUpdateState | ((previous: AppUpdateState) => AppUpdateState)) => {
-    setStateValue((previous) => {
-      const resolved = typeof next === "function" ? next(previous) : next;
-      stateRef.current = resolved;
-      return resolved;
-    });
-  }, []);
+  const setState = useCallback(
+    (next: AppUpdateState | ((previous: AppUpdateState) => AppUpdateState)) => {
+      setStateValue((previous) => {
+        const resolved = typeof next === "function" ? next(previous) : next;
+        stateRef.current = resolved;
+        return resolved;
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!state.supported) {
@@ -99,15 +123,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const checkForUpdates = useCallback(
     async (source: AppUpdateSource = "manual") => {
-      if (!stateRef.current.supported || stateRef.current.status === "downloading" || stateRef.current.status === "installing") {
+      if (
+        !stateRef.current.supported ||
+        stateRef.current.status === "downloading" ||
+        stateRef.current.status === "installing"
+      ) {
         return;
       }
 
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
       if (source === "manual") {
-        setDialogMode("update");
-        setDialogOpen(true);
+        openUpdateDialog("update");
       }
       setState((previous) => ({
         ...previous,
@@ -143,7 +170,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         if (!update) {
           await closeAppUpdate(updateRef.current);
           updateRef.current = null;
-          const currentVersion = await getCurrentAppVersion().catch(() => stateRef.current.currentVersion);
+          const currentVersion = await getCurrentAppVersion().catch(
+            () => stateRef.current.currentVersion,
+          );
           setState((previous) => ({
             ...previous,
             currentVersion,
@@ -173,8 +202,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           source,
           status: "available",
         }));
-        setDialogMode("update");
-        setDialogOpen(true);
+        openUpdateDialog("update");
       } catch (error) {
         if (requestIdRef.current !== requestId) {
           return;
@@ -190,8 +218,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           status: "error",
         }));
         if (source === "manual") {
-          setDialogMode("update");
-          setDialogOpen(true);
+          openUpdateDialog("update");
         }
       }
     },
@@ -200,14 +227,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
   const downloadAndInstall = useCallback(async () => {
     const targetVersion = stateRef.current.info?.version;
-    if (!stateRef.current.supported || !targetVersion || stateRef.current.status === "downloading" || stateRef.current.status === "installing") {
+    if (
+      !stateRef.current.supported ||
+      !targetVersion ||
+      stateRef.current.status === "downloading" ||
+      stateRef.current.status === "installing"
+    ) {
       return;
     }
 
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setDialogMode("update");
-    setDialogOpen(true);
+    openUpdateDialog("update");
     setState((previous) => ({
       ...previous,
       error: undefined,
@@ -222,12 +253,19 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       const installedVersion = await retryWithBackoff(
         async () => {
           attempt += 1;
-          const update = attempt === 1 && updateRef.current?.version === targetVersion ? updateRef.current : await checkForAppUpdate();
+          const update =
+            attempt === 1 && updateRef.current?.version === targetVersion
+              ? updateRef.current
+              : await checkForAppUpdate();
           if (!update) {
-            throw new Error("No update is available from the configured update endpoint.");
+            throw new Error(
+              "No update is available from the configured update endpoint.",
+            );
           }
           if (update.version !== targetVersion) {
-            throw new Error(`Expected update ${targetVersion}, but updater returned ${update.version}.`);
+            throw new Error(
+              `Expected update ${targetVersion}, but updater returned ${update.version}.`,
+            );
           }
 
           updateRef.current = update;
@@ -245,7 +283,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
               if (event.event === "Progress") {
                 downloaded += event.data.chunkLength;
               }
-              setState((previous) => applyDownloadEvent(previous, event, downloaded, contentLength));
+              setState((previous) =>
+                applyDownloadEvent(previous, event, downloaded, contentLength),
+              );
             });
           } catch (error) {
             await closeAppUpdate(update);
@@ -281,7 +321,9 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       setState((previous) => ({
         ...previous,
         error: undefined,
-        info: previous.info ? { ...previous.info, version: installedVersion } : previous.info,
+        info: previous.info
+          ? { ...previous.info, version: installedVersion }
+          : previous.info,
         progress: 100,
         retryAttempt: undefined,
         retryTotal: undefined,
@@ -301,8 +343,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         retryTotal: undefined,
         status: "error",
       }));
-      setDialogMode("update");
-      setDialogOpen(true);
+      openUpdateDialog("update");
     }
   }, [setState]);
 
@@ -353,22 +394,33 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AppUpdateContextValue>(
     () => ({
       checkForUpdates,
-      closeDialog: () => setDialogOpen(false),
-      dialogMode,
-      dialogOpen,
+      closeDialog: closeUpdateDialog,
+      dialogMode: updateDialogMode ?? "update",
+      dialogOpen: updateDialogMode !== null,
       downloadAndInstall,
       openDialog: (mode: AppUpdateDialogMode = "update") => {
-        setDialogMode(mode);
-        setDialogOpen(true);
+        openUpdateDialog(mode);
       },
       openReleases: openReleasePage,
       restartApp,
       state,
     }),
-    [checkForUpdates, dialogMode, dialogOpen, downloadAndInstall, restartApp, state],
+    [
+      checkForUpdates,
+      closeUpdateDialog,
+      downloadAndInstall,
+      openUpdateDialog,
+      restartApp,
+      state,
+      updateDialogMode,
+    ],
   );
 
-  return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>;
+  return (
+    <AppUpdateContext.Provider value={value}>
+      {children}
+    </AppUpdateContext.Provider>
+  );
 }
 
 export function useAppUpdater() {
@@ -380,10 +432,17 @@ export function useAppUpdater() {
 }
 
 function isDevRuntime() {
-  return Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+  return Boolean(
+    (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV,
+  );
 }
 
-function applyDownloadEvent(state: AppUpdateState, event: DownloadEvent, downloaded: number, contentLength: number): AppUpdateState {
+function applyDownloadEvent(
+  state: AppUpdateState,
+  event: DownloadEvent,
+  downloaded: number,
+  contentLength: number,
+): AppUpdateState {
   if (event.event === "Started") {
     return {
       ...state,
@@ -395,7 +454,10 @@ function applyDownloadEvent(state: AppUpdateState, event: DownloadEvent, downloa
   }
 
   if (event.event === "Progress") {
-    const nextProgress = contentLength > 0 ? Math.min(95, Math.round((downloaded / contentLength) * 100)) : Math.min(95, state.progress + 1);
+    const nextProgress =
+      contentLength > 0
+        ? Math.min(95, Math.round((downloaded / contentLength) * 100))
+        : Math.min(95, state.progress + 1);
     return {
       ...state,
       progress: nextProgress,

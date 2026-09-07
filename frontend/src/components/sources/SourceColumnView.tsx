@@ -1,9 +1,19 @@
 import clsx from "clsx";
 import { FolderOpen, Pencil, Trash2 } from "lucide-react";
-import { sourceKindLabel, sourceOriginLabel, translateScanStatus } from "../../i18n/domain";
+import {
+  sourceKindLabel,
+  sourceOriginLabel,
+  translateScanStatus,
+} from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
+import { useAppSettings } from "../../store/settings/useAppSettings";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
 import { getAssetMountSummaryState } from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
@@ -44,7 +54,11 @@ export function SourceColumnView({
   onEditAsset: (asset: Asset) => void;
   onReveal: (path: string) => void;
   onSelectSource: (sourceId: string) => void;
-  onSetSourceMountProfile: (assetIds: string[], profileId: string, enabled: boolean) => void;
+  onSetSourceMountProfile: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => void;
   onToggleMount: (assetId: string, profileId: string) => void;
   profiles: TargetProfile[];
   selectedSource: Source;
@@ -53,8 +67,12 @@ export function SourceColumnView({
   const { t } = useI18n();
   const { settings } = useAppSettings();
   const selectedAssets = assetsBySourceId.get(selectedSource.id) ?? [];
-  const mountBlockedReason = isDirectMountBlockedSource(selectedSource) ? t("mount.blocked") : undefined;
-  const hasVisibleMountShortcuts = appShortcuts.some((shortcut) => shortcut.enabled);
+  const mountBlockedReason = isDirectMountBlockedSource(selectedSource)
+    ? t("mount.blocked")
+    : undefined;
+  const hasVisibleMountShortcuts = appShortcuts.some(
+    (shortcut) => shortcut.enabled,
+  );
 
   return (
     <ResizableColumns
@@ -74,20 +92,27 @@ export function SourceColumnView({
       storageKey="assetiweave.sourceColumns.v2"
     >
       <section className="aurora-workbench-column flex min-h-0 flex-col">
-        <ColumnHeader title={t("source.column.sources")} meta={t("source.column.sourceCount", { count: sources.length })} />
-        <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("source.column.sources")}>
+        <ColumnHeader
+          title={t("source.column.sources")}
+          meta={t("source.column.sourceCount", { count: sources.length })}
+        />
+        <div
+          className="min-h-0 overflow-y-auto py-1"
+          role="listbox"
+          aria-label={t("source.column.sources")}
+        >
           {sources.map((source) => {
             const sourceAssets = assetsBySourceId.get(source.id) ?? [];
             const active = source.id === selectedSource.id;
             return (
               <button
-                aria-label={t("source.column.selectSource", { name: source.name })}
+                aria-label={t("source.column.selectSource", {
+                  name: source.name,
+                })}
                 aria-selected={active}
                 className={clsx(
                   "aurora-workbench-item flex min-h-[68px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
-                  active
-                    ? "text-on-surface"
-                    : "text-on-surface-variant",
+                  active ? "text-on-surface" : "text-on-surface-variant",
                 )}
                 data-selected={active}
                 key={source.id}
@@ -96,7 +121,10 @@ export function SourceColumnView({
                 type="button"
               >
                 <span
-                  className={clsx("mt-1 size-2 shrink-0 rounded-full", source.enabled ? "bg-status-create" : "bg-outline")}
+                  className={clsx(
+                    "mt-1 size-2 shrink-0 rounded-full",
+                    source.enabled ? "bg-status-create" : "bg-outline",
+                  )}
                   aria-hidden="true"
                 />
                 <span className="min-w-0 flex-1">
@@ -106,7 +134,9 @@ export function SourceColumnView({
                   <span className="mt-1 block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-outline">
                     {abbreviateHomePath(source.root_path)}
                   </span>
-                  <span className="mt-1 text-body-sm text-on-surface-variant">{t("source.assetCount", { count: sourceAssets.length })}</span>
+                  <span className="mt-1 text-body-sm text-on-surface-variant">
+                    {t("source.assetCount", { count: sourceAssets.length })}
+                  </span>
                 </span>
               </button>
             );
@@ -123,7 +153,9 @@ export function SourceColumnView({
         />
         <div className="min-h-0 overflow-y-auto">
           {selectedAssets.length === 0 ? (
-            <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("source.emptySkills")}</div>
+            <div className="px-4 py-5 text-body-sm text-on-surface-variant">
+              {t("source.emptySkills")}
+            </div>
           ) : (
             selectedAssets.map((asset) => {
               const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
@@ -137,9 +169,14 @@ export function SourceColumnView({
                       <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
                         {asset.name}
                       </span>
-                      <span className={kindBadgeClass(asset.kind)}>{t("assetKind.skill")}</span>
+                      <span className={kindBadgeClass(asset.kind)}>
+                        {t("assetKind.skill")}
+                      </span>
                       <SkillBackupBadge asset={asset} />
-                      <MountStatePill compact state={getAssetMountSummaryState(mountStatuses)} />
+                      <MountStatePill
+                        compact
+                        state={getAssetMountSummaryState(mountStatuses)}
+                      />
                     </div>
                     <button
                       className="mt-1 block max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant transition-colors hover:text-primary"
@@ -157,13 +194,27 @@ export function SourceColumnView({
                       mountStatuses={mountStatuses}
                       profiles={profiles}
                       shortcuts={appShortcuts}
-                      onToggle={(profileId) => onToggleMount(asset.id, profileId)}
+                      onToggle={(profileId) =>
+                        onToggleMount(asset.id, profileId)
+                      }
                     />
-                    {hasVisibleMountShortcuts && <span className="h-6 w-px bg-theme-control-border/80" aria-hidden="true" />}
-                    <ColumnAssetIconButton label={t("asset.edit")} onClick={() => onEditAsset(asset)}>
+                    {hasVisibleMountShortcuts && (
+                      <span
+                        className="h-6 w-px bg-theme-control-border/80"
+                        aria-hidden="true"
+                      />
+                    )}
+                    <ColumnAssetIconButton
+                      label={t("asset.edit")}
+                      onClick={() => onEditAsset(asset)}
+                    >
                       <Pencil size={16} />
                     </ColumnAssetIconButton>
-                    <ColumnAssetIconButton danger label={t("asset.delete")} onClick={() => onDeleteAsset(asset)}>
+                    <ColumnAssetIconButton
+                      danger
+                      label={t("asset.delete")}
+                      onClick={() => onDeleteAsset(asset)}
+                    >
                       <Trash2 size={16} />
                     </ColumnAssetIconButton>
                   </div>
@@ -175,7 +226,10 @@ export function SourceColumnView({
       </section>
 
       <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
-        <ColumnHeader title={t("source.column.mountTargets")} meta={translateScanStatus(selectedSource.last_scan_status, t)} />
+        <ColumnHeader
+          title={t("source.column.mountTargets")}
+          meta={translateScanStatus(selectedSource.last_scan_status, t)}
+        />
         <div className="min-h-0 overflow-y-auto p-4">
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <button
@@ -192,10 +246,16 @@ export function SourceColumnView({
               disabled={busy || isProtectedSource(selectedSource)}
               onClick={() => onDelete(selectedSource)}
               type="button"
-              title={isProtectedSource(selectedSource) ? t("source.delete.protected") : t("source.action.delete")}
+              title={
+                isProtectedSource(selectedSource)
+                  ? t("source.delete.protected")
+                  : t("source.action.delete")
+              }
             >
               <Trash2 size={15} />
-              {isProtectedSource(selectedSource) ? t("source.delete.protected") : t("source.action.delete")}
+              {isProtectedSource(selectedSource)
+                ? t("source.delete.protected")
+                : t("source.action.delete")}
             </button>
           </div>
           <SourceBulkMountControls
@@ -210,11 +270,27 @@ export function SourceColumnView({
           />
 
           <div className="aurora-detail-surface mt-4 space-y-3 p-3">
-            <SourceDetailRow label={t("source.field.kind")} value={sourceKindLabel(selectedSource.kind, t)} />
-            <SourceDetailRow label={t("source.field.rootPath")} value={abbreviateHomePath(selectedSource.root_path)} mono />
-            <SourceDetailRow label={t("source.field.origin")} value={sourceOriginLabel(selectedSource.source_origin, t)} />
-            <RuleList label={t("source.rules.include")} rules={selectedSource.include_globs} />
-            <RuleList label={t("source.rules.exclude")} rules={selectedSource.exclude_globs} />
+            <SourceDetailRow
+              label={t("source.field.kind")}
+              value={sourceKindLabel(selectedSource.kind, t)}
+            />
+            <SourceDetailRow
+              label={t("source.field.rootPath")}
+              value={abbreviateHomePath(selectedSource.root_path)}
+              mono
+            />
+            <SourceDetailRow
+              label={t("source.field.origin")}
+              value={sourceOriginLabel(selectedSource.source_origin, t)}
+            />
+            <RuleList
+              label={t("source.rules.include")}
+              rules={selectedSource.include_globs}
+            />
+            <RuleList
+              label={t("source.rules.exclude")}
+              rules={selectedSource.exclude_globs}
+            />
           </div>
         </div>
       </section>
@@ -267,8 +343,12 @@ function ColumnHeader({
   return (
     <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
+        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+          {title}
+        </h3>
+        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+          {meta}
+        </p>
       </div>
       {onAction && actionLabel && (
         <button
@@ -285,11 +365,24 @@ function ColumnHeader({
   );
 }
 
-function SourceDetailRow({ label, mono = false, value }: { label: string; mono?: boolean; value: string }) {
+function SourceDetailRow({
+  label,
+  mono = false,
+  value,
+}: {
+  label: string;
+  mono?: boolean;
+  value: string;
+}) {
   return (
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
-      <div className={clsx("mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface", mono && "font-mono")}>
+      <div
+        className={clsx(
+          "mt-1 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-on-surface",
+          mono && "font-mono",
+        )}
+      >
         {value}
       </div>
     </div>
@@ -303,7 +396,9 @@ function RuleList({ label, rules }: { label: string; rules: string[] }) {
     <div className="min-w-0">
       <div className="text-label-caps uppercase text-outline">{label}</div>
       {rules.length === 0 ? (
-        <div className="mt-1 text-body-sm text-on-surface-variant">{t("source.rules.empty")}</div>
+        <div className="mt-1 text-body-sm text-on-surface-variant">
+          {t("source.rules.empty")}
+        </div>
       ) : (
         <div className="mt-1 flex flex-wrap gap-1.5">
           {rules.map((rule) => (

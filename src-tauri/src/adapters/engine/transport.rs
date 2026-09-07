@@ -4,7 +4,7 @@
 //! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
 
 use super::{policy, protocol, registry as command_registry, runtime};
-use crate::backend::runtime::AppError;
+use crate::backend::runtime::{AppError, WireError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
@@ -72,22 +72,22 @@ struct EngineResponse {
 pub(crate) struct EngineError {
     /// 错误分类名称 ("type")
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     /// 稳定错误代码
-    code: String,
+    pub(crate) code: String,
     /// 详细错误文本描述
-    message: String,
+    pub(crate) message: String,
     /// 针对开发者的修复提示 (Hint)
     #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
+    pub(crate) hint: Option<String>,
     /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<Value>,
+    pub(crate) details: Option<Value>,
     /// 是否建议调用方重试
-    retryable: bool,
+    pub(crate) retryable: bool,
 }
 
-pub(crate) fn run_stdio() -> Result<(), String> {
+pub(crate) async fn run_stdio() -> Result<(), String> {
     let mut input = String::new();
     io::stdin()
         .read_to_string(&mut input)
@@ -111,7 +111,7 @@ pub(crate) fn run_stdio() -> Result<(), String> {
 
     let id = request.id.clone();
     let (hooks, mut invocation) = runtime::before(&request.method);
-    let result = handle_wire_request(request);
+    let result = handle_wire_request(request).await;
     runtime::after(
         &hooks,
         &mut invocation,
@@ -164,9 +164,9 @@ fn response_meta_with_invocation(invocation: &runtime::Invocation) -> Value {
     meta
 }
 
-fn handle_wire_request(request: WireEngineRequest) -> EngineResult<Value> {
+async fn handle_wire_request(request: WireEngineRequest) -> EngineResult<Value> {
     validate_wire_compatibility(&request)?;
-    dispatch(request.into())
+    dispatch(request.into()).await
 }
 
 fn validate_wire_compatibility(request: &WireEngineRequest) -> EngineResult<()> {
@@ -196,7 +196,7 @@ fn validate_wire_compatibility(request: &WireEngineRequest) -> EngineResult<()> 
     Ok(())
 }
 
-fn dispatch(mut request: EngineRequest) -> EngineResult<Value> {
+async fn dispatch(mut request: EngineRequest) -> EngineResult<Value> {
     let method = request.method.clone();
     let spec =
         command_registry::find(&method).ok_or_else(|| EngineError::unknown_method(&method))?;
@@ -210,6 +210,7 @@ fn dispatch(mut request: EngineRequest) -> EngineResult<Value> {
     request.params = command_registry::validate_params(spec, &request.params)
         .map_err(|violations| EngineError::invalid_params(&method, violations))?;
     spec.dispatch(request.params)
+        .await
         .map_err(EngineError::from_dispatch)
 }
 
@@ -311,8 +312,8 @@ impl EngineError {
         }
     }
 
-    fn from_app(error: AppError) -> Self {
-        let view = error.view();
+    pub(crate) fn from_app(error: AppError) -> Self {
+        let view: WireError = error.into();
         let kind = match view.code.as_str() {
             "validation_error" => "validation",
             "not_found" => "not_found",
@@ -359,18 +360,139 @@ mod tests {
     };
     use uuid::Uuid;
 
-    #[test]
-    fn unknown_method_returns_structured_error() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_method_returns_structured_error() {
         let _guard = env_lock().lock().expect("env lock");
         let error = dispatch(EngineRequest {
             method: "missing.method".to_string(),
             params: json!({}),
         })
+        .await
         .expect_err("unknown method should fail");
 
         assert_eq!(error.kind, "unknown_method");
         assert_eq!(error.code, "unknown_method");
         assert!(error.hint.as_deref().unwrap_or_default().contains("schema"));
+    }
+
+    #[test]
+    fn error_taxonomy_tauri_engine_parity() {
+        use std::error::Error;
+
+        let cases: Vec<(AppError, &'static str, bool, Option<Value>)> = vec![
+            (
+                AppError::Validation("invalid param: id is required".to_string()),
+                "validation_error",
+                false,
+                None,
+            ),
+            (
+                AppError::NotFound("item 123 not found".to_string()),
+                "not_found",
+                false,
+                None,
+            ),
+            (
+                AppError::Conflict("version conflict".to_string()),
+                "conflict",
+                true,
+                None,
+            ),
+            (
+                AppError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "disk access denied",
+                )),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Codec(crate::backend::store::CodecError::Decode(
+                    serde_json::from_str::<i32>("bad").unwrap_err(),
+                )),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Cancelled("task cancelled by user".to_string()),
+                "cancelled",
+                true,
+                None,
+            ),
+            (
+                AppError::Timeout("operation timed out".to_string()),
+                "timeout",
+                true,
+                None,
+            ),
+            (
+                AppError::Storage("unrecoverable db block error".to_string()),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Process("external process exited with code 1".to_string()),
+                "process_error",
+                true,
+                None,
+            ),
+            (
+                AppError::External("remote server failed".to_string()),
+                "external_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Domain {
+                    code: "agent_not_found".to_string(),
+                    message: "agent agent-42 not found".to_string(),
+                    retryable: false,
+                    details: Some(json!({ "agentId": "agent-42" })),
+                },
+                "agent_not_found",
+                false,
+                Some(json!({ "agentId": "agent-42" })),
+            ),
+        ];
+
+        for (app_error, expected_code, expected_retryable, expected_details) in cases {
+            let tauri_view = app_error.view();
+            // Verify source before moving app_error into from_app
+            if let AppError::Io(_) = &app_error {
+                assert!(app_error.source().is_some());
+                assert!(app_error.source().unwrap().is::<std::io::Error>());
+            }
+            if let AppError::Codec(_) = &app_error {
+                assert!(app_error.source().is_some());
+                assert!(app_error
+                    .source()
+                    .unwrap()
+                    .is::<crate::backend::store::CodecError>());
+            }
+
+            let engine_error = EngineError::from_app(app_error);
+
+            // 1. Code parity
+            assert_eq!(tauri_view.code, expected_code);
+            assert_eq!(engine_error.code, expected_code);
+            assert_eq!(tauri_view.code, engine_error.code);
+
+            // 2. Retryable parity
+            assert_eq!(tauri_view.retryable, expected_retryable);
+            assert_eq!(engine_error.retryable, expected_retryable);
+            assert_eq!(tauri_view.retryable, engine_error.retryable);
+
+            // 3. Message parity
+            assert_eq!(tauri_view.message, engine_error.message);
+
+            // 4. Details parity
+            assert_eq!(tauri_view.details, expected_details);
+            assert_eq!(engine_error.details, expected_details);
+            assert_eq!(tauri_view.details, engine_error.details);
+        }
     }
 
     #[test]
@@ -401,11 +523,12 @@ mod tests {
         assert_eq!(engine_error.details, tauri_view.details);
     }
 
-    #[test]
-    fn registered_handler_uses_the_bound_request_type() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn registered_handler_uses_the_bound_request_type() {
         let spec = command_registry::find("source.add").expect("source.add spec");
         let error = spec
             .dispatch(json!({ "id": "source-id" }))
+            .await
             .expect_err("registered handler must parse the bound request type");
 
         assert!(matches!(
@@ -415,8 +538,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn mismatched_wire_protocol_is_rejected_before_dispatch() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn mismatched_wire_protocol_is_rejected_before_dispatch() {
         let error = handle_wire_request(WireEngineRequest {
             id: None,
             method: "profile.list".to_string(),
@@ -424,14 +547,15 @@ mod tests {
             protocol_version: Some(99),
             contract_version: Some(protocol::CONTRACT_VERSION),
         })
+        .await
         .expect_err("mismatched protocol should fail");
 
         assert_eq!(error.kind, "engine_incompatible");
         assert_eq!(error.code, "protocol_version_mismatch");
     }
 
-    #[test]
-    fn version_probe_does_not_require_compatibility_fields() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn version_probe_does_not_require_compatibility_fields() {
         let value = handle_wire_request(WireEngineRequest {
             id: Some("version".to_string()),
             method: "system.version".to_string(),
@@ -439,18 +563,20 @@ mod tests {
             protocol_version: None,
             contract_version: None,
         })
+        .await
         .expect("version probe");
 
         assert_eq!(value["protocol_version"], json!(protocol::PROTOCOL_VERSION));
         assert_eq!(value["contract_version"], json!(protocol::CONTRACT_VERSION));
     }
 
-    #[test]
-    fn system_version_exposes_compatibility_contract() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn system_version_exposes_compatibility_contract() {
         let value = dispatch(EngineRequest {
             method: "system.version".to_string(),
             params: json!({}),
         })
+        .await
         .expect("system.version");
 
         assert_eq!(value["product"], json!("AssetIWeave"));
@@ -482,8 +608,8 @@ mod tests {
         assert_eq!(meta["invocation"]["error_type"], json!("command_denied"));
     }
 
-    #[test]
-    fn import_skill_dry_run_does_not_copy_to_library() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn import_skill_dry_run_does_not_copy_to_library() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-home");
         let db_path = home.join("app.db");
@@ -501,6 +627,7 @@ mod tests {
                 "dry_run": true
             }),
         })
+        .await
         .expect("dry run import");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -517,8 +644,8 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[test]
-    fn import_skill_uses_configured_backup_downloaded_directory() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn import_skill_uses_configured_backup_downloaded_directory() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-import-home");
         let db_path = home.join("app.db");
@@ -538,6 +665,7 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("update backup settings");
         let value = dispatch(EngineRequest {
             method: "skill.import".to_string(),
@@ -547,6 +675,7 @@ mod tests {
                 "dry_run": false
             }),
         })
+        .await
         .expect("import skill");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -562,8 +691,8 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[test]
-    fn acquire_skill_dry_run_plans_github_tree_without_cloning() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn acquire_skill_dry_run_plans_github_tree_without_cloning() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-acquire-home");
         let db_path = home.join("app.db");
@@ -578,6 +707,7 @@ mod tests {
                 "dry_run": true
             }),
         })
+        .await
         .expect("dry run acquire");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -599,9 +729,9 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[cfg(unix)]
-    fn acquire_skill_imports_from_isolated_git_repo_and_records_remote_source() {
+    async fn acquire_skill_imports_from_isolated_git_repo_and_records_remote_source() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-acquire-import-home");
         let db_path = home.join("app.db");
@@ -652,6 +782,7 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("configure backup root");
         let value = dispatch(EngineRequest {
             method: "skill.acquire".to_string(),
@@ -660,11 +791,13 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("acquire skill from rewritten local repo");
         let remotes = dispatch(EngineRequest {
             method: "skill.remote.list".to_string(),
             params: json!({}),
         })
+        .await
         .expect("list remote sources");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -710,8 +843,8 @@ mod tests {
         fs::remove_dir_all(repo).ok();
     }
 
-    #[test]
-    fn backup_settings_migrate_custom_root_and_delete_old_custom_root() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn backup_settings_migrate_custom_root_and_delete_old_custom_root() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-migration-home");
         let db_path = home.join("app.db");
@@ -729,6 +862,7 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("move to old custom backup root");
         let old_skill = old_root.join("downloaded").join("old-skill");
         fs::create_dir_all(&old_skill).expect("create old downloaded skill");
@@ -742,6 +876,7 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("move to new custom backup root");
 
         assert_eq!(
@@ -758,8 +893,8 @@ mod tests {
         fs::remove_dir_all(new_root).ok();
     }
 
-    #[test]
-    fn backup_skill_copies_app_target_skill_and_catalog_shows_backup_copy() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn backup_skill_copies_app_target_skill_and_catalog_shows_backup_copy() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-backup-home");
         let db_path = home.join("app.db");
@@ -780,6 +915,7 @@ mod tests {
                 "yes": true
             }),
         })
+        .await
         .expect("update backup settings");
         dispatch(EngineRequest {
             method: "source.add".to_string(),
@@ -799,11 +935,13 @@ mod tests {
                 "origin_app_kind": "codex"
             }),
         })
+        .await
         .expect("add app target source");
         let scanned = dispatch(EngineRequest {
             method: "source.scan".to_string(),
             params: json!({ "kind": "skill" }),
         })
+        .await
         .expect("scan source");
         let app_asset_id = scanned
             .as_array()
@@ -818,11 +956,13 @@ mod tests {
             method: "backup_skill".to_string(),
             params: json!({ "asset_id": app_asset_id }),
         })
+        .await
         .expect("backup skill");
         let catalog = dispatch(EngineRequest {
             method: "asset.list".to_string(),
             params: json!({ "kind": "skill" }),
         })
+        .await
         .expect("list catalog");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -842,8 +982,8 @@ mod tests {
         fs::remove_dir_all(app_source_root).ok();
     }
 
-    #[test]
-    fn source_add_dry_run_does_not_persist() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn source_add_dry_run_does_not_persist() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-source-home");
         let db_path = home.join("app.db");
@@ -870,12 +1010,14 @@ mod tests {
                 "dry_run": true
             }),
         })
+        .await
         .expect("dry run source add");
 
         let sources = dispatch(EngineRequest {
             method: "source.list".to_string(),
             params: json!({}),
         })
+        .await
         .expect("source list");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -889,9 +1031,9 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
+    #[tokio::test(flavor = "multi_thread")]
     #[cfg(unix)]
-    fn source_add_aliases_are_normalized_before_typed_dispatch() {
+    async fn source_add_aliases_are_normalized_before_typed_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-source-alias-home");
         let db_path = home.join("app.db");
@@ -918,6 +1060,7 @@ mod tests {
                 "dryRun": true
             }),
         })
+        .await
         .expect("aliases should reach typed source.add dispatch");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -927,8 +1070,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn invalid_params_return_validation_error() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_params_return_validation_error() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-invalid-params-home");
         let db_path = home.join("app.db");
@@ -940,6 +1083,7 @@ mod tests {
             method: "skill.import".to_string(),
             params: json!({}),
         })
+        .await
         .expect_err("missing required params should fail");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -950,8 +1094,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn tauri_command_aliases_are_callable_and_listed() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn tauri_command_aliases_are_callable_and_listed() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-alias-home");
         let db_path = home.join("app.db");
@@ -963,16 +1107,19 @@ mod tests {
             method: "list_profiles".to_string(),
             params: json!({}),
         })
+        .await
         .expect("list profiles alias");
         let schema = dispatch(EngineRequest {
             method: "schema.list".to_string(),
             params: json!({}),
         })
+        .await
         .expect("schema list");
         let mounts = dispatch(EngineRequest {
             method: "list_asset_mounts".to_string(),
             params: json!({ "assetId": null }),
         })
+        .await
         .expect("list asset mounts with Tauri camelCase params");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -987,8 +1134,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn engine_search_index_rebuild_executes_the_canonical_workflow() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn engine_search_index_rebuild_executes_the_canonical_workflow() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-search-index-home");
         let db_path = home.join("app.db");
@@ -1000,11 +1147,13 @@ mod tests {
             method: "start_conversation_search_index_rebuild".to_string(),
             params: json!({}),
         })
+        .await
         .expect("rebuild search index through Engine");
         let status = dispatch(EngineRequest {
             method: "get_conversation_search_index_status".to_string(),
             params: json!({}),
         })
+        .await
         .expect("read rebuilt search index status");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -1041,8 +1190,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn command_registry_owns_engine_dispatch_handlers() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn command_registry_owns_engine_dispatch_handlers() {
         let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("workspace root")
@@ -1053,6 +1202,7 @@ mod tests {
         let version = command_registry::find("system.version")
             .expect("system.version spec")
             .dispatch(json!({}))
+            .await
             .expect("registered handler should execute");
 
         assert_eq!(version["product"], json!("AssetIWeave"));
@@ -1116,12 +1266,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn high_risk_raw_method_requires_explicit_confirmation() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn high_risk_raw_method_requires_explicit_confirmation() {
         let error = dispatch(EngineRequest {
             method: "delete_source".to_string(),
             params: json!({ "id": "source-id" }),
         })
+        .await
         .expect_err("high-risk raw method should require confirmation");
 
         assert_eq!(error.kind, "confirmation_required");
@@ -1135,24 +1286,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn unsupported_dry_run_does_not_bypass_high_risk_confirmation() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unsupported_dry_run_does_not_bypass_high_risk_confirmation() {
         let error = dispatch(EngineRequest {
             method: "delete_source".to_string(),
             params: json!({ "id": "source-id", "dry_run": true }),
         })
+        .await
         .expect_err("unsupported dry-run must not bypass confirmation");
 
         assert_eq!(error.kind, "confirmation_required");
         assert_eq!(error.code, "confirmation_required");
     }
 
-    #[test]
-    fn unknown_method_params_are_rejected_before_service_dispatch() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unknown_method_params_are_rejected_before_service_dispatch() {
         let error = dispatch(EngineRequest {
             method: "profile.list".to_string(),
             params: json!({ "typo": true }),
         })
+        .await
         .expect_err("unknown params should fail");
 
         assert_eq!(error.kind, "validation");
@@ -1163,8 +1316,8 @@ mod tests {
             .is_some_and(|details| details["violations"].is_array()));
     }
 
-    #[test]
-    fn nested_type_mismatch_is_rejected_before_service_dispatch() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nested_type_mismatch_is_rejected_before_service_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-nested-params-home");
         let db_path = home.join("app.db");
@@ -1181,6 +1334,7 @@ mod tests {
                 }
             }),
         })
+        .await
         .expect_err("nested type mismatch should fail");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -1194,8 +1348,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn command_policy_denies_confirmed_high_risk_method_before_service_dispatch() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn command_policy_denies_confirmed_high_risk_method_before_service_dispatch() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-policy-home");
         let policy_path = home.join("policy.json");
@@ -1209,6 +1363,7 @@ mod tests {
             method: "delete_source".to_string(),
             params: json!({ "id": "missing", "yes": true }),
         })
+        .await
         .expect_err("policy should deny command");
 
         env::remove_var("ASSETIWEAVE_POLICY_PATH");
@@ -1220,8 +1375,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn invalid_command_policy_fails_closed_for_non_diagnostic_methods() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_command_policy_fails_closed_for_non_diagnostic_methods() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-invalid-policy-home");
         let policy_path = home.join("policy.json");
@@ -1235,6 +1390,7 @@ mod tests {
             method: "profile.list".to_string(),
             params: json!({}),
         })
+        .await
         .expect_err("invalid policy should fail closed");
 
         env::remove_var("ASSETIWEAVE_POLICY_PATH");
@@ -1246,8 +1402,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn diagnostic_method_remains_available_when_command_policy_is_invalid() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn diagnostic_method_remains_available_when_command_policy_is_invalid() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-diagnostic-policy-home");
         let policy_path = home.join("policy.json");
@@ -1259,6 +1415,7 @@ mod tests {
             method: "system.version".to_string(),
             params: json!({}),
         })
+        .await
         .expect("diagnostic method should bypass invalid policy");
 
         env::remove_var("ASSETIWEAVE_POLICY_PATH");
@@ -1298,8 +1455,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn newly_supported_tauri_write_command_is_not_unknown() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn newly_supported_tauri_write_command_is_not_unknown() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-create-profile-home");
         let db_path = home.join("app.db");
@@ -1311,6 +1468,7 @@ mod tests {
             method: "create_profile".to_string(),
             params: json!({}),
         })
+        .await
         .expect_err("missing profile input should fail validation");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -1320,8 +1478,8 @@ mod tests {
         fs::remove_dir_all(home).ok();
     }
 
-    #[test]
-    fn external_source_skill_delete_is_rejected() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn external_source_skill_delete_is_rejected() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-delete-home");
         let db_path = home.join("app.db");
@@ -1351,16 +1509,19 @@ mod tests {
                 "origin_app_kind": null
             }),
         })
+        .await
         .expect("add external source");
         dispatch(EngineRequest {
             method: "source.scan".to_string(),
             params: json!({ "kind": "skill" }),
         })
+        .await
         .expect("scan external source");
         let error = dispatch(EngineRequest {
             method: "skill.delete".to_string(),
             params: json!({ "asset_ref": "external-skill", "yes": true }),
         })
+        .await
         .expect_err("external skill delete should fail");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");
@@ -1374,8 +1535,8 @@ mod tests {
         fs::remove_dir_all(source).ok();
     }
 
-    #[test]
-    fn default_library_source_remove_is_rejected() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn default_library_source_remove_is_rejected() {
         let _guard = env_lock().lock().expect("env lock");
         let home = unique_temp_dir("assetiweave-engine-protected-source-home");
         let db_path = home.join("app.db");
@@ -1387,6 +1548,7 @@ mod tests {
             method: "source.remove".to_string(),
             params: json!({ "id": "assetiweave-library-skills", "yes": true }),
         })
+        .await
         .expect_err("default library source remove should fail");
 
         env::remove_var("ASSETIWEAVE_DB_PATH");

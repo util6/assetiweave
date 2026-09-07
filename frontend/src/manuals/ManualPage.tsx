@@ -55,35 +55,54 @@ export function ManualPage({
     : {
         title: locale === "zh" ? "页面使用手册" : "Page Manual",
         subtitle: routeKey,
-        overview: locale === "zh" ? "这个页面暂未配置手册内容。" : "No manual content is configured for this page yet.",
+        overview:
+          locale === "zh"
+            ? "这个页面暂未配置手册内容。"
+            : "No manual content is configured for this page yet.",
         sections: [],
       };
   const backLabel = locale === "zh" ? "返回页面" : "Back to page";
   const eyebrow = locale === "zh" ? "使用手册" : "Manual";
   const routeLabel = locale === "zh" ? "路由" : "Route";
   const searchLabel = locale === "zh" ? "搜索本页手册" : "Search this manual";
-  const searchPlaceholder = locale === "zh" ? "搜索流程、状态、风险或操作..." : "Search workflow, state, risk, or actions...";
+  const searchPlaceholder =
+    locale === "zh"
+      ? "搜索流程、状态、风险或操作..."
+      : "Search workflow, state, risk, or actions...";
   const searchSubmitLabel = locale === "zh" ? "搜索手册" : "Search manual";
   const sectionLabel = locale === "zh" ? "章节" : "Sections";
   const stepLabel = locale === "zh" ? "条目" : "Items";
   const overviewLabel = locale === "zh" ? "页面概览" : "Overview";
-  const noResultsLabel = locale === "zh" ? "没有匹配的手册内容。" : "No manual content matched your search.";
+  const noResultsLabel =
+    locale === "zh"
+      ? "没有匹配的手册内容。"
+      : "No manual content matched your search.";
   const outcomesLabel = locale === "zh" ? "能帮你完成" : "What this helps with";
-  const stepsBlockLabel = locale === "zh" ? "推荐操作步骤" : "Recommended steps";
+  const stepsBlockLabel =
+    locale === "zh" ? "推荐操作步骤" : "Recommended steps";
   const cautionsLabel = locale === "zh" ? "注意事项" : "Watch points";
   const keywordsLabel = locale === "zh" ? "关键词" : "Keywords";
   const expandAllLabel = locale === "zh" ? "全部展开" : "Expand all";
   const collapseAllLabel = locale === "zh" ? "全部收起" : "Collapse all";
-  const emptyBlockLabel = locale === "zh" ? "暂无特别说明。" : "No extra notes yet.";
+  const emptyBlockLabel =
+    locale === "zh" ? "暂无特别说明。" : "No extra notes yet.";
   const normalizedQuery = query.trim().toLowerCase();
   const visibleSections = useMemo(
     () => filterManualSections(content.sections, normalizedQuery),
     [content.sections, normalizedQuery],
   );
-  const visibleItemCount = visibleSections.reduce((total, section) => total + (section.items?.length ?? 0), 0);
-  const totalItemCount = content.sections.reduce((total, section) => total + (section.items?.length ?? 0), 0);
+  const visibleItemCount = visibleSections.reduce(
+    (total, section) => total + (section.items?.length ?? 0),
+    0,
+  );
+  const totalItemCount = content.sections.reduce(
+    (total, section) => total + (section.items?.length ?? 0),
+    0,
+  );
   const visibleHeadings = visibleSections.map((section) => section.heading);
-  const allVisibleExpanded = visibleHeadings.length > 0 && visibleHeadings.every((heading) => expandedHeadings.has(heading));
+  const allVisibleExpanded =
+    visibleHeadings.length > 0 &&
+    visibleHeadings.every((heading) => expandedHeadings.has(heading));
 
   function toggleSection(heading: string) {
     setExpandedHeadings((current) => {
@@ -141,7 +160,9 @@ export function ManualPage({
             {visibleItemCount}/{totalItemCount} {stepLabel}
           </span>
         </div>
-        <p className="max-w-4xl text-body-md leading-7 text-on-surface">{content.overview}</p>
+        <p className="max-w-4xl text-body-md leading-7 text-on-surface">
+          {content.overview}
+        </p>
 
         <DebouncedToolbarSearch
           ariaLabel={searchLabel}
@@ -171,7 +192,9 @@ export function ManualPage({
           </div>
           <nav className="mt-4 grid gap-2" aria-label={sectionLabel}>
             {content.sections.map((section, index) => {
-              const visible = visibleSections.some((candidate) => candidate.heading === section.heading);
+              const visible = visibleSections.some(
+                (candidate) => candidate.heading === section.heading,
+              );
 
               return (
                 <a
@@ -197,15 +220,25 @@ export function ManualPage({
             </section>
           ) : (
             visibleSections.map((section) => {
-              const sectionIndex = content.sections.findIndex((candidate) => candidate.heading === section.heading);
+              const sectionIndex = content.sections.findIndex(
+                (candidate) => candidate.heading === section.heading,
+              );
               const expanded = expandedHeadings.has(section.heading);
               const steps = section.steps ?? section.items ?? [];
-              const outcomes = section.outcomes ?? (section.body ? [section.body] : section.items?.slice(0, 2) ?? []);
+              const outcomes =
+                section.outcomes ??
+                (section.body
+                  ? [section.body]
+                  : (section.items?.slice(0, 2) ?? []));
               const cautions = section.cautions ?? [];
               const keywords = section.keywords ?? [];
 
               return (
-                <section className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/78" id={`manual-section-${sectionIndex}`} key={section.heading}>
+                <section
+                  className="overflow-hidden rounded-xl border border-theme-card-border bg-theme-card/78"
+                  id={`manual-section-${sectionIndex}`}
+                  key={section.heading}
+                >
                   <button
                     aria-expanded={expanded}
                     className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-start gap-4 p-5 text-left transition-colors hover:bg-theme-control/34"
@@ -217,8 +250,14 @@ export function ManualPage({
                         <CheckCircle2 size={17} />
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-title-sm text-on-surface">{section.heading}</span>
-                        {section.body ? <span className="mt-2 block text-body-sm leading-6 text-on-surface-variant">{section.body}</span> : null}
+                        <span className="block text-title-sm text-on-surface">
+                          {section.heading}
+                        </span>
+                        {section.body ? (
+                          <span className="mt-2 block text-body-sm leading-6 text-on-surface-variant">
+                            {section.body}
+                          </span>
+                        ) : null}
                       </span>
                     </span>
                     <ChevronDown
@@ -228,14 +267,33 @@ export function ManualPage({
                   {expanded ? (
                     <div className="border-t border-theme-card-border/70 p-5 pt-4">
                       <div className="grid gap-3 xl:grid-cols-3">
-                        <ManualInfoBlock emptyLabel={emptyBlockLabel} icon={<Lightbulb size={16} />} items={outcomes} title={outcomesLabel} />
-                        <ManualInfoBlock emptyLabel={emptyBlockLabel} icon={<Target size={16} />} items={steps} ordered title={stepsBlockLabel} />
-                        <ManualInfoBlock caution emptyLabel={emptyBlockLabel} icon={<AlertTriangle size={16} />} items={cautions} title={cautionsLabel} />
+                        <ManualInfoBlock
+                          emptyLabel={emptyBlockLabel}
+                          icon={<Lightbulb size={16} />}
+                          items={outcomes}
+                          title={outcomesLabel}
+                        />
+                        <ManualInfoBlock
+                          emptyLabel={emptyBlockLabel}
+                          icon={<Target size={16} />}
+                          items={steps}
+                          ordered
+                          title={stepsBlockLabel}
+                        />
+                        <ManualInfoBlock
+                          caution
+                          emptyLabel={emptyBlockLabel}
+                          icon={<AlertTriangle size={16} />}
+                          items={cautions}
+                          title={cautionsLabel}
+                        />
                       </div>
 
                       {keywords.length ? (
                         <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <span className="text-label-caps text-on-surface-muted">{keywordsLabel}</span>
+                          <span className="text-label-caps text-on-surface-muted">
+                            {keywordsLabel}
+                          </span>
                           {keywords.map((keyword) => (
                             <span
                               className="rounded-md border border-theme-control-border bg-theme-control/65 px-2 py-1 text-code-sm text-on-surface-variant"
@@ -277,17 +335,24 @@ function ManualInfoBlock({
 
   return (
     <section className="rounded-lg border border-theme-control-border/70 bg-theme-control/35 p-4">
-      <div className={`flex items-center gap-2 ${caution ? "text-status-conflict" : "text-primary"}`}>
+      <div
+        className={`flex items-center gap-2 ${caution ? "text-status-conflict" : "text-primary"}`}
+      >
         {icon}
         <h3 className="text-label-caps text-on-surface">{title}</h3>
       </div>
       {items.length ? (
         <ListTag className="mt-3 grid gap-2 text-body-sm leading-6 text-on-surface-variant">
           {items.map((item, index) => (
-            <li className="grid grid-cols-[auto_minmax(0,1fr)] gap-2" key={item}>
+            <li
+              className="grid grid-cols-[auto_minmax(0,1fr)] gap-2"
+              key={item}
+            >
               <span
                 className={`mt-[0.3rem] grid shrink-0 place-items-center ${
-                  ordered ? "size-5 rounded-md bg-primary/14 text-code-sm font-semibold text-primary" : "mt-[0.45rem] size-1.5 rounded-full bg-current text-primary"
+                  ordered
+                    ? "size-5 rounded-md bg-primary/14 text-code-sm font-semibold text-primary"
+                    : "mt-[0.45rem] size-1.5 rounded-full bg-current text-primary"
                 }`}
                 aria-hidden="true"
               >
@@ -304,7 +369,10 @@ function ManualInfoBlock({
   );
 }
 
-function filterManualSections(sections: ManualSection[], normalizedQuery: string) {
+function filterManualSections(
+  sections: ManualSection[],
+  normalizedQuery: string,
+) {
   if (!normalizedQuery) {
     return sections;
   }
@@ -323,7 +391,10 @@ function filterManualSections(sections: ManualSection[], normalizedQuery: string
         .join(" ")
         .toLowerCase();
       const sectionMatches = sectionPayload.includes(normalizedQuery);
-      const matchingItems = section.items?.filter((item) => item.toLowerCase().includes(normalizedQuery)) ?? [];
+      const matchingItems =
+        section.items?.filter((item) =>
+          item.toLowerCase().includes(normalizedQuery),
+        ) ?? [];
 
       if (sectionMatches) {
         return section;

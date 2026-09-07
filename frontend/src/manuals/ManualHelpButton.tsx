@@ -9,7 +9,8 @@ export function ManualHelpButton({
   onOpen: () => void;
 }) {
   const { locale } = useI18n();
-  const label = locale === "zh" ? "打开当前页面使用手册" : "Open this page manual";
+  const label =
+    locale === "zh" ? "打开当前页面使用手册" : "Open this page manual";
 
   return (
     <button

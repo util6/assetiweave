@@ -21,7 +21,12 @@ export const navigationIconSchema = z.enum([
   "users",
 ]);
 
-export const menuScopeSchema = z.enum(["global", "asset-catalog", "profile", "settings"]);
+export const menuScopeSchema = z.enum([
+  "global",
+  "asset-catalog",
+  "profile",
+  "settings",
+]);
 
 const localizedNavigationLabelsSchema = z
   .strictObject({

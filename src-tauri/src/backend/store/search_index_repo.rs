@@ -4,7 +4,7 @@ use crate::backend::{
     runtime::{AppError, AppResult},
 };
 use chrono::Utc;
-use sqlx::{AssertSqlSafe, Row, SqliteConnection, SqlitePool};
+use sqlx::{AssertSqlSafe, SqliteConnection, SqlitePool};
 use uuid::Uuid;
 
 const CONVERSATION_SEARCH_SCHEMA_VERSION: i64 = 4;
@@ -102,7 +102,7 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     .execute(pool)
     .await?;
 
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, SearchIndexStateRow>(
         r#"
         SELECT tenant_id, index_instance_id, schema_version, tokenizer_version,
                source_revision, indexed_revision, active_generation, health,
@@ -115,7 +115,7 @@ pub(crate) async fn load_or_create_conversation_search_index_state_sqlx(
     .bind(tenant_id)
     .fetch_one(pool)
     .await?;
-    map_search_index_state(&row)
+    map_search_index_state(row)
 }
 
 #[allow(dead_code)]
@@ -216,6 +216,65 @@ pub(crate) async fn try_acquire_conversation_search_writer_lease_sqlx(
     Ok(result.rows_affected() == 1)
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct SearchIndexStateRow {
+    tenant_id: String,
+    index_instance_id: String,
+    schema_version: i64,
+    tokenizer_version: String,
+    source_revision: i64,
+    indexed_revision: Option<i64>,
+    active_generation: Option<String>,
+    health: String,
+    document_count: i64,
+    size_bytes: i64,
+    last_built_at: Option<String>,
+    last_error: Option<String>,
+    lease_owner: Option<String>,
+    lease_expires_at: Option<String>,
+    updated_at: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SearchIndexQuestionDocumentRow {
+    session_id: String,
+    question_id: String,
+    turn_id: String,
+    question_title: Option<String>,
+    user_text: String,
+    adapter_id: String,
+    source_id: String,
+    project_path: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SearchIndexPartDocumentRow {
+    session_id: String,
+    question_id: String,
+    turn_id: String,
+    part_id: String,
+    question_title: Option<String>,
+    user_text: String,
+    part_index: i64,
+    role: String,
+    kind: String,
+    text: Option<String>,
+    language: Option<String>,
+    command: Option<String>,
+    cwd: Option<String>,
+    status: Option<String>,
+    exit_code: Option<i64>,
+    metadata_json: Option<String>,
+    content_card_json: Option<String>,
+    translated_text: Option<String>,
+    source_execution_id: Option<String>,
+    command_label: Option<String>,
+    adapter_id: String,
+    source_id: String,
+    project_path: Option<String>,
+    card_kinds_json: String,
+}
+
 pub(crate) async fn load_conversation_search_index_documents_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -224,8 +283,8 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
     for tables in [SearchDocumentTables::session(), SearchDocumentTables::web()] {
         let question_sql = format!(
             r#"
-            SELECT s.id, q.id, t.id, q.title, t.user_text,
-                   s.adapter_id, s.source_id, {project_path}
+            SELECT s.id AS session_id, q.id AS question_id, t.id AS turn_id, q.title AS question_title, t.user_text AS user_text,
+                   s.adapter_id AS adapter_id, s.source_id AS source_id, {project_path} AS project_path
             FROM {sessions} s
             JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
             JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
@@ -247,39 +306,41 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             turns = tables.turns,
             project_path = tables.project_path,
         );
-        for row in sqlx::query(AssertSqlSafe(question_sql))
+        for row in sqlx::query_as::<_, SearchIndexQuestionDocumentRow>(AssertSqlSafe(question_sql))
             .bind(tenant_id)
             .fetch_all(pool)
             .await?
         {
-            let turn_id: String = row.try_get(2)?;
-            let user_text: String = row.try_get(4)?;
+            let turn_id = row.turn_id;
+            let user_text = row.user_text;
+            let question_title = search_question_title(row.question_title, &user_text);
             documents.push(ConversationSearchIndexDocumentRow {
                 document_kind: "question".to_string(),
                 record_kind: tables.record_kind.to_string(),
-                session_id: row.try_get(0)?,
-                question_id: row.try_get(1)?,
+                session_id: row.session_id,
+                question_id: row.question_id,
                 turn_id: turn_id.clone(),
                 part_id: String::new(),
                 block_id: format!("{turn_id}-question"),
                 card_kind: String::new(),
                 semantic_role: String::new(),
-                question_title: search_question_title(row.try_get(3)?, &user_text),
+                question_title,
                 content: user_text,
-                adapter_id: row.try_get(5)?,
-                source_id: row.try_get(6)?,
-                project_path: row.try_get(7)?,
+                adapter_id: row.adapter_id,
+                source_id: row.source_id,
+                project_path: row.project_path.unwrap_or_default(),
             });
         }
 
         let part_sql = format!(
             r#"
-            SELECT s.id, q.id, t.id, p.id, q.title, t.user_text,
-                   p.part_index, p.role, p.kind, p.text, p.language, p.command, p.cwd,
-                   p.status, p.exit_code, p.metadata_json, p.content_card_json,
-                   p.translated_text, p.source_execution_id, p.command_label,
-                   s.adapter_id, s.source_id, {project_path},
-                   COALESCE(a.card_kinds_json, '[]')
+            SELECT s.id AS session_id, q.id AS question_id, t.id AS turn_id, p.id AS part_id, q.title AS question_title, t.user_text AS user_text,
+                   p.part_index AS part_index, p.role AS role, p.kind AS kind, p.text AS text, p.language AS language,
+                   p.command AS command, p.cwd AS cwd, p.status AS status, p.exit_code AS exit_code,
+                   p.metadata_json AS metadata_json, p.content_card_json AS content_card_json,
+                   p.translated_text AS translated_text, p.source_execution_id AS source_execution_id,
+                   p.command_label AS command_label, s.adapter_id AS adapter_id, s.source_id AS source_id,
+                   {project_path} AS project_path, COALESCE(a.card_kinds_json, '[]') AS card_kinds_json
             FROM {sessions} s
             JOIN {questions} q ON q.tenant_id = s.tenant_id AND q.session_id = s.id
             JOIN {question_turns} qt ON qt.tenant_id = q.tenant_id AND qt.question_id = q.id
@@ -304,26 +365,24 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
             parts = tables.parts,
             project_path = tables.project_path,
         );
-        for row in sqlx::query(AssertSqlSafe(part_sql))
+        for row in sqlx::query_as::<_, SearchIndexPartDocumentRow>(AssertSqlSafe(part_sql))
             .bind(tenant_id)
             .fetch_all(pool)
             .await?
         {
             let part = map_search_part(&row)?;
-            let card_kinds_json: String = row.try_get(23)?;
             let card_kinds = serde_json::from_str::<
                 Vec<crate::backend::models::ConversationCardKindDefinition>,
-            >(&card_kinds_json)
+            >(&row.card_kinds_json)
             .unwrap_or_default();
-            let adapter_id: String = row.try_get(20)?;
+            let adapter_id = row.adapter_id.clone();
             let cards =
                 crate::backend::projection::conversation_cards::project_conversation_content_cards(
                     &part,
                     &adapter_id,
                     &card_kinds,
-                )
-                .map_err(AppError::external)?;
-            let question_title = search_question_title(row.try_get(4)?, row.try_get(5)?);
+                )?;
+            let question_title = search_question_title(row.question_title.clone(), &row.user_text);
             for card in cards {
                 let card_kind = card.kind;
                 let semantic_role = card
@@ -337,18 +396,18 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                 documents.push(ConversationSearchIndexDocumentRow {
                     document_kind: "card".to_string(),
                     record_kind: tables.record_kind.to_string(),
-                    session_id: row.try_get(0)?,
-                    question_id: row.try_get(1)?,
-                    turn_id: row.try_get(2)?,
+                    session_id: row.session_id.clone(),
+                    question_id: row.question_id.clone(),
+                    turn_id: row.turn_id.clone(),
                     part_id: part.id.clone(),
                     block_id: card.node_id,
                     card_kind,
                     semantic_role,
                     question_title: question_title.clone(),
                     content: card.body,
-                    adapter_id: row.try_get(20)?,
-                    source_id: row.try_get(21)?,
-                    project_path: row.try_get(22)?,
+                    adapter_id: row.adapter_id.clone(),
+                    source_id: row.source_id.clone(),
+                    project_path: row.project_path.clone().unwrap_or_default(),
                 });
             }
         }
@@ -356,27 +415,28 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
     Ok(documents)
 }
 
-fn map_search_part(row: &sqlx::sqlite::SqliteRow) -> AppResult<ConversationPart> {
+fn map_search_part(row: &SearchIndexPartDocumentRow) -> AppResult<ConversationPart> {
     Ok(ConversationPart {
-        id: row.try_get(3)?,
-        turn_id: row.try_get(2)?,
-        part_index: row.try_get(6)?,
-        role: super::codec::decode_enum(row.try_get::<String, _>(7)?)?,
-        kind: super::codec::decode_enum(row.try_get::<String, _>(8)?)?,
-        text: row.try_get(9)?,
-        language: row.try_get(10)?,
-        command: row.try_get(11)?,
-        cwd: row.try_get(12)?,
-        status: row.try_get(13)?,
-        exit_code: row.try_get(14)?,
-        metadata_json: row.try_get(15)?,
-        command_label: row.try_get(19)?,
-        source_execution_id: row.try_get(18)?,
+        id: row.part_id.clone(),
+        turn_id: row.turn_id.clone(),
+        part_index: row.part_index,
+        role: super::codec::decode_enum(row.role.clone())?,
+        kind: super::codec::decode_enum(row.kind.clone())?,
+        text: row.text.clone(),
+        language: row.language.clone(),
+        command: row.command.clone(),
+        cwd: row.cwd.clone(),
+        status: row.status.clone(),
+        exit_code: row.exit_code.map(|v| v as i32),
+        metadata_json: row.metadata_json.clone(),
+        command_label: row.command_label.clone(),
+        source_execution_id: row.source_execution_id.clone(),
         content_card: row
-            .try_get::<Option<String>, _>(16)?
+            .content_card_json
+            .clone()
             .map(super::codec::decode_json)
             .transpose()?,
-        translated_text: row.try_get(17)?,
+        translated_text: row.translated_text.clone(),
     })
 }
 
@@ -542,25 +602,23 @@ fn search_question_title(title: Option<String>, question_text: &str) -> String {
         })
 }
 
-fn map_search_index_state(
-    row: &sqlx::sqlite::SqliteRow,
-) -> AppResult<ConversationSearchIndexState> {
+fn map_search_index_state(row: SearchIndexStateRow) -> AppResult<ConversationSearchIndexState> {
     Ok(ConversationSearchIndexState {
-        tenant_id: row.try_get(0)?,
-        index_instance_id: row.try_get(1)?,
-        schema_version: row.try_get(2)?,
-        tokenizer_version: row.try_get(3)?,
-        source_revision: row.try_get(4)?,
-        indexed_revision: row.try_get(5)?,
-        active_generation: row.try_get(6)?,
-        health: decode_search_index_health(&row.try_get::<String, _>(7)?)?,
-        document_count: row.try_get(8)?,
-        size_bytes: row.try_get(9)?,
-        last_built_at: row.try_get(10)?,
-        last_error: row.try_get(11)?,
-        lease_owner: row.try_get(12)?,
-        lease_expires_at: row.try_get(13)?,
-        updated_at: row.try_get(14)?,
+        tenant_id: row.tenant_id,
+        index_instance_id: row.index_instance_id,
+        schema_version: row.schema_version,
+        tokenizer_version: row.tokenizer_version,
+        source_revision: row.source_revision,
+        indexed_revision: row.indexed_revision,
+        active_generation: row.active_generation,
+        health: decode_search_index_health(&row.health)?,
+        document_count: row.document_count,
+        size_bytes: row.size_bytes,
+        last_built_at: row.last_built_at,
+        last_error: row.last_error,
+        lease_owner: row.lease_owner,
+        lease_expires_at: row.lease_expires_at,
+        updated_at: row.updated_at,
     })
 }
 
@@ -586,92 +644,92 @@ mod tests {
 
     const TENANT_ID: &str = "default";
 
-    #[test]
-    fn conversation_search_state_tracks_revision_and_writer_lease() {
+    #[tokio::test]
+    async fn conversation_search_state_tracks_revision_and_writer_lease() {
         let db_path = temporary_database_path();
-        let database = Database::open(&db_path).expect("open search state database");
+        let database = Database::open_async(&db_path)
+            .await
+            .expect("open search state database");
 
-        database
-            .block_on(async {
-                let initial =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(initial.health, ConversationSearchIndexHealth::Missing);
-                assert_eq!(initial.source_revision, 0);
-                assert_eq!(initial.indexed_revision, None);
-                assert!(initial.is_compatible());
-                let mut previous_schema = initial.clone();
-                previous_schema.schema_version = CONVERSATION_SEARCH_SCHEMA_VERSION - 1;
-                assert!(!previous_schema.is_compatible());
-
-                let revision =
-                    bump_conversation_search_source_revision_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(revision, 1);
-
-                assert!(
-                    try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "desktop",
-                        "2026-07-22T10:00:00Z",
-                        "2026-07-22T10:05:00Z",
-                    )
-                    .await?
-                );
-                assert!(
-                    !try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "cli",
-                        "2026-07-22T10:01:00Z",
-                        "2026-07-22T10:06:00Z",
-                    )
-                    .await?
-                );
-                assert!(
-                    try_acquire_conversation_search_writer_lease_sqlx(
-                        database.pool(),
-                        TENANT_ID,
-                        "cli",
-                        "2026-07-22T10:06:00Z",
-                        "2026-07-22T10:11:00Z",
-                    )
-                    .await?
-                );
-
-                let state =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert_eq!(state.source_revision, 1);
-                assert_eq!(state.lease_owner.as_deref(), Some("cli"));
-
-                sqlx::query(
-                    "UPDATE conversation_search_index_state SET schema_version = ?1 WHERE tenant_id = ?2",
-                )
-                .bind(CONVERSATION_SEARCH_SCHEMA_VERSION - 1)
-                .bind(TENANT_ID)
-                .execute(database.pool())
+        let initial =
+            load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
                 .await
-                ?;
-                assert!(complete_conversation_search_index_rebuild_sqlx(
-                    database.pool(),
-                    TENANT_ID,
-                    revision,
-                    "generation-upgraded",
-                    12,
-                    4096,
-                )
-                .await?);
-                let rebuilt =
-                    load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
-                        .await?;
-                assert!(rebuilt.is_compatible());
-                assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
-                assert_eq!(rebuilt.active_generation.as_deref(), Some("generation-upgraded"));
-                AppResult::Ok(())
-            })
-            .expect("track search state");
+                .expect("load initial state");
+        assert_eq!(initial.health, ConversationSearchIndexHealth::Missing);
+        assert_eq!(initial.source_revision, 0);
+        assert_eq!(initial.indexed_revision, None);
+        assert!(initial.is_compatible());
+        let mut previous_schema = initial.clone();
+        previous_schema.schema_version = CONVERSATION_SEARCH_SCHEMA_VERSION - 1;
+        assert!(!previous_schema.is_compatible());
+
+        let revision = bump_conversation_search_source_revision_sqlx(database.pool(), TENANT_ID)
+            .await
+            .expect("bump revision");
+        assert_eq!(revision, 1);
+
+        assert!(try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "desktop",
+            "2026-07-22T10:00:00Z",
+            "2026-07-22T10:05:00Z",
+        )
+        .await
+        .expect("acquire lease"));
+        assert!(!try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "cli",
+            "2026-07-22T10:01:00Z",
+            "2026-07-22T10:06:00Z",
+        )
+        .await
+        .expect("fail overlapping lease"));
+        assert!(try_acquire_conversation_search_writer_lease_sqlx(
+            database.pool(),
+            TENANT_ID,
+            "cli",
+            "2026-07-22T10:06:00Z",
+            "2026-07-22T10:11:00Z",
+        )
+        .await
+        .expect("acquire subsequent lease"));
+
+        let state = load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
+            .await
+            .expect("load state");
+        assert_eq!(state.source_revision, 1);
+        assert_eq!(state.lease_owner.as_deref(), Some("cli"));
+
+        sqlx::query(
+            "UPDATE conversation_search_index_state SET schema_version = ?1 WHERE tenant_id = ?2",
+        )
+        .bind(CONVERSATION_SEARCH_SCHEMA_VERSION - 1)
+        .bind(TENANT_ID)
+        .execute(database.pool())
+        .await
+        .expect("update schema version");
+        assert!(complete_conversation_search_index_rebuild_sqlx(
+            database.pool(),
+            TENANT_ID,
+            revision,
+            "generation-upgraded",
+            12,
+            4096,
+        )
+        .await
+        .expect("complete rebuild"));
+        let rebuilt =
+            load_or_create_conversation_search_index_state_sqlx(database.pool(), TENANT_ID)
+                .await
+                .expect("load rebuilt state");
+        assert!(rebuilt.is_compatible());
+        assert_eq!(rebuilt.health, ConversationSearchIndexHealth::Ready);
+        assert_eq!(
+            rebuilt.active_generation.as_deref(),
+            Some("generation-upgraded")
+        );
 
         drop(database);
         let _ = std::fs::remove_file(db_path);

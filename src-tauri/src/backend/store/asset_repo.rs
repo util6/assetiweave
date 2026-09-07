@@ -17,14 +17,12 @@ pub(crate) async fn load_assets_sqlx(
             .bind(tenant_id)
             .bind(encode_enum_app(kind)?)
             .fetch_all(pool)
-            .await
-            .map_err(|error| AppError::External(error.to_string()))?
+            .await?
     } else {
         sqlx::query(sql::LIST_ASSETS)
             .bind(tenant_id)
             .fetch_all(pool)
-            .await
-            .map_err(|error| AppError::External(error.to_string()))?
+            .await?
     };
     rows.iter().map(map_sqlx_asset_row).collect()
 }
@@ -38,8 +36,7 @@ pub(crate) async fn load_asset_sqlx(
         .bind(tenant_id)
         .bind(asset_id)
         .fetch_optional(pool)
-        .await
-        .map_err(|error| AppError::External(error.to_string()))?
+        .await?
         .as_ref()
         .map(map_sqlx_asset_row)
         .transpose()
@@ -47,51 +44,20 @@ pub(crate) async fn load_asset_sqlx(
 
 fn map_sqlx_asset_row(row: &SqliteRow) -> AppResult<Asset> {
     Ok(Asset {
-        id: row
-            .try_get(0)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        source_id: row
-            .try_get(1)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        name: row
-            .try_get(2)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        kind: decode_enum_app::<AssetKind>(
-            row.try_get::<String, _>(3)
-                .map_err(|error| AppError::External(error.to_string()))?,
-        )?,
-        format: decode_enum_app::<AssetFormat>(
-            row.try_get::<String, _>(4)
-                .map_err(|error| AppError::External(error.to_string()))?,
-        )?,
-        relative_path: row
-            .try_get(5)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        absolute_path: row
-            .try_get(6)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        entry_file: row
-            .try_get(7)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        description: row
-            .try_get(8)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        content_hash: row
-            .try_get(9)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        discovered_at: row
-            .try_get(10)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        updated_at: row
-            .try_get(11)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        detector_id: row
-            .try_get(12)
-            .map_err(|error| AppError::External(error.to_string()))?,
-        detector_version: row
-            .try_get::<i64, _>(13)
-            .map_err(|error| AppError::External(error.to_string()))?
-            as u32,
+        id: row.try_get(0)?,
+        source_id: row.try_get(1)?,
+        name: row.try_get(2)?,
+        kind: decode_enum_app::<AssetKind>(row.try_get::<String, _>(3)?)?,
+        format: decode_enum_app::<AssetFormat>(row.try_get::<String, _>(4)?)?,
+        relative_path: row.try_get(5)?,
+        absolute_path: row.try_get(6)?,
+        entry_file: row.try_get(7)?,
+        description: row.try_get(8)?,
+        content_hash: row.try_get(9)?,
+        discovered_at: row.try_get(10)?,
+        updated_at: row.try_get(11)?,
+        detector_id: row.try_get(12)?,
+        detector_version: row.try_get::<i64, _>(13)? as u32,
     })
 }
 
@@ -101,16 +67,12 @@ pub(crate) async fn replace_source_assets_sqlx(
     source_id: &str,
     assets: &[Asset],
 ) -> AppResult<()> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|error| AppError::External(error.to_string()))?;
+    let mut tx = pool.begin().await?;
     sqlx::query(sql::DELETE_ASSETS_BY_SOURCE)
         .bind(tenant_id)
         .bind(source_id)
         .execute(&mut *tx)
-        .await
-        .map_err(|error| AppError::External(error.to_string()))?;
+        .await?;
     for asset in assets {
         sqlx::query(sql::INSERT_ASSET)
             .bind(tenant_id)
@@ -129,12 +91,9 @@ pub(crate) async fn replace_source_assets_sqlx(
             .bind(&asset.detector_id)
             .bind(asset.detector_version)
             .execute(&mut *tx)
-            .await
-            .map_err(|error| AppError::External(error.to_string()))?;
+            .await?;
     }
-    tx.commit()
-        .await
-        .map_err(|error| AppError::External(error.to_string()))?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -149,8 +108,7 @@ pub(crate) async fn update_asset_description_sqlx(
         .bind(tenant_id)
         .bind(&asset.id)
         .execute(pool)
-        .await
-        .map_err(|error| AppError::External(error.to_string()))?;
+        .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("asset not found: {}", asset.id)));
     }
@@ -161,86 +119,88 @@ pub(crate) async fn update_asset_description_sqlx(
 mod tests {
     use super::*;
 
-    #[test]
-    fn sqlx_asset_repo_replaces_filters_and_updates_descriptions() {
+    #[tokio::test]
+    async fn sqlx_asset_repo_replaces_filters_and_updates_descriptions() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-asset-sqlx-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let mut skill = test_asset("skill-a", AssetKind::Skill);
         let rule = test_asset("design", AssetKind::Rule);
 
-        database
-            .block_on(async {
-                replace_source_assets_sqlx(
-                    database.pool(),
-                    "default",
-                    "source-a",
-                    &[skill.clone(), rule],
-                )
-                .await?;
-                let scoped_assets =
-                    load_assets_sqlx(database.pool(), "default", Some(AssetKind::Skill)).await?;
-                let loaded_skill = load_asset_sqlx(database.pool(), "default", &skill.id).await?;
-                let missing_asset = load_asset_sqlx(database.pool(), "default", "missing").await?;
-                skill.description = Some("Updated".to_string());
-                update_asset_description_sqlx(database.pool(), "default", &skill).await?;
-                let all_assets = load_assets_sqlx(database.pool(), "default", None).await?;
-                AppResult::Ok((scoped_assets, loaded_skill, missing_asset, all_assets))
-            })
-            .map(|(scoped_assets, loaded_skill, missing_asset, all_assets)| {
-                assert_eq!(scoped_assets.len(), 1);
-                assert_eq!(scoped_assets[0].name, "skill-a");
-                assert_eq!(loaded_skill.expect("load asset by id").id, skill.id);
-                assert!(missing_asset.is_none());
-                let updated = all_assets
-                    .iter()
-                    .find(|asset| asset.id == "asset-skill-a")
-                    .expect("updated asset");
-                assert_eq!(updated.description.as_deref(), Some("Updated"));
-            })
-            .expect("query SQLx asset repo");
+        replace_source_assets_sqlx(
+            database.pool(),
+            "default",
+            "source-a",
+            &[skill.clone(), rule],
+        )
+        .await
+        .expect("replace source assets");
+        let scoped_assets = load_assets_sqlx(database.pool(), "default", Some(AssetKind::Skill))
+            .await
+            .expect("load scoped assets");
+        let loaded_skill = load_asset_sqlx(database.pool(), "default", &skill.id)
+            .await
+            .expect("load asset");
+        let missing_asset = load_asset_sqlx(database.pool(), "default", "missing")
+            .await
+            .expect("load missing asset");
+        skill.description = Some("Updated".to_string());
+        update_asset_description_sqlx(database.pool(), "default", &skill)
+            .await
+            .expect("update description");
+        let all_assets = load_assets_sqlx(database.pool(), "default", None)
+            .await
+            .expect("load all assets");
+
+        assert_eq!(scoped_assets.len(), 1);
+        assert_eq!(scoped_assets[0].name, "skill-a");
+        assert_eq!(loaded_skill.expect("load asset by id").id, skill.id);
+        assert!(missing_asset.is_none());
+        let updated = all_assets
+            .iter()
+            .find(|asset| asset.id == "asset-skill-a")
+            .expect("updated asset");
+        assert_eq!(updated.description.as_deref(), Some("Updated"));
+
         drop(database);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-wal"));
         let _ = std::fs::remove_file(db_path.with_extension("sqlite-shm"));
     }
 
-    #[test]
-    fn sqlx_asset_repo_isolates_source_replacement_by_tenant() {
+    #[tokio::test]
+    async fn sqlx_asset_repo_isolates_source_replacement_by_tenant() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-asset-tenant-sqlx-{}.sqlite",
             uuid::Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
         let mut default_asset = test_asset("skill-a", AssetKind::Skill);
         default_asset.absolute_path = "/tmp/default-skill-a.md".to_string();
         let mut tenant_asset = test_asset("skill-a", AssetKind::Skill);
         tenant_asset.absolute_path = "/tmp/tenant-skill-a.md".to_string();
 
-        let (default_assets, tenant_assets) = database
-            .block_on(async {
-                replace_source_assets_sqlx(
-                    database.pool(),
-                    "default",
-                    "source-a",
-                    &[default_asset],
-                )
-                .await?;
-                replace_source_assets_sqlx(
-                    database.pool(),
-                    "tenant-a",
-                    "source-a",
-                    &[tenant_asset],
-                )
-                .await?;
-                replace_source_assets_sqlx(database.pool(), "default", "source-a", &[]).await?;
-                let default_assets = load_assets_sqlx(database.pool(), "default", None).await?;
-                let tenant_assets = load_assets_sqlx(database.pool(), "tenant-a", None).await?;
-                AppResult::Ok((default_assets, tenant_assets))
-            })
-            .expect("query tenant-scoped assets");
+        replace_source_assets_sqlx(database.pool(), "default", "source-a", &[default_asset])
+            .await
+            .expect("replace default assets");
+        replace_source_assets_sqlx(database.pool(), "tenant-a", "source-a", &[tenant_asset])
+            .await
+            .expect("replace tenant assets");
+        replace_source_assets_sqlx(database.pool(), "default", "source-a", &[])
+            .await
+            .expect("clear default assets");
+        let default_assets = load_assets_sqlx(database.pool(), "default", None)
+            .await
+            .expect("load default assets");
+        let tenant_assets = load_assets_sqlx(database.pool(), "tenant-a", None)
+            .await
+            .expect("load tenant assets");
 
         assert!(default_assets.is_empty());
         assert_eq!(tenant_assets.len(), 1);

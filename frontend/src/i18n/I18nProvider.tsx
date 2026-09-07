@@ -1,88 +1,60 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { messages, type Locale, type TranslationKey, type TranslationParams } from "./messages";
+import { useContext, useRef, type ReactNode } from "react";
+import { I18nextProvider } from "react-i18next";
+import type { i18n as I18nInstance } from "i18next";
+import {
+  QueryClient,
+  QueryClientContext,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { createAppI18nSync } from "./createAppI18n";
+import { resolveInitialLocale } from "./localeBootstrap";
+import type { Translator } from "./types";
 
-const STORAGE_KEY = "assetiweave.locale";
+export { useI18n } from "./useI18n";
+export type { Translator };
 
-export type Translator = (key: TranslationKey, params?: TranslationParams) => string;
+const fallbackQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+  },
+});
 
-interface I18nContextValue {
-  locale: Locale;
-  setLocale: (locale: Locale) => void;
-  t: Translator;
+interface I18nProviderProps {
+  children: ReactNode;
+  i18n?: I18nInstance;
 }
 
-const I18nContext = createContext<I18nContextValue | null>(null);
+export function I18nProvider({ children, i18n }: I18nProviderProps) {
+  const hasQueryClient = Boolean(useContext(QueryClientContext));
+  const instanceRef = useRef<I18nInstance | null>(null);
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(() => getInitialLocale());
-
-  useEffect(() => {
-    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
-    writeStoredLocale(locale);
-  }, [locale]);
-
-  const value = useMemo<I18nContextValue>(() => {
-    const t: Translator = (key, params) => interpolate(messages[locale][key] ?? messages.zh[key] ?? key, params);
-
-    return {
-      locale,
-      setLocale: setLocaleState,
-      t,
-    };
-  }, [locale]);
-
-  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
-}
-
-export function useI18n() {
-  const context = useContext(I18nContext);
-  if (!context) {
-    throw new Error("useI18n must be used inside I18nProvider");
-  }
-  return context;
-}
-
-function getInitialLocale(): Locale {
-  const stored = readStoredLocale();
-  if (stored === "zh" || stored === "en") {
-    return stored;
+  if (i18n) {
+    instanceRef.current = i18n;
+  } else if (!instanceRef.current) {
+    let storedLocale: string | null = null;
+    try {
+      storedLocale =
+        typeof localStorage !== "undefined"
+          ? localStorage.getItem("assetiweave.locale")
+          : null;
+    } catch {
+      // Ignore storage errors in restricted contexts
+    }
+    const initialLocale = resolveInitialLocale(storedLocale);
+    instanceRef.current = createAppI18nSync(initialLocale);
   }
 
-  if (typeof navigator === "undefined") {
-    return "zh";
+  const content = (
+    <I18nextProvider i18n={instanceRef.current}>{children}</I18nextProvider>
+  );
+
+  if (!hasQueryClient) {
+    return (
+      <QueryClientProvider client={fallbackQueryClient}>
+        {content}
+      </QueryClientProvider>
+    );
   }
 
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
-}
-
-function readStoredLocale(): string | null {
-  if (typeof localStorage === "undefined") {
-    return null;
-  }
-
-  try {
-    return localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredLocale(locale: Locale): void {
-  if (typeof localStorage === "undefined") {
-    return;
-  }
-
-  try {
-    localStorage.setItem(STORAGE_KEY, locale);
-  } catch {
-    // Ignore restricted storage environments, such as browser privacy modes and Node tests.
-  }
-}
-
-function interpolate(template: string, params?: TranslationParams) {
-  if (!params) {
-    return template;
-  }
-
-  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(params[key] ?? ""));
+  return content;
 }

@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, AssetMountStatus, TargetProfile } from "../../types";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  TargetProfile,
+} from "../../types";
 import { AssetMountCard } from "./AssetMountCard";
 
 describe("AssetMountCard", () => {
@@ -35,7 +40,10 @@ describe("AssetMountCard", () => {
       <I18nProvider>
         <AssetMountCard
           asset={skillAsset}
-          mountStatus={{ ...mountedStatus, display_target_dir: "~/.codex/skills" }}
+          mountStatus={{
+            ...mountedStatus,
+            display_target_dir: "~/.codex/skills",
+          }}
           onToggle={vi.fn()}
           profile={profile}
         />

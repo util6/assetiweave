@@ -1,7 +1,10 @@
 import type { Asset } from "../types";
 
 export function displayAssetPath(asset: Asset) {
-  return asset.display_path || abbreviateHomePath(asset.absolute_path || asset.relative_path);
+  return (
+    asset.display_path ||
+    abbreviateHomePath(asset.absolute_path || asset.relative_path)
+  );
 }
 
 export function abbreviateHomePath(path: string) {
@@ -10,7 +13,10 @@ export function abbreviateHomePath(path: string) {
   }
 
   const normalizedPath = normalizeSeparators(path);
-  if (normalizedPath.startsWith("%USERPROFILE%/") || normalizedPath === "%USERPROFILE%") {
+  if (
+    normalizedPath.startsWith("%USERPROFILE%/") ||
+    normalizedPath === "%USERPROFILE%"
+  ) {
     return normalizedPath.replace("%USERPROFILE%", "~");
   }
 
@@ -24,7 +30,9 @@ export function abbreviateHomePath(path: string) {
     return normalizedPath.replace(linuxHomeMatch[0], "~");
   }
 
-  const windowsHomeMatch = normalizedPath.match(/^[A-Za-z]:\/Users\/[^/]+(?=\/|$)/);
+  const windowsHomeMatch = normalizedPath.match(
+    /^[A-Za-z]:\/Users\/[^/]+(?=\/|$)/,
+  );
   if (windowsHomeMatch) {
     return normalizedPath.replace(windowsHomeMatch[0], "~");
   }

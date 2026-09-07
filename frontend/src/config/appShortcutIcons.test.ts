@@ -36,9 +36,16 @@ describe("app shortcut icon assets", () => {
     for (const [appKind, definition] of Object.entries(appShortcutIcons)) {
       expect(definition.paths.length, appKind).toBeGreaterThan(0);
       expect(definition.viewBox, appKind).toMatch(/^0 0 \d+ \d+$/);
-      expect(appShortcutIconAssetsByKind[appKind].legacyIcon, appKind).toBeTruthy();
-      expect(appShortcutIconAssetsByKind[appKind].svg, appKind).toContain("<svg");
-      expect(appShortcutIconAssetsByKind[appKind].accentColor, appKind).toMatch(/^#[0-9a-fA-F]{6}$/);
+      expect(
+        appShortcutIconAssetsByKind[appKind].legacyIcon,
+        appKind,
+      ).toBeTruthy();
+      expect(appShortcutIconAssetsByKind[appKind].svg, appKind).toContain(
+        "<svg",
+      );
+      expect(appShortcutIconAssetsByKind[appKind].accentColor, appKind).toMatch(
+        /^#[0-9a-fA-F]{6}$/,
+      );
     }
   });
 
@@ -54,6 +61,8 @@ describe("app shortcut icon assets", () => {
     expect(catalog.map((item) => item.appKind)).toEqual(["sample-agent"]);
     expect(catalog[0]?.asset.legacyIcon).toBe("S");
     expect(catalog[0]?.definition.paths[0]?.d).toBe("M0 0");
-    expect(appShortcutIconCatalog.map((item) => item.appKind)).toEqual(Object.keys(appShortcutIconAssetsByKind));
+    expect(appShortcutIconCatalog.map((item) => item.appKind)).toEqual(
+      Object.keys(appShortcutIconAssetsByKind),
+    );
   });
 });

@@ -1,6 +1,6 @@
 # A-F16：前端成熟生态收口与 CI 门禁
 
-> **Status: PLANNED**。使用 `superpowers:executing-plans`。
+> **Status: COMPLETED**。使用 `superpowers:executing-plans`。
 
 **Goal:** 完成前端旧机制删除、真实边界检查与持续验证，不把引库留在局部样板。
 **Depends:** A-F15。
@@ -15,9 +15,9 @@
 
 ## 步骤
 
-- [ ] 运行前面每张前端卡的 regression；将旧 Provider/import 转移期的剩余项列清单并逐一删除。
-- [ ] 检查 AppProviders：保留库 Provider 与必要业务 runtime owner；不以 Provider 数量为唯一指标删除任务投影或全局进度。QueryClient/I18next 实例不在每次 render 创建。
-- [ ] 按代码引用检查旧 AppRouter 匹配、routeLoaders、i18n Context/interpolate、asyncCache、旧 settings数据 Context 均退出生产；库外薄 facade 只表达业务，不持另一套状态。
+- [x] 运行前面每张前端卡的 regression；将旧 Provider/import 转移期的剩余项列清单并逐一删除。
+- [x] 检查 AppProviders：保留库 Provider 与必要业务 runtime owner；不以 Provider 数量为唯一指标删除任务投影或全局进度。QueryClient/I18next 实例不在每次 render 创建。
+- [x] 按代码引用检查旧 AppRouter 匹配、routeLoaders、i18n Context/interpolate、asyncCache、旧 settings数据 Context 均退出生产；库外薄 facade 只表达业务，不持另一套状态。
 
 ```ts
 import { expect, it } from "vitest";
@@ -35,8 +35,8 @@ it("生产代码没有重新导入已删除共享缓存", () => {
 
 该检查只约束“已删除机制”；正常 import 架构规则由 ESLint，不新造静态分析框架。`as` 只对 Vite raw glob 的构建输出做明确类型边界，不用于伪造业务测试对象。
 
-- [ ] CI 在 install 后执行 lint/format:check；脚本用当前唯一 config 和适当文件范围，不启用一套只检查新文件的长期例外。Prettier 避开生成合同/编译产物/业务资源快照，以免生成器与formatter永远互相改写。
-- [ ] 运行全前端验证和现有边界脚本；记录库替换前后机制删除/保留表，交给 A-C02 跨层统一，不开插件平台。
+- [x] CI 在 install 后执行 lint/format:check；脚本用当前唯一 config 和适当文件范围，不启用一套只检查新文件的长期例外。Prettier 避开生成合同/编译产物/业务资源快照，以免生成器与formatter永远互相改写。
+- [x] 运行全前端验证和现有边界脚本；记录库替换前后机制删除/保留表，交给 A-C02 跨层统一，不开插件平台。
 
 ```sh
 pnpm lint

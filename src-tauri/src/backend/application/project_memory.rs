@@ -1,10 +1,9 @@
 use super::prelude::*;
 use crate::backend::{
     ai_execution::{
-        execute_agent_blocking, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
+        execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
-    app_settings,
     models::{ProjectMemoryJob, ProjectMemoryJobStatus, ProjectMemorySource},
     runtime::tasks::{TaskContext, TaskFilter, TaskKind, TaskSpec},
     store::{
@@ -20,7 +19,6 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    thread,
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -38,8 +36,7 @@ struct ProjectMemoryAgentOutput {
 }
 
 struct ProjectMemoryLeaseGuard {
-    stop: CancellationToken,
-    join: Option<thread::JoinHandle<()>>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl ProjectMemoryLeaseGuard {
@@ -50,43 +47,40 @@ impl ProjectMemoryLeaseGuard {
         ownership_token: String,
         cancellation: CancellationToken,
     ) -> Self {
-        let stop = CancellationToken::new();
-        let thread_stop = stop.clone();
-        let join = thread::Builder::new()
-            .name("aiw-project-memory-heartbeat".to_string())
-            .spawn(move || {
-                while !thread_stop.is_cancelled() && !cancellation.is_cancelled() {
-                    thread::sleep(Duration::from_secs(1));
-                    if thread_stop.is_cancelled() || cancellation.is_cancelled() {
-                        break;
+        let task = tokio::spawn(async move {
+            let pool = database.pool().clone();
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        if cancellation.is_cancelled() {
+                            break;
+                        }
+                        let now = Utc::now().to_rfc3339();
+                        let healthy = store::heartbeat_project_memory_job_sqlx(
+                            &pool,
+                            &tenant_id,
+                            &job_id,
+                            &ownership_token,
+                            &now,
+                        )
+                        .await;
+                        if !healthy.unwrap_or(false) {
+                            break;
+                        }
                     }
-                    let now = Utc::now().to_rfc3339();
-                    let healthy = database.run_sync(store::heartbeat_project_memory_job_sqlx(
-                        database.pool(),
-                        &tenant_id,
-                        &job_id,
-                        &ownership_token,
-                        &now,
-                    ));
-                    if !healthy.unwrap_or(false) {
+                    _ = cancellation.cancelled() => {
                         break;
                     }
                 }
-            })
-            .expect("Project Memory heartbeat thread must start");
-        Self {
-            stop,
-            join: Some(join),
-        }
+            }
+        });
+        Self { task }
     }
 }
 
 impl Drop for ProjectMemoryLeaseGuard {
     fn drop(&mut self) {
-        self.stop.cancel();
-        if let Some(join) = self.join.take() {
-            let _ = join.join();
-        }
+        self.task.abort();
     }
 }
 
@@ -94,25 +88,20 @@ impl AppService {
     /// Rehydrates Project Memory work after Session Memory commits or process
     /// restart. The per-project conflict key is the in-memory serialization
     /// boundary; the durable claim remains authoritative across processes.
-    pub(crate) fn reconcile_project_memory_jobs_for_tenant_at(
+    pub(crate) async fn reconcile_project_memory_jobs_for_tenant_at(
         &self,
         tenant_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<usize> {
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(0);
         }
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
-        self.runtime
-            .run_sync(store::recover_expired_project_memory_leases_sqlx(
-                &pool, tenant_id, &now_text,
-            ))?;
+        store::recover_expired_project_memory_leases_sqlx(&pool, tenant_id, &now_text).await?;
         let job_ids =
-            self.runtime
-                .run_sync(store::list_project_memory_job_ids_for_scheduler_sqlx(
-                    &pool, tenant_id, &now_text, 32,
-                ))?;
+            store::list_project_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text, 32)
+                .await?;
         let active_count = self
             .runtime
             .task_runtime()
@@ -126,9 +115,7 @@ impl AppService {
             if active_count + scheduled >= MAX_PROJECT_MEMORY_CONCURRENCY {
                 break;
             }
-            let Some(job) = self.runtime.run_sync(store::load_project_memory_job_sqlx(
-                &pool, tenant_id, &job_id,
-            ))?
+            let Some(job) = store::load_project_memory_job_sqlx(&pool, tenant_id, &job_id).await?
             else {
                 continue;
             };
@@ -153,9 +140,10 @@ impl AppService {
                 "project_id": job.project_id,
                 "project_path": job.project_path,
             });
-            match self.runtime.task_runtime().spawn(
-                spec,
-                Box::new(move |context| {
+            match self
+                .runtime
+                .task_runtime()
+                .spawn_async(spec, move |context| async move {
                     AppService::from_runtime(&runtime)
                         .run_project_memory_for_tenant_at(
                             &tenant_id_for_task,
@@ -163,6 +151,7 @@ impl AppService {
                             now,
                             context,
                         )
+                        .await
                         .map(|version| {
                             json!({
                                 "domain": "project_memory",
@@ -170,8 +159,7 @@ impl AppService {
                                 "projected": version.is_some(),
                             })
                         })
-                }),
-            ) {
+                }) {
                 Ok(crate::backend::runtime::tasks::SpawnOutcome::Started) => scheduled += 1,
                 Ok(crate::backend::runtime::tasks::SpawnOutcome::Existing) => {}
                 Err(error) => return Err(error),
@@ -180,7 +168,7 @@ impl AppService {
         Ok(scheduled)
     }
 
-    pub(crate) fn run_project_memory_for_tenant_at(
+    pub(crate) async fn run_project_memory_for_tenant_at(
         &self,
         tenant_id: &str,
         job_id: &str,
@@ -189,10 +177,7 @@ impl AppService {
     ) -> AppResult<Option<crate::backend::models::ProjectMemoryVersion>> {
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
-        let Some(job) = self.runtime.run_sync(store::load_project_memory_job_sqlx(
-            &pool, tenant_id, job_id,
-        ))?
-        else {
+        let Some(job) = store::load_project_memory_job_sqlx(&pool, tenant_id, job_id).await? else {
             return Err(AppError::NotFound(
                 "Project Memory job not found".to_string(),
             ));
@@ -204,24 +189,20 @@ impl AppService {
             return Ok(None);
         }
         if context.is_cancelled() {
-            self.runtime
-                .run_sync(store::cancel_project_memory_job_sqlx(
-                    &pool, tenant_id, job_id, &now_text,
-                ))?;
-            return Err(AppError::Canceled(
+            store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
+            return Err(AppError::Cancelled(
                 "Project Memory task was canceled".to_string(),
             ));
         }
         let ownership_token = format!("project-memory-owner-{}", Uuid::new_v4());
-        let Some(job) = self
-            .runtime
-            .run_sync(store::claim_project_memory_job_with_lease_sqlx(
-                &pool,
-                tenant_id,
-                job_id,
-                &now_text,
-                &ownership_token,
-            ))?
+        let Some(job) = store::claim_project_memory_job_with_lease_sqlx(
+            &pool,
+            tenant_id,
+            job_id,
+            &now_text,
+            &ownership_token,
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -234,32 +215,24 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
-        let inputs = self
-            .runtime
-            .run_sync(store::load_project_memory_inputs_sqlx(
-                &pool,
-                tenant_id,
-                &job.project_path,
-            ))?;
+        let inputs =
+            store::load_project_memory_inputs_sqlx(&pool, tenant_id, &job.project_path).await?;
         if inputs.memories.is_empty() {
             drop(lease_guard);
-            self.runtime
-                .run_sync(store::cancel_project_memory_job_sqlx(
-                    &pool, tenant_id, job_id, &now_text,
-                ))?;
+            store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
-        let output = match self.execute_project_memory_agent(&job, &inputs, context.cancellation())
+        let output = match self
+            .execute_project_memory_agent(&job, &inputs, context.cancellation())
+            .await
         {
             Ok(output) => output,
             Err(error) => {
                 drop(lease_guard);
                 if context.is_cancelled() {
-                    self.runtime
-                        .run_sync(store::cancel_project_memory_job_sqlx(
-                            &pool, tenant_id, job_id, &now_text,
-                        ))?;
-                    return Err(AppError::Canceled(
+                    store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                        .await?;
+                    return Err(AppError::Cancelled(
                         "Project Memory task was canceled".to_string(),
                     ));
                 }
@@ -269,40 +242,33 @@ impl AppService {
                     .chars()
                     .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
                     .collect::<String>();
-                self.runtime
-                    .run_sync(store::mark_project_memory_job_failed_with_lease_sqlx(
-                        &pool,
-                        tenant_id,
-                        job_id,
-                        &ownership_token,
-                        if code.is_empty() {
-                            "project_memory_failed"
-                        } else {
-                            &code
-                        },
-                        &now_text,
-                    ))?;
+                store::mark_project_memory_job_failed_with_lease_sqlx(
+                    &pool,
+                    tenant_id,
+                    job_id,
+                    &ownership_token,
+                    if code.is_empty() {
+                        "project_memory_failed"
+                    } else {
+                        &code
+                    },
+                    &now_text,
+                )
+                .await?;
                 return Err(error);
             }
         };
         progress.progress(1, Some(3), Some("agent_completed"));
         if context.is_cancelled() {
             drop(lease_guard);
-            self.runtime
-                .run_sync(store::cancel_project_memory_job_sqlx(
-                    &pool, tenant_id, job_id, &now_text,
-                ))?;
-            return Err(AppError::Canceled(
+            store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
+            return Err(AppError::Cancelled(
                 "Project Memory task was canceled".to_string(),
             ));
         }
         let version_number =
-            self.runtime
-                .run_sync(store::next_project_memory_version_number_sqlx(
-                    &pool,
-                    tenant_id,
-                    &job.project_id,
-                ))?;
+            store::next_project_memory_version_number_sqlx(&pool, tenant_id, &job.project_id)
+                .await?;
         let document_paths =
             project_document_paths(&self.db_path, tenant_id, &job.project_path, version_number);
         write_project_version_file(&document_paths.version_path, &output.content_markdown)?;
@@ -327,35 +293,30 @@ impl AppService {
                 })
                 .collect(),
         };
-        let version = match self
-            .runtime
-            .run_sync(store::persist_project_memory_success_sqlx(
-                &pool, &persist, &now_text,
-            )) {
-            Ok(version) => version,
-            Err(error) => {
-                drop(lease_guard);
-                if context.is_cancelled() {
-                    self.runtime
-                        .run_sync(store::cancel_project_memory_job_sqlx(
-                            &pool, tenant_id, job_id, &now_text,
-                        ))?;
-                    return Err(AppError::Canceled(
-                        "Project Memory task was canceled".to_string(),
-                    ));
-                }
-                self.runtime
-                    .run_sync(store::mark_project_memory_job_failed_with_lease_sqlx(
+        let version =
+            match store::persist_project_memory_success_sqlx(&pool, &persist, &now_text).await {
+                Ok(version) => version,
+                Err(error) => {
+                    drop(lease_guard);
+                    if context.is_cancelled() {
+                        store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                            .await?;
+                        return Err(AppError::Cancelled(
+                            "Project Memory task was canceled".to_string(),
+                        ));
+                    }
+                    store::mark_project_memory_job_failed_with_lease_sqlx(
                         &pool,
                         tenant_id,
                         job_id,
                         &persist.ownership_token,
                         "project_memory_persist_failed",
                         &now_text,
-                    ))?;
-                return Err(error);
-            }
-        };
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            };
         drop(lease_guard);
         publish_project_document(
             &document_paths.document_path,
@@ -366,19 +327,19 @@ impl AppService {
         Ok(Some(version))
     }
 
-    fn execute_project_memory_agent(
+    async fn execute_project_memory_agent(
         &self,
         job: &ProjectMemoryJob,
         inputs: &ProjectMemoryInputSet,
         cancellation: CancellationToken,
     ) -> AppResult<ProjectMemoryAgentOutputWithRaw> {
-        let settings = app_settings::read_app_settings_value_for_database(&self.db)?;
+        let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new(PROJECT_MEMORY_ACTION),
             &settings,
         )?;
         let prompt = build_project_memory_prompt(&job.project_path, inputs)?;
-        let result = execute_agent_blocking(
+        let result = execute_agent(
             self.agent_runtime.clone(),
             AiExecutionRequest {
                 execution_id: format!("project-memory-execution-{}", job.id),
@@ -399,6 +360,7 @@ impl AppService {
                 recall_tools: None,
             },
         )
+        .await
         .map_err(|error| {
             let view = error.to_view();
             AppError::Domain {
@@ -629,8 +591,8 @@ mod tests {
         assert_eq!(clean_project_markdown(" # project ").unwrap(), "# project");
     }
 
-    #[test]
-    fn successful_project_version_is_last_success_and_failed_revision_keeps_it() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn successful_project_version_is_last_success_and_failed_revision_keeps_it() {
         let root = std::env::temp_dir().join(format!(
             "assetiweave-project-memory-{}",
             uuid::Uuid::new_v4()
@@ -639,23 +601,31 @@ mod tests {
         let db_path = root.join("app.db");
         let fake = FakeRuntime::new(r##"{"content_markdown":"# first project memory"}"##);
         let service = AppService::open_with_db_path_and_runtime(db_path.clone(), fake.clone())
+            .await
             .expect("open project memory service");
         let now = "2026-08-31T01:00:00Z";
-        service.runtime.run_sync(sqlx::query(
+        sqlx::query(
             "INSERT INTO session_memories (tenant_id,id,session_id,source_id,source_revision,source_fingerprint,contract_version,prompt_version,status,project_path,summary,goal,result,decisions_json,verification_json,blockers_json,follow_up_json,topics_json,raw_output_json,generated_at,created_at,updated_at) VALUES ('default','session-memory-a','session-a','source-a',1,'fingerprint-a','session-memory.v1','session-memory-prompt.v1','active','/project','summary a','','','[]','[]','[]','[]','[]','{}',?1,?1,?1)",
-        ).bind(now).execute(service.db.pool())).expect("insert session memory fixture");
-        let project_job_id = service
-            .runtime
-            .run_sync(async {
-                let mut tx = service.db.pool().begin().await.map_err(AppError::Db)?;
-                let job_id =
-                    store::enqueue_project_memory_job_tx(&mut tx, "default", "/project", now)
-                        .await?
-                        .expect("project job");
-                tx.commit().await.map_err(AppError::Db)?;
-                Ok::<_, AppError>(job_id)
-            })
-            .expect("enqueue project memory");
+        )
+        .bind(now)
+        .execute(service.db.pool())
+        .await
+        .expect("insert session memory fixture");
+
+        let mut tx = service
+            .db
+            .pool()
+            .begin()
+            .await
+            .map_err(AppError::Db)
+            .expect("begin tx");
+        let project_job_id =
+            store::enqueue_project_memory_job_tx(&mut tx, "default", "/project", now)
+                .await
+                .expect("enqueue project memory")
+                .expect("project job");
+        tx.commit().await.map_err(AppError::Db).expect("commit tx");
+
         let first = service
             .run_project_memory_for_tenant_at(
                 "default",
@@ -663,18 +633,14 @@ mod tests {
                 DateTime::parse_from_rfc3339(now)
                     .expect("parse project clock")
                     .with_timezone(&Utc),
-                TaskContext::detached(),
+                TaskContext::untracked(),
             )
+            .await
             .expect("run first project consolidation")
             .expect("first project version");
         assert_eq!(first.version_number, 1);
-        let project = service
-            .runtime
-            .run_sync(store::load_project_memory_sqlx(
-                service.db.pool(),
-                "default",
-                "/project",
-            ))
+        let project = store::load_project_memory_sqlx(service.db.pool(), "default", "/project")
+            .await
             .expect("load project")
             .expect("project exists");
         let first_version_id = project
@@ -685,24 +651,30 @@ mod tests {
         let first_document = std::fs::read_to_string(&document_path).expect("read first document");
         assert_eq!(first_document, "# first project memory");
 
-        service.runtime.run_sync(sqlx::query(
+        sqlx::query(
             "UPDATE session_memories SET source_fingerprint = 'fingerprint-b', source_revision = 2 WHERE tenant_id = 'default' AND id = 'session-memory-a'",
-        ).execute(service.db.pool())).expect("revise session memory");
-        service
-            .runtime
-            .run_sync(async {
-                let mut tx = service.db.pool().begin().await.map_err(AppError::Db)?;
-                store::enqueue_project_memory_job_tx(
-                    &mut tx,
-                    "default",
-                    "/project",
-                    "2026-08-31T01:01:00Z",
-                )
-                .await?;
-                tx.commit().await.map_err(AppError::Db)?;
-                Ok::<_, AppError>(())
-            })
-            .expect("enqueue revised project");
+        )
+        .execute(service.db.pool())
+        .await
+        .expect("revise session memory");
+
+        let mut tx = service
+            .db
+            .pool()
+            .begin()
+            .await
+            .map_err(AppError::Db)
+            .expect("begin tx");
+        store::enqueue_project_memory_job_tx(
+            &mut tx,
+            "default",
+            "/project",
+            "2026-08-31T01:01:00Z",
+        )
+        .await
+        .expect("enqueue revised project");
+        tx.commit().await.map_err(AppError::Db).expect("commit tx");
+
         fake.set_result("{}");
         assert!(service
             .run_project_memory_for_tenant_at(
@@ -711,18 +683,15 @@ mod tests {
                 DateTime::parse_from_rfc3339("2026-08-31T01:01:00Z")
                     .expect("parse revised project clock")
                     .with_timezone(&Utc),
-                TaskContext::detached(),
+                TaskContext::untracked(),
             )
+            .await
             .is_err());
-        let project_after = service
-            .runtime
-            .run_sync(store::load_project_memory_sqlx(
-                service.db.pool(),
-                "default",
-                "/project",
-            ))
-            .expect("load project after failure")
-            .expect("project after failure");
+        let project_after =
+            store::load_project_memory_sqlx(service.db.pool(), "default", "/project")
+                .await
+                .expect("load project after failure")
+                .expect("project after failure");
         assert_eq!(
             project_after.last_successful_version_id,
             Some(first_version_id)

@@ -254,151 +254,145 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    #[test]
-    fn sqlx_mount_repo_sets_lists_filters_and_cleans_orphans() {
+    #[tokio::test]
+    async fn sqlx_mount_repo_sets_lists_filters_and_cleans_orphans() {
         let db_path =
             std::env::temp_dir().join(format!("assetiweave-mount-sqlx-{}.sqlite", Uuid::new_v4()));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
 
-        database
-            .block_on(async {
-                insert_asset(database.pool(), "asset-a").await?;
-                let initial = set_asset_mount_sqlx(
-                    database.pool(),
-                    "default",
-                    "asset-a",
-                    "profile-a",
-                    true,
-                    DeploymentStrategy::SymlinkToSource,
-                )
-                .await?;
-                let updated = set_asset_mount_sqlx(
-                    database.pool(),
-                    "default",
-                    "asset-a",
-                    "profile-a",
-                    false,
-                    DeploymentStrategy::CopyToTarget,
-                )
-                .await?;
-                set_asset_mount_sqlx(
-                    database.pool(),
-                    "default",
-                    "asset-b",
-                    "profile-a",
-                    true,
-                    DeploymentStrategy::SymlinkToSource,
-                )
-                .await?;
+        insert_asset(database.pool(), "asset-a")
+            .await
+            .expect("insert asset");
+        let initial = set_asset_mount_sqlx(
+            database.pool(),
+            "default",
+            "asset-a",
+            "profile-a",
+            true,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .await
+        .expect("set asset mount");
+        let updated = set_asset_mount_sqlx(
+            database.pool(),
+            "default",
+            "asset-a",
+            "profile-a",
+            false,
+            DeploymentStrategy::CopyToTarget,
+        )
+        .await
+        .expect("update asset mount");
+        set_asset_mount_sqlx(
+            database.pool(),
+            "default",
+            "asset-b",
+            "profile-a",
+            true,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .await
+        .expect("set second asset mount");
 
-                let scoped =
-                    load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a")).await?;
-                let enabled =
-                    load_enabled_asset_mounts_sqlx(database.pool(), "default", Some("profile-a"))
-                        .await?;
-                delete_orphan_asset_mounts_sqlx(database.pool(), "default").await?;
-                let all_after_cleanup =
-                    load_asset_mounts_sqlx(database.pool(), "default", None).await?;
+        let scoped = load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a"))
+            .await
+            .expect("load scoped mounts");
+        let enabled = load_enabled_asset_mounts_sqlx(database.pool(), "default", Some("profile-a"))
+            .await
+            .expect("load enabled mounts");
+        delete_orphan_asset_mounts_sqlx(database.pool(), "default")
+            .await
+            .expect("delete orphan mounts");
+        let all_after_cleanup = load_asset_mounts_sqlx(database.pool(), "default", None)
+            .await
+            .expect("load all mounts after cleanup");
 
-                AppResult::Ok((initial, updated, scoped, enabled, all_after_cleanup))
-            })
-            .map(|(initial, updated, scoped, enabled, all_after_cleanup)| {
-                assert_eq!(initial.created_at, updated.created_at);
-                assert!(!updated.enabled);
-                assert_eq!(updated.strategy, DeploymentStrategy::CopyToTarget);
-                assert_eq!(scoped, vec![updated]);
-                assert_eq!(enabled.len(), 1);
-                assert_eq!(enabled[0].asset_id, "asset-b");
-                assert_eq!(all_after_cleanup.len(), 1);
-                assert_eq!(all_after_cleanup[0].asset_id, "asset-a");
-            })
-            .expect("query SQLx mount repo");
+        assert_eq!(initial.created_at, updated.created_at);
+        assert!(!updated.enabled);
+        assert_eq!(updated.strategy, DeploymentStrategy::CopyToTarget);
+        assert_eq!(scoped, vec![updated]);
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].asset_id, "asset-b");
+        assert_eq!(all_after_cleanup.len(), 1);
+        assert_eq!(all_after_cleanup[0].asset_id, "asset-a");
+
         drop(database);
         cleanup_database(&db_path);
     }
 
-    #[test]
-    fn sqlx_verified_mount_persistence_updates_mount_and_deployment_state_atomically() {
+    #[tokio::test]
+    async fn sqlx_verified_mount_persistence_updates_mount_and_deployment_state_atomically() {
         let db_path = std::env::temp_dir().join(format!(
             "assetiweave-verified-mount-sqlx-{}.sqlite",
             Uuid::new_v4()
         ));
-        let database = crate::backend::store::Database::open(&db_path).expect("open database");
+        let database = crate::backend::store::Database::open_async(&db_path)
+            .await
+            .expect("open database");
 
-        database
-            .block_on(async {
-                insert_asset(database.pool(), "asset-a").await?;
-                let state = DeploymentState {
-                    profile_id: "profile-a".to_string(),
-                    asset_id: "asset-a".to_string(),
-                    target_path: "/target/a".to_string(),
-                    strategy: DeploymentStrategy::SymlinkToSource,
-                    source_hash: "hash-a".to_string(),
-                    deployed_at: "2026-06-18T00:00:00Z".to_string(),
-                    managed_by: "assetiweave".to_string(),
-                };
+        insert_asset(database.pool(), "asset-a")
+            .await
+            .expect("insert asset");
+        let state = DeploymentState {
+            profile_id: "profile-a".to_string(),
+            asset_id: "asset-a".to_string(),
+            target_path: "/target/a".to_string(),
+            strategy: DeploymentStrategy::SymlinkToSource,
+            source_hash: "hash-a".to_string(),
+            deployed_at: "2026-06-18T00:00:00Z".to_string(),
+            managed_by: "assetiweave".to_string(),
+        };
 
-                let mounted = persist_verified_mount_sqlx(
-                    database.pool(),
-                    "default",
-                    &state,
-                    DeploymentStrategy::SymlinkToSource,
-                )
-                .await?;
-                let managed_after_mount = managed_by(
-                    database.pool(),
-                    "default",
-                    "profile-a",
-                    "asset-a",
-                    "/target/a",
-                )
-                .await?;
-                let unmounted = persist_verified_unmount_sqlx(
-                    database.pool(),
-                    "default",
-                    "asset-a",
-                    "profile-a",
-                    "/target/a",
-                    DeploymentStrategy::CopyToTarget,
-                )
-                .await?;
-                let managed_after_unmount = managed_by(
-                    database.pool(),
-                    "default",
-                    "profile-a",
-                    "asset-a",
-                    "/target/a",
-                )
-                .await?;
-                let stored_mounts =
-                    load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a")).await?;
+        let mounted = persist_verified_mount_sqlx(
+            database.pool(),
+            "default",
+            &state,
+            DeploymentStrategy::SymlinkToSource,
+        )
+        .await
+        .expect("persist verified mount");
+        let managed_after_mount = managed_by(
+            database.pool(),
+            "default",
+            "profile-a",
+            "asset-a",
+            "/target/a",
+        )
+        .await
+        .expect("check managed after mount");
+        let unmounted = persist_verified_unmount_sqlx(
+            database.pool(),
+            "default",
+            "asset-a",
+            "profile-a",
+            "/target/a",
+            DeploymentStrategy::CopyToTarget,
+        )
+        .await
+        .expect("persist verified unmount");
+        let managed_after_unmount = managed_by(
+            database.pool(),
+            "default",
+            "profile-a",
+            "asset-a",
+            "/target/a",
+        )
+        .await
+        .expect("check managed after unmount");
+        let stored_mounts = load_asset_mounts_sqlx(database.pool(), "default", Some("asset-a"))
+            .await
+            .expect("load stored mounts");
 
-                AppResult::Ok((
-                    mounted,
-                    managed_after_mount,
-                    unmounted,
-                    managed_after_unmount,
-                    stored_mounts,
-                ))
-            })
-            .map(
-                |(
-                    mounted,
-                    managed_after_mount,
-                    unmounted,
-                    managed_after_unmount,
-                    stored_mounts,
-                )| {
-                    assert!(mounted.enabled);
-                    assert_eq!(managed_after_mount.as_deref(), Some("assetiweave"));
-                    assert!(!unmounted.enabled);
-                    assert_eq!(unmounted.strategy, DeploymentStrategy::CopyToTarget);
-                    assert_eq!(mounted.created_at, unmounted.created_at);
-                    assert!(managed_after_unmount.is_none());
-                    assert_eq!(stored_mounts, vec![unmounted]);
-                },
-            )
-            .expect("persist verified mount SQLx transaction");
+        assert!(mounted.enabled);
+        assert_eq!(managed_after_mount.as_deref(), Some("assetiweave"));
+        assert!(!unmounted.enabled);
+        assert_eq!(unmounted.strategy, DeploymentStrategy::CopyToTarget);
+        assert_eq!(mounted.created_at, unmounted.created_at);
+        assert!(managed_after_unmount.is_none());
+        assert_eq!(stored_mounts, vec![unmounted]);
+
         drop(database);
         cleanup_database(&db_path);
     }

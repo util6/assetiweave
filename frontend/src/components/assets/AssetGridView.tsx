@@ -2,8 +2,17 @@ import clsx from "clsx";
 import { FolderOpen, Pencil, Trash2 } from "lucide-react";
 import { assetKindLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { AppShortcut, Asset, AssetMountStatus, Source, TargetProfile } from "../../types";
-import { getAssetMountSummaryState, getMountedProfileIds } from "../../utils/mountState";
+import type {
+  AppShortcut,
+  Asset,
+  AssetMountStatus,
+  Source,
+  TargetProfile,
+} from "../../types";
+import {
+  getAssetMountSummaryState,
+  getMountedProfileIds,
+} from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { displayAssetPath } from "../../utils/path";
 import { assetSourceHref, assetSourceLabel } from "../../utils/assetSource";
@@ -45,13 +54,18 @@ export function AssetGridView({
   }
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4" aria-label={t("asset.grid.aria")}>
+    <div
+      className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-4"
+      aria-label={t("asset.grid.aria")}
+    >
       {assets.map((asset) => {
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
         const mountedProfileIds = getMountedProfileIds(mountStatuses);
         const mountSummaryState = getAssetMountSummaryState(mountStatuses);
-        const mountBlockedReason = isDirectMountBlockedSource(source) ? t("mount.blocked") : undefined;
+        const mountBlockedReason = isDirectMountBlockedSource(source)
+          ? t("mount.blocked")
+          : undefined;
         const sourceLabel = assetSourceLabel(asset, source);
         const sourceHref = assetSourceHref(asset);
 
@@ -66,7 +80,9 @@ export function AssetGridView({
                   <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[14px] font-semibold leading-5 text-on-surface">
                     {asset.name}
                   </span>
-                  <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+                  <span className={kindBadgeClass(asset.kind)}>
+                    {assetKindLabel(asset.kind, t)}
+                  </span>
                   <SkillBackupBadge asset={asset} />
                   <MountStatePill compact state={mountSummaryState} />
                 </div>
@@ -92,13 +108,23 @@ export function AssetGridView({
               </div>
 
               <div className="flex shrink-0 items-center gap-1.5">
-                <GridIconButton label={t("asset.revealPath")} onClick={() => onRevealPath(asset.absolute_path)}>
+                <GridIconButton
+                  label={t("asset.revealPath")}
+                  onClick={() => onRevealPath(asset.absolute_path)}
+                >
                   <FolderOpen size={16} />
                 </GridIconButton>
-                <GridIconButton label={t("asset.edit")} onClick={() => onEditAsset(asset)}>
+                <GridIconButton
+                  label={t("asset.edit")}
+                  onClick={() => onEditAsset(asset)}
+                >
                   <Pencil size={16} />
                 </GridIconButton>
-                <GridIconButton danger label={t("asset.delete")} onClick={() => onDeleteAsset(asset)}>
+                <GridIconButton
+                  danger
+                  label={t("asset.delete")}
+                  onClick={() => onDeleteAsset(asset)}
+                >
                   <Trash2 size={16} />
                 </GridIconButton>
               </div>
@@ -121,17 +147,22 @@ export function AssetGridView({
               <span
                 className={clsx(
                   "inline-flex min-w-0 items-center gap-1.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm",
-                  mountBlockedReason ? "text-status-conflict" : mountSummaryTextClass(mountSummaryState),
+                  mountBlockedReason
+                    ? "text-status-conflict"
+                    : mountSummaryTextClass(mountSummaryState),
                 )}
               >
                 <span
                   className={clsx(
                     "size-1.5 shrink-0 rounded-full",
-                    mountBlockedReason ? "bg-status-conflict" : mountSummaryDotClass(mountSummaryState),
+                    mountBlockedReason
+                      ? "bg-status-conflict"
+                      : mountSummaryDotClass(mountSummaryState),
                   )}
                   aria-hidden="true"
                 />
-                {mountBlockedReason ?? t("mount.selected", { count: mountedProfileIds.length })}
+                {mountBlockedReason ??
+                  t("mount.selected", { count: mountedProfileIds.length })}
               </span>
               <div className="shrink-0 rounded-xl border border-theme-control-border bg-theme-control/55 p-1.5">
                 <QuickMountButtons
@@ -178,13 +209,17 @@ function GridIconButton({
   );
 }
 
-function mountSummaryTextClass(state: ReturnType<typeof getAssetMountSummaryState>) {
+function mountSummaryTextClass(
+  state: ReturnType<typeof getAssetMountSummaryState>,
+) {
   if (state === "mounted") return "text-status-create";
   if (state === "conflict" || state === "broken") return "text-status-remove";
   return "text-on-surface-variant";
 }
 
-function mountSummaryDotClass(state: ReturnType<typeof getAssetMountSummaryState>) {
+function mountSummaryDotClass(
+  state: ReturnType<typeof getAssetMountSummaryState>,
+) {
   if (state === "mounted") return "bg-status-create";
   if (state === "conflict" || state === "broken") return "bg-status-remove";
   return "bg-outline";

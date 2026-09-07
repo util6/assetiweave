@@ -1,15 +1,38 @@
-import { lazy, Suspense, useState, type CSSProperties, type ReactNode } from "react";
-import { AlertCircle, CheckCircle2, DownloadCloud, RefreshCw } from "lucide-react";
-import { useAppUpdater, type AppUpdateDialogMode, type AppUpdateStatus } from "../../app/updates/AppUpdateProvider";
-import { NotificationBanner, type NotificationMessage } from "../../components/notifications/NotificationBanner";
+import {
+  lazy,
+  Suspense,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  DownloadCloud,
+  RefreshCw,
+} from "lucide-react";
+import {
+  useAppUpdater,
+  type AppUpdateDialogMode,
+  type AppUpdateStatus,
+} from "../../app/updates/AppUpdateProvider";
+import {
+  NotificationBanner,
+  type NotificationMessage,
+} from "../../components/notifications/NotificationBanner";
 import { useI18n } from "../../i18n/I18nProvider";
-import type { HeaderTabItem, NavigationModel, RailMenuItem } from "../../router/types";
-import type { SettingsPanelId } from "../../store/settings/AppSettingsProvider";
+import type {
+  HeaderTabItem,
+  NavigationModel,
+  RailMenuItem,
+} from "../../router/types";
+import type { SettingsPanelId } from "../../store/settings/settingsSchema";
 import type { AppShortcut, Tenant, TenantCreateParams } from "../../types";
 import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
 import { WindowTitleBar } from "./WindowTitleBar";
 import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
+import { useAppUiStore } from "../../store/ui/appUiStore";
 
 const GlobalSettingsDialog = lazy(() =>
   import("../../components/settings/GlobalSettingsDialog").then((module) => ({
@@ -42,22 +65,22 @@ export function AppLayout({
   activeSubNavId: string;
   appShortcuts: AppShortcut[];
   children: ReactNode;
-  logViewerOpen: boolean;
+  logViewerOpen?: boolean;
   navigationModel: NavigationModel;
   notification: NotificationMessage | null;
   onAppShortcutsChange: (shortcuts: AppShortcut[]) => void;
   onDismissNotification: (id: string) => void;
-  onLogViewerOpen: () => void;
+  onLogViewerOpen?: () => void;
   onHeaderTabSelect: (tab: HeaderTabItem) => void;
   onHeaderTabPrefetch?: (tab: HeaderTabItem) => void;
   onNavigationModelChange: (navigationModel: NavigationModel) => void;
   onSkillBackupLibraryChange?: () => Promise<void> | void;
-  onSettingsClose: () => void;
-  onSettingsOpen: () => void;
+  onSettingsClose?: () => void;
+  onSettingsOpen?: () => void;
   onSubNavSelect: (id: string) => void;
   onSubNavPrefetch?: (id: string) => void;
-  settingsPanel: SettingsPanelId;
-  settingsOpen: boolean;
+  settingsPanel?: SettingsPanelId;
+  settingsOpen?: boolean;
   tenantControls: {
     activeTenant: Tenant | null;
     busy: boolean;
@@ -68,34 +91,70 @@ export function AppLayout({
     tenants: Tenant[];
   };
 }) {
+  const storeLogViewerOpen = useAppUiStore((state) => state.logViewerOpen);
+  const storeSetLogViewerOpen = useAppUiStore(
+    (state) => state.setLogViewerOpen,
+  );
+  const storeSettingsPanel = useAppUiStore((state) => state.settingsPanel);
+  const storeOpenSettings = useAppUiStore((state) => state.openSettings);
+  const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
+
+  const effectiveLogViewerOpen = logViewerOpen ?? storeLogViewerOpen;
+  const effectiveSettingsOpen = settingsOpen ?? storeSettingsPanel !== null;
+  const effectiveSettingsPanel =
+    settingsPanel ?? storeSettingsPanel ?? "general.appearance";
+  const handleOpenSettings =
+    onSettingsOpen ?? (() => storeOpenSettings("general.appearance"));
+  const handleCloseSettings = onSettingsClose ?? storeCloseSettings;
+  const handleOpenLogViewer =
+    onLogViewerOpen ?? (() => storeSetLogViewerOpen(true));
+
   const { t } = useI18n();
   const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();
   const [tenantDialogOpen, setTenantDialogOpen] = useState(false);
   const [sideRailExpanded, setSideRailExpanded] = useState(false);
-  const activeSubNavItems = navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
-  const railItems = ensureLogRailItem(navigationModel.railItems).filter(isSupportedRailItem);
-  const updateBrandAction = getUpdateBrandAction(updateState, openUpdateDialog, t);
+  const activeSubNavItems =
+    navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
+  const railItems = ensureLogRailItem(navigationModel.railItems).filter(
+    isSupportedRailItem,
+  );
+  const updateBrandAction = getUpdateBrandAction(
+    updateState,
+    openUpdateDialog,
+    t,
+  );
   const layoutStyle = {
     "--app-sidebar-width": sideRailExpanded ? "216px" : "64px",
+    // Opt-in bounded routes share the existing titlebar + subnavigation offset.
+    "--app-route-viewport-height": "calc(100dvh - var(--app-toolbar-top))",
   } as CSSProperties;
 
   function handleRailItemSelect(item: RailMenuItem) {
     if (item.id === "settings") {
-      onSettingsOpen();
+      handleOpenSettings();
       return;
     }
 
     if (item.id === "logs") {
-      onLogViewerOpen();
+      handleOpenLogViewer();
     }
   }
 
   return (
-    <div className="min-h-screen bg-background text-on-surface" style={layoutStyle}>
+    <div
+      className="min-h-screen bg-background text-on-surface"
+      style={layoutStyle}
+    >
       <WindowTitleBar />
       <div className="grid-texture flex min-h-screen pt-[var(--app-window-titlebar-height)]">
         <SideRail
-          activeId={logViewerOpen ? "logs" : settingsOpen ? "settings" : navigationModel.activeRailId}
+          activeId={
+            effectiveLogViewerOpen
+              ? "logs"
+              : effectiveSettingsOpen
+                ? "settings"
+                : navigationModel.activeRailId
+          }
           activeHeaderTabId={navigationModel.activeHeaderTabId}
           brandAction={updateBrandAction}
           expanded={sideRailExpanded}
@@ -123,7 +182,10 @@ export function AppLayout({
             onSelect={(item) => onSubNavSelect(item.id)}
             onPrefetch={onSubNavPrefetch}
           />
-          <NotificationBanner notification={notification} onDismiss={onDismissNotification} />
+          <NotificationBanner
+            notification={notification}
+            onDismiss={onDismissNotification}
+          />
           {children}
         </main>
       </div>
@@ -141,17 +203,17 @@ export function AppLayout({
         />
       ) : null}
 
-      {settingsOpen ? (
+      {effectiveSettingsOpen ? (
         <Suspense fallback={null}>
           <GlobalSettingsDialog
             appShortcuts={appShortcuts}
-            initialPanel={settingsPanel}
+            initialPanel={effectiveSettingsPanel}
             navigationModel={navigationModel}
             onAppShortcutsChange={onAppShortcutsChange}
-            onClose={onSettingsClose}
+            onClose={handleCloseSettings}
             onNavigationModelChange={onNavigationModelChange}
             onSkillBackupLibraryChange={onSkillBackupLibraryChange}
-            open={settingsOpen}
+            open={effectiveSettingsOpen}
           />
         </Suspense>
       ) : null}
@@ -207,7 +269,10 @@ function getUpdateBrandAction(
   };
 }
 
-function getUpdateBrandLabel(status: AppUpdateStatus, t: (key: UpdateLabelKey) => string) {
+function getUpdateBrandLabel(
+  status: AppUpdateStatus,
+  t: (key: UpdateLabelKey) => string,
+) {
   if (status === "downloading") {
     return t("update.button.downloading");
   }
@@ -236,7 +301,9 @@ function getUpdateBrandIcon(status: AppUpdateStatus) {
   return DownloadCloud;
 }
 
-function getUpdateBrandTone(status: AppUpdateStatus): SideRailBrandAction["tone"] {
+function getUpdateBrandTone(
+  status: AppUpdateStatus,
+): SideRailBrandAction["tone"] {
   if (status === "ready") {
     return "ready";
   }
@@ -266,10 +333,16 @@ function ensureLogRailItem(items: RailMenuItem[]) {
     return items;
   }
 
-  const settingsIndex = items.findIndex((item) => item.id === "settings" && item.position === "secondary");
+  const settingsIndex = items.findIndex(
+    (item) => item.id === "settings" && item.position === "secondary",
+  );
   if (settingsIndex === -1) {
     return [...items, logRailItem];
   }
 
-  return [...items.slice(0, settingsIndex), logRailItem, ...items.slice(settingsIndex)];
+  return [
+    ...items.slice(0, settingsIndex),
+    logRailItem,
+    ...items.slice(settingsIndex),
+  ];
 }

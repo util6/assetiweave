@@ -25,11 +25,16 @@ describe("RenderSafeScrollSurface", () => {
   });
 
   it("keeps the scroll surface and content rules opaque and isolated", () => {
-    const cssPath = [resolve(process.cwd(), "frontend/src/styles/index.css"), resolve(process.cwd(), "src/styles/index.css")].find(existsSync);
+    const cssPath = [
+      resolve(process.cwd(), "frontend/src/styles/index.css"),
+      resolve(process.cwd(), "src/styles/index.css"),
+    ].find(existsSync);
     expect(cssPath).toBeTruthy();
     const css = readFileSync(cssPath!, "utf8");
-    const surfaceRule = css.match(/\.render-safe-scroll-surface\s*\{([^}]+)\}/)?.[1] ?? "";
-    const contentRule = css.match(/\.render-safe-scroll-content\s*\{([^}]+)\}/)?.[1] ?? "";
+    const surfaceRule =
+      css.match(/\.render-safe-scroll-surface\s*\{([^}]+)\}/)?.[1] ?? "";
+    const contentRule =
+      css.match(/\.render-safe-scroll-content\s*\{([^}]+)\}/)?.[1] ?? "";
 
     expect(surfaceRule).toContain("background: rgb(var(--color-background))");
     expect(surfaceRule).toContain("isolation: isolate");

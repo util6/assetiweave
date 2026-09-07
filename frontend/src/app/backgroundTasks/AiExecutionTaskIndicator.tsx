@@ -2,18 +2,25 @@ import { LoaderCircle, X } from "lucide-react";
 import { useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
-import { isActiveAiExecutionTask, useAiExecutionTasks } from "./AiExecutionTaskProvider";
+import {
+  isActiveAiExecutionTask,
+  useAiExecutionTasks,
+} from "./AiExecutionTaskProvider";
 
 export function AiExecutionTaskIndicator() {
   const { t } = useI18n();
   const { cancelTask, tasks } = useAiExecutionTasks();
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
-  const [cancelErrorTaskId, setCancelErrorTaskId] = useState<string | null>(null);
+  const [cancelErrorTaskId, setCancelErrorTaskId] = useState<string | null>(
+    null,
+  );
   const activeTasks = tasks
     .filter(isActiveAiExecutionTask)
-    .sort((left, right) => (
-      right.updated_at.localeCompare(left.updated_at) || right.id.localeCompare(left.id)
-    ));
+    .sort(
+      (left, right) =>
+        right.updated_at.localeCompare(left.updated_at) ||
+        right.id.localeCompare(left.id),
+    );
   const latestTask = activeTasks[0];
 
   if (!latestTask) return null;
@@ -30,7 +37,8 @@ export function AiExecutionTaskIndicator() {
     }
   }
 
-  const cancelling = latestTask.phase === "cancelling" ||
+  const cancelling =
+    latestTask.phase === "cancelling" ||
     latestTask.phase === "cleaning_up" ||
     cancellingTaskId === latestTask.id;
 
@@ -51,7 +59,10 @@ export function AiExecutionTaskIndicator() {
           {t(`ai.execution.phase.${latestTask.phase}` as TranslationKey)}
         </span>
         {cancelErrorTaskId === latestTask.id ? (
-          <span className="mt-1 block text-code-sm text-status-remove" role="alert">
+          <span
+            className="mt-1 block text-code-sm text-status-remove"
+            role="alert"
+          >
             {t("ai.execution.cancelFailed")}
           </span>
         ) : null}

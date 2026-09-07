@@ -4,7 +4,10 @@ export function getBackupableSkillAssets(assets: Asset[]): Asset[] {
   return assets.filter(isBackupableSkillAsset);
 }
 
-export function getBackupableSkillAssetsByIds(assetsById: Map<string, Asset>, assetIds: Iterable<string>): Asset[] {
+export function getBackupableSkillAssetsByIds(
+  assetsById: Map<string, Asset>,
+  assetIds: Iterable<string>,
+): Asset[] {
   const backupableAssets: Asset[] = [];
   const seenAssetIds = new Set<string>();
 

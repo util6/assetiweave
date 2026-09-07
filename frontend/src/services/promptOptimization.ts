@@ -27,9 +27,12 @@ export function buildPromptOptimizationPrompt({
   promptTemplate,
   text,
 }: Pick<PromptOptimizationRequest, "promptTemplate" | "text">) {
-  const template = promptTemplate?.trim() || DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE;
+  const template =
+    promptTemplate?.trim() || DEFAULT_PROMPT_OPTIMIZATION_PROMPT_TEMPLATE;
   const rendered = template.split("{content}").join(text);
-  return rendered.includes(text) ? rendered : `${rendered}\n\n<content>\n${text}\n</content>`;
+  return rendered.includes(text)
+    ? rendered
+    : `${rendered}\n\n<content>\n${text}\n</content>`;
 }
 
 export async function optimizePromptContent(
@@ -57,5 +60,7 @@ export async function checkPromptOptimizationAvailability(): Promise<OpencodeTra
       version: null,
     };
   }
-  return invoke<OpencodeTranslationAvailability>("check_prompt_optimization_availability");
+  return invoke<OpencodeTranslationAvailability>(
+    "check_prompt_optimization_availability",
+  );
 }

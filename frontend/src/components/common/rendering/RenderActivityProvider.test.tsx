@@ -3,7 +3,10 @@
 import { act, render, screen } from "@testing-library/react";
 import { StrictMode, useEffect, useRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RenderActivityProvider, useScrollActivitySnapshot } from "./RenderActivityProvider";
+import {
+  RenderActivityProvider,
+  useScrollActivitySnapshot,
+} from "./RenderActivityProvider";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -12,7 +15,9 @@ afterEach(() => {
 
 function SnapshotReader() {
   const snapshot = useScrollActivitySnapshot();
-  return <output data-phase={snapshot.phase}>{snapshot.direction ?? "none"}</output>;
+  return (
+    <output data-phase={snapshot.phase}>{snapshot.direction ?? "none"}</output>
+  );
 }
 
 describe("RenderActivityProvider", () => {
@@ -23,10 +28,14 @@ describe("RenderActivityProvider", () => {
       rafCallbacks.set(id, callback);
       return id;
     });
-    vi.stubGlobal("cancelAnimationFrame", (id: number) => rafCallbacks.delete(id));
+    vi.stubGlobal("cancelAnimationFrame", (id: number) =>
+      rafCallbacks.delete(id),
+    );
     const surface = document.createElement("div");
     document.body.append(surface);
-    const ref = { current: surface } as React.MutableRefObject<HTMLDivElement | null>;
+    const ref = {
+      current: surface,
+    } as React.MutableRefObject<HTMLDivElement | null>;
     const addEventListener = vi.spyOn(surface, "addEventListener");
     let currentTime = 0;
     vi.spyOn(performance, "now").mockImplementation(() => currentTime);
@@ -39,10 +48,15 @@ describe("RenderActivityProvider", () => {
       </StrictMode>,
     );
     expect(surface.getAttribute("data-scroll-phase")).toBe("idle");
-    const scrollListeners = addEventListener.mock.calls.filter(([type]) => type === "scroll");
+    const scrollListeners = addEventListener.mock.calls.filter(
+      ([type]) => type === "scroll",
+    );
     expect(scrollListeners).toHaveLength(2);
 
-    Object.defineProperty(surface, "scrollTop", { configurable: true, value: 100 });
+    Object.defineProperty(surface, "scrollTop", {
+      configurable: true,
+      value: 100,
+    });
     act(() => {
       currentTime = 16;
       surface.dispatchEvent(new Event("scroll"));
@@ -53,12 +67,17 @@ describe("RenderActivityProvider", () => {
   });
 
   it("disposes the controller when the provider unmounts", () => {
-    const ref = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
+    const ref = {
+      current: null,
+    } as React.MutableRefObject<HTMLDivElement | null>;
     const cancelAnimationFrame = vi.fn();
-    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
-      callback(0);
-      return 1;
-    }));
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      }),
+    );
     vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
     const { unmount } = render(
       <RenderActivityProvider scrollElementRef={ref}>

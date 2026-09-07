@@ -4,7 +4,11 @@ import type { ReactNode } from "react";
 import { useI18n } from "../../../i18n/I18nProvider";
 import { headerTabLabel, railLabel } from "../../../i18n/navigation";
 import { MenuIcon } from "../../../router/icons";
-import type { HeaderTabItem, NavigationIcon, RailMenuItem } from "../../../router/types";
+import type {
+  HeaderTabItem,
+  NavigationIcon,
+  RailMenuItem,
+} from "../../../router/types";
 
 export interface SideRailBrandAction {
   ariaLabel: string;
@@ -42,9 +46,13 @@ export function SideRail({
   primaryAction?: ReactNode;
 }) {
   const { t } = useI18n();
-  const secondaryItems = items.filter((item) => item.enabled && item.position === "secondary");
+  const secondaryItems = items.filter(
+    (item) => item.enabled && item.position === "secondary",
+  );
   const enabledHeaderTabs = headerTabs.filter((tab) => tab.enabled);
-  const toggleLabel = expanded ? t("nav.sidebar.collapse") : t("nav.sidebar.expand");
+  const toggleLabel = expanded
+    ? t("nav.sidebar.collapse")
+    : t("nav.sidebar.expand");
   const ToggleIcon = expanded ? PanelLeftClose : PanelLeftOpen;
 
   return (
@@ -56,9 +64,21 @@ export function SideRail({
       aria-label={t("nav.aria.main")}
       data-expanded={expanded}
     >
-      <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
-        {primaryAction ? <div className="mb-2 flex w-full justify-center">{primaryAction}</div> : null}
-        <div className={clsx("mb-4 flex w-full items-center gap-2", expanded ? "justify-between" : "flex-col")}>
+      <div
+        className={clsx(
+          "flex w-full flex-col gap-2",
+          expanded ? "items-stretch" : "items-center",
+        )}
+      >
+        {primaryAction ? (
+          <div className="mb-2 flex w-full justify-center">{primaryAction}</div>
+        ) : null}
+        <div
+          className={clsx(
+            "mb-4 flex w-full items-center gap-2",
+            expanded ? "justify-between" : "flex-col",
+          )}
+        >
           <BrandIdentity action={brandAction} expanded={expanded} />
           <button
             className="grid size-10 shrink-0 place-items-center rounded-xl border border-transparent text-on-surface-variant/75 transition-all hover:border-theme-nav-active-border hover:bg-theme-nav-hover hover:text-theme-nav-active-fg active:scale-95"
@@ -80,8 +100,18 @@ export function SideRail({
         />
       </div>
 
-      <div className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
-        <RailGroup activeId={activeId} expanded={expanded} items={secondaryItems} onItemSelect={onItemSelect} />
+      <div
+        className={clsx(
+          "flex w-full flex-col gap-2",
+          expanded ? "items-stretch" : "items-center",
+        )}
+      >
+        <RailGroup
+          activeId={activeId}
+          expanded={expanded}
+          items={secondaryItems}
+          onItemSelect={onItemSelect}
+        />
       </div>
     </aside>
   );
@@ -105,7 +135,10 @@ function BrandIdentity({
     return (
       <button
         aria-label={action.ariaLabel}
-        className={clsx(brandClassName, "relative transition-colors hover:bg-theme-nav-hover active:scale-95")}
+        className={clsx(
+          brandClassName,
+          "relative transition-colors hover:bg-theme-nav-hover active:scale-95",
+        )}
         onClick={action.onClick}
         title={action.title ?? action.ariaLabel}
         type="button"
@@ -142,7 +175,12 @@ function BrandIdentity({
             type="button"
           >
             {action.icon ? (
-              <span className={clsx("grid size-4 shrink-0 place-items-center", action.busy && "animate-spin")}>
+              <span
+                className={clsx(
+                  "grid size-4 shrink-0 place-items-center",
+                  action.busy && "animate-spin",
+                )}
+              >
                 {action.icon}
               </span>
             ) : null}
@@ -151,7 +189,10 @@ function BrandIdentity({
             </span>
           </button>
         ) : (
-          <span className="min-w-0 truncate text-body-md font-semibold" data-side-rail-label="">
+          <span
+            className="min-w-0 truncate text-body-md font-semibold"
+            data-side-rail-label=""
+          >
             AssetIWeave
           </span>
         )
@@ -160,7 +201,9 @@ function BrandIdentity({
   );
 }
 
-function getBrandActionToneClassName(tone: SideRailBrandAction["tone"] | undefined) {
+function getBrandActionToneClassName(
+  tone: SideRailBrandAction["tone"] | undefined,
+) {
   if (!tone || tone === "neutral") {
     return "";
   }
@@ -173,7 +216,9 @@ function getBrandActionToneClassName(tone: SideRailBrandAction["tone"] | undefin
   return "border-status-update/45 bg-status-update/15 text-status-update hover:text-status-update";
 }
 
-function getBrandActionIconToneClassName(tone: SideRailBrandAction["tone"] | undefined) {
+function getBrandActionIconToneClassName(
+  tone: SideRailBrandAction["tone"] | undefined,
+) {
   if (!tone || tone === "neutral") {
     return "text-theme-nav-active-fg";
   }
@@ -202,7 +247,13 @@ function HeaderTabRailGroup({
   const { locale, t } = useI18n();
 
   return (
-    <nav className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")} aria-label={t("nav.aria.assetTypes")}>
+    <nav
+      className={clsx(
+        "flex w-full flex-col gap-2",
+        expanded ? "items-stretch" : "items-center",
+      )}
+      aria-label={t("nav.aria.assetTypes")}
+    >
       {tabs.map((tab) => {
         const label = headerTabLabel(tab, t, locale);
         const selected = tab.id === activeId;
@@ -237,7 +288,12 @@ function RailGroup({
   const { locale, t } = useI18n();
 
   return (
-    <nav className={clsx("flex w-full flex-col gap-2", expanded ? "items-stretch" : "items-center")}>
+    <nav
+      className={clsx(
+        "flex w-full flex-col gap-2",
+        expanded ? "items-stretch" : "items-center",
+      )}
+    >
       {items.map((item) => {
         const label = railLabel(item, t, locale);
 
@@ -293,7 +349,10 @@ function RailButton({
         <MenuIcon name={icon} />
       </span>
       {expanded ? (
-        <span className="min-w-0 truncate text-left text-body-sm font-medium" data-side-rail-label="">
+        <span
+          className="min-w-0 truncate text-left text-body-sm font-medium"
+          data-side-rail-label=""
+        >
           {label}
         </span>
       ) : null}

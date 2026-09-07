@@ -15,12 +15,26 @@ import {
   RefreshCw,
   Settings,
   Trash2,
-  X,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { loadSharedResource, readSharedResource } from "../../lib/asyncCache";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryScope } from "../../app/query/QueryScopeProvider";
+import {
+  catalogKeys,
+  groupsQueryOptions,
+} from "../../app/query/catalogQueries";
 import { useSkillBackup } from "../../app/backgroundTasks/SkillBackupProvider";
-import { AssetToolbar, type AssetToolbarViewMode } from "../../components/assets/AssetToolbar";
+import {
+  AssetToolbar,
+  type AssetToolbarViewMode,
+} from "../../components/assets/AssetToolbar";
 import { MountStatePill } from "../../components/assets/MountStatePill";
 import { QuickMountButtons } from "../../components/assets/QuickMountButtons";
 import { SkillBackupBadge } from "../../components/assets/SkillBackupBadge";
@@ -34,7 +48,11 @@ import {
   SkillBackupButtonContent,
 } from "../../components/backup/SkillBackupProgress";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
-import { ToolbarMultiSelectDropdown, ToolbarSingleSelectDropdown, ToolbarSortDirectionButton } from "../../components/common/DataToolbar";
+import {
+  ToolbarMultiSelectDropdown,
+  ToolbarSingleSelectDropdown,
+  ToolbarSortDirectionButton,
+} from "../../components/common/DataToolbar";
 import { PageMetrics } from "../../components/common/PageMetrics";
 import { PathPickerInput } from "../../components/common/PathPickerInput";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
@@ -50,12 +68,11 @@ import { assetKindLabel, sourceOriginLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TranslationKey } from "../../i18n/messages";
 import { ManualHelpButton } from "../../manuals/ManualHelpButton";
-import { useAppSettings } from "../../store/settings/AppSettingsProvider";
+import { useAppSettings } from "../../store/settings/useAppSettings";
 import { DEFAULT_ENTITY_ACCENT_HEX } from "../../theme/themes";
 import {
   createProfile,
   deleteProfile,
-  listSkillGroups,
   selectTargetDirectory,
   type SkillBackupTaskSnapshot,
   updateProfile,
@@ -69,11 +86,19 @@ import type {
   Source,
   TargetProfile,
 } from "../../types";
-import { getAssetMountSummaryState, groupMountStatusesByAssetId } from "../../utils/mountState";
+import {
+  getAssetMountSummaryState,
+  groupMountStatusesByAssetId,
+} from "../../utils/mountState";
 import { isDirectMountBlockedSource } from "../../utils/mountPolicy";
 import { abbreviateHomePath, displayAssetPath } from "../../utils/path";
 import { isDefaultAppProfileId } from "../../utils/defaultApps";
-import { buildTargetProfileInput, defaultAppShortcut, hasProfileIdConflict, targetProfileFromInput } from "../../utils/profile";
+import {
+  buildTargetProfileInput,
+  defaultAppShortcut,
+  hasProfileIdConflict,
+  targetProfileFromInput,
+} from "../../utils/profile";
 import { groupMemberAssetIds } from "../../utils/skillGroups";
 import { kindBadgeClass } from "../../utils/styles";
 
@@ -81,8 +106,6 @@ type SkillMountViewMode = Extract<AssetToolbarViewMode, "list" | "columns">;
 type MountScopeKind = "source" | "group";
 type ProfileStatusFilter = "enabled" | "disabled";
 type ProfileSortBy = "name" | "app-kind" | "mounted-count";
-
-const SKILL_GROUPS_CACHE_KEY = "catalog.skill-groups";
 
 interface MountScope {
   assetIds: string[];
@@ -106,14 +129,27 @@ interface SkillMountsPageProps {
   onRefreshProfiles: () => Promise<void>;
   onRevealPath: (path: string) => void;
   onSaveAppShortcuts: (shortcuts: AppShortcut[]) => Promise<AppShortcut[]>;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profiles: TargetProfile[];
   refreshingMountStatus: boolean;
   sources: Source[];
 }
 
-const appKinds: AppKind[] = ["custom", "codex", "claude", "cursor", "opencode", "gemini", "antigravity", "openclaw"];
+const appKinds: AppKind[] = [
+  "custom",
+  "codex",
+  "claude",
+  "cursor",
+  "opencode",
+  "gemini",
+  "antigravity",
+  "openclaw",
+];
 
 interface PendingDefaultPathChange {
   editingProfile: TargetProfile;
@@ -141,32 +177,53 @@ export function SkillMountsPage({
 }: SkillMountsPageProps) {
   const { t } = useI18n();
   const { startBackup, task: backupTask } = useSkillBackup();
+  const queryClient = useQueryClient();
+  const queryScope = useQueryScope();
+  const activeScope = queryScope ?? { tenantId: "default", epoch: 1 };
+  const groupsQuery = useQuery(groupsQueryOptions(activeScope));
+  const groups = groupsQuery.data ?? [];
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<SkillMountViewMode>("list");
   const [appKindFilters, setAppKindFilters] = useState<AppKind[]>([]);
   const [statusFilters, setStatusFilters] = useState<ProfileStatusFilter[]>([]);
   const [sortBy, setSortBy] = useState<ProfileSortBy>("name");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
-  const [groups, setGroups] = useState<AssetGroupDetail[]>(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) ?? [],
+  const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(
+    new Set(),
   );
-  const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(new Set());
-  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+    null,
+  );
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
-  const [dialogProfile, setDialogProfile] = useState<TargetProfile | null>(null);
+  const [dialogProfile, setDialogProfile] = useState<TargetProfile | null>(
+    null,
+  );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [backupDialogOpen, setBackupDialogOpen] = useState(false);
-  const [deletingProfile, setDeletingProfile] = useState<TargetProfile | null>(null);
-  const [pendingDefaultPathChange, setPendingDefaultPathChange] = useState<PendingDefaultPathChange | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(
-    () => readSharedResource<AssetGroupDetail[]>(SKILL_GROUPS_CACHE_KEY) === undefined,
+  const [deletingProfile, setDeletingProfile] = useState<TargetProfile | null>(
+    null,
   );
+  const [pendingDefaultPathChange, setPendingDefaultPathChange] =
+    useState<PendingDefaultPathChange | null>(null);
+  const [busy, setBusy] = useState(false);
+  const loading = groupsQuery.isLoading;
 
-  const skillAssets = useMemo(() => assets.filter((asset) => asset.kind === "skill"), [assets]);
-  const skillAssetById = useMemo(() => new Map(skillAssets.map((asset) => [asset.id, asset])), [skillAssets]);
-  const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
-  const mountStatusesByAssetId = useMemo(() => groupMountStatusesByAssetId(assetMountStatuses), [assetMountStatuses]);
+  const skillAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "skill"),
+    [assets],
+  );
+  const skillAssetById = useMemo(
+    () => new Map(skillAssets.map((asset) => [asset.id, asset])),
+    [skillAssets],
+  );
+  const sourceById = useMemo(
+    () => new Map(sources.map((source) => [source.id, source])),
+    [sources],
+  );
+  const mountStatusesByAssetId = useMemo(
+    () => groupMountStatusesByAssetId(assetMountStatuses),
+    [assetMountStatuses],
+  );
   const scopes = useMemo(
     () => buildMountScopes({ groups, skillAssetById, sources, t }),
     [groups, skillAssetById, sources, t],
@@ -183,33 +240,58 @@ export function SkillMountsPage({
       sortDirection,
       statusFilters,
     });
-  }, [appKindFilters, mountStatusesByAssetId, profiles, query, skillAssets, sortBy, sortDirection, statusFilters]);
+  }, [
+    appKindFilters,
+    mountStatusesByAssetId,
+    profiles,
+    query,
+    skillAssets,
+    sortBy,
+    sortDirection,
+    statusFilters,
+  ]);
   const appKindFilterOptions = useMemo(() => {
     const countByKind = new Map<AppKind, number>();
-    profiles.forEach((profile) => countByKind.set(profile.app_kind, (countByKind.get(profile.app_kind) ?? 0) + 1));
+    profiles.forEach((profile) =>
+      countByKind.set(
+        profile.app_kind,
+        (countByKind.get(profile.app_kind) ?? 0) + 1,
+      ),
+    );
     return [...countByKind.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([kind, count]) => ({ label: `${formatAppKindLabel(kind)} (${count})`, value: kind }));
+      .map(([kind, count]) => ({
+        label: `${formatAppKindLabel(kind)} (${count})`,
+        value: kind,
+      }));
   }, [profiles]);
   const profileStatusOptions = useMemo(
     () => [
       {
-        label: t("toolbar.filter.enabled", { count: profiles.filter((profile) => profile.enabled).length }),
+        label: t("toolbar.filter.enabled", {
+          count: profiles.filter((profile) => profile.enabled).length,
+        }),
         value: "enabled" as const,
       },
       {
-        label: t("toolbar.filter.disabled", { count: profiles.filter((profile) => !profile.enabled).length }),
+        label: t("toolbar.filter.disabled", {
+          count: profiles.filter((profile) => !profile.enabled).length,
+        }),
         value: "disabled" as const,
       },
     ],
     [profiles, t],
   );
   const selectedProfile = useMemo(
-    () => filteredProfiles.find((profile) => profile.id === selectedProfileId) ?? filteredProfiles[0] ?? null,
+    () =>
+      filteredProfiles.find((profile) => profile.id === selectedProfileId) ??
+      filteredProfiles[0] ??
+      null,
     [filteredProfiles, selectedProfileId],
   );
   const selectedScope = useMemo(
-    () => scopes.find((scope) => scope.id === selectedScopeId) ?? scopes[0] ?? null,
+    () =>
+      scopes.find((scope) => scope.id === selectedScopeId) ?? scopes[0] ?? null,
     [scopes, selectedScopeId],
   );
 
@@ -226,12 +308,14 @@ export function SkillMountsPage({
   async function refreshGroups() {
     setBusy(true);
     try {
-      setGroups(await loadSharedResource(SKILL_GROUPS_CACHE_KEY, listSkillGroups, { force: true }));
+      await queryClient.invalidateQueries({
+        queryKey: catalogKeys.groups(activeScope),
+      });
+      await queryClient.fetchQuery(groupsQueryOptions(activeScope));
     } catch (error) {
       onNotifyError(errorMessage(error));
     } finally {
       setBusy(false);
-      setLoading(false);
     }
   }
 
@@ -253,25 +337,39 @@ export function SkillMountsPage({
     setBusy(true);
     try {
       const input = buildTargetProfileInput(values, editingProfile);
-      const existingProfile = profiles.find((profile) => profile.id === input.id);
-      if (!editingProfile && input.id && hasProfileIdConflict(input.id, profiles)) {
+      const existingProfile = profiles.find(
+        (profile) => profile.id === input.id,
+      );
+      if (
+        !editingProfile &&
+        input.id &&
+        hasProfileIdConflict(input.id, profiles)
+      ) {
         input.include = existingProfile?.include ?? input.include;
         input.exclude = existingProfile?.exclude ?? input.exclude;
         input.safety = existingProfile?.safety ?? input.safety;
-        input.supported_kinds = existingProfile?.supported_kinds ?? input.supported_kinds;
+        input.supported_kinds =
+          existingProfile?.supported_kinds ?? input.supported_kinds;
       }
 
       const savedProfile =
         editingProfile || existingProfile
-          ? await updateProfile({ ...(existingProfile ?? editingProfile)!, ...targetProfileFromInput(input) })
+          ? await updateProfile({
+              ...(existingProfile ?? editingProfile)!,
+              ...targetProfileFromInput(input),
+            })
           : await createProfile(input);
       const shortcut = defaultAppShortcut(savedProfile, {
         accentColor: values.accentColor,
-        displayIcon: values.displayIcon.trim() || defaultAppShortcut(savedProfile).displayIcon,
+        displayIcon:
+          values.displayIcon.trim() ||
+          defaultAppShortcut(savedProfile).displayIcon,
         enabled: values.shortcutEnabled,
       });
       await onSaveAppShortcuts([
-        ...appShortcuts.filter((candidate) => candidate.profileId !== shortcut.profileId),
+        ...appShortcuts.filter(
+          (candidate) => candidate.profileId !== shortcut.profileId,
+        ),
         shortcut,
       ]);
       await onRefreshProfiles();
@@ -287,7 +385,9 @@ export function SkillMountsPage({
 
   async function handleDeleteProfile(profile: TargetProfile) {
     if (isDefaultAppProfileId(profile.id)) {
-      onNotifyError(t("appMount.deleteDialog.defaultBlocked", { name: profile.name }));
+      onNotifyError(
+        t("appMount.deleteDialog.defaultBlocked", { name: profile.name }),
+      );
       setDeletingProfile(null);
       return;
     }
@@ -295,9 +395,13 @@ export function SkillMountsPage({
     setBusy(true);
     try {
       await deleteProfile(profile.id);
-      await onSaveAppShortcuts(appShortcuts.filter((shortcut) => shortcut.profileId !== profile.id));
+      await onSaveAppShortcuts(
+        appShortcuts.filter((shortcut) => shortcut.profileId !== profile.id),
+      );
       await onRefreshProfiles();
-      setSelectedProfileId((current) => (current === profile.id ? null : current));
+      setSelectedProfileId((current) =>
+        current === profile.id ? null : current,
+      );
       setDeletingProfile(null);
     } catch (error) {
       onNotifyError(errorMessage(error));
@@ -372,33 +476,47 @@ export function SkillMountsPage({
               label: t("toolbar.refreshMountStatus"),
               onClick: () => void onRefreshMountStatus(),
             },
-            { icon: <Settings size={17} />, label: t("toolbar.settings"), onClick: onOpenSettings },
+            {
+              icon: <Settings size={17} />,
+              label: t("toolbar.settings"),
+              onClick: onOpenSettings,
+            },
           ],
         ]}
         ariaLabel={t("appMount.page.title")}
         filterControls={
           <>
             <ToolbarMultiSelectDropdown
-              allLabel={t("appMount.toolbar.appKindAll", { count: profiles.length })}
+              allLabel={t("appMount.toolbar.appKindAll", {
+                count: profiles.length,
+              })}
               ariaLabel={t("appMount.toolbar.appKindFilter")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<AppWindow size={15} />}
               label={t("appMount.toolbar.appKindFilter")}
               onClear={() => setAppKindFilters([])}
-              onToggleValue={(value) => setAppKindFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setAppKindFilters((current) =>
+                  toggleFilterValue(current, value),
+                )
+              }
               options={appKindFilterOptions}
               selectedValues={appKindFilters}
             />
             <ToolbarMultiSelectDropdown
-              allLabel={t("toolbar.filter.statusAll", { count: profiles.length })}
+              allLabel={t("toolbar.filter.statusAll", {
+                count: profiles.length,
+              })}
               ariaLabel={t("appMount.toolbar.statusFilter")}
               clearLabel={t("toolbar.filter.clear")}
               emptyLabel={t("toolbar.filter.empty")}
               icon={<Power size={15} />}
               label={t("appMount.toolbar.statusFilter")}
               onClear={() => setStatusFilters([])}
-              onToggleValue={(value) => setStatusFilters((current) => toggleFilterValue(current, value))}
+              onToggleValue={(value) =>
+                setStatusFilters((current) => toggleFilterValue(current, value))
+              }
               options={profileStatusOptions}
               selectedValues={statusFilters}
             />
@@ -408,16 +526,30 @@ export function SkillMountsPage({
               onChange={setSortBy}
               options={[
                 { label: t("toolbar.sort.name"), value: "name" },
-                { label: t("appMount.toolbar.sort.appKind"), value: "app-kind" },
-                { label: t("appMount.toolbar.sort.mountedCount"), value: "mounted-count" },
+                {
+                  label: t("appMount.toolbar.sort.appKind"),
+                  value: "app-kind",
+                },
+                {
+                  label: t("appMount.toolbar.sort.mountedCount"),
+                  value: "mounted-count",
+                },
               ]}
               value={sortBy}
             />
             <ToolbarSortDirectionButton
               direction={sortDirection}
               label={t("toolbar.sort.direction.label")}
-              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
-              title={t(sortDirection === "desc" ? "toolbar.sort.direction.descTitle" : "toolbar.sort.direction.ascTitle")}
+              onClick={() =>
+                setSortDirection((current) =>
+                  current === "desc" ? "asc" : "desc",
+                )
+              }
+              title={t(
+                sortDirection === "desc"
+                  ? "toolbar.sort.direction.descTitle"
+                  : "toolbar.sort.direction.ascTitle",
+              )}
             />
           </>
         }
@@ -432,15 +564,30 @@ export function SkillMountsPage({
         viewAriaLabel={t("toolbar.view.aria")}
         viewMode={viewMode}
         viewOptions={[
-          { icon: <LayoutList size={17} />, label: t("toolbar.view.list"), value: "list" },
-          { icon: <Columns3 size={17} />, label: t("toolbar.view.columns"), value: "columns" },
+          {
+            icon: <LayoutList size={17} />,
+            label: t("toolbar.view.list"),
+            value: "list",
+          },
+          {
+            icon: <Columns3 size={17} />,
+            label: t("toolbar.view.columns"),
+            value: "columns",
+          },
         ]}
       />
 
       {loading ? (
-        <AppSkeleton label={t("common.loading")} layout="columns" layoutProps={{ columns: 3 }} scope="content" />
+        <AppSkeleton
+          label={t("common.loading")}
+          layout="columns"
+          layoutProps={{ columns: 3 }}
+          scope="content"
+        />
       ) : filteredProfiles.length === 0 ? (
-        <EmptyState className="aurora-empty-surface">{t("appMount.empty")}</EmptyState>
+        <EmptyState className="aurora-empty-surface">
+          {t("appMount.empty")}
+        </EmptyState>
       ) : viewMode === "columns" && selectedProfile && selectedScope ? (
         <AppMountColumnView
           appShortcuts={appShortcuts}
@@ -505,7 +652,9 @@ export function SkillMountsPage({
           setDialogOpen(false);
           setDialogProfile(null);
         }}
-        onPickTargetPath={() => selectTargetDirectory(t("appMount.dialog.pickTarget"))}
+        onPickTargetPath={() =>
+          selectTargetDirectory(t("appMount.dialog.pickTarget"))
+        }
         onSubmit={handleSaveProfile}
         open={dialogOpen}
         profile={dialogProfile}
@@ -519,14 +668,24 @@ export function SkillMountsPage({
       <ConfirmDialog
         busy={busy}
         confirmLabel={t("common.delete")}
-        message={deletingProfile ? t("appMount.deleteDialog.message", { name: deletingProfile.name }) : ""}
+        message={
+          deletingProfile
+            ? t("appMount.deleteDialog.message", { name: deletingProfile.name })
+            : ""
+        }
         onClose={() => setDeletingProfile(null)}
-        onConfirm={() => deletingProfile && void handleDeleteProfile(deletingProfile)}
+        onConfirm={() =>
+          deletingProfile && void handleDeleteProfile(deletingProfile)
+        }
         open={Boolean(deletingProfile)}
         title={t("appMount.deleteDialog.title")}
         tone="danger"
       >
-        <FoundationPanel className="text-body-sm text-on-surface-variant" padding="sm" variant="muted">
+        <FoundationPanel
+          className="text-body-sm text-on-surface-variant"
+          padding="sm"
+          variant="muted"
+        >
           {deletingProfile && isDefaultAppProfileId(deletingProfile.id)
             ? t("appMount.deleteDialog.defaultDetail")
             : t("appMount.deleteDialog.detail")}
@@ -537,7 +696,9 @@ export function SkillMountsPage({
         confirmLabel={t("common.save")}
         message={
           pendingDefaultPathChange
-            ? t("appMount.pathChangeDialog.message", { name: pendingDefaultPathChange.editingProfile.name })
+            ? t("appMount.pathChangeDialog.message", {
+                name: pendingDefaultPathChange.editingProfile.name,
+              })
             : ""
         }
         onClose={() => setPendingDefaultPathChange(null)}
@@ -545,19 +706,31 @@ export function SkillMountsPage({
           if (!pendingDefaultPathChange) {
             return;
           }
-          void handleSaveProfile(pendingDefaultPathChange.values, pendingDefaultPathChange.editingProfile, {
-            confirmedDefaultPathChange: true,
-          });
+          void handleSaveProfile(
+            pendingDefaultPathChange.values,
+            pendingDefaultPathChange.editingProfile,
+            {
+              confirmedDefaultPathChange: true,
+            },
+          );
           setPendingDefaultPathChange(null);
         }}
         open={Boolean(pendingDefaultPathChange)}
         title={t("appMount.pathChangeDialog.title")}
       >
-        <FoundationPanel className="text-body-sm text-on-surface-variant" padding="sm" variant="muted">
+        <FoundationPanel
+          className="text-body-sm text-on-surface-variant"
+          padding="sm"
+          variant="muted"
+        >
           {pendingDefaultPathChange
             ? t("appMount.pathChangeDialog.detail", {
-                nextPath: abbreviateHomePath(pendingDefaultPathChange.values.targetPath.trim()),
-                previousPath: abbreviateHomePath(pendingDefaultPathChange.editingProfile.target_paths[0] ?? ""),
+                nextPath: abbreviateHomePath(
+                  pendingDefaultPathChange.values.targetPath.trim(),
+                ),
+                previousPath: abbreviateHomePath(
+                  pendingDefaultPathChange.editingProfile.target_paths[0] ?? "",
+                ),
               })
             : ""}
         </FoundationPanel>
@@ -593,7 +766,11 @@ function AppMountRow({
   onDelete: () => void;
   onEdit: () => void;
   onReveal: () => void;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleExpanded: () => void;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profile: TargetProfile;
@@ -603,24 +780,44 @@ function AppMountRow({
 }) {
   const { t } = useI18n();
   const skillAssets = [...skillAssetById.values()];
-  const counts = getProfileMountCounts(profile.id, skillAssets, mountStatusesByAssetId);
+  const counts = getProfileMountCounts(
+    profile.id,
+    skillAssets,
+    mountStatusesByAssetId,
+  );
   const shortcut = shortcutForProfile(profile, appShortcuts);
-  const summaryState = counts.conflict > 0 ? "conflict" : counts.broken > 0 ? "broken" : counts.mounted > 0 ? "mounted" : "not_mounted";
+  const summaryState =
+    counts.conflict > 0
+      ? "conflict"
+      : counts.broken > 0
+        ? "broken"
+        : counts.mounted > 0
+          ? "mounted"
+          : "not_mounted";
   const defaultApp = isDefaultAppProfileId(profile.id);
 
   return (
-    <article className={clsx("aurora-list-row", expanded && "mount-expanded")} data-expanded={expanded}>
+    <article
+      className={clsx("aurora-list-row", expanded && "mount-expanded")}
+      data-expanded={expanded}
+    >
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[860px]:grid-cols-1">
         <div className="flex min-w-0 items-start gap-3">
           <span
-            className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "size-10 shrink-0 text-[13px] font-bold")}
+            className={clsx(
+              APP_SHORTCUT_ICON_FRAME_CLASS,
+              "size-10 shrink-0 text-[13px] font-bold",
+            )}
             style={{
               backgroundColor: `${shortcut.accentColor}18`,
               borderColor: `${shortcut.accentColor}66`,
               color: shortcut.accentColor,
             }}
           >
-            <AppShortcutIconForShortcut className="size-5" shortcut={shortcut} />
+            <AppShortcutIconForShortcut
+              className="size-5"
+              shortcut={shortcut}
+            />
           </span>
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -633,10 +830,14 @@ function AppMountRow({
               <span
                 className={clsx(
                   "rounded-md px-2 py-0.5 text-label-caps uppercase",
-                  profile.enabled ? "bg-status-create/15 text-status-create" : "bg-theme-control-hover text-outline",
+                  profile.enabled
+                    ? "bg-status-create/15 text-status-create"
+                    : "bg-theme-control-hover text-outline",
                 )}
               >
-                {profile.enabled ? t("appMount.status.enabled") : t("appMount.status.disabled")}
+                {profile.enabled
+                  ? t("appMount.status.enabled")
+                  : t("appMount.status.disabled")}
               </span>
               <MountStatePill compact state={summaryState} />
             </div>
@@ -652,18 +853,40 @@ function AppMountRow({
         </div>
 
         <div className="flex items-center justify-end gap-3 max-[860px]:justify-start">
-          <MountCountBadge count={counts.mounted} label={t("appMount.metric.mounted")} total={counts.total} />
-          <MountCountBadge count={counts.conflict + counts.broken} label={t("appMount.metric.issues")} total={counts.total} />
-          <IconAction disabled={busy} label={t("appMount.action.edit")} onClick={onEdit}>
+          <MountCountBadge
+            count={counts.mounted}
+            label={t("appMount.metric.mounted")}
+            total={counts.total}
+          />
+          <MountCountBadge
+            count={counts.conflict + counts.broken}
+            label={t("appMount.metric.issues")}
+            total={counts.total}
+          />
+          <IconAction
+            disabled={busy}
+            label={t("appMount.action.edit")}
+            onClick={onEdit}
+          >
             <Pencil size={16} />
           </IconAction>
           <IconAction label={t("appMount.action.reveal")} onClick={onReveal}>
             <FolderOpen size={16} />
           </IconAction>
-          <IconAction danger disabled={busy || defaultApp} label={t("appMount.action.delete")} onClick={onDelete}>
+          <IconAction
+            danger
+            disabled={busy || defaultApp}
+            label={t("appMount.action.delete")}
+            onClick={onDelete}
+          >
             <Trash2 size={16} />
           </IconAction>
-          <IconAction label={t(expanded ? "appMount.action.collapse" : "appMount.action.expand")} onClick={onToggleExpanded}>
+          <IconAction
+            label={t(
+              expanded ? "appMount.action.collapse" : "appMount.action.expand",
+            )}
+            onClick={onToggleExpanded}
+          >
             {expanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
           </IconAction>
         </div>
@@ -720,7 +943,11 @@ function AppMountColumnView({
   onRevealPath: (path: string) => void;
   onSelectProfile: (profileId: string) => void;
   onSelectScope: (scopeId: string) => void;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profiles: TargetProfile[];
   scopes: MountScope[];
@@ -739,7 +966,10 @@ function AppMountColumnView({
   const defaultSelectedApp = isDefaultAppProfileId(selectedProfile.id);
 
   return (
-    <FoundationPanel className="aurora-workbench-surface overflow-visible" padding="none">
+    <FoundationPanel
+      className="aurora-workbench-surface overflow-visible"
+      padding="none"
+    >
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
         className="aurora-workbench-surface min-h-[560px]"
@@ -757,20 +987,29 @@ function AppMountColumnView({
         storageKey="assetiweave.mountColumns.v2"
       >
         <section className="aurora-workbench-column flex min-h-0 flex-col">
-          <ColumnHeader meta={t("appMount.metric.appsWithCount", { count: profiles.length })} title={t("appMount.column.apps")} />
-          <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("appMount.column.apps")}>
+          <ColumnHeader
+            meta={t("appMount.metric.appsWithCount", {
+              count: profiles.length,
+            })}
+            title={t("appMount.column.apps")}
+          />
+          <div
+            className="min-h-0 overflow-y-auto py-1"
+            role="listbox"
+            aria-label={t("appMount.column.apps")}
+          >
             {profiles.map((profile) => {
               const active = profile.id === selectedProfile.id;
               const profileShortcut = shortcutForProfile(profile, appShortcuts);
               return (
                 <button
-                  aria-label={t("appMount.column.selectApp", { name: profile.name })}
+                  aria-label={t("appMount.column.selectApp", {
+                    name: profile.name,
+                  })}
                   aria-selected={active}
                   className={clsx(
                     "aurora-workbench-item flex min-h-[72px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
-                    active
-                      ? "text-on-surface"
-                      : "text-on-surface-variant",
+                    active ? "text-on-surface" : "text-on-surface-variant",
                   )}
                   data-selected={active}
                   key={profile.id}
@@ -779,14 +1018,20 @@ function AppMountColumnView({
                   type="button"
                 >
                   <span
-                    className={clsx(APP_SHORTCUT_ICON_FRAME_CLASS, "mt-0.5 size-9 shrink-0")}
+                    className={clsx(
+                      APP_SHORTCUT_ICON_FRAME_CLASS,
+                      "mt-0.5 size-9 shrink-0",
+                    )}
                     style={{
                       backgroundColor: `${profileShortcut.accentColor}18`,
                       borderColor: `${profileShortcut.accentColor}66`,
                       color: profileShortcut.accentColor,
                     }}
                   >
-                    <AppShortcutIconForShortcut className="size-4" shortcut={profileShortcut} />
+                    <AppShortcutIconForShortcut
+                      className="size-4"
+                      shortcut={profileShortcut}
+                    />
                   </span>
                   <span className="min-w-0">
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold">
@@ -877,7 +1122,11 @@ function AppMountWorkbench({
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
   onBackupSkill: (asset: Asset) => Promise<void>;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   onToggleMount: (assetId: string, profileId: string) => void | Promise<void>;
   profile: TargetProfile;
   scopes: MountScope[];
@@ -887,7 +1136,8 @@ function AppMountWorkbench({
   const { t } = useI18n();
   const { settings } = useAppSettings();
   const [selectedScopeId, setSelectedScopeId] = useState<string | null>(null);
-  const selectedScope = scopes.find((scope) => scope.id === selectedScopeId) ?? scopes[0] ?? null;
+  const selectedScope =
+    scopes.find((scope) => scope.id === selectedScopeId) ?? scopes[0] ?? null;
   const scopeAssets = selectedScope
     ? selectedScope.assetIds.flatMap((assetId) => {
         const asset = skillAssetById.get(assetId);
@@ -900,7 +1150,11 @@ function AppMountWorkbench({
   }
 
   return (
-    <FoundationPanel className="aurora-workbench-surface overflow-visible" padding="none" variant="muted">
+    <FoundationPanel
+      className="aurora-workbench-surface overflow-visible"
+      padding="none"
+      variant="muted"
+    >
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
         className="min-h-[420px]"
@@ -917,7 +1171,10 @@ function AppMountWorkbench({
         storageKey="assetiweave.mountWorkbenchColumns.v2"
       >
         <section className="aurora-workbench-column flex min-h-0 flex-col">
-          <ColumnHeader meta={t("appMount.scope.count", { count: scopes.length })} title={t("appMount.column.scopes")} />
+          <ColumnHeader
+            meta={t("appMount.scope.count", { count: scopes.length })}
+            title={t("appMount.column.scopes")}
+          />
           <ScopeList
             mountStatusesByAssetId={mountStatusesByAssetId}
             onSelectScope={setSelectedScopeId}
@@ -928,7 +1185,10 @@ function AppMountWorkbench({
           />
         </section>
         <section className="flex min-h-0 flex-col">
-          <ColumnHeader meta={t("appMount.scope.assetCount", { count: scopeAssets.length })} title={selectedScope.name} />
+          <ColumnHeader
+            meta={t("appMount.scope.assetCount", { count: scopeAssets.length })}
+            title={selectedScope.name}
+          />
           <div className="p-3">
             <ScopeBatchActions
               busy={busy}
@@ -974,14 +1234,22 @@ function ScopeList({
   const { t } = useI18n();
 
   return (
-    <div className="min-h-0 overflow-y-auto py-1" role="listbox" aria-label={t("appMount.column.scopes")}>
+    <div
+      className="min-h-0 overflow-y-auto py-1"
+      role="listbox"
+      aria-label={t("appMount.column.scopes")}
+    >
       {scopes.map((scope) => {
         const active = scope.id === selectedScopeId;
         const skillAssets = scope.assetIds.flatMap((assetId) => {
           const asset = skillAssetById.get(assetId);
           return asset ? [asset] : [];
         });
-        const counts = getProfileMountCounts(profile.id, skillAssets, mountStatusesByAssetId);
+        const counts = getProfileMountCounts(
+          profile.id,
+          skillAssets,
+          mountStatusesByAssetId,
+        );
         return (
           <button
             aria-label={t("appMount.column.selectScope", { name: scope.name })}
@@ -1005,7 +1273,10 @@ function ScopeList({
                 {scope.description}
               </span>
               <span className="mt-1 text-body-sm text-on-surface-variant">
-                {t("appMount.scope.mountProgress", { selected: counts.mounted, total: counts.total })}
+                {t("appMount.scope.mountProgress", {
+                  selected: counts.mounted,
+                  total: counts.total,
+                })}
               </span>
             </span>
             <span className="mt-1 rounded-md border border-theme-control-border bg-theme-control px-2 py-0.5 text-label-caps uppercase text-on-surface-variant">
@@ -1028,7 +1299,11 @@ function ScopeBatchActions({
 }: {
   busy: boolean;
   mountStatusesByAssetId: Map<string, AssetMountStatus[]>;
-  onSetSkillMountProfiles: (assetIds: string[], profileId: string, enabled: boolean) => Promise<void>;
+  onSetSkillMountProfiles: (
+    assetIds: string[],
+    profileId: string,
+    enabled: boolean,
+  ) => Promise<void>;
   profile: TargetProfile;
   scope: MountScope;
   skillAssetById: Map<string, Asset>;
@@ -1038,22 +1313,41 @@ function ScopeBatchActions({
     const asset = skillAssetById.get(assetId);
     return asset ? [asset] : [];
   });
-  const counts = getProfileMountCounts(profile.id, skillAssets, mountStatusesByAssetId);
+  const counts = getProfileMountCounts(
+    profile.id,
+    skillAssets,
+    mountStatusesByAssetId,
+  );
   const allMounted = counts.total > 0 && counts.mounted === counts.total;
   const disabled = busy || counts.total === 0 || Boolean(scope.blockedReason);
-  const label = scope.blockedReason ?? t(allMounted ? "appMount.action.unmountScope" : "appMount.action.mountScope", { profile: profile.name });
+  const label =
+    scope.blockedReason ??
+    t(
+      allMounted
+        ? "appMount.action.unmountScope"
+        : "appMount.action.mountScope",
+      { profile: profile.name },
+    );
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="min-w-0">
-        <div className="text-label-caps uppercase text-outline">{t("appMount.scope.batch")}</div>
+        <div className="text-label-caps uppercase text-outline">
+          {t("appMount.scope.batch")}
+        </div>
         <div className="mt-1 text-body-sm text-on-surface-variant">
-          {scope.blockedReason ?? t("appMount.scope.mountProgress", { selected: counts.mounted, total: counts.total })}
+          {scope.blockedReason ??
+            t("appMount.scope.mountProgress", {
+              selected: counts.mounted,
+              total: counts.total,
+            })}
         </div>
       </div>
       <Button
         disabled={disabled}
-        onClick={() => void onSetSkillMountProfiles(scope.assetIds, profile.id, !allMounted)}
+        onClick={() =>
+          void onSetSkillMountProfiles(scope.assetIds, profile.id, !allMounted)
+        }
         type="button"
         variant={allMounted ? "outline" : "default"}
       >
@@ -1087,7 +1381,11 @@ function SkillScopeAssetList({
   const { t } = useI18n();
 
   if (skillAssets.length === 0) {
-    return <div className="px-4 py-5 text-body-sm text-on-surface-variant">{t("appMount.scope.noSkills")}</div>;
+    return (
+      <div className="px-4 py-5 text-body-sm text-on-surface-variant">
+        {t("appMount.scope.noSkills")}
+      </div>
+    );
   }
 
   return (
@@ -1095,9 +1393,13 @@ function SkillScopeAssetList({
       {skillAssets.map((asset) => {
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
-        const profileMountStatuses = mountStatuses.filter((status) => status.profile_id === profile.id);
+        const profileMountStatuses = mountStatuses.filter(
+          (status) => status.profile_id === profile.id,
+        );
         const mountBlocked = isDirectMountBlockedSource(source);
-        const mountBlockedReason = mountBlocked ? t("mount.blocked") : undefined;
+        const mountBlockedReason = mountBlocked
+          ? t("mount.blocked")
+          : undefined;
         return (
           <article
             className="aurora-workbench-item m-0 grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
@@ -1108,9 +1410,14 @@ function SkillScopeAssetList({
                 <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-code-md font-semibold text-on-surface">
                   {asset.name}
                 </span>
-                <span className={kindBadgeClass(asset.kind)}>{assetKindLabel(asset.kind, t)}</span>
+                <span className={kindBadgeClass(asset.kind)}>
+                  {assetKindLabel(asset.kind, t)}
+                </span>
                 <SkillBackupBadge asset={asset} />
-                <MountStatePill compact state={getAssetMountSummaryState(profileMountStatuses)} />
+                <MountStatePill
+                  compact
+                  state={getAssetMountSummaryState(profileMountStatuses)}
+                />
               </div>
               <div className="mt-1 flex min-w-0 items-center gap-2">
                 <span className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-body-sm text-on-surface-variant">
@@ -1178,14 +1485,22 @@ function AppProfileDialog({
   busy: boolean;
   onClose: () => void;
   onPickTargetPath: () => Promise<string | null>;
-  onSubmit: (values: AppProfileDialogValues, editingProfile: TargetProfile | null) => Promise<void>;
+  onSubmit: (
+    values: AppProfileDialogValues,
+    editingProfile: TargetProfile | null,
+  ) => Promise<void>;
   open: boolean;
   profile: TargetProfile | null;
 }) {
   const { t } = useI18n();
   const formId = useId();
-  const shortcut = profile ? (appShortcuts.find((candidate) => candidate.profileId === profile.id) ?? null) : null;
-  const [values, setValues] = useState<AppProfileDialogValues>(() => initialDialogValues(profile, shortcut));
+  const shortcut = profile
+    ? (appShortcuts.find((candidate) => candidate.profileId === profile.id) ??
+      null)
+    : null;
+  const [values, setValues] = useState<AppProfileDialogValues>(() =>
+    initialDialogValues(profile, shortcut),
+  );
   const [picking, setPicking] = useState(false);
 
   useEffect(() => {
@@ -1199,7 +1514,10 @@ function AppProfileDialog({
     return null;
   }
 
-  function updateValue<Key extends keyof AppProfileDialogValues>(key: Key, value: AppProfileDialogValues[Key]) {
+  function updateValue<Key extends keyof AppProfileDialogValues>(
+    key: Key,
+    value: AppProfileDialogValues[Key],
+  ) {
     setValues((current) => ({ ...current, [key]: value }));
   }
 
@@ -1227,10 +1545,19 @@ function AppProfileDialog({
       contentClassName="p-0"
       footer={
         <>
-          <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+          <Button
+            disabled={busy}
+            onClick={onClose}
+            type="button"
+            variant="outline"
+          >
             {t("appMount.dialog.cancel")}
           </Button>
-          <Button disabled={busy || !values.name.trim() || !values.targetPath.trim()} form={formId} type="submit">
+          <Button
+            disabled={busy || !values.name.trim() || !values.targetPath.trim()}
+            form={formId}
+            type="submit"
+          >
             {busy ? t("appMount.dialog.saving") : t("appMount.dialog.save")}
           </Button>
         </>
@@ -1241,106 +1568,131 @@ function AppProfileDialog({
       containerClassName="px-6 py-8"
       layer="base"
       size="lg"
-      title={profile ? t("appMount.dialog.editTitle") : t("appMount.dialog.importTitle")}
+      title={
+        profile
+          ? t("appMount.dialog.editTitle")
+          : t("appMount.dialog.importTitle")
+      }
     >
-        <form className="px-5 py-5" id={formId} onSubmit={(event) => void handleSubmit(event)}>
-          <div className="grid gap-4">
-            <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-3 max-[720px]:grid-cols-1">
-              <Field label={t("appMount.field.name")} required>
-                <Input
-                  disabled={busy}
-                  onChange={(event) => updateValue("name", event.target.value)}
-                  placeholder={t("appMount.dialog.namePlaceholder")}
-                  value={values.name}
-                />
-              </Field>
-              <Field label={t("appMount.field.appKind")}>
-                <select
-                  className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60 disabled:opacity-50"
-                  disabled={busy}
-                  onChange={(event) => updateValue("appKind", event.target.value as AppKind)}
-                  value={values.appKind}
-                >
-                  {appKinds.map((appKind) => (
-                    <option key={appKind} value={appKind}>
-                      {appKind}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            <Field label={t("appMount.field.targetPath")} required>
-              <PathPickerInput
+      <form
+        className="px-5 py-5"
+        id={formId}
+        onSubmit={(event) => void handleSubmit(event)}
+      >
+        <div className="grid gap-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-3 max-[720px]:grid-cols-1">
+            <Field label={t("appMount.field.name")} required>
+              <Input
                 disabled={busy}
-                onChange={(event) => updateValue("targetPath", event.target.value)}
-                onPick={() => void handlePickTargetPath()}
-                pickLabel={t("appMount.dialog.pickTarget")}
-                picking={picking}
-                placeholder={t("appMount.dialog.targetPlaceholder")}
-                value={values.targetPath}
+                onChange={(event) => updateValue("name", event.target.value)}
+                placeholder={t("appMount.dialog.namePlaceholder")}
+                value={values.name}
               />
             </Field>
-
-            <div className="grid grid-cols-[minmax(0,1fr)_9rem] gap-3 max-[720px]:grid-cols-1">
-              <Field label={t("appMount.field.displayIcon")}>
-                <Input
-                  disabled={busy}
-                  maxLength={48}
-                  onChange={(event) => updateValue("displayIcon", event.target.value)}
-                  placeholder={t("appMount.dialog.iconPlaceholder")}
-                  value={values.displayIcon}
-                />
-              </Field>
-              <Field label={t("appMount.field.accentColor")}>
-                <div className="flex gap-2">
-                  <Input
-                    aria-label={t("appMount.field.accentColor")}
-                    className="w-12 px-1"
-                    disabled={busy}
-                    onChange={(event) => updateValue("accentColor", event.target.value)}
-                    type="color"
-                    value={values.accentColor}
-                  />
-                  <Input
-                    className="min-w-0 flex-1 font-mono"
-                    disabled={busy}
-                    onChange={(event) => updateValue("accentColor", event.target.value)}
-                    value={values.accentColor}
-                  />
-                </div>
-              </Field>
-            </div>
-
-            <ToggleRow
-              checked={values.enabled}
-              disabled={busy}
-              label={t("appMount.field.enabled")}
-              onChange={(checked) => updateValue("enabled", checked)}
-            />
-            <ToggleRow
-              checked={values.shortcutEnabled}
-              disabled={busy}
-              label={t("appMount.field.shortcutEnabled")}
-              onChange={(checked) => updateValue("shortcutEnabled", checked)}
-            />
+            <Field label={t("appMount.field.appKind")}>
+              <select
+                className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60 disabled:opacity-50"
+                disabled={busy}
+                onChange={(event) =>
+                  updateValue("appKind", event.target.value as AppKind)
+                }
+                value={values.appKind}
+              >
+                {appKinds.map((appKind) => (
+                  <option key={appKind} value={appKind}>
+                    {appKind}
+                  </option>
+                ))}
+              </select>
+            </Field>
           </div>
 
-        </form>
+          <Field label={t("appMount.field.targetPath")} required>
+            <PathPickerInput
+              disabled={busy}
+              onChange={(event) =>
+                updateValue("targetPath", event.target.value)
+              }
+              onPick={() => void handlePickTargetPath()}
+              pickLabel={t("appMount.dialog.pickTarget")}
+              picking={picking}
+              placeholder={t("appMount.dialog.targetPlaceholder")}
+              value={values.targetPath}
+            />
+          </Field>
+
+          <div className="grid grid-cols-[minmax(0,1fr)_9rem] gap-3 max-[720px]:grid-cols-1">
+            <Field label={t("appMount.field.displayIcon")}>
+              <Input
+                disabled={busy}
+                maxLength={48}
+                onChange={(event) =>
+                  updateValue("displayIcon", event.target.value)
+                }
+                placeholder={t("appMount.dialog.iconPlaceholder")}
+                value={values.displayIcon}
+              />
+            </Field>
+            <Field label={t("appMount.field.accentColor")}>
+              <div className="flex gap-2">
+                <Input
+                  aria-label={t("appMount.field.accentColor")}
+                  className="w-12 px-1"
+                  disabled={busy}
+                  onChange={(event) =>
+                    updateValue("accentColor", event.target.value)
+                  }
+                  type="color"
+                  value={values.accentColor}
+                />
+                <Input
+                  className="min-w-0 flex-1 font-mono"
+                  disabled={busy}
+                  onChange={(event) =>
+                    updateValue("accentColor", event.target.value)
+                  }
+                  value={values.accentColor}
+                />
+              </div>
+            </Field>
+          </div>
+
+          <ToggleRow
+            checked={values.enabled}
+            disabled={busy}
+            label={t("appMount.field.enabled")}
+            onChange={(checked) => updateValue("enabled", checked)}
+          />
+          <ToggleRow
+            checked={values.shortcutEnabled}
+            disabled={busy}
+            label={t("appMount.field.shortcutEnabled")}
+            onChange={(checked) => updateValue("shortcutEnabled", checked)}
+          />
+        </div>
+      </form>
     </DialogFrame>
   );
 }
 
-function initialDialogValues(profile: TargetProfile | null, shortcut: AppShortcut | null): AppProfileDialogValues {
+function initialDialogValues(
+  profile: TargetProfile | null,
+  shortcut: AppShortcut | null,
+): AppProfileDialogValues {
   const defaultShortcut = profile ? defaultAppShortcut(profile) : null;
   return {
-    accentColor: shortcut?.accentColor ?? defaultShortcut?.accentColor ?? DEFAULT_ENTITY_ACCENT_HEX,
+    accentColor:
+      shortcut?.accentColor ??
+      defaultShortcut?.accentColor ??
+      DEFAULT_ENTITY_ACCENT_HEX,
     appKind: profile?.app_kind ?? "custom",
     displayIcon: shortcut?.displayIcon ?? defaultShortcut?.displayIcon ?? "",
     enabled: profile?.enabled ?? true,
     name: profile?.name ?? "",
     shortcutEnabled: shortcut?.enabled ?? true,
-    targetPath: profile?.target_paths[0] ? abbreviateHomePath(profile.target_paths[0]) : "",
+    targetPath: profile?.target_paths[0]
+      ? abbreviateHomePath(profile.target_paths[0])
+      : "",
   };
 }
 
@@ -1377,7 +1729,10 @@ function filterAndSortProfiles({
       }
       if (
         statusSet.size > 0 &&
-        !((statusSet.has("enabled") && profile.enabled) || (statusSet.has("disabled") && !profile.enabled))
+        !(
+          (statusSet.has("enabled") && profile.enabled) ||
+          (statusSet.has("disabled") && !profile.enabled)
+        )
       ) {
         return false;
       }
@@ -1385,12 +1740,26 @@ function filterAndSortProfiles({
         return true;
       }
 
-      return [profile.name, profile.id, profile.app_kind, profile.target_paths.join(" ")]
+      return [
+        profile.name,
+        profile.id,
+        profile.app_kind,
+        profile.target_paths.join(" "),
+      ]
         .join(" ")
         .toLowerCase()
         .includes(query);
     })
-    .sort((left, right) => compareProfiles(left, right, sortBy, sortDirection, skillAssets, mountStatusesByAssetId));
+    .sort((left, right) =>
+      compareProfiles(
+        left,
+        right,
+        sortBy,
+        sortDirection,
+        skillAssets,
+        mountStatusesByAssetId,
+      ),
+    );
 }
 
 function compareProfiles(
@@ -1408,8 +1777,10 @@ function compareProfiles(
     primary = left.app_kind.localeCompare(right.app_kind);
   } else if (sortBy === "mounted-count") {
     primary =
-      getProfileMountCounts(left.id, skillAssets, mountStatusesByAssetId).mounted -
-      getProfileMountCounts(right.id, skillAssets, mountStatusesByAssetId).mounted;
+      getProfileMountCounts(left.id, skillAssets, mountStatusesByAssetId)
+        .mounted -
+      getProfileMountCounts(right.id, skillAssets, mountStatusesByAssetId)
+        .mounted;
   } else {
     primary = left.name.localeCompare(right.name);
   }
@@ -1434,7 +1805,10 @@ function formatAppKindLabel(kind: AppKind) {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
-function toggleFilterValue<Value extends string>(current: Value[], value: Value) {
+function toggleFilterValue<Value extends string>(
+  current: Value[],
+  value: Value,
+) {
   if (current.includes(value)) {
     return current.filter((item) => item !== value);
   }
@@ -1458,7 +1832,9 @@ function buildMountScopes({
       .map((asset) => asset.id);
     return {
       assetIds,
-      blockedReason: isDirectMountBlockedSource(source) ? t("mount.blockedAppSource") : undefined,
+      blockedReason: isDirectMountBlockedSource(source)
+        ? t("mount.blockedAppSource")
+        : undefined,
       description: abbreviateHomePath(source.root_path),
       id: `source:${source.id}`,
       kind: "source" as const,
@@ -1466,14 +1842,18 @@ function buildMountScopes({
     };
   });
   const groupScopes = groups.map((detail) => ({
-    assetIds: groupMemberAssetIds(detail).filter((assetId) => skillAssetById.has(assetId)),
+    assetIds: groupMemberAssetIds(detail).filter((assetId) =>
+      skillAssetById.has(assetId),
+    ),
     description: detail.group.description ?? t("group.noDescription"),
     id: `group:${detail.group.id}`,
     kind: "group" as const,
     name: detail.group.name,
   }));
 
-  return [...sourceScopes, ...groupScopes].filter((scope) => scope.assetIds.length > 0);
+  return [...sourceScopes, ...groupScopes].filter(
+    (scope) => scope.assetIds.length > 0,
+  );
 }
 
 function getProfileMountCounts(
@@ -1483,7 +1863,9 @@ function getProfileMountCounts(
 ) {
   return skillAssets.reduce(
     (counts, asset) => {
-      const status = (mountStatusesByAssetId.get(asset.id) ?? []).find((candidate) => candidate.profile_id === profileId);
+      const status = (mountStatusesByAssetId.get(asset.id) ?? []).find(
+        (candidate) => candidate.profile_id === profileId,
+      );
       return {
         broken: counts.broken + (status?.state === "broken" ? 1 : 0),
         conflict: counts.conflict + (status?.state === "conflict" ? 1 : 0),
@@ -1496,10 +1878,21 @@ function getProfileMountCounts(
 }
 
 function shortcutForProfile(profile: TargetProfile, shortcuts: AppShortcut[]) {
-  return shortcuts.find((shortcut) => shortcut.profileId === profile.id) ?? defaultAppShortcut(profile);
+  return (
+    shortcuts.find((shortcut) => shortcut.profileId === profile.id) ??
+    defaultAppShortcut(profile)
+  );
 }
 
-function MountCountBadge({ count, label, total }: { count: number; label: string; total: number }) {
+function MountCountBadge({
+  count,
+  label,
+  total,
+}: {
+  count: number;
+  label: string;
+  total: number;
+}) {
   return (
     <span className="inline-flex h-9 items-center gap-2 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface-variant">
       <span>{label}</span>
@@ -1534,8 +1927,12 @@ function ColumnHeader({
   return (
     <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
-        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">{title}</h3>
-        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">{meta}</p>
+        <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
+          {title}
+        </h3>
+        <p className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-body-sm text-outline">
+          {meta}
+        </p>
       </div>
       {onAction && actionLabel && (
         <div className="flex shrink-0 items-center gap-1.5">
@@ -1610,12 +2007,25 @@ function ToggleRow({
   return (
     <div className="flex items-center justify-between gap-4 rounded-xl border border-theme-control-border bg-theme-control/70 px-3 py-3">
       <span className="text-body-sm text-on-surface">{label}</span>
-      <Switch aria-label={label} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+      <Switch
+        aria-label={label}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+      />
     </div>
   );
 }
 
-function Field({ children, label, required = false }: { children: ReactNode; label: string; required?: boolean }) {
+function Field({
+  children,
+  label,
+  required = false,
+}: {
+  children: ReactNode;
+  label: string;
+  required?: boolean;
+}) {
   return (
     <label className="grid gap-1.5">
       <span className="text-body-sm font-medium text-on-surface-variant">
@@ -1627,9 +2037,18 @@ function Field({ children, label, required = false }: { children: ReactNode; lab
   );
 }
 
-function EmptyState({ children, className }: { children: ReactNode; className?: string }) {
+function EmptyState({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <FoundationEmptyState className={clsx("min-h-0 px-4 py-10 text-body-md", className)} title={children} />
+    <FoundationEmptyState
+      className={clsx("min-h-0 px-4 py-10 text-body-md", className)}
+      title={children}
+    />
   );
 }
 

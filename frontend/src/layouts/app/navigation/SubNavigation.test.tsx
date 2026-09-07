@@ -18,8 +18,18 @@ describe("SubNavigation", () => {
         <SubNavigation
           activeId="overview"
           items={[
-            { id: "overview", label: "Catalog Overview", routeKey: "skills.overview", enabled: true },
-            { id: "sources", label: "Skill Sources", routeKey: "skills.sources", enabled: true },
+            {
+              id: "overview",
+              label: "Catalog Overview",
+              routeKey: "skills.overview",
+              enabled: true,
+            },
+            {
+              id: "sources",
+              label: "Skill Sources",
+              routeKey: "skills.sources",
+              enabled: true,
+            },
           ]}
           onSelect={vi.fn()}
         />

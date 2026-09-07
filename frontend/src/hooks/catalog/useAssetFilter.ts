@@ -37,15 +37,29 @@ export function filterAssets(assets: Asset[], options: AssetFilterOptions) {
         return true;
       }
 
-      return [asset.name, asset.kind, asset.format, asset.relative_path, asset.absolute_path, asset.description ?? ""]
+      return [
+        asset.name,
+        asset.kind,
+        asset.format,
+        asset.relative_path,
+        asset.absolute_path,
+        asset.description ?? "",
+      ]
         .join(" ")
         .toLowerCase()
         .includes(normalized);
     })
-    .sort((first, second) => compareAssets(first, second, options.sortBy, options.sortDirection));
+    .sort((first, second) =>
+      compareAssets(first, second, options.sortBy, options.sortDirection),
+    );
 }
 
-function compareAssets(first: Asset, second: Asset, sortBy: AssetSortBy, direction: AssetSortDirection) {
+function compareAssets(
+  first: Asset,
+  second: Asset,
+  sortBy: AssetSortBy,
+  direction: AssetSortDirection,
+) {
   const directionMultiplier = direction === "asc" ? 1 : -1;
   const primary = compareAssetField(first, second, sortBy);
 
@@ -53,7 +67,9 @@ function compareAssets(first: Asset, second: Asset, sortBy: AssetSortBy, directi
     return primary * directionMultiplier;
   }
 
-  return first.name.localeCompare(second.name) || first.id.localeCompare(second.id);
+  return (
+    first.name.localeCompare(second.name) || first.id.localeCompare(second.id)
+  );
 }
 
 function compareAssetField(first: Asset, second: Asset, sortBy: AssetSortBy) {

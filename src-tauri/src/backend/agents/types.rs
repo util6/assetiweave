@@ -382,47 +382,23 @@ pub(crate) struct AgentModelsRequest {
     pub(crate) agent_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(crate) enum AgentDefinitionError {
+    #[error("{0}")]
     InvalidId(String),
+    #[error("{0}")]
     InvalidDisplayName(String),
+    #[error("{0}")]
     InvalidCommand(String),
+    #[error("invalid {field} argument at index {index}: {message}")]
     InvalidArgument {
         field: &'static str,
         index: usize,
         message: String,
     },
-    InvalidEnvironment {
-        index: usize,
-        message: String,
-    },
+    #[error("invalid environment entry at index {index}: {message}")]
+    InvalidEnvironment { index: usize, message: String },
 }
-
-impl fmt::Display for AgentDefinitionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidId(message)
-            | Self::InvalidDisplayName(message)
-            | Self::InvalidCommand(message) => formatter.write_str(message),
-            Self::InvalidArgument {
-                field,
-                index,
-                message,
-            } => write!(
-                formatter,
-                "invalid {field} argument at index {index}: {message}"
-            ),
-            Self::InvalidEnvironment { index, message } => {
-                write!(
-                    formatter,
-                    "invalid environment entry at index {index}: {message}"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for AgentDefinitionError {}
 
 fn validate_arguments(args: &[String], field: &'static str) -> Result<(), AgentDefinitionError> {
     for (index, argument) in args.iter().enumerate() {

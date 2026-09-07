@@ -1,13 +1,24 @@
 /* @vitest-environment jsdom */
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { clearSharedResourceCache } from "../../lib/asyncCache";
 import { defaultSettings } from "../../store/settings/settingsSchema";
 import type { ConversationNavigationTarget } from "../../router/navigationTargets";
-import type { ConversationAdapter, ConversationSessionDetail, ConversationSessionListItem } from "../../types";
+import type {
+  ConversationAdapter,
+  ConversationSessionDetail,
+  ConversationSessionListItem,
+} from "../../types";
 import { ConversationsPage } from "./ConversationsPage";
 
 type ConversationNotify = ComponentProps<typeof ConversationsPage>["onNotify"];
@@ -20,7 +31,9 @@ const listConversationAdaptersMock = vi.hoisted(() => vi.fn());
 const listConversationSessionsMock = vi.hoisted(() => vi.fn());
 const listWebRecordSessionsMock = vi.hoisted(() => vi.fn());
 const searchConversationRecordsMock = vi.hoisted(() => vi.fn());
-const conversationSyncTaskMock = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
+const conversationSyncTaskMock = vi.hoisted(() => ({
+  current: null as null | Record<string, unknown>,
+}));
 
 vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   useConversationSync: () => ({
@@ -41,14 +54,17 @@ vi.mock("../../app/backgroundTasks/SearchIndexProvider", () => ({
   }),
 }));
 
-vi.mock("../../store/settings/AppSettingsProvider", async () => {
-  const actual = await vi.importActual<typeof import("../../store/settings/AppSettingsProvider")>(
-    "../../store/settings/AppSettingsProvider",
-  );
+vi.mock("../../store/settings/useAppSettings", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../store/settings/useAppSettings")
+  >("../../store/settings/useAppSettings");
   return {
     ...actual,
     useAppSettings: () => ({
       resetSettings: vi.fn(),
+      retrySave: vi.fn(),
+      setColumnLayout: vi.fn(),
+      setColumnLayoutAsync: vi.fn().mockResolvedValue(undefined),
       settings: defaultSettings,
       settingsError: null,
       settingsLoaded: true,
@@ -59,9 +75,9 @@ vi.mock("../../store/settings/AppSettingsProvider", async () => {
 });
 
 vi.mock("../../services/conversations", async () => {
-  const actual = await vi.importActual<typeof import("../../services/conversations")>(
-    "../../services/conversations",
-  );
+  const actual = await vi.importActual<
+    typeof import("../../services/conversations")
+  >("../../services/conversations");
   return {
     ...actual,
     exportConversationSession: exportConversationSessionMock,
@@ -74,16 +90,29 @@ vi.mock("../../services/conversations", async () => {
   };
 });
 
+let testQueryClient: QueryClient;
+
 describe("ConversationsPage sync scope", () => {
   beforeEach(() => {
-    clearSharedResourceCache();
+    testQueryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          gcTime: 0,
+          staleTime: 0,
+        },
+      },
+    });
     conversationSyncTaskMock.current = null;
     window.scrollTo = vi.fn();
-    vi.stubGlobal("ResizeObserver", class {
-      disconnect() {}
-      observe() {}
-      unobserve() {}
-    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        disconnect() {}
+        observe() {}
+        unobserve() {}
+      },
+    );
     startSyncMock.mockReset().mockResolvedValue({
       adapter_id: null,
       dry_run: false,
@@ -101,8 +130,12 @@ describe("ConversationsPage sync scope", () => {
       question_ids: [],
       session_id: "session-export-target",
     });
-    getConversationSessionMock.mockReset().mockResolvedValue(conversationSessionDetail);
-    getWebRecordSessionMock.mockReset().mockResolvedValue(conversationSessionDetail);
+    getConversationSessionMock
+      .mockReset()
+      .mockResolvedValue(conversationSessionDetail);
+    getWebRecordSessionMock
+      .mockReset()
+      .mockResolvedValue(conversationSessionDetail);
     listConversationAdaptersMock.mockReset().mockResolvedValue([]);
     listConversationSessionsMock.mockReset().mockResolvedValue([]);
     listWebRecordSessionsMock.mockReset().mockResolvedValue([]);
@@ -132,6 +165,7 @@ describe("ConversationsPage sync scope", () => {
 
   afterEach(() => {
     cleanup();
+    testQueryClient.clear();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -185,14 +219,18 @@ describe("ConversationsPage sync scope", () => {
 
       renderConversationsPage(pageRecordKind);
 
-      const syncButton = screen.getByRole("button", { name: "Sync" }) as HTMLButtonElement;
+      const syncButton = screen.getByRole("button", {
+        name: "Sync",
+      }) as HTMLButtonElement;
       expect(syncButton.disabled).toBe(false);
       fireEvent.click(syncButton);
-      await waitFor(() => expect(startSyncMock).toHaveBeenCalledWith({
-        dry_run: false,
-        record_kind: pageRecordKind,
-        source_id: null,
-      }));
+      await waitFor(() =>
+        expect(startSyncMock).toHaveBeenCalledWith({
+          dry_run: false,
+          record_kind: pageRecordKind,
+          source_id: null,
+        }),
+      );
     },
   );
 
@@ -203,9 +241,15 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session", { onNotify });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Export Markdown" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm export" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Export target" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Export Markdown" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Confirm export" }),
+    );
 
     await waitFor(() =>
       expect(exportConversationSessionMock).toHaveBeenCalledWith(
@@ -234,21 +278,34 @@ describe("ConversationsPage sync scope", () => {
     listConversationSessionsMock.mockResolvedValue([conversationSession]);
 
     renderConversationsPage("session");
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Export target" }),
+    );
 
-    await waitFor(() => expect(getConversationSessionMock).toHaveBeenCalledWith("session-export-target"));
+    await waitFor(() =>
+      expect(getConversationSessionMock).toHaveBeenCalledWith(
+        "session-export-target",
+      ),
+    );
     expect(screen.queryByRole("region", { name: "对话记录操作栏" })).toBeNull();
-    expect(screen.queryByPlaceholderText("搜索当前 Session 的问题...")).toBeNull();
+    expect(
+      screen.queryByPlaceholderText("搜索当前 Session 的问题..."),
+    ).toBeNull();
     expect(screen.queryByRole("button", { name: "同步" })).toBeNull();
   });
 
   it("clears the previous preview and shows the detail skeleton while opening another session", async () => {
     let resolveSecondSession!: (detail: ConversationSessionDetail) => void;
-    const secondSessionPromise = new Promise<ConversationSessionDetail>((resolve) => {
-      resolveSecondSession = resolve;
-    });
+    const secondSessionPromise = new Promise<ConversationSessionDetail>(
+      (resolve) => {
+        resolveSecondSession = resolve;
+      },
+    );
     listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
-    listConversationSessionsMock.mockResolvedValue([conversationSession, secondConversationSession]);
+    listConversationSessionsMock.mockResolvedValue([
+      conversationSession,
+      secondConversationSession,
+    ]);
     getConversationSessionMock.mockImplementation((sessionId: string) =>
       sessionId === secondConversationSession.id
         ? secondSessionPromise
@@ -257,48 +314,75 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
-    expect((await screen.findAllByText("Export question")).length).toBeGreaterThan(0);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Export target" }),
+    );
+    expect(
+      (await screen.findAllByText("Export question")).length,
+    ).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "Back to apps / sessions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Second target" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to apps / sessions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Second target" }),
+    );
 
     expect(screen.queryByText("Export question")).toBeNull();
     expect(screen.getByText("Loading session...")).toBeTruthy();
     expect(document.querySelector(".app-skeleton-root")).toBeTruthy();
 
     resolveSecondSession(secondConversationSessionDetail);
-    await waitFor(() => expect(screen.getAllByText("Second question").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText("Second question").length).toBeGreaterThan(0),
+    );
   });
 
   it("ignores an older session response after switching to a newer session", async () => {
     const firstSessionLoad = createDeferred<ConversationSessionDetail>();
     const secondSessionLoad = createDeferred<ConversationSessionDetail>();
     listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
-    listConversationSessionsMock.mockResolvedValue([conversationSession, secondConversationSession]);
+    listConversationSessionsMock.mockResolvedValue([
+      conversationSession,
+      secondConversationSession,
+    ]);
     getConversationSessionMock.mockImplementation((sessionId: string) =>
-      sessionId === conversationSession.id ? firstSessionLoad.promise : secondSessionLoad.promise,
+      sessionId === conversationSession.id
+        ? firstSessionLoad.promise
+        : secondSessionLoad.promise,
     );
 
     renderConversationsPage("session");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Export target" }));
-    fireEvent.click(screen.getByRole("button", { name: "Back to apps / sessions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Open session Second target" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Export target" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Back to apps / sessions" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open session Second target" }),
+    );
 
     firstSessionLoad.resolve(conversationSessionDetail);
     await act(async () => undefined);
     expect(screen.queryByText("Export question")).toBeNull();
 
     secondSessionLoad.resolve(secondConversationSessionDetail);
-    await waitFor(() => expect(screen.getAllByText("Second question").length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(screen.getAllByText("Second question").length).toBeGreaterThan(0),
+    );
   });
 
   it.each(["session", "web"] as const)(
     "opens a %s evidence target once and highlights its exact block",
     async (recordKind) => {
-      const targetSession = recordKind === "web" ? webConversationSession : conversationSession;
-      const targetDetail = { ...conversationSessionDetail, session: targetSession };
+      const targetSession =
+        recordKind === "web" ? webConversationSession : conversationSession;
+      const targetDetail = {
+        ...conversationSessionDetail,
+        session: targetSession,
+      };
       const navigationTarget: ConversationNavigationTarget = {
         blockId: "part-export-target-answer-node-0",
         nonce: `target-${recordKind}`,
@@ -310,40 +394,59 @@ describe("ConversationsPage sync scope", () => {
       listConversationAdaptersMock.mockResolvedValue([
         recordKind === "web" ? webConversationAdapter : conversationAdapter,
       ]);
-      (recordKind === "web" ? listWebRecordSessionsMock : listConversationSessionsMock).mockResolvedValue([
-        targetSession,
-      ]);
-      (recordKind === "web" ? getWebRecordSessionMock : getConversationSessionMock).mockResolvedValue(targetDetail);
+      (recordKind === "web"
+        ? listWebRecordSessionsMock
+        : listConversationSessionsMock
+      ).mockResolvedValue([targetSession]);
+      (recordKind === "web"
+        ? getWebRecordSessionMock
+        : getConversationSessionMock
+      ).mockResolvedValue(targetDetail);
 
-      const view = renderConversationsPage(recordKind, { navigationTarget, onNavigationTargetConsumed });
+      const view = renderConversationsPage(recordKind, {
+        navigationTarget,
+        onNavigationTargetConsumed,
+      });
 
       await waitFor(() => {
-        expect(recordKind === "web" ? getWebRecordSessionMock : getConversationSessionMock).toHaveBeenCalledWith(targetSession.id);
+        expect(
+          recordKind === "web"
+            ? getWebRecordSessionMock
+            : getConversationSessionMock,
+        ).toHaveBeenCalledWith(targetSession.id);
       });
       const targetCard = await waitFor(() => {
-        const element = document.querySelector('[data-conversation-card-id="part-export-target-answer-node-0"]');
+        const element = document.querySelector(
+          '[data-conversation-card-id="part-export-target-answer-node-0"]',
+        );
         expect(element).toBeTruthy();
         return element as HTMLElement;
       });
       expect(targetCard.className).toContain("ring-2");
       expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1);
-      expect(onNavigationTargetConsumed).toHaveBeenCalledWith(navigationTarget.nonce);
+      expect(onNavigationTargetConsumed).toHaveBeenCalledWith(
+        navigationTarget.nonce,
+      );
 
       view.rerender(
-        <I18nProvider>
-          <ConversationsPage
-            appShortcuts={[]}
-            navigationTarget={navigationTarget}
-            onManualOpen={vi.fn()}
-            onNavigationTargetConsumed={onNavigationTargetConsumed}
-            onNotify={() => undefined}
-            onNotifyError={vi.fn()}
-            onOpenSettings={vi.fn()}
-            recordKind={recordKind}
-          />
-        </I18nProvider>,
+        <QueryClientProvider client={testQueryClient}>
+          <I18nProvider>
+            <ConversationsPage
+              appShortcuts={[]}
+              navigationTarget={navigationTarget}
+              onManualOpen={vi.fn()}
+              onNavigationTargetConsumed={onNavigationTargetConsumed}
+              onNotify={() => undefined}
+              onNotifyError={vi.fn()}
+              onOpenSettings={vi.fn()}
+              recordKind={recordKind}
+            />
+          </I18nProvider>
+        </QueryClientProvider>,
       );
-      await waitFor(() => expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(onNavigationTargetConsumed).toHaveBeenCalledTimes(1),
+      );
     },
   );
 
@@ -355,10 +458,15 @@ describe("ConversationsPage sync scope", () => {
         renderConversationsPage(recordKind);
 
         await act(async () => undefined);
-        const listSessionsMock = recordKind === "web" ? listWebRecordSessionsMock : listConversationSessionsMock;
+        const listSessionsMock =
+          recordKind === "web"
+            ? listWebRecordSessionsMock
+            : listConversationSessionsMock;
         listSessionsMock.mockClear();
 
-        const searchInput = screen.getByPlaceholderText("Search sessions or projects...") as HTMLInputElement;
+        const searchInput = screen.getByPlaceholderText(
+          "Search sessions or projects...",
+        ) as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: "d" } });
         await act(async () => {
           await vi.advanceTimersByTimeAsync(300);
@@ -402,7 +510,9 @@ describe("ConversationsPage sync scope", () => {
       await act(async () => undefined);
       listConversationSessionsMock.mockClear();
 
-      const searchInput = screen.getByPlaceholderText("Search sessions or projects...") as HTMLInputElement;
+      const searchInput = screen.getByPlaceholderText(
+        "Search sessions or projects...",
+      ) as HTMLInputElement;
       fireEvent.change(searchInput, { target: { value: "deploy" } });
       fireEvent.keyDown(searchInput, { key: "Enter" });
       await act(async () => undefined);
@@ -441,7 +551,9 @@ describe("ConversationsPage sync scope", () => {
       try {
         renderConversationsPage(recordKind);
 
-        const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+        const searchInput = screen.getByPlaceholderText(
+          "Search content and jump to cards...",
+        ) as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: "d" } });
         await act(async () => {
           await vi.advanceTimersByTimeAsync(300);
@@ -487,7 +599,9 @@ describe("ConversationsPage sync scope", () => {
     try {
       renderConversationsPage("session");
 
-      const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+      const searchInput = screen.getByPlaceholderText(
+        "Search content and jump to cards...",
+      ) as HTMLInputElement;
       fireEvent.change(searchInput, { target: { value: "deploy" } });
       fireEvent.keyDown(searchInput, { key: "Enter" });
 
@@ -532,7 +646,9 @@ describe("ConversationsPage sync scope", () => {
   });
 
   it("shows explicit progress while content card search is running", async () => {
-    let resolveSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    let resolveSearch: (
+      value: Awaited<ReturnType<typeof searchConversationRecordsMock>>,
+    ) => void;
     searchConversationRecordsMock.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveSearch = resolve;
@@ -541,11 +657,15 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session");
 
-    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    const searchInput = screen.getByPlaceholderText(
+      "Search content and jump to cards...",
+    ) as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "deploy" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
 
-    expect(await screen.findByRole("progressbar", { name: "Searching content..." })).toBeTruthy();
+    expect(
+      await screen.findByRole("progressbar", { name: "Searching content..." }),
+    ).toBeTruthy();
 
     resolveSearch!({
       hits: [],
@@ -571,7 +691,9 @@ describe("ConversationsPage sync scope", () => {
     });
 
     await waitFor(() =>
-      expect(screen.queryByRole("progressbar", { name: "Searching content..." })).toBeNull(),
+      expect(
+        screen.queryByRole("progressbar", { name: "Searching content..." }),
+      ).toBeNull(),
     );
   });
 
@@ -593,8 +715,14 @@ describe("ConversationsPage sync scope", () => {
       title: "OpenCode target",
     };
 
-    listConversationAdaptersMock.mockResolvedValue([opencodeAdapter, conversationAdapter]);
-    listConversationSessionsMock.mockResolvedValue([opencodeSession, conversationSession]);
+    listConversationAdaptersMock.mockResolvedValue([
+      opencodeAdapter,
+      conversationAdapter,
+    ]);
+    listConversationSessionsMock.mockResolvedValue([
+      opencodeSession,
+      conversationSession,
+    ]);
     searchConversationRecordsMock.mockResolvedValueOnce({
       hits: [
         {
@@ -612,21 +740,40 @@ describe("ConversationsPage sync scope", () => {
       ],
       query: "export",
       record_kind: "session",
-      scope: searchScope("export", ["question", "answer", "tool", "command", "code", "result"]),
+      scope: searchScope("export", [
+        "question",
+        "answer",
+        "tool",
+        "command",
+        "code",
+        "result",
+      ]),
       total_count: 1,
     });
 
     renderConversationsPage("session");
 
-    expect(await screen.findByRole("button", { name: "Open session OpenCode target" })).toBeTruthy();
+    expect(
+      await screen.findByRole("button", {
+        name: "Open session OpenCode target",
+      }),
+    ).toBeTruthy();
 
-    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    const searchInput = screen.getByPlaceholderText(
+      "Search content and jump to cards...",
+    ) as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "export" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
-    fireEvent.click(await screen.findByRole("button", { name: "Open Answer text search result: Export target" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Open Answer text search result: Export target",
+      }),
+    );
 
     await waitFor(() =>
-      expect(getConversationSessionMock).toHaveBeenLastCalledWith("session-export-target"),
+      expect(getConversationSessionMock).toHaveBeenLastCalledWith(
+        "session-export-target",
+      ),
     );
     expect(await screen.findAllByText("Export question")).toHaveLength(2);
     expect(screen.getAllByText("Export-ready answer.")).toHaveLength(2);
@@ -641,13 +788,22 @@ describe("ConversationsPage sync scope", () => {
       ],
       query: "deploy",
       record_kind: "session",
-      scope: searchScope("deploy", ["question", "answer", "tool", "command", "code", "result"]),
+      scope: searchScope("deploy", [
+        "question",
+        "answer",
+        "tool",
+        "command",
+        "code",
+        "result",
+      ]),
       total_count: 3,
     });
 
     renderConversationsPage("session");
 
-    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+    const searchInput = screen.getByPlaceholderText(
+      "Search content and jump to cards...",
+    ) as HTMLInputElement;
     fireEvent.change(searchInput, { target: { value: "deploy" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
 
@@ -655,13 +811,23 @@ describe("ConversationsPage sync scope", () => {
     const answerTwo = screen.getByText("answer match two");
     const command = screen.getByText("command match");
 
-    expect(answerOne.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(answerTwo.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      answerOne.compareDocumentPosition(command) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      answerTwo.compareDocumentPosition(command) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
-    const commandBadge = document.querySelector('[data-search-card-type-badge="command"]');
+    const commandBadge = document.querySelector(
+      '[data-search-card-type-badge="command"]',
+    );
     expect(commandBadge?.getAttribute("style")).toContain("rgb(208, 138, 25)");
 
-    let resolveCommandSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    let resolveCommandSearch: (
+      value: Awaited<ReturnType<typeof searchConversationRecordsMock>>,
+    ) => void;
     searchConversationRecordsMock.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveCommandSearch = resolve;
@@ -685,7 +851,9 @@ describe("ConversationsPage sync scope", () => {
     expect(screen.queryByText("answer match one")).toBeNull();
     expect(screen.getByText("command match")).toBeTruthy();
 
-    let resolveCombinedSearch: (value: Awaited<ReturnType<typeof searchConversationRecordsMock>>) => void;
+    let resolveCombinedSearch: (
+      value: Awaited<ReturnType<typeof searchConversationRecordsMock>>,
+    ) => void;
     searchConversationRecordsMock.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveCombinedSearch = resolve;
@@ -748,7 +916,9 @@ describe("ConversationsPage sync scope", () => {
     });
 
     renderConversationsPage("session");
-    const searchInput = screen.getByPlaceholderText("Search content and jump to cards...");
+    const searchInput = screen.getByPlaceholderText(
+      "Search content and jump to cards...",
+    );
     fireEvent.change(searchInput, { target: { value: "reasoning" } });
     fireEvent.keyDown(searchInput, { key: "Enter" });
 
@@ -756,28 +926,32 @@ describe("ConversationsPage sync scope", () => {
     searchConversationRecordsMock.mockReturnValue(new Promise(() => undefined));
 
     fireEvent.click(screen.getByRole("button", { name: "role:reasoning" }));
-    await waitFor(() => expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
-      card_kinds: [],
-      content_types: [],
-      include_cards: true,
-      include_questions: true,
-      semantic_roles: ["reasoning"],
-      limit: 50,
-      query: "reasoning",
-      record_kind: "session",
-    }));
+    await waitFor(() =>
+      expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: true,
+        semantic_roles: ["reasoning"],
+        limit: 50,
+        query: "reasoning",
+        record_kind: "session",
+      }),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "User question" }));
-    await waitFor(() => expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
-      card_kinds: [],
-      content_types: [],
-      include_cards: true,
-      include_questions: false,
-      semantic_roles: ["reasoning"],
-      limit: 50,
-      query: "reasoning",
-      record_kind: "session",
-    }));
+    await waitFor(() =>
+      expect(searchConversationRecordsMock).toHaveBeenLastCalledWith({
+        card_kinds: [],
+        content_types: [],
+        include_cards: true,
+        include_questions: false,
+        semantic_roles: ["reasoning"],
+        limit: 50,
+        query: "reasoning",
+        record_kind: "session",
+      }),
+    );
     expect(screen.queryByText("question match")).toBeNull();
     expect(screen.getByText("reasoning match")).toBeTruthy();
   });
@@ -789,7 +963,9 @@ describe("ConversationsPage sync scope", () => {
       try {
         renderConversationsPage(recordKind);
 
-        const searchInput = screen.getByPlaceholderText("Search content and jump to cards...") as HTMLInputElement;
+        const searchInput = screen.getByPlaceholderText(
+          "Search content and jump to cards...",
+        ) as HTMLInputElement;
         fireEvent.compositionStart(searchInput);
         fireEvent.change(searchInput, {
           target: { value: "zhong" },
@@ -837,29 +1013,38 @@ describe("ConversationsPage sync scope", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sync" }));
 
-    expect(await screen.findByText("Reading and importing conversations")).toBeTruthy();
+    expect(
+      await screen.findByText("Reading and importing conversations"),
+    ).toBeTruthy();
 
     view.rerender(
-      <I18nProvider>
-        <ConversationsPage
-          appShortcuts={[]}
-          onManualOpen={vi.fn()}
-          onNotify={() => undefined}
-          onNotifyError={vi.fn()}
-          onOpenSettings={vi.fn()}
-          recordKind="web"
-        />
-      </I18nProvider>,
+      <QueryClientProvider client={testQueryClient}>
+        <I18nProvider>
+          <ConversationsPage
+            appShortcuts={[]}
+            onManualOpen={vi.fn()}
+            onNotify={() => undefined}
+            onNotifyError={vi.fn()}
+            onOpenSettings={vi.fn()}
+            recordKind="web"
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
     );
 
     await waitFor(() => {
-      expect(screen.queryByText("Reading and importing conversations")).toBeNull();
+      expect(
+        screen.queryByText("Reading and importing conversations"),
+      ).toBeNull();
     });
   });
 
   it("shows progress updates within the same running source without refreshing the catalog", async () => {
     conversationSyncTaskMock.current = {
-      id: "live-progress", status: "running", record_kind: "session", source_id: null,
+      id: "live-progress",
+      status: "running",
+      record_kind: "session",
+      source_id: null,
       progress: { current_source_name: "Codex · 读取会话 1/3" },
     };
     const view = renderConversationsPage("session");
@@ -870,16 +1055,18 @@ describe("ConversationsPage sync scope", () => {
       progress: { current_source_name: "Codex · 写入会话 2/3" },
     };
     view.rerender(
-      <I18nProvider>
-        <ConversationsPage
-          appShortcuts={[]}
-          onManualOpen={vi.fn()}
-          onNotify={() => undefined}
-          onNotifyError={vi.fn()}
-          onOpenSettings={vi.fn()}
-          recordKind="session"
-        />
-      </I18nProvider>,
+      <QueryClientProvider client={testQueryClient}>
+        <I18nProvider>
+          <ConversationsPage
+            appShortcuts={[]}
+            onManualOpen={vi.fn()}
+            onNotify={() => undefined}
+            onNotifyError={vi.fn()}
+            onOpenSettings={vi.fn()}
+            recordKind="session"
+          />
+        </I18nProvider>
+      </QueryClientProvider>,
     );
     expect(await screen.findByText(/Codex · 写入会话 2\/3/)).toBeTruthy();
     expect(screen.queryByText(/Codex · 读取会话 1\/3/)).toBeNull();
@@ -887,7 +1074,8 @@ describe("ConversationsPage sync scope", () => {
   });
 
   it("does not leave a non-dismissible sync summary after the completed progress is dismissed", async () => {
-    const summary = "Added/updated 1 web records and 3 content items, skipped 0 unchanged records across 1 sources.";
+    const summary =
+      "Added/updated 1 web records and 3 content items, skipped 0 unchanged records across 1 sources.";
     conversationSyncTaskMock.current = {
       adapter_id: null,
       dry_run: false,
@@ -919,7 +1107,9 @@ describe("ConversationsPage sync scope", () => {
     expect(await screen.findByText("Web record sync completed")).toBeTruthy();
     expect(screen.getAllByText(summary)).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss sync progress" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss sync progress" }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByText(summary)).toBeNull();
@@ -969,7 +1159,9 @@ describe("ConversationsPage sync scope", () => {
     ).toBeTruthy();
     expect(screen.getByText("Failed web sources")).toBeTruthy();
     expect(screen.getByText("gemini-web · gemini-web-export")).toBeTruthy();
-    expect(screen.getByText("Gemini web CSRF token SNlM0e was not found")).toBeTruthy();
+    expect(
+      screen.getByText("Gemini web CSRF token SNlM0e was not found"),
+    ).toBeTruthy();
   });
 
   it("shows failed source details when a completed session sync has failed sources", async () => {
@@ -1015,7 +1207,9 @@ describe("ConversationsPage sync scope", () => {
     ).toBeTruthy();
     expect(screen.getByText("Failed sources")).toBeTruthy();
     expect(screen.getByText("claude-code · claude-code-export")).toBeTruthy();
-    expect(screen.getByText("adapter trusted hash mismatch: claude-code")).toBeTruthy();
+    expect(
+      screen.getByText("adapter trusted hash mismatch: claude-code"),
+    ).toBeTruthy();
   });
 
   it("keeps completed sync progress dismissed after leaving and returning to the page", async () => {
@@ -1049,7 +1243,9 @@ describe("ConversationsPage sync scope", () => {
 
     expect(await screen.findByText("Web record sync completed")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss sync progress" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss sync progress" }),
+    );
 
     await waitFor(() => {
       expect(screen.queryByText("Web record sync completed")).toBeNull();
@@ -1075,18 +1271,20 @@ function renderConversationsPage(
   const onNotify = options.onNotify ?? (() => undefined);
 
   return render(
-    <I18nProvider>
-      <ConversationsPage
-        appShortcuts={[]}
-        navigationTarget={options.navigationTarget}
-        onManualOpen={vi.fn()}
-        onNavigationTargetConsumed={options.onNavigationTargetConsumed}
-        onNotify={onNotify}
-        onNotifyError={vi.fn()}
-        onOpenSettings={vi.fn()}
-        recordKind={recordKind}
-      />
-    </I18nProvider>,
+    <QueryClientProvider client={testQueryClient}>
+      <I18nProvider>
+        <ConversationsPage
+          appShortcuts={[]}
+          navigationTarget={options.navigationTarget}
+          onManualOpen={vi.fn()}
+          onNavigationTargetConsumed={options.onNavigationTargetConsumed}
+          onNotify={onNotify}
+          onNotifyError={vi.fn()}
+          onOpenSettings={vi.fn()}
+          recordKind={recordKind}
+        />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -1098,16 +1296,14 @@ function createDeferred<T>() {
   return { promise, resolve };
 }
 
-function searchScope(
-  query: string,
-  contentTypes: string[],
-) {
+function searchScope(query: string, contentTypes: string[]) {
   return {
     adapter_id: null,
     card_kinds: contentTypes.filter((kind) => kind !== "question"),
     content_types: contentTypes,
     include_cards: true,
-    include_questions: contentTypes.length === 0 || contentTypes.includes("question"),
+    include_questions:
+      contentTypes.length === 0 || contentTypes.includes("question"),
     limit: 50,
     offset: 0,
     project_path: null,
@@ -1121,11 +1317,7 @@ function searchScope(
   };
 }
 
-function searchHit(
-  id: string,
-  cardType: string,
-  snippet: string,
-) {
+function searchHit(id: string, cardType: string, snippet: string) {
   return {
     block_id: id,
     card_type: cardType,
@@ -1195,7 +1387,9 @@ const conversationSessionDetail: ConversationSessionDetail = {
         {
           id: "part-export-target-answer",
           kind: "text",
-          metadata_json: JSON.stringify({ content_card: { type: "answer", format: "markdown" } }),
+          metadata_json: JSON.stringify({
+            content_card: { type: "answer", format: "markdown" },
+          }),
           part_index: 0,
           role: "assistant",
           text: "Export-ready answer.",
@@ -1231,34 +1425,36 @@ const conversationSessionDetail: ConversationSessionDetail = {
           updated_at: "2026-06-15T00:00:00Z",
         },
       ],
-      projected_content_nodes: [{
-        node_id: "part-export-target-answer-node-0",
-        locator: {
+      projected_content_nodes: [
+        {
+          node_id: "part-export-target-answer-node-0",
+          locator: {
+            question_id: "question-export-target",
+            turn_id: "turn-export-target",
+            part_id: "part-export-target-answer",
+            node_order: 0,
+          },
           question_id: "question-export-target",
           turn_id: "turn-export-target",
           part_id: "part-export-target-answer",
+          turn_order: 0,
+          part_order: 0,
           node_order: 0,
+          node_type: "answer",
+          semantic_role: "answer",
+          renderer: "markdown",
+          role: "assistant",
+          content: "Export-ready answer.",
+          language: null,
+          cwd: null,
+          status: null,
+          exit_code: null,
+          source_execution_id: null,
+          command_label: null,
+          translated_content: null,
+          legacy_anchor_ids: [],
         },
-        question_id: "question-export-target",
-        turn_id: "turn-export-target",
-        part_id: "part-export-target-answer",
-        turn_order: 0,
-        part_order: 0,
-        node_order: 0,
-        node_type: "answer",
-        semantic_role: "answer",
-        renderer: "markdown",
-        role: "assistant",
-        content: "Export-ready answer.",
-        language: null,
-        cwd: null,
-        status: null,
-        exit_code: null,
-        source_execution_id: null,
-        command_label: null,
-        translated_content: null,
-        legacy_anchor_ids: [],
-      }],
+      ],
     },
   ],
   session: conversationSession,

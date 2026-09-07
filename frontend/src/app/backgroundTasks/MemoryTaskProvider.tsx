@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
+import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   cancelMemoryPublicTask,
   listMemoryPublicTasks,
@@ -6,8 +7,20 @@ import {
   subscribeMemoryTasks,
 } from "../../services/memory";
 import type { MemoryTaskView } from "../../types/memory";
+import { useQueryScope } from "../query/QueryScopeProvider";
+import { taskKeys } from "../query/taskKeys";
+import { TaskEventBridge } from "../query/TaskEventBridge";
+import type { QueryScope } from "../query/catalogQueries";
 
-interface MemoryTaskContextValue {
+export function memoryTasksQueryOptions(scope: QueryScope) {
+  return queryOptions<MemoryTaskView[]>({
+    queryKey: taskKeys.resource(scope, "memory"),
+    queryFn: () => listMemoryPublicTasks(true),
+    staleTime: 1000,
+  });
+}
+
+export interface MemoryTaskContextValue {
   cancelTask: (taskId: string) => Promise<MemoryTaskView>;
   refresh: () => Promise<void>;
   retryTask: (taskId: string) => Promise<MemoryTaskView>;
@@ -16,64 +29,92 @@ interface MemoryTaskContextValue {
   publicTasks: MemoryTaskView[];
 }
 
-const MemoryTaskContext = createContext<MemoryTaskContextValue | null>(null);
+export function MemoryTaskProvider({
+  children,
+}: {
+  children?: ReactNode;
+} = {}) {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryKey = taskKeys.resource(activeScope, "memory");
 
-export function MemoryTaskProvider({ children }: { children: ReactNode }) {
-  const [tasks, setTasks] = useState<MemoryTaskView[]>([]);
+  useQuery({
+    ...memoryTasksQueryOptions(activeScope),
+    enabled: true,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const isRunning = data?.some(
+        (t) =>
+          t.status === "running" ||
+          t.status === "pending" ||
+          t.status === "cancelling",
+      );
+      return isRunning ? 1000 : 10000;
+    },
+    refetchIntervalInBackground: true,
+  });
+
+  return (
+    <>
+      <TaskEventBridge<MemoryTaskView[], unknown>
+        queryKey={queryKey}
+        subscribe={(listener) => subscribeMemoryTasks(() => listener({}))}
+      />
+      {children ?? null}
+    </>
+  );
+}
+
+export function useMemoryTasks(): MemoryTaskContextValue {
+  const scope = useQueryScope();
+  const activeScope = scope ?? { tenantId: "default", epoch: 1 };
+  const queryClient = useQueryClient();
+  const queryKey = taskKeys.resource(activeScope, "memory");
+
+  const query = useQuery({
+    ...memoryTasksQueryOptions(activeScope),
+  });
+
+  const tasks = query.data ?? [];
+
+  const cancelTask = useCallback(
+    async (taskId: string) => {
+      const updated = await cancelMemoryPublicTask(taskId);
+      queryClient.setQueryData<MemoryTaskView[]>(queryKey, (current) =>
+        upsertTask(current ?? [], updated),
+      );
+      return updated;
+    },
+    [queryClient, queryKey],
+  );
+
+  const retryTask = useCallback(
+    async (taskId: string) => {
+      const updated = await retryMemoryPublicTask(taskId);
+      queryClient.setQueryData<MemoryTaskView[]>(queryKey, (current) =>
+        upsertTask(current ?? [], updated),
+      );
+      return updated;
+    },
+    [queryClient, queryKey],
+  );
 
   const refresh = useCallback(async () => {
-    setTasks(await listMemoryPublicTasks(true));
-  }, []);
+    await queryClient.refetchQueries({ exact: true, queryKey });
+  }, [queryClient, queryKey]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const refreshTasks = () => void listMemoryPublicTasks(true).then((nextTasks) => {
-      if (!cancelled) setTasks(nextTasks);
-    }).catch(() => undefined);
-    void refreshTasks();
-    const interval = window.setInterval(refreshTasks, 1000);
-    let unlisten: (() => void) | undefined;
-    void subscribeMemoryTasks(refreshTasks).then((cleanup) => {
-      if (cancelled) cleanup();
-      else unlisten = cleanup;
-    });
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-      unlisten?.();
-    };
-  }, []);
-
-  const cancelTask = useCallback(async (taskId: string) => {
-    const task = await cancelMemoryPublicTask(taskId);
-    setTasks((current) => upsertTask(current, task));
-    return task;
-  }, []);
-
-  const retryTask = useCallback(async (taskId: string) => {
-    const task = await retryMemoryPublicTask(taskId);
-    setTasks((current) => upsertTask(current, task));
-    return task;
-  }, []);
-
-  const value = useMemo(() => ({
+  return {
     cancelTask,
     refresh,
     retryTask,
     task: tasks[tasks.length - 1] ?? null,
     tasks,
     publicTasks: tasks,
-  }), [cancelTask, refresh, retryTask, tasks]);
-
-  return <MemoryTaskContext.Provider value={value}>{children}</MemoryTaskContext.Provider>;
-}
-
-export function useMemoryTasks() {
-  const context = useContext(MemoryTaskContext);
-  if (!context) throw new Error("useMemoryTasks must be used inside MemoryTaskProvider");
-  return context;
+  };
 }
 
 function upsertTask(tasks: MemoryTaskView[], nextTask: MemoryTaskView) {
-  return [...tasks.filter((task) => task.id !== nextTask.id), nextTask].sort((left, right) => left.started_at.localeCompare(right.started_at));
+  return [...tasks.filter((task) => task.id !== nextTask.id), nextTask].sort(
+    (left, right) => left.started_at.localeCompare(right.started_at),
+  );
 }

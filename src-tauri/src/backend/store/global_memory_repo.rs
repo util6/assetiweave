@@ -5,7 +5,7 @@ use crate::backend::models::{
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub(crate) const GLOBAL_MEMORY_CONTRACT_VERSION: &str = "global-memory.v1";
 pub(crate) const GLOBAL_MEMORY_PROMPT_VERSION: &str = "global-memory-prompt.v1";
@@ -43,29 +43,166 @@ pub(crate) struct GlobalMemoryPersistInput {
     pub(crate) sources: Vec<GlobalMemorySource>,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+struct GlobalMemoryCandidateProjectRow {
+    project_id: String,
+    project_path: String,
+    project_version_id: String,
+    project_version_number: i64,
+    project_watermark: i64,
+    project_input_fingerprint: String,
+    memory_markdown: String,
+}
+
+impl From<GlobalMemoryCandidateProjectRow> for GlobalMemoryProjectInput {
+    fn from(row: GlobalMemoryCandidateProjectRow) -> Self {
+        Self {
+            project_id: row.project_id,
+            project_path: row.project_path,
+            project_version_id: row.project_version_id,
+            project_version_number: row.project_version_number,
+            project_watermark: row.project_watermark,
+            project_input_fingerprint: row.project_input_fingerprint,
+            memory_markdown: row.memory_markdown,
+        }
+    }
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GlobalJobStatusAndFingerprintRow {
+    status: String,
+    input_fingerprint: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GlobalMemorySourceRow {
+    project_id: String,
+    project_path: String,
+    project_version_id: String,
+    project_watermark: i64,
+    sort_order: i64,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GlobalMemoryJobRow {
+    tenant_id: String,
+    id: String,
+    target_watermark: i64,
+    input_fingerprint: String,
+    status: String,
+    attempt_count: i64,
+    retry_count: i64,
+    retry_at: Option<String>,
+    last_error: Option<String>,
+    ownership_token: Option<String>,
+    lease_expires_at: Option<String>,
+    heartbeat_at: Option<String>,
+    started_at: Option<String>,
+    finished_at: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
+struct GlobalMemoryRow {
+    tenant_id: String,
+    id: String,
+    last_successful_version_id: Option<String>,
+    last_successful_at: Option<String>,
+    last_successful_watermark: i64,
+    last_successful_input_fingerprint: Option<String>,
+    summary_document_path: Option<String>,
+    memory_document_path: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct GlobalMemoryVersionRow {
+    tenant_id: String,
+    id: String,
+    version_number: i64,
+    status: String,
+    input_fingerprint: String,
+    source_watermark: i64,
+    summary_markdown: Option<String>,
+    memory_markdown: Option<String>,
+    raw_output_json: Option<String>,
+    error_message: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+const GLOBAL_MEMORY_CANDIDATE_PROJECTS_QUERY: &str = "\
+SELECT \
+    pm.id AS project_id, \
+    pm.project_path AS project_path, \
+    v.id AS project_version_id, \
+    v.version_number AS project_version_number, \
+    v.source_watermark AS project_watermark, \
+    v.input_fingerprint AS project_input_fingerprint, \
+    v.content_markdown AS memory_markdown \
+FROM project_memories pm \
+JOIN project_memory_versions v \
+    ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id \
+WHERE pm.tenant_id = ?1 \
+    AND v.status = 'succeeded' \
+    AND NOT EXISTS ( \
+        SELECT 1 FROM project_memory_sources source \
+        WHERE source.tenant_id = v.tenant_id \
+            AND source.version_id = v.id \
+            AND NOT EXISTS ( \
+                SELECT 1 FROM session_memories m \
+                WHERE m.tenant_id = source.tenant_id \
+                    AND m.id = source.session_memory_id \
+                    AND m.status = 'active' \
+                    AND m.project_path = pm.project_path \
+                    AND m.source_revision = source.source_revision \
+                    AND NOT EXISTS ( \
+                        SELECT 1 FROM session_memories newer \
+                        WHERE newer.tenant_id = m.tenant_id \
+                            AND newer.session_id = m.session_id \
+                            AND newer.status = 'active' \
+                            AND (newer.source_revision > m.source_revision \
+                                OR (newer.source_revision = m.source_revision AND newer.id > m.id)) \
+                    ) \
+                    AND ( \
+                        NOT EXISTS ( \
+                            SELECT 1 FROM conversation_sessions c \
+                            WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id \
+                        ) \
+                        OR EXISTS ( \
+                            SELECT 1 FROM conversation_sessions c \
+                            WHERE c.tenant_id = m.tenant_id \
+                                AND c.id = m.session_id \
+                                AND c.source_id = m.source_id \
+                                AND c.missing = 0 \
+                                AND EXISTS ( \
+                                    SELECT 1 FROM conversation_sources source_record \
+                                    WHERE source_record.tenant_id = c.tenant_id \
+                                        AND source_record.id = c.source_id \
+                                        AND source_record.enabled = 1 \
+                                ) \
+                                AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint) \
+                        ) \
+                    ) \
+            ) \
+    ) \
+ORDER BY pm.project_path ASC, pm.id ASC";
+
 pub(crate) async fn load_global_memory_inputs_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<GlobalMemoryInputSet> {
-    let rows = sqlx::query(
-        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' AND NOT EXISTS (SELECT 1 FROM project_memory_sources source WHERE source.tenant_id = v.tenant_id AND source.version_id = v.id AND NOT EXISTS (SELECT 1 FROM session_memories m WHERE m.tenant_id = source.tenant_id AND m.id = source.session_memory_id AND m.status = 'active' AND m.project_path = pm.project_path AND m.source_revision = source.source_revision AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source_record WHERE source_record.tenant_id = c.tenant_id AND source_record.id = c.source_id AND source_record.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))))) ORDER BY pm.project_path ASC, pm.id ASC",
+    let rows = sqlx::query_as::<_, GlobalMemoryCandidateProjectRow>(
+        GLOBAL_MEMORY_CANDIDATE_PROJECTS_QUERY,
     )
     .bind(tenant_id)
     .fetch_all(pool)
     .await
     .map_err(AppError::Db)?;
-    let mut projects = Vec::with_capacity(rows.len());
-    for row in rows {
-        projects.push(GlobalMemoryProjectInput {
-            project_id: row.try_get(0).map_err(AppError::external)?,
-            project_path: row.try_get(1).map_err(AppError::external)?,
-            project_version_id: row.try_get(2).map_err(AppError::external)?,
-            project_version_number: row.try_get(3).map_err(AppError::external)?,
-            project_watermark: row.try_get(4).map_err(AppError::external)?,
-            project_input_fingerprint: row.try_get(5).map_err(AppError::external)?,
-            memory_markdown: row.try_get(6).map_err(AppError::external)?,
-        });
-    }
+    let projects = rows.into_iter().map(Into::into).collect();
     Ok(global_input_set_from_projects(projects))
 }
 
@@ -119,8 +256,8 @@ pub(crate) async fn enqueue_global_memory_job_tx(
     tenant_id: &str,
     now: &str,
 ) -> AppResult<Option<String>> {
-    let rows = sqlx::query(
-        "SELECT pm.id, pm.project_path, v.id, v.version_number, v.source_watermark, v.input_fingerprint, v.content_markdown FROM project_memories pm JOIN project_memory_versions v ON v.tenant_id = pm.tenant_id AND v.id = pm.last_successful_version_id WHERE pm.tenant_id = ?1 AND v.status = 'succeeded' AND NOT EXISTS (SELECT 1 FROM project_memory_sources source WHERE source.tenant_id = v.tenant_id AND source.version_id = v.id AND NOT EXISTS (SELECT 1 FROM session_memories m WHERE m.tenant_id = source.tenant_id AND m.id = source.session_memory_id AND m.status = 'active' AND m.project_path = pm.project_path AND m.source_revision = source.source_revision AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source_record WHERE source_record.tenant_id = c.tenant_id AND source_record.id = c.source_id AND source_record.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))))) ORDER BY pm.project_path ASC, pm.id ASC",
+    let rows = sqlx::query_as::<_, GlobalMemoryCandidateProjectRow>(
+        GLOBAL_MEMORY_CANDIDATE_PROJECTS_QUERY,
     )
     .bind(tenant_id)
     .fetch_all(&mut **tx)
@@ -129,20 +266,7 @@ pub(crate) async fn enqueue_global_memory_job_tx(
     if rows.is_empty() {
         return Ok(None);
     }
-    let projects = rows
-        .into_iter()
-        .map(|row| {
-            Ok(GlobalMemoryProjectInput {
-                project_id: row.try_get(0).map_err(AppError::external)?,
-                project_path: row.try_get(1).map_err(AppError::external)?,
-                project_version_id: row.try_get(2).map_err(AppError::external)?,
-                project_version_number: row.try_get(3).map_err(AppError::external)?,
-                project_watermark: row.try_get(4).map_err(AppError::external)?,
-                project_input_fingerprint: row.try_get(5).map_err(AppError::external)?,
-                memory_markdown: row.try_get(6).map_err(AppError::external)?,
-            })
-        })
-        .collect::<AppResult<Vec<_>>>()?;
+    let projects = rows.into_iter().map(Into::into).collect();
     let inputs = global_input_set_from_projects(projects);
     let memory_id = global_memory_id(tenant_id);
     sqlx::query(
@@ -154,34 +278,22 @@ pub(crate) async fn enqueue_global_memory_job_tx(
     .execute(&mut **tx)
     .await
     .map_err(AppError::Db)?;
-    let current = sqlx::query(
+    let current = sqlx::query_as::<_, GlobalJobStatusAndFingerprintRow>(
         "SELECT status, input_fingerprint FROM global_memory_jobs WHERE tenant_id = ?1",
     )
     .bind(tenant_id)
     .fetch_optional(&mut **tx)
     .await
     .map_err(AppError::Db)?;
-    if current.as_ref().is_some_and(|row| {
-        let status: Result<String, _> = row.try_get(0);
-        let fingerprint: Result<String, _> = row.try_get(1);
-        status
-            .as_deref()
-            .is_ok_and(|value| matches!(value, "queued" | "running"))
-            && fingerprint
-                .as_deref()
-                .is_ok_and(|value| value == inputs.fingerprint)
-    }) {
-        return Ok(Some(memory_id));
-    }
-    if current.as_ref().is_some_and(|row| {
-        let status: Result<String, _> = row.try_get(0);
-        let fingerprint: Result<String, _> = row.try_get(1);
-        status.as_deref().is_ok_and(|value| value == "succeeded")
-            && fingerprint
-                .as_deref()
-                .is_ok_and(|value| value == inputs.fingerprint)
-    }) {
-        return Ok(None);
+    if let Some(row) = current {
+        if matches!(row.status.as_str(), "queued" | "running")
+            && row.input_fingerprint == inputs.fingerprint
+        {
+            return Ok(Some(memory_id));
+        }
+        if row.status == "succeeded" && row.input_fingerprint == inputs.fingerprint {
+            return Ok(None);
+        }
     }
     sqlx::query(
         "INSERT INTO global_memory_jobs (tenant_id, id, target_watermark, input_fingerprint, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'queued', ?5, ?5) ON CONFLICT (tenant_id) DO UPDATE SET target_watermark = excluded.target_watermark, input_fingerprint = excluded.input_fingerprint, status = CASE WHEN global_memory_jobs.status = 'running' THEN 'running' ELSE 'queued' END, retry_at = NULL, last_error = NULL, finished_at = NULL, updated_at = excluded.updated_at",
@@ -217,7 +329,7 @@ pub(crate) async fn load_global_memory_job_sqlx(
     tenant_id: &str,
     job_id: &str,
 ) -> AppResult<Option<GlobalMemoryJob>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, GlobalMemoryJobRow>(
         "SELECT tenant_id, id, target_watermark, input_fingerprint, status, attempt_count, retry_count, retry_at, last_error, ownership_token, lease_expires_at, heartbeat_at, started_at, finished_at, created_at, updated_at FROM global_memory_jobs WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -225,7 +337,7 @@ pub(crate) async fn load_global_memory_job_sqlx(
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    row.as_ref().map(map_job).transpose()
+    row.map(map_job).transpose()
 }
 
 pub(crate) async fn claim_global_memory_job_with_lease_sqlx(
@@ -463,18 +575,19 @@ pub(crate) async fn persist_global_memory_success_sqlx(
     })
 }
 
+#[allow(dead_code)]
 pub(crate) async fn load_global_memory_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Option<GlobalMemory>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, GlobalMemoryRow>(
         "SELECT tenant_id, id, last_successful_version_id, last_successful_at, last_successful_watermark, last_successful_input_fingerprint, summary_document_path, memory_document_path, created_at, updated_at FROM global_memories WHERE tenant_id = ?1",
     )
     .bind(tenant_id)
     .fetch_optional(pool)
     .await
     .map_err(AppError::Db)?;
-    row.as_ref().map(map_global).transpose()
+    Ok(row.map(map_global))
 }
 
 pub(crate) async fn retry_global_memory_job_sqlx(
@@ -498,7 +611,7 @@ pub(crate) async fn load_global_memory_latest_version_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Option<GlobalMemoryVersion>> {
-    let row = sqlx::query(
+    let row = sqlx::query_as::<_, GlobalMemoryVersionRow>(
         "SELECT tenant_id, id, version_number, status, input_fingerprint, source_watermark, summary_markdown, memory_markdown, raw_output_json, error_message, created_at, updated_at FROM global_memory_versions WHERE tenant_id = ?1 AND status = 'succeeded' ORDER BY version_number DESC LIMIT 1",
     )
     .bind(tenant_id)
@@ -508,7 +621,7 @@ pub(crate) async fn load_global_memory_latest_version_sqlx(
     let Some(row) = row else {
         return Ok(None);
     };
-    let version = map_version(&row)?;
+    let version = map_version(row)?;
     let sources = load_global_memory_sources_sqlx(pool, tenant_id, &version.id).await?;
     for source in sources {
         let current_project = super::project_memory_repo::load_project_memory_latest_version_sqlx(
@@ -531,7 +644,7 @@ pub(crate) async fn load_global_memory_sources_sqlx(
     tenant_id: &str,
     version_id: &str,
 ) -> AppResult<Vec<GlobalMemorySource>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, GlobalMemorySourceRow>(
         "SELECT project_id, project_path, project_version_id, project_watermark, sort_order FROM global_memory_sources WHERE tenant_id = ?1 AND version_id = ?2 ORDER BY sort_order ASC, project_id ASC",
     )
     .bind(tenant_id)
@@ -539,69 +652,69 @@ pub(crate) async fn load_global_memory_sources_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::Db)?;
-    rows.iter()
-        .map(|row| {
-            Ok(GlobalMemorySource {
-                project_id: row.try_get(0).map_err(AppError::external)?,
-                project_path: row.try_get(1).map_err(AppError::external)?,
-                project_version_id: row.try_get(2).map_err(AppError::external)?,
-                project_watermark: row.try_get(3).map_err(AppError::external)?,
-                sort_order: row.try_get(4).map_err(AppError::external)?,
-            })
+    Ok(rows
+        .into_iter()
+        .map(|row| GlobalMemorySource {
+            project_id: row.project_id,
+            project_path: row.project_path,
+            project_version_id: row.project_version_id,
+            project_watermark: row.project_watermark,
+            sort_order: row.sort_order,
         })
-        .collect()
+        .collect())
 }
 
-fn map_job(row: &sqlx::sqlite::SqliteRow) -> AppResult<GlobalMemoryJob> {
+fn map_job(row: GlobalMemoryJobRow) -> AppResult<GlobalMemoryJob> {
     Ok(GlobalMemoryJob {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        target_watermark: row.try_get(2).map_err(AppError::external)?,
-        input_fingerprint: row.try_get(3).map_err(AppError::external)?,
-        status: parse_job_status(row.try_get(4).map_err(AppError::external)?)?,
-        attempt_count: row.try_get(5).map_err(AppError::external)?,
-        retry_count: row.try_get(6).map_err(AppError::external)?,
-        retry_at: row.try_get(7).map_err(AppError::external)?,
-        last_error: row.try_get(8).map_err(AppError::external)?,
-        ownership_token: row.try_get(9).map_err(AppError::external)?,
-        lease_expires_at: row.try_get(10).map_err(AppError::external)?,
-        heartbeat_at: row.try_get(11).map_err(AppError::external)?,
-        started_at: row.try_get(12).map_err(AppError::external)?,
-        finished_at: row.try_get(13).map_err(AppError::external)?,
-        created_at: row.try_get(14).map_err(AppError::external)?,
-        updated_at: row.try_get(15).map_err(AppError::external)?,
+        tenant_id: row.tenant_id,
+        id: row.id,
+        target_watermark: row.target_watermark,
+        input_fingerprint: row.input_fingerprint,
+        status: parse_job_status(row.status)?,
+        attempt_count: row.attempt_count,
+        retry_count: row.retry_count,
+        retry_at: row.retry_at,
+        last_error: row.last_error,
+        ownership_token: row.ownership_token,
+        lease_expires_at: row.lease_expires_at,
+        heartbeat_at: row.heartbeat_at,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     })
 }
 
-fn map_global(row: &sqlx::sqlite::SqliteRow) -> AppResult<GlobalMemory> {
-    Ok(GlobalMemory {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        last_successful_version_id: row.try_get(2).map_err(AppError::external)?,
-        last_successful_at: row.try_get(3).map_err(AppError::external)?,
-        last_successful_watermark: row.try_get(4).map_err(AppError::external)?,
-        last_successful_input_fingerprint: row.try_get(5).map_err(AppError::external)?,
-        summary_document_path: row.try_get(6).map_err(AppError::external)?,
-        memory_document_path: row.try_get(7).map_err(AppError::external)?,
-        created_at: row.try_get(8).map_err(AppError::external)?,
-        updated_at: row.try_get(9).map_err(AppError::external)?,
-    })
+#[allow(dead_code)]
+fn map_global(row: GlobalMemoryRow) -> GlobalMemory {
+    GlobalMemory {
+        tenant_id: row.tenant_id,
+        id: row.id,
+        last_successful_version_id: row.last_successful_version_id,
+        last_successful_at: row.last_successful_at,
+        last_successful_watermark: row.last_successful_watermark,
+        last_successful_input_fingerprint: row.last_successful_input_fingerprint,
+        summary_document_path: row.summary_document_path,
+        memory_document_path: row.memory_document_path,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
 }
 
-fn map_version(row: &sqlx::sqlite::SqliteRow) -> AppResult<GlobalMemoryVersion> {
+fn map_version(row: GlobalMemoryVersionRow) -> AppResult<GlobalMemoryVersion> {
     Ok(GlobalMemoryVersion {
-        tenant_id: row.try_get(0).map_err(AppError::external)?,
-        id: row.try_get(1).map_err(AppError::external)?,
-        version_number: row.try_get(2).map_err(AppError::external)?,
-        status: parse_version_status(row.try_get(3).map_err(AppError::external)?)?,
-        input_fingerprint: row.try_get(4).map_err(AppError::external)?,
-        source_watermark: row.try_get(5).map_err(AppError::external)?,
-        summary_markdown: row.try_get(6).map_err(AppError::external)?,
-        memory_markdown: row.try_get(7).map_err(AppError::external)?,
-        raw_output_json: row.try_get(8).map_err(AppError::external)?,
-        error_message: row.try_get(9).map_err(AppError::external)?,
-        created_at: row.try_get(10).map_err(AppError::external)?,
-        updated_at: row.try_get(11).map_err(AppError::external)?,
+        tenant_id: row.tenant_id,
+        id: row.id,
+        version_number: row.version_number,
+        status: parse_version_status(row.status)?,
+        input_fingerprint: row.input_fingerprint,
+        source_watermark: row.source_watermark,
+        summary_markdown: row.summary_markdown,
+        memory_markdown: row.memory_markdown,
+        raw_output_json: row.raw_output_json,
+        error_message: row.error_message,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     })
 }
 

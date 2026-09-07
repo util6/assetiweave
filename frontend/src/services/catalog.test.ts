@@ -1,6 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fallbackNavigationModel } from "../mock/catalog";
-import { backupSkills, getNavigationModel, scanSources, startSkillBackupTask } from "./catalog";
+import {
+  backupSkills,
+  createSource,
+  getNavigationModel,
+  getOverview,
+  listAppShortcutSettings,
+  listAssetMountStatuses,
+  listAssets,
+  listProfiles,
+  listSkillGroups,
+  listSkillSources,
+  listSourceAssets,
+  listSources,
+  scanSources,
+  startSkillBackupTask,
+} from "./catalog";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const openMock = vi.hoisted(() => vi.fn());
@@ -24,26 +39,32 @@ describe("catalog services", () => {
   });
 
   it("backs up each unique Skill asset id", async () => {
-    invokeMock.mockImplementation(async (_command: string, args: { assetId: string }) => ({
-      id: args.assetId,
-      source_id: "source-a",
-      name: args.assetId,
-      kind: "skill",
-      format: "directory",
-      relative_path: args.assetId,
-      absolute_path: `/tmp/${args.assetId}`,
-      entry_file: null,
-      description: null,
-      content_hash: null,
-      discovered_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
-    }));
+    invokeMock.mockImplementation(
+      async (_command: string, args: { assetId: string }) => ({
+        id: args.assetId,
+        source_id: "source-a",
+        name: args.assetId,
+        kind: "skill",
+        format: "directory",
+        relative_path: args.assetId,
+        absolute_path: `/tmp/${args.assetId}`,
+        entry_file: null,
+        description: null,
+        content_hash: null,
+        discovered_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      }),
+    );
 
     const results = await backupSkills(["skill-a", "skill-a", "skill-b"]);
 
     expect(results.map((asset) => asset.id)).toEqual(["skill-a", "skill-b"]);
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "backup_skill", { assetId: "skill-a" });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "backup_skill", { assetId: "skill-b" });
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "backup_skill", {
+      assetId: "skill-a",
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "backup_skill", {
+      assetId: "skill-b",
+    });
     expect(invokeMock).toHaveBeenCalledTimes(2);
   });
 
@@ -64,7 +85,12 @@ describe("catalog services", () => {
     } as const;
     invokeMock.mockResolvedValue(runningTask);
 
-    const result = await startSkillBackupTask([" skill-a ", "skill-a", "skill-b", ""]);
+    const result = await startSkillBackupTask([
+      " skill-a ",
+      "skill-a",
+      "skill-b",
+      "",
+    ]);
 
     expect(result).toEqual(runningTask);
     expect(invokeMock).toHaveBeenCalledWith("backup_skills", {
@@ -77,16 +103,23 @@ describe("catalog services", () => {
     const storedModel = JSON.parse(JSON.stringify(fallbackNavigationModel));
     storedModel.headerTabs = storedModel.headerTabs
       .filter((tab: { id: string }) => tab.id !== "memory")
-      .map((tab: { id: string; label: string }) => (tab.id === "skills" ? { ...tab, label: "My Skills" } : tab));
+      .map((tab: { id: string; label: string }) =>
+        tab.id === "skills" ? { ...tab, label: "My Skills" } : tab,
+      );
     delete storedModel.subNavItems.memory;
     const storage = createMockLocalStorage();
-    storage.setItem("assetiweave.preview.navigation", JSON.stringify(storedModel));
+    storage.setItem(
+      "assetiweave.preview.navigation",
+      JSON.stringify(storedModel),
+    );
     vi.stubGlobal("localStorage", storage);
     invokeMock.mockRejectedValueOnce(new Error("browser preview"));
 
     const model = await getNavigationModel();
 
-    expect(model.headerTabs.find((tab) => tab.id === "skills")?.label).toBe("My Skills");
+    expect(model.headerTabs.find((tab) => tab.id === "skills")?.label).toBe(
+      "My Skills",
+    );
     expect(model.headerTabs.some((tab) => tab.id === "memory")).toBe(true);
     expect(model.subNavItems.memory.map((item) => item.routeKey)).toEqual([
       "memory.recent",
@@ -97,8 +130,109 @@ describe("catalog services", () => {
   it("does not expose a synchronous desktop scan fallback", async () => {
     vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
 
-    await expect(scanSources()).rejects.toThrow("Desktop source scans must use startSourceScan");
+    await expect(scanSources()).rejects.toThrow(
+      "Desktop source scans must use startSourceScan",
+    );
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  describe("desktop error handling and preview fallback", () => {
+    it("rejects listAssets in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAssets("skill")).rejects.toThrow("tauri error");
+    });
+
+    it("falls back to mock data for listAssets in browser preview environment", async () => {
+      vi.stubGlobal("window", {});
+      invokeMock.mockRejectedValueOnce(new Error("no tauri"));
+
+      const assets = await listAssets("skill");
+      expect(assets.length).toBeGreaterThan(0);
+      expect(assets.every((a) => a.kind === "skill")).toBe(true);
+    });
+
+    it("rejects getOverview in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(getOverview()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSources in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSources()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listProfiles in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listProfiles()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listAppShortcutSettings in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAppShortcutSettings()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listAssetMountStatuses in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listAssetMountStatuses()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects getNavigationModel in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(getNavigationModel()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSourceAssets in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSourceAssets("skill")).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSkillSources in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSkillSources()).rejects.toThrow("tauri error");
+    });
+
+    it("rejects createSource in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(
+        createSource({
+          name: "Test",
+          kind: "local",
+          scanner_kind: "skill",
+          root_path: "/test",
+          include_globs: [],
+          exclude_globs: [],
+          enabled: true,
+          priority: 0,
+        }),
+      ).rejects.toThrow("tauri error");
+    });
+
+    it("rejects listSkillGroups in desktop environment when invoke fails", async () => {
+      vi.stubGlobal("window", { __TAURI_INTERNALS__: {} });
+      invokeMock.mockRejectedValueOnce(new Error("tauri error"));
+
+      await expect(listSkillGroups()).rejects.toThrow("tauri error");
+    });
   });
 });
 

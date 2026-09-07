@@ -13,23 +13,26 @@ import type {
   SkillGroupExclusiveMountPreview,
   SkillGroupExclusiveMountSkippedItem,
 } from "../types";
-import { assetKindSchema, deploymentStrategySchema, physicalMountStateSchema } from "./domain";
+import {
+  assetKindSchema,
+  deploymentStrategySchema,
+  physicalMountStateSchema,
+} from "./domain";
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-const assetGroupIconSvgSchema = z
-  .strictObject({
-    paths: z
-      .array(
-        z.strictObject({
-          clip_rule: z.enum(["evenodd", "nonzero"]).optional(),
-          d: z.string().trim().min(1),
-          fill_rule: z.enum(["evenodd", "nonzero"]).optional(),
-        }),
-      )
-      .min(1),
-    view_box: z.string().trim().min(1).optional(),
-  });
+export const assetGroupIconSvgSchema = z.strictObject({
+  paths: z
+    .array(
+      z.strictObject({
+        clip_rule: z.enum(["evenodd", "nonzero"]).optional(),
+        d: z.string().trim().min(1),
+        fill_rule: z.enum(["evenodd", "nonzero"]).optional(),
+      }),
+    )
+    .min(1),
+  view_box: z.string().trim().min(1).optional(),
+});
 
 export const assetGroupRulesSchema = z.strictObject({
   source_ids: z.array(nonEmptyStringSchema).default([]),
@@ -148,11 +151,12 @@ export const skillGroupExclusiveMountPreviewSchema = z.strictObject({
   skipped_count: z.number().int().nonnegative(),
 }) satisfies z.ZodType<SkillGroupExclusiveMountPreview>;
 
-export const applySkillGroupExclusiveMountResultSchema = skillGroupExclusiveMountPreviewSchema.extend({
-  statuses: z.array(assetMountStatusSchema),
-  errors: z.array(
-    exclusiveMountItemSchema.extend({
-      message: nonEmptyStringSchema,
-    }),
-  ),
-}) satisfies z.ZodType<ApplySkillGroupExclusiveMountResult>;
+export const applySkillGroupExclusiveMountResultSchema =
+  skillGroupExclusiveMountPreviewSchema.extend({
+    statuses: z.array(assetMountStatusSchema),
+    errors: z.array(
+      exclusiveMountItemSchema.extend({
+        message: nonEmptyStringSchema,
+      }),
+    ),
+  }) satisfies z.ZodType<ApplySkillGroupExclusiveMountResult>;

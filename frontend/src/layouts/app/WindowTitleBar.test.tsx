@@ -8,7 +8,9 @@ describe("WindowTitleBar", () => {
   });
 
   it("renders drag and interactive window controls for Windows frameless chrome", () => {
-    const html = renderToStaticMarkup(<WindowTitleBar mode="windows-frameless" />);
+    const html = renderToStaticMarkup(
+      <WindowTitleBar mode="windows-frameless" />,
+    );
 
     expect(html).toContain('data-window-chrome="windows-frameless"');
     expect(html).toContain('data-tauri-drag-region="true"');
@@ -17,7 +19,9 @@ describe("WindowTitleBar", () => {
     expect(html).toContain('aria-label="Toggle maximize window"');
     expect(html).toContain('aria-label="Close window"');
     expect(html).toContain('data-app-window-icon="display"');
-    expect(html.indexOf('data-tauri-drag-region="true"')).toBeLessThan(html.indexOf('aria-label="Window controls"'));
+    expect(html.indexOf('data-tauri-drag-region="true"')).toBeLessThan(
+      html.indexOf('aria-label="Window controls"'),
+    );
   });
 
   it("does not add app chrome for platforms using the native title bar", () => {

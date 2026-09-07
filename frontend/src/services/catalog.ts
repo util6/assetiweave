@@ -20,15 +20,25 @@ import {
   skillGroupExclusiveMountInputSchema,
   skillGroupExclusiveMountPreviewSchema,
 } from "../schemas/group";
-import { appShortcutListSchema, navigationModelSchema } from "../schemas/navigation";
-import { targetProfileInputSchema, targetProfileListSchema, targetProfileSchema } from "../schemas/profile";
+import {
+  appShortcutListSchema,
+  navigationModelSchema,
+} from "../schemas/navigation";
+import {
+  targetProfileInputSchema,
+  targetProfileListSchema,
+  targetProfileSchema,
+} from "../schemas/profile";
 import {
   skillAcquireResultSchema,
   skillRemoteSourceSchema,
   skillSearchResultSchema,
 } from "../schemas/skillDiscovery";
 import { sourceInputSchema } from "../schemas/source";
-import { parseSchemaOrFallback, parseSchemaOrThrow } from "../schemas/validation";
+import {
+  parseSchemaOrFallback,
+  parseSchemaOrThrow,
+} from "../schemas/validation";
 import type {
   ApplyAssetGroupMountResult,
   ApplySkillGroupExclusiveMountResult,
@@ -58,12 +68,19 @@ import type {
   TargetProfile,
   TargetProfileInput,
 } from "../types";
-import { defaultAppShortcut, deriveProfileId, targetProfileFromInput } from "../utils/profile";
+import {
+  defaultAppShortcut,
+  deriveProfileId,
+  targetProfileFromInput,
+} from "../utils/profile";
 
 export async function getOverview(): Promise<AppOverview> {
   try {
     return await invoke<AppOverview>("get_app_overview");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return {
       source_count: 2,
       asset_count: fallbackAssets.length,
@@ -76,16 +93,26 @@ export async function getOverview(): Promise<AppOverview> {
 export async function listAssets(kind?: AssetKind): Promise<Asset[]> {
   try {
     return await invoke<Asset[]>("list_assets", { kind: kind ?? null });
-  } catch {
-    return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return kind
+      ? fallbackAssets.filter((asset) => asset.kind === kind)
+      : fallbackAssets;
   }
 }
 
 export async function listSourceAssets(kind?: AssetKind): Promise<Asset[]> {
   try {
     return await invoke<Asset[]>("list_source_assets", { kind: kind ?? null });
-  } catch {
-    return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return kind
+      ? fallbackAssets.filter((asset) => asset.kind === kind)
+      : fallbackAssets;
   }
 }
 
@@ -107,8 +134,14 @@ export async function getSkillBackupSettings(): Promise<SkillBackupSettings> {
   }
 }
 
-export async function updateSkillBackupSettings(rootPath: string, migrate = true): Promise<SkillBackupSettings> {
-  return await invoke<SkillBackupSettings>("update_skill_backup_settings", { root_path: rootPath, migrate });
+export async function updateSkillBackupSettings(
+  rootPath: string,
+  migrate = true,
+): Promise<SkillBackupSettings> {
+  return await invoke<SkillBackupSettings>("update_skill_backup_settings", {
+    root_path: rootPath,
+    migrate,
+  });
 }
 
 export async function backupSkill(assetId: string): Promise<Asset> {
@@ -148,14 +181,20 @@ export interface SkillBackupTaskSnapshot {
 
 const SKILL_BACKUP_TASK_UPDATED_EVENT = "skill-backup-task-updated";
 
-export async function startSkillBackupTask(assetIds: string[]): Promise<SkillBackupTaskSnapshot> {
-  const uniqueAssetIds = [...new Set(assetIds.map((assetId) => assetId.trim()).filter(Boolean))];
+export async function startSkillBackupTask(
+  assetIds: string[],
+): Promise<SkillBackupTaskSnapshot> {
+  const uniqueAssetIds = [
+    ...new Set(assetIds.map((assetId) => assetId.trim()).filter(Boolean)),
+  ];
   if (uniqueAssetIds.length === 0) {
     throw new Error("At least one Skill asset id is required");
   }
 
   try {
-    return await invoke<SkillBackupTaskSnapshot>("backup_skills", { assetIds: uniqueAssetIds });
+    return await invoke<SkillBackupTaskSnapshot>("backup_skills", {
+      assetIds: uniqueAssetIds,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -181,7 +220,9 @@ export async function startSkillBackupTask(assetIds: string[]): Promise<SkillBac
 
 export async function getSkillBackupTask(): Promise<SkillBackupTaskSnapshot | null> {
   try {
-    return await invoke<SkillBackupTaskSnapshot | null>("get_skill_backup_task");
+    return await invoke<SkillBackupTaskSnapshot | null>(
+      "get_skill_backup_task",
+    );
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -196,12 +237,19 @@ export function subscribeSkillBackupTasks(
   if (!isTauriRuntime()) {
     return Promise.resolve(() => undefined);
   }
-  return listen<SkillBackupTaskSnapshot>(SKILL_BACKUP_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+  return listen<SkillBackupTaskSnapshot>(
+    SKILL_BACKUP_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
-export async function searchSkills(query: string, limit = 8, provider = "github"): Promise<SkillSearchResult> {
+export async function searchSkills(
+  query: string,
+  limit = 8,
+  provider = "github",
+): Promise<SkillSearchResult> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     throw new Error("Skill search query is required");
@@ -210,7 +258,9 @@ export async function searchSkills(query: string, limit = 8, provider = "github"
   try {
     return parseSchemaOrThrow(
       skillSearchResultSchema,
-      await invoke<SkillSearchResult>("search_skills", { params: { query: trimmedQuery, provider, limit } }),
+      await invoke<SkillSearchResult>("search_skills", {
+        params: { query: trimmedQuery, provider, limit },
+      }),
       "Invalid skill search result",
     );
   } catch (error) {
@@ -235,7 +285,11 @@ export async function acquireSkill(params: {
     let task = await startSkillAcquire(params);
     for (;;) {
       if (task.status === "completed" && task.result) {
-        return parseSchemaOrThrow(skillAcquireResultSchema, task.result, "Invalid skill acquire result");
+        return parseSchemaOrThrow(
+          skillAcquireResultSchema,
+          task.result,
+          "Invalid skill acquire result",
+        );
       }
       if (task.status === "failed" || task.status === "cancelled") {
         throw new Error(task.error?.message ?? "Skill acquire task failed");
@@ -268,24 +322,43 @@ export async function startSkillAcquire(params: {
   });
 }
 
-export async function getSkillAcquireTask(taskId?: string): Promise<RemoteSkillAcquireTaskSnapshot | null> {
-  return await invoke<RemoteSkillAcquireTaskSnapshot | null>("get_skill_acquire_task", {
-    taskId: taskId ?? null,
-  });
+export async function getSkillAcquireTask(
+  taskId?: string,
+): Promise<RemoteSkillAcquireTaskSnapshot | null> {
+  return await invoke<RemoteSkillAcquireTaskSnapshot | null>(
+    "get_skill_acquire_task",
+    {
+      taskId: taskId ?? null,
+    },
+  );
 }
 
-export async function listSkillAcquireTasks(): Promise<RemoteSkillAcquireTaskSnapshot[]> {
-  return await invoke<RemoteSkillAcquireTaskSnapshot[]>("list_skill_acquire_tasks");
+export async function listSkillAcquireTasks(): Promise<
+  RemoteSkillAcquireTaskSnapshot[]
+> {
+  return await invoke<RemoteSkillAcquireTaskSnapshot[]>(
+    "list_skill_acquire_tasks",
+  );
 }
 
-export async function cancelSkillAcquireTask(taskId: string): Promise<RemoteSkillAcquireTaskSnapshot> {
-  return await invoke<RemoteSkillAcquireTaskSnapshot>("cancel_skill_acquire_task", { taskId });
+export async function cancelSkillAcquireTask(
+  taskId: string,
+): Promise<RemoteSkillAcquireTaskSnapshot> {
+  return await invoke<RemoteSkillAcquireTaskSnapshot>(
+    "cancel_skill_acquire_task",
+    { taskId },
+  );
 }
 
-export function subscribeSkillAcquireTasks(listener: (snapshot: RemoteSkillAcquireTaskSnapshot) => void) {
-  return listen<RemoteSkillAcquireTaskSnapshot>("skill-remote://acquire-task-updated", (event) => {
-    listener(event.payload);
-  });
+export function subscribeSkillAcquireTasks(
+  listener: (snapshot: RemoteSkillAcquireTaskSnapshot) => void,
+) {
+  return listen<RemoteSkillAcquireTaskSnapshot>(
+    "skill-remote://acquire-task-updated",
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
 function skillAcquirePayload(params: {
@@ -313,7 +386,9 @@ export async function listSkillRemoteSources(): Promise<SkillRemoteSource[]> {
   );
 }
 
-export async function checkSkillRemoteSources(assetId?: string | null): Promise<SkillRemoteSource[]> {
+export async function checkSkillRemoteSources(
+  assetId?: string | null,
+): Promise<SkillRemoteSource[]> {
   const trimmedAssetId = assetId?.trim();
   return parseSchemaOrThrow(
     skillRemoteSourceSchema.array(),
@@ -324,9 +399,15 @@ export async function checkSkillRemoteSources(assetId?: string | null): Promise<
   );
 }
 
-export async function updateAssetDescription(assetId: string, description: string | null): Promise<Asset> {
+export async function updateAssetDescription(
+  assetId: string,
+  description: string | null,
+): Promise<Asset> {
   try {
-    return await invoke<Asset>("update_asset_description", { assetId, description });
+    return await invoke<Asset>("update_asset_description", {
+      assetId,
+      description,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -344,7 +425,10 @@ export async function updateAssetDescription(assetId: string, description: strin
   }
 }
 
-export async function deleteAsset(assetId: string, unmount = false): Promise<Asset> {
+export async function deleteAsset(
+  assetId: string,
+  unmount = false,
+): Promise<Asset> {
   try {
     return await invoke<Asset>("delete_asset", { assetId, unmount });
   } catch (error) {
@@ -363,7 +447,10 @@ export async function deleteAsset(assetId: string, unmount = false): Promise<Ass
 export async function listSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_sources");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return fallbackSources;
   }
 }
@@ -371,17 +458,27 @@ export async function listSources(): Promise<Source[]> {
 export async function listSkillSources(): Promise<Source[]> {
   try {
     return await invoke<Source[]>("list_skill_sources");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return fallbackSources.filter((source) => source.scanner_kind === "skill");
   }
 }
 
 export async function createSource(source: SourceInput): Promise<Source> {
-  const parsedSource = parseSchemaOrThrow(sourceInputSchema, source, "Invalid source input");
+  const parsedSource = parseSchemaOrThrow(
+    sourceInputSchema,
+    source,
+    "Invalid source input",
+  );
 
   try {
     return await invoke<Source>("create_source", { source: parsedSource });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return {
       ...parsedSource,
       id: parsedSource.id ?? crypto.randomUUID(),
@@ -394,7 +491,10 @@ export async function createSource(source: SourceInput): Promise<Source> {
 export async function updateSource(source: Source): Promise<Source> {
   try {
     return await invoke<Source>("update_source", { source });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return source;
   }
 }
@@ -402,7 +502,10 @@ export async function updateSource(source: Source): Promise<Source> {
 export async function deleteSource(id: string): Promise<void> {
   try {
     await invoke<void>("delete_source", { id });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return;
   }
 }
@@ -410,12 +513,17 @@ export async function deleteSource(id: string): Promise<void> {
 export async function listProfiles(): Promise<TargetProfile[]> {
   try {
     return await invoke<TargetProfile[]>("list_profiles");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackProfiles();
   }
 }
 
-export async function createProfile(profile: TargetProfileInput): Promise<TargetProfile> {
+export async function createProfile(
+  profile: TargetProfileInput,
+): Promise<TargetProfile> {
   const parsedProfile = parseSchemaOrThrow(
     targetProfileInputSchema,
     { ...profile, id: profile.id ?? deriveProfileId(profile.name) },
@@ -444,8 +552,14 @@ export async function createProfile(profile: TargetProfileInput): Promise<Target
   }
 }
 
-export async function updateProfile(profile: TargetProfile): Promise<TargetProfile> {
-  const parsedProfile = parseSchemaOrThrow(targetProfileSchema, profile, "Invalid target profile");
+export async function updateProfile(
+  profile: TargetProfile,
+): Promise<TargetProfile> {
+  const parsedProfile = parseSchemaOrThrow(
+    targetProfileSchema,
+    profile,
+    "Invalid target profile",
+  );
 
   try {
     return parseSchemaOrThrow(
@@ -462,7 +576,11 @@ export async function updateProfile(profile: TargetProfile): Promise<TargetProfi
     if (!profiles.some((candidate) => candidate.id === parsedProfile.id)) {
       throw new Error(`profile not found: ${parsedProfile.id}`);
     }
-    setStoredFallbackProfiles(profiles.map((candidate) => (candidate.id === parsedProfile.id ? parsedProfile : candidate)));
+    setStoredFallbackProfiles(
+      profiles.map((candidate) =>
+        candidate.id === parsedProfile.id ? parsedProfile : candidate,
+      ),
+    );
     upsertStoredFallbackAppShortcut(defaultAppShortcut(parsedProfile));
     return parsedProfile;
   }
@@ -476,29 +594,60 @@ export async function deleteProfile(id: string): Promise<void> {
       throw error;
     }
 
-    if (getStoredFallbackMountStatuses().some((status) => status.profile_id === id && status.state === "mounted")) {
+    if (
+      getStoredFallbackMountStatuses().some(
+        (status) => status.profile_id === id && status.state === "mounted",
+      )
+    ) {
       throw new Error(`profile has mounted assets: ${id}`);
     }
-    setStoredFallbackProfiles(getStoredFallbackProfiles().filter((profile) => profile.id !== id));
-    setStoredFallbackAppShortcuts(getStoredFallbackAppShortcuts().filter((shortcut) => shortcut.profileId !== id));
-    setStoredFallbackMountStatuses(getStoredFallbackMountStatuses().filter((status) => status.profile_id !== id));
+    setStoredFallbackProfiles(
+      getStoredFallbackProfiles().filter((profile) => profile.id !== id),
+    );
+    setStoredFallbackAppShortcuts(
+      getStoredFallbackAppShortcuts().filter(
+        (shortcut) => shortcut.profileId !== id,
+      ),
+    );
+    setStoredFallbackMountStatuses(
+      getStoredFallbackMountStatuses().filter(
+        (status) => status.profile_id !== id,
+      ),
+    );
   }
 }
 
 export async function getNavigationModel(): Promise<NavigationModel> {
   try {
-    return normalizeNavigationModelRoutes(await invoke<NavigationModel>("get_navigation_model"));
-  } catch {
+    return normalizeNavigationModelRoutes(
+      await invoke<NavigationModel>("get_navigation_model"),
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackNavigationModel();
   }
 }
 
-export async function updateNavigationModel(model: NavigationModel): Promise<NavigationModel> {
+export async function updateNavigationModel(
+  model: NavigationModel,
+): Promise<NavigationModel> {
   const normalizedModel = normalizeNavigationModelRoutes(model);
   try {
-    return normalizeNavigationModelRoutes(await invoke<NavigationModel>("update_navigation_model", { model: normalizedModel }));
-  } catch {
-    localStorage.setItem(FALLBACK_NAVIGATION_STORAGE_KEY, JSON.stringify(normalizedModel));
+    return normalizeNavigationModelRoutes(
+      await invoke<NavigationModel>("update_navigation_model", {
+        model: normalizedModel,
+      }),
+    );
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    localStorage.setItem(
+      FALLBACK_NAVIGATION_STORAGE_KEY,
+      JSON.stringify(normalizedModel),
+    );
     return normalizedModel;
   }
 }
@@ -506,23 +655,36 @@ export async function updateNavigationModel(model: NavigationModel): Promise<Nav
 export async function listAppShortcuts(): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("list_app_shortcuts");
-  } catch {
-    return getStoredFallbackAppShortcuts().filter((shortcut) => shortcut.enabled);
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    return getStoredFallbackAppShortcuts().filter(
+      (shortcut) => shortcut.enabled,
+    );
   }
 }
 
 export async function listAppShortcutSettings(): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("list_app_shortcut_settings");
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackAppShortcuts();
   }
 }
 
-export async function updateAppShortcuts(shortcuts: AppShortcut[]): Promise<AppShortcut[]> {
+export async function updateAppShortcuts(
+  shortcuts: AppShortcut[],
+): Promise<AppShortcut[]> {
   try {
     return await invoke<AppShortcut[]>("update_app_shortcuts", { shortcuts });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     setStoredFallbackAppShortcuts(shortcuts);
     return shortcuts;
   }
@@ -531,40 +693,67 @@ export async function updateAppShortcuts(shortcuts: AppShortcut[]): Promise<AppS
 export async function listAssetMounts(assetId?: string): Promise<AssetMount[]> {
   try {
     return await invoke<AssetMount[]>("list_asset_mounts", { assetId });
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return [];
   }
 }
 
-export async function listAssetMountStatuses(assetId?: string): Promise<AssetMountStatus[]> {
+export async function listAssetMountStatuses(
+  assetId?: string,
+): Promise<AssetMountStatus[]> {
   try {
-    return await invoke<AssetMountStatus[]>("list_asset_mount_statuses", { assetId });
-  } catch {
+    return await invoke<AssetMountStatus[]>("list_asset_mount_statuses", {
+      assetId,
+    });
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const statuses = getStoredFallbackMountStatuses();
-    return assetId ? statuses.filter((status) => status.asset_id === assetId) : statuses;
+    return assetId
+      ? statuses.filter((status) => status.asset_id === assetId)
+      : statuses;
   }
 }
 
-export async function refreshAssetMountStatuses(assetId?: string): Promise<AssetMountStatus[]> {
+export async function refreshAssetMountStatuses(
+  assetId?: string,
+): Promise<AssetMountStatus[]> {
   try {
-    return await invoke<AssetMountStatus[]>("refresh_asset_mount_statuses", { assetId: assetId ?? null });
+    return await invoke<AssetMountStatus[]>("refresh_asset_mount_statuses", {
+      assetId: assetId ?? null,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
     }
 
     const statuses = getStoredFallbackMountStatuses();
-    return assetId ? statuses.filter((status) => status.asset_id === assetId) : statuses;
+    return assetId
+      ? statuses.filter((status) => status.asset_id === assetId)
+      : statuses;
   }
 }
 
-export async function toggleAssetMount(assetId: string, profileId: string): Promise<AssetMount> {
+export async function toggleAssetMount(
+  assetId: string,
+  profileId: string,
+): Promise<AssetMount> {
   return await invoke<AssetMount>("toggle_asset_mount", { assetId, profileId });
 }
 
-export async function mountAssetMount(assetId: string, profileId: string): Promise<AssetMountUpdateResult> {
+export async function mountAssetMount(
+  assetId: string,
+  profileId: string,
+): Promise<AssetMountUpdateResult> {
   try {
-    return await invoke<AssetMountUpdateResult>("mount_asset_mount", { assetId, profileId });
+    return await invoke<AssetMountUpdateResult>("mount_asset_mount", {
+      assetId,
+      profileId,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -574,9 +763,15 @@ export async function mountAssetMount(assetId: string, profileId: string): Promi
   }
 }
 
-export async function unmountAssetMount(assetId: string, profileId: string): Promise<AssetMountUpdateResult> {
+export async function unmountAssetMount(
+  assetId: string,
+  profileId: string,
+): Promise<AssetMountUpdateResult> {
   try {
-    return await invoke<AssetMountUpdateResult>("unmount_asset_mount", { assetId, profileId });
+    return await invoke<AssetMountUpdateResult>("unmount_asset_mount", {
+      assetId,
+      profileId,
+    });
   } catch (error) {
     if (isTauriRuntime()) {
       throw error;
@@ -607,21 +802,35 @@ export async function listSkillGroups(): Promise<AssetGroupDetail[]> {
       await invoke<AssetGroupDetail[]>("list_skill_groups"),
       "Invalid skill group list",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     return getStoredFallbackSkillGroups();
   }
 }
 
-export async function createSkillGroup(input: AssetGroupInput): Promise<AssetGroupDetail> {
-  const parsedInput = parseSchemaOrThrow(assetGroupInputSchema, input, "Invalid skill group input");
+export async function createSkillGroup(
+  input: AssetGroupInput,
+): Promise<AssetGroupDetail> {
+  const parsedInput = parseSchemaOrThrow(
+    assetGroupInputSchema,
+    input,
+    "Invalid skill group input",
+  );
 
   try {
     return parseSchemaOrThrow(
       assetGroupDetailSchema,
-      await invoke<AssetGroupDetail>("create_skill_group", { input: parsedInput }),
+      await invoke<AssetGroupDetail>("create_skill_group", {
+        input: parsedInput,
+      }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const now = new Date().toISOString();
     const detail: AssetGroupDetail = {
       group: {
@@ -633,8 +842,13 @@ export async function createSkillGroup(input: AssetGroupInput): Promise<AssetGro
         display_icon: parsedInput.display_icon ?? null,
         icon_svg: parsedInput.icon_svg ?? null,
         enabled: parsedInput.enabled ?? true,
-        sort_order: parsedInput.sort_order ?? getStoredFallbackSkillGroups().length * 10,
-        rules: parsedInput.rules ?? { source_ids: [], relative_path_globs: [], name_contains: null },
+        sort_order:
+          parsedInput.sort_order ?? getStoredFallbackSkillGroups().length * 10,
+        rules: parsedInput.rules ?? {
+          source_ids: [],
+          relative_path_globs: [],
+          name_contains: null,
+        },
         created_at: now,
         updated_at: now,
       },
@@ -647,43 +861,77 @@ export async function createSkillGroup(input: AssetGroupInput): Promise<AssetGro
   }
 }
 
-export async function updateSkillGroup(group: AssetGroup): Promise<AssetGroupDetail> {
+export async function updateSkillGroup(
+  group: AssetGroup,
+): Promise<AssetGroupDetail> {
   try {
     return parseSchemaOrThrow(
       assetGroupDetailSchema,
       await invoke<AssetGroupDetail>("update_skill_group", { group }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const groups = getStoredFallbackSkillGroups().map((detail) =>
-      detail.group.id === group.id ? resolveFallbackGroupDetail({ ...detail, group }) : detail,
+      detail.group.id === group.id
+        ? resolveFallbackGroupDetail({ ...detail, group })
+        : detail,
     );
     setStoredFallbackSkillGroups(groups);
-    return groups.find((detail) => detail.group.id === group.id) ?? resolveFallbackGroupDetail({ group, members: [], manual_asset_ids: [] });
+    return (
+      groups.find((detail) => detail.group.id === group.id) ??
+      resolveFallbackGroupDetail({ group, members: [], manual_asset_ids: [] })
+    );
   }
 }
 
 export async function deleteSkillGroup(groupId: string): Promise<void> {
   try {
     await invoke<void>("delete_skill_group", { groupId });
-  } catch {
-    setStoredFallbackSkillGroups(getStoredFallbackSkillGroups().filter((detail) => detail.group.id !== groupId));
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
+    setStoredFallbackSkillGroups(
+      getStoredFallbackSkillGroups().filter(
+        (detail) => detail.group.id !== groupId,
+      ),
+    );
   }
 }
 
-export async function setSkillGroupManualMembers(groupId: string, assetIds: string[]): Promise<AssetGroupDetail> {
+export async function setSkillGroupManualMembers(
+  groupId: string,
+  assetIds: string[],
+): Promise<AssetGroupDetail> {
   try {
     return parseSchemaOrThrow(
       assetGroupDetailSchema,
-      await invoke<AssetGroupDetail>("set_skill_group_manual_members", { groupId, assetIds }),
+      await invoke<AssetGroupDetail>("set_skill_group_manual_members", {
+        groupId,
+        assetIds,
+      }),
       "Invalid skill group",
     );
-  } catch {
+  } catch (error) {
+    if (isTauriRuntime()) {
+      throw error;
+    }
     const groups = getStoredFallbackSkillGroups().map((detail) =>
-      detail.group.id === groupId ? resolveFallbackGroupDetail({ ...detail, manual_asset_ids: [...new Set(assetIds)] }) : detail,
+      detail.group.id === groupId
+        ? resolveFallbackGroupDetail({
+            ...detail,
+            manual_asset_ids: [...new Set(assetIds)],
+          })
+        : detail,
     );
     setStoredFallbackSkillGroups(groups);
-    return groups.find((detail) => detail.group.id === groupId) ?? getStoredFallbackSkillGroups()[0]!;
+    return (
+      groups.find((detail) => detail.group.id === groupId) ??
+      getStoredFallbackSkillGroups()[0]!
+    );
   }
 }
 
@@ -695,7 +943,11 @@ export async function applySkillGroupMount(
   try {
     return parseSchemaOrThrow(
       applyAssetGroupMountResultSchema,
-      await invoke<ApplyAssetGroupMountResult>("apply_skill_group_mount", { groupId, profileId, enabled }),
+      await invoke<ApplyAssetGroupMountResult>("apply_skill_group_mount", {
+        groupId,
+        profileId,
+        enabled,
+      }),
       "Invalid skill group mount result",
     );
   } catch (error) {
@@ -729,7 +981,10 @@ export async function previewSkillGroupExclusiveMount(
   try {
     return parseSchemaOrThrow(
       skillGroupExclusiveMountPreviewSchema,
-      await invoke<SkillGroupExclusiveMountPreview>("preview_skill_group_exclusive_mount", { input: parsedInput }),
+      await invoke<SkillGroupExclusiveMountPreview>(
+        "preview_skill_group_exclusive_mount",
+        { input: parsedInput },
+      ),
       "Invalid exclusive skill group mount preview",
     );
   } catch (error) {
@@ -753,7 +1008,10 @@ export async function applySkillGroupExclusiveMount(
   try {
     return parseSchemaOrThrow(
       applySkillGroupExclusiveMountResultSchema,
-      await invoke<ApplySkillGroupExclusiveMountResult>("apply_skill_group_exclusive_mount", { input: parsedInput }),
+      await invoke<ApplySkillGroupExclusiveMountResult>(
+        "apply_skill_group_exclusive_mount",
+        { input: parsedInput },
+      ),
       "Invalid exclusive skill group mount result",
     );
   } catch (error) {
@@ -769,7 +1027,9 @@ export async function scanSources(kind?: AssetKind): Promise<Asset[]> {
   if (isTauriRuntime()) {
     throw new Error("Desktop source scans must use startSourceScan");
   }
-  return kind ? fallbackAssets.filter((asset) => asset.kind === kind) : fallbackAssets;
+  return kind
+    ? fallbackAssets.filter((asset) => asset.kind === kind)
+    : fallbackAssets;
 }
 
 export async function scanSkillSources(): Promise<Asset[]> {
@@ -810,22 +1070,33 @@ export async function startSourceScan(
   });
 }
 
-export async function getSourceScanTask(taskId: string): Promise<SourceScanTaskSnapshot> {
-  return await invoke<SourceScanTaskSnapshot>("get_source_scan_task", { taskId });
+export async function getSourceScanTask(
+  taskId: string,
+): Promise<SourceScanTaskSnapshot> {
+  return await invoke<SourceScanTaskSnapshot>("get_source_scan_task", {
+    taskId,
+  });
 }
 
 export async function listSourceScanTasks(): Promise<SourceScanTaskSnapshot[]> {
   return await invoke<SourceScanTaskSnapshot[]>("list_source_scan_tasks");
 }
 
-export async function cancelSourceScan(taskId: string): Promise<SourceScanTaskSnapshot> {
+export async function cancelSourceScan(
+  taskId: string,
+): Promise<SourceScanTaskSnapshot> {
   return await invoke<SourceScanTaskSnapshot>("cancel_source_scan", { taskId });
 }
 
-export function subscribeSourceScanTasks(listener: (snapshot: SourceScanTaskSnapshot) => void) {
-  return listen<SourceScanTaskSnapshot>(SOURCE_SCAN_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+export function subscribeSourceScanTasks(
+  listener: (snapshot: SourceScanTaskSnapshot) => void,
+) {
+  return listen<SourceScanTaskSnapshot>(
+    SOURCE_SCAN_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
 export interface BatchMountTaskSnapshot {
@@ -865,29 +1136,43 @@ export async function startBatchMount(params: {
   });
 }
 
-export async function getBatchMountTask(taskId: string): Promise<BatchMountTaskSnapshot> {
-  return await invoke<BatchMountTaskSnapshot>("get_batch_mount_task", { taskId });
+export async function getBatchMountTask(
+  taskId: string,
+): Promise<BatchMountTaskSnapshot> {
+  return await invoke<BatchMountTaskSnapshot>("get_batch_mount_task", {
+    taskId,
+  });
 }
 
 export async function listBatchMountTasks(): Promise<BatchMountTaskSnapshot[]> {
   return await invoke<BatchMountTaskSnapshot[]>("list_batch_mount_tasks");
 }
 
-export async function cancelBatchMount(taskId: string): Promise<BatchMountTaskSnapshot> {
+export async function cancelBatchMount(
+  taskId: string,
+): Promise<BatchMountTaskSnapshot> {
   return await invoke<BatchMountTaskSnapshot>("cancel_batch_mount", { taskId });
 }
 
-export function subscribeBatchMountTasks(listener: (snapshot: BatchMountTaskSnapshot) => void) {
-  return listen<BatchMountTaskSnapshot>(BATCH_MOUNT_TASK_UPDATED_EVENT, (event) => {
-    listener(event.payload);
-  });
+export function subscribeBatchMountTasks(
+  listener: (snapshot: BatchMountTaskSnapshot) => void,
+) {
+  return listen<BatchMountTaskSnapshot>(
+    BATCH_MOUNT_TASK_UPDATED_EVENT,
+    (event) => {
+      listener(event.payload);
+    },
+  );
 }
 
 export async function createPlan(profileId?: string): Promise<DeploymentPlan> {
   return await invoke<DeploymentPlan>("create_plan", { profileId });
 }
 
-export async function executePlan(plan: DeploymentPlan, actionIds?: string[]): Promise<ExecutionResult> {
+export async function executePlan(
+  plan: DeploymentPlan,
+  actionIds?: string[],
+): Promise<ExecutionResult> {
   return await invoke<ExecutionResult>("execute_plan", {
     plan,
     actionIds,
@@ -898,7 +1183,9 @@ export async function revealPath(path: string): Promise<void> {
   return await invoke<void>("reveal_path", { path });
 }
 
-export async function selectSourceDirectory(title: string): Promise<string | null> {
+export async function selectSourceDirectory(
+  title: string,
+): Promise<string | null> {
   try {
     const selected = await open({
       directory: true,
@@ -911,7 +1198,9 @@ export async function selectSourceDirectory(title: string): Promise<string | nul
   }
 }
 
-export async function selectTargetDirectory(title: string): Promise<string | null> {
+export async function selectTargetDirectory(
+  title: string,
+): Promise<string | null> {
   return selectSourceDirectory(title);
 }
 
@@ -944,15 +1233,24 @@ function getStoredFallbackNavigationModel(): NavigationModel {
   try {
     const stored = localStorage.getItem(FALLBACK_NAVIGATION_STORAGE_KEY);
     const model = stored
-      ? parseSchemaOrFallback(navigationModelSchema, JSON.parse(stored), fallbackNavigationModel)
+      ? parseSchemaOrFallback(
+          navigationModelSchema,
+          JSON.parse(stored),
+          fallbackNavigationModel,
+        )
       : fallbackNavigationModel;
-    return normalizeNavigationModelRoutes(mergeNavigationModelDefaults(model, fallbackNavigationModel));
+    return normalizeNavigationModelRoutes(
+      mergeNavigationModelDefaults(model, fallbackNavigationModel),
+    );
   } catch {
     return normalizeNavigationModelRoutes(fallbackNavigationModel);
   }
 }
 
-function mergeNavigationModelDefaults(model: NavigationModel, defaults: NavigationModel): NavigationModel {
+function mergeNavigationModelDefaults(
+  model: NavigationModel,
+  defaults: NavigationModel,
+): NavigationModel {
   const railItemIds = new Set(model.railItems.map((item) => item.id));
   const headerTabIds = new Set(model.headerTabs.map((item) => item.id));
   const subNavItems = { ...model.subNavItems };
@@ -960,17 +1258,28 @@ function mergeNavigationModelDefaults(model: NavigationModel, defaults: Navigati
   for (const [parentId, defaultItems] of Object.entries(defaults.subNavItems)) {
     const existingItems = subNavItems[parentId] ?? [];
     const existingIds = new Set(existingItems.map((item) => item.id));
-    const existingRouteKeys = new Set(existingItems.map((item) => item.routeKey));
+    const existingRouteKeys = new Set(
+      existingItems.map((item) => item.routeKey),
+    );
     subNavItems[parentId] = [
       ...existingItems,
-      ...defaultItems.filter((item) => !existingIds.has(item.id) && !existingRouteKeys.has(item.routeKey)),
+      ...defaultItems.filter(
+        (item) =>
+          !existingIds.has(item.id) && !existingRouteKeys.has(item.routeKey),
+      ),
     ];
   }
 
   return {
     ...model,
-    headerTabs: [...model.headerTabs, ...defaults.headerTabs.filter((item) => !headerTabIds.has(item.id))],
-    railItems: [...model.railItems, ...defaults.railItems.filter((item) => !railItemIds.has(item.id))],
+    headerTabs: [
+      ...model.headerTabs,
+      ...defaults.headerTabs.filter((item) => !headerTabIds.has(item.id)),
+    ],
+    railItems: [
+      ...model.railItems,
+      ...defaults.railItems.filter((item) => !railItemIds.has(item.id)),
+    ],
     subNavItems,
   };
 }
@@ -979,7 +1288,11 @@ function getStoredFallbackProfiles(): TargetProfile[] {
   try {
     const stored = localStorage.getItem(FALLBACK_PROFILES_STORAGE_KEY);
     return stored
-      ? parseSchemaOrFallback(targetProfileListSchema, JSON.parse(stored), fallbackProfiles)
+      ? parseSchemaOrFallback(
+          targetProfileListSchema,
+          JSON.parse(stored),
+          fallbackProfiles,
+        )
       : fallbackProfiles;
   } catch {
     return fallbackProfiles;
@@ -995,9 +1308,15 @@ function getStoredFallbackAppShortcuts(): AppShortcut[] {
   try {
     const stored = localStorage.getItem(FALLBACK_APP_SHORTCUTS_STORAGE_KEY);
     const shortcuts = stored
-      ? parseSchemaOrFallback(appShortcutListSchema, JSON.parse(stored), fallbackAppShortcuts)
+      ? parseSchemaOrFallback(
+          appShortcutListSchema,
+          JSON.parse(stored),
+          fallbackAppShortcuts,
+        )
       : fallbackAppShortcuts;
-    const shortcutByProfileId = new Map(shortcuts.map((shortcut) => [shortcut.profileId, shortcut]));
+    const shortcutByProfileId = new Map(
+      shortcuts.map((shortcut) => [shortcut.profileId, shortcut]),
+    );
     return profiles.map((profile) => {
       const shortcut = shortcutByProfileId.get(profile.id);
       return shortcut
@@ -1010,7 +1329,9 @@ function getStoredFallbackAppShortcuts(): AppShortcut[] {
     });
   } catch {
     return profiles.map((profile) => {
-      const shortcut = fallbackAppShortcuts.find((candidate) => candidate.profileId === profile.id);
+      const shortcut = fallbackAppShortcuts.find(
+        (candidate) => candidate.profileId === profile.id,
+      );
       return shortcut
         ? { ...shortcut, appKind: profile.app_kind, profileName: profile.name }
         : defaultAppShortcut(profile);
@@ -1019,12 +1340,17 @@ function getStoredFallbackAppShortcuts(): AppShortcut[] {
 }
 
 function setStoredFallbackAppShortcuts(shortcuts: AppShortcut[]) {
-  localStorage.setItem(FALLBACK_APP_SHORTCUTS_STORAGE_KEY, JSON.stringify(shortcuts));
+  localStorage.setItem(
+    FALLBACK_APP_SHORTCUTS_STORAGE_KEY,
+    JSON.stringify(shortcuts),
+  );
 }
 
 function upsertStoredFallbackAppShortcut(shortcut: AppShortcut) {
   setStoredFallbackAppShortcuts([
-    ...getStoredFallbackAppShortcuts().filter((candidate) => candidate.profileId !== shortcut.profileId),
+    ...getStoredFallbackAppShortcuts().filter(
+      (candidate) => candidate.profileId !== shortcut.profileId,
+    ),
     shortcut,
   ]);
 }
@@ -1033,7 +1359,11 @@ function getStoredFallbackSkillGroups(): AssetGroupDetail[] {
   try {
     const stored = localStorage.getItem(FALLBACK_SKILL_GROUPS_STORAGE_KEY);
     const groups = stored
-      ? parseSchemaOrFallback(assetGroupDetailListSchema, JSON.parse(stored), fallbackSkillGroups)
+      ? parseSchemaOrFallback(
+          assetGroupDetailListSchema,
+          JSON.parse(stored),
+          fallbackSkillGroups,
+        )
       : fallbackSkillGroups;
     return groups.map(resolveFallbackGroupDetail);
   } catch {
@@ -1042,7 +1372,10 @@ function getStoredFallbackSkillGroups(): AssetGroupDetail[] {
 }
 
 function setStoredFallbackSkillGroups(groups: AssetGroupDetail[]) {
-  localStorage.setItem(FALLBACK_SKILL_GROUPS_STORAGE_KEY, JSON.stringify(groups.map(resolveFallbackGroupDetail)));
+  localStorage.setItem(
+    FALLBACK_SKILL_GROUPS_STORAGE_KEY,
+    JSON.stringify(groups.map(resolveFallbackGroupDetail)),
+  );
 }
 
 function isTauriRuntime() {
@@ -1051,7 +1384,12 @@ function isTauriRuntime() {
 
 function getStoredFallbackMountStatuses(): AssetMountStatus[] {
   const baseStatuses = fallbackMountStatuses();
-  const statusByKey = new Map(baseStatuses.map((status) => [mountStatusKey(status.asset_id, status.profile_id), status]));
+  const statusByKey = new Map(
+    baseStatuses.map((status) => [
+      mountStatusKey(status.asset_id, status.profile_id),
+      status,
+    ]),
+  );
 
   if (typeof localStorage === "undefined") {
     return baseStatuses;
@@ -1063,7 +1401,10 @@ function getStoredFallbackMountStatuses(): AssetMountStatus[] {
     if (Array.isArray(parsed)) {
       for (const candidate of parsed) {
         if (isAssetMountStatus(candidate)) {
-          statusByKey.set(mountStatusKey(candidate.asset_id, candidate.profile_id), candidate);
+          statusByKey.set(
+            mountStatusKey(candidate.asset_id, candidate.profile_id),
+            candidate,
+          );
         }
       }
     }
@@ -1076,22 +1417,32 @@ function getStoredFallbackMountStatuses(): AssetMountStatus[] {
 
 function setStoredFallbackMountStatuses(statuses: AssetMountStatus[]) {
   if (typeof localStorage !== "undefined") {
-    localStorage.setItem(FALLBACK_MOUNT_STATUSES_STORAGE_KEY, JSON.stringify(statuses));
+    localStorage.setItem(
+      FALLBACK_MOUNT_STATUSES_STORAGE_KEY,
+      JSON.stringify(statuses),
+    );
   }
 }
 
-function setStoredFallbackMountStatus(assetId: string, profileId: string, enabled: boolean): AssetMountUpdateResult {
+function setStoredFallbackMountStatus(
+  assetId: string,
+  profileId: string,
+  enabled: boolean,
+): AssetMountUpdateResult {
   const status = fallbackMountStatus(assetId, profileId, enabled);
   const statuses = [
     ...getStoredFallbackMountStatuses().filter(
-      (candidate) => candidate.asset_id !== assetId || candidate.profile_id !== profileId,
+      (candidate) =>
+        candidate.asset_id !== assetId || candidate.profile_id !== profileId,
     ),
     status,
   ];
   setStoredFallbackMountStatuses(statuses);
 
   const now = new Date().toISOString();
-  const profile = getStoredFallbackProfiles().find((candidate) => candidate.id === profileId);
+  const profile = getStoredFallbackProfiles().find(
+    (candidate) => candidate.id === profileId,
+  );
   return {
     mount: {
       asset_id: assetId,
@@ -1105,13 +1456,27 @@ function setStoredFallbackMountStatus(assetId: string, profileId: string, enable
   };
 }
 
-function buildFallbackExclusiveMountPreview(input: SkillGroupExclusiveMountInput): SkillGroupExclusiveMountPreview {
-  const profile = getStoredFallbackProfiles().find((candidate) => candidate.id === input.profile_id);
-  if (!profile || !profile.enabled || !profile.supported_kinds.includes("skill")) {
-    throw new Error(`profile does not support skill assets: ${input.profile_id}`);
+function buildFallbackExclusiveMountPreview(
+  input: SkillGroupExclusiveMountInput,
+): SkillGroupExclusiveMountPreview {
+  const profile = getStoredFallbackProfiles().find(
+    (candidate) => candidate.id === input.profile_id,
+  );
+  if (
+    !profile ||
+    !profile.enabled ||
+    !profile.supported_kinds.includes("skill")
+  ) {
+    throw new Error(
+      `profile does not support skill assets: ${input.profile_id}`,
+    );
   }
 
-  const skillAssetById = new Map(fallbackAssets.filter((asset) => asset.kind === "skill").map((asset) => [asset.id, asset]));
+  const skillAssetById = new Map(
+    fallbackAssets
+      .filter((asset) => asset.kind === "skill")
+      .map((asset) => [asset.id, asset]),
+  );
   const selectedSkillIds = new Set<string>();
   const groupIds: string[] = [];
   const seenGroupIds = new Set<string>();
@@ -1120,7 +1485,9 @@ function buildFallbackExclusiveMountPreview(input: SkillGroupExclusiveMountInput
       continue;
     }
     seenGroupIds.add(groupId);
-    const detail = getStoredFallbackSkillGroups().find((group) => group.group.id === groupId);
+    const detail = getStoredFallbackSkillGroups().find(
+      (group) => group.group.id === groupId,
+    );
     if (!detail?.group.enabled) {
       continue;
     }
@@ -1143,7 +1510,10 @@ function buildFallbackExclusiveMountPreview(input: SkillGroupExclusiveMountInput
     if (!asset) {
       continue;
     }
-    const status = statuses.find((candidate) => candidate.asset_id === assetId && candidate.profile_id === profile.id);
+    const status = statuses.find(
+      (candidate) =>
+        candidate.asset_id === assetId && candidate.profile_id === profile.id,
+    );
     if (status?.state === "mounted") {
       keep.push({ asset_id: asset.id, name: asset.name });
     } else {
@@ -1155,7 +1525,10 @@ function buildFallbackExclusiveMountPreview(input: SkillGroupExclusiveMountInput
     if (selectedSkillIds.has(asset.id)) {
       continue;
     }
-    const status = statuses.find((candidate) => candidate.asset_id === asset.id && candidate.profile_id === profile.id);
+    const status = statuses.find(
+      (candidate) =>
+        candidate.asset_id === asset.id && candidate.profile_id === profile.id,
+    );
     if (status?.state === "mounted") {
       unmount.push({ asset_id: asset.id, name: asset.name });
     }
@@ -1181,7 +1554,9 @@ function buildFallbackExclusiveMountPreview(input: SkillGroupExclusiveMountInput
   };
 }
 
-function applyFallbackExclusiveMount(input: SkillGroupExclusiveMountInput): ApplySkillGroupExclusiveMountResult {
+function applyFallbackExclusiveMount(
+  input: SkillGroupExclusiveMountInput,
+): ApplySkillGroupExclusiveMountResult {
   const preview = buildFallbackExclusiveMountPreview(input);
   const affectedAssetIds = new Set([
     ...preview.keep.map((item) => item.asset_id),
@@ -1189,12 +1564,20 @@ function applyFallbackExclusiveMount(input: SkillGroupExclusiveMountInput): Appl
     ...preview.unmount.map((item) => item.asset_id),
   ]);
   const nextStatuses = getStoredFallbackMountStatuses().filter(
-    (status) => status.profile_id !== preview.profile_id || !affectedAssetIds.has(status.asset_id),
+    (status) =>
+      status.profile_id !== preview.profile_id ||
+      !affectedAssetIds.has(status.asset_id),
   );
   const statuses = [
-    ...preview.keep.map((item) => fallbackMountStatus(item.asset_id, preview.profile_id, true)),
-    ...preview.mount.map((item) => fallbackMountStatus(item.asset_id, preview.profile_id, true)),
-    ...preview.unmount.map((item) => fallbackMountStatus(item.asset_id, preview.profile_id, false)),
+    ...preview.keep.map((item) =>
+      fallbackMountStatus(item.asset_id, preview.profile_id, true),
+    ),
+    ...preview.mount.map((item) =>
+      fallbackMountStatus(item.asset_id, preview.profile_id, true),
+    ),
+    ...preview.unmount.map((item) =>
+      fallbackMountStatus(item.asset_id, preview.profile_id, false),
+    ),
   ];
 
   setStoredFallbackMountStatuses([...nextStatuses, ...statuses]);
@@ -1210,18 +1593,29 @@ function compareExclusiveMountItems(
   left: SkillGroupExclusiveMountPreview["keep"][number],
   right: SkillGroupExclusiveMountPreview["keep"][number],
 ) {
-  return left.name.localeCompare(right.name) || left.asset_id.localeCompare(right.asset_id);
+  return (
+    left.name.localeCompare(right.name) ||
+    left.asset_id.localeCompare(right.asset_id)
+  );
 }
 
 function fallbackMountStatuses(): AssetMountStatus[] {
   return fallbackAssets.flatMap((asset) =>
-    getStoredFallbackProfiles().map((profile) => fallbackMountStatus(asset.id, profile.id, false)),
+    getStoredFallbackProfiles().map((profile) =>
+      fallbackMountStatus(asset.id, profile.id, false),
+    ),
   );
 }
 
-function fallbackMountStatus(assetId: string, profileId: string, enabled: boolean): AssetMountStatus {
+function fallbackMountStatus(
+  assetId: string,
+  profileId: string,
+  enabled: boolean,
+): AssetMountStatus {
   const asset = fallbackAssets.find((candidate) => candidate.id === assetId);
-  const profile = getStoredFallbackProfiles().find((candidate) => candidate.id === profileId);
+  const profile = getStoredFallbackProfiles().find(
+    (candidate) => candidate.id === profileId,
+  );
   const targetDir = profile?.target_paths[0] ?? "";
   return {
     asset_id: assetId,
@@ -1255,18 +1649,29 @@ function isAssetMountStatus(candidate: unknown): candidate is AssetMountStatus {
   );
 }
 
-function resolveFallbackGroupDetail(detail: AssetGroupDetail): AssetGroupDetail {
+function resolveFallbackGroupDetail(
+  detail: AssetGroupDetail,
+): AssetGroupDetail {
   const manualIds = new Set(detail.manual_asset_ids);
-  const members = new Map<AssetGroupDetail["members"][number]["asset_id"], AssetGroupDetail["members"][number]["origin"]>();
+  const members = new Map<
+    AssetGroupDetail["members"][number]["asset_id"],
+    AssetGroupDetail["members"][number]["origin"]
+  >();
   for (const member of detail.members) {
     if (member.origin === "rule" || member.origin === "manual_and_rule") {
-      members.set(member.asset_id, manualIds.has(member.asset_id) ? "manual_and_rule" : "rule");
+      members.set(
+        member.asset_id,
+        manualIds.has(member.asset_id) ? "manual_and_rule" : "rule",
+      );
     } else if (manualIds.has(member.asset_id)) {
       members.set(member.asset_id, "manual");
     }
   }
   for (const assetId of manualIds) {
-    members.set(assetId, members.get(assetId) === "rule" ? "manual_and_rule" : "manual");
+    members.set(
+      assetId,
+      members.get(assetId) === "rule" ? "manual_and_rule" : "manual",
+    );
   }
 
   return {
@@ -1280,27 +1685,37 @@ function fallbackSkillSearch(query: string): SkillSearchResult {
   const normalizedQuery = query.toLowerCase();
   const candidates = [
     {
-      acquire_command: "assetiweave-cli skill acquire --url https://github.com/browser-act/skills --yes",
+      acquire_command:
+        "assetiweave-cli skill acquire --url https://github.com/browser-act/skills --yes",
       clone_url: "https://github.com/browser-act/skills.git",
       default_branch: "main",
       description: "Browser automation and agent workflow skills.",
-      match_reason: "Repository fallback: preview data for non-Tauri development",
+      match_reason:
+        "Repository fallback: preview data for non-Tauri development",
       name: "browser-act/skills",
       stars: 2032,
       url: "https://github.com/browser-act/skills",
     },
     {
-      acquire_command: "assetiweave-cli skill acquire --url https://github.com/util6/util6-agents/tree/main/skills/browser --yes",
+      acquire_command:
+        "assetiweave-cli skill acquire --url https://github.com/util6/util6-agents/tree/main/skills/browser --yes",
       clone_url: "https://github.com/util6/util6-agents.git",
       default_branch: "main",
-      description: "Personal agent skill collection with browser and workflow helpers.",
-      match_reason: "Resolved concrete Skill directory from skills/browser/SKILL.md",
+      description:
+        "Personal agent skill collection with browser and workflow helpers.",
+      match_reason:
+        "Resolved concrete Skill directory from skills/browser/SKILL.md",
       name: "util6/util6-agents/skills/browser",
       path: "skills/browser",
       stars: 0,
       url: "https://github.com/util6/util6-agents/tree/main/skills/browser",
     },
-  ].filter((candidate) => `${candidate.name} ${candidate.description}`.toLowerCase().includes(normalizedQuery) || normalizedQuery.length > 0);
+  ].filter(
+    (candidate) =>
+      `${candidate.name} ${candidate.description}`
+        .toLowerCase()
+        .includes(normalizedQuery) || normalizedQuery.length > 0,
+  );
 
   return {
     candidates,
@@ -1330,7 +1745,9 @@ function fallbackSkillAcquire(params: {
     name: inferredName,
     path: params.path ?? null,
     provider: "github",
-    repo_url: params.url.endsWith(".git") ? params.url : `${params.url.replace(/\/tree\/.*$/, "")}.git`,
+    repo_url: params.url.endsWith(".git")
+      ? params.url
+      : `${params.url.replace(/\/tree\/.*$/, "")}.git`,
     security_notice:
       "Review the remote Skill contents before importing; AssetIWeave does not execute or trust remote code automatically.",
     skill_path: `~/.assetiweave/library/skills/staging/${inferredName}`,

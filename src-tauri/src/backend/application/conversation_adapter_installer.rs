@@ -10,7 +10,7 @@ use crate::backend::models::{
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
-    io::{Cursor, Read},
+    io::{Read, Seek},
     time::Duration,
 };
 
@@ -36,7 +36,7 @@ impl GitHubInstallLocation {
 /// Canonical package installer entry point. The installer core consumes the
 /// version-neutral spec directly; legacy Script Catalog items only reverse-map
 /// into this boundary in `install_conversation_adapter_package_from_item`.
-pub(super) fn install_conversation_adapter_package_from_spec(
+pub(super) async fn install_conversation_adapter_package_from_spec(
     service: &AppService,
     spec: &ConversationAdapterPackageInstallSpec,
     dry_run: bool,
@@ -63,8 +63,10 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         }));
     }
 
-    let previous_package = service.load_conversation_adapter_package(spec.package_id())?;
-    let installed = match install_conversation_adapter_package_files(spec, &version_dir) {
+    let previous_package = service
+        .load_conversation_adapter_package(spec.package_id())
+        .await?;
+    let installed = match install_conversation_adapter_package_files(spec, &version_dir).await {
         Ok(installed) => installed,
         Err(error) => {
             if previous_package.is_none() {
@@ -74,13 +76,14 @@ pub(super) fn install_conversation_adapter_package_from_spec(
                     spec,
                     &version_dir,
                     &error_message,
-                )?;
+                )
+                .await?;
             }
             return Err(error);
         }
     };
 
-    let settings = crate::backend::app_settings::read_app_settings_value_for_database(&service.db)?;
+    let settings = service.app_settings_value();
     let preview = crate::backend::conversations::register_external_adapter_with_settings(
         crate::backend::conversations::ExternalAdapterRegisterParams {
             manifest_path: installed.validation.adapter_manifest_path.clone(),
@@ -89,6 +92,7 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         },
         &settings,
     )
+    .await
     .map_err(AppError::external)?;
     let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
         .map_err(AppError::external)?;
@@ -147,17 +151,10 @@ pub(super) fn install_conversation_adapter_package_from_spec(
         installed_at: package.updated_at.clone(),
     };
     let pool = service.db.pool().clone();
-    let adapter_to_save = adapter.clone();
-    let package_to_save = package.clone();
-    let activation = service.db.block_on(async move {
-        crate::backend::store::activate_conversation_adapter_package_sqlx(
-            &pool,
-            &adapter_to_save,
-            &package_to_save,
-            &version,
-        )
-        .await
-    });
+    let activation = crate::backend::store::activate_conversation_adapter_package_sqlx(
+        &pool, &adapter, &package, &version,
+    )
+    .await;
     if let Err(error) = activation {
         if installed.created_version_dir {
             let _ = fs::remove_dir_all(&version_dir);
@@ -169,7 +166,8 @@ pub(super) fn install_conversation_adapter_package_from_spec(
                 spec,
                 &version_dir,
                 &error_message,
-            )?;
+            )
+            .await?;
         }
         return Err(error);
     }
@@ -194,17 +192,17 @@ struct InstalledConversationAdapterPackage {
     created_version_dir: bool,
 }
 
-fn install_conversation_adapter_package_files(
+async fn install_conversation_adapter_package_files(
     spec: &ConversationAdapterPackageInstallSpec,
     version_dir: &Path,
 ) -> AppResult<InstalledConversationAdapterPackage> {
     let staging_dir = conversation_script_staging_dir(spec)?;
     let prepared_dir = conversation_adapter_package_prepared_dir(spec)?;
-    let install_result = (|| {
+    let install_result: AppResult<InstalledConversationAdapterPackage> = async {
         let source_dir = match spec.source.kind {
             ConversationAdapterPackageInstallSourceKind::Github => {
                 let location = parse_github_install_source(&spec.source)?;
-                clone_github_catalog_source(&location, &staging_dir)?;
+                clone_github_catalog_source(&location, &staging_dir).await?;
                 location.source_dir(&staging_dir)
             }
             ConversationAdapterPackageInstallSourceKind::ArtifactZip => {
@@ -300,7 +298,8 @@ fn install_conversation_adapter_package_files(
                 Err(error)
             }
         }
-    })();
+    }
+    .await;
 
     let _ = fs::remove_dir_all(&staging_dir);
     if install_result.is_err() {
@@ -327,53 +326,63 @@ fn download_and_extract_install_artifact(
                 "conversation adapter package artifact sha256 is required".to_string(),
             )
         })?;
-    let response = ureq::get(&spec.source.url)
-        .set(
-            "User-Agent",
-            "AssetIWeave/0.5 conversation-adapter-package-artifact",
-        )
-        .call()
-        .map_err(|error| {
-            AppError::External(format!(
-                "download conversation adapter package artifact failed: {error}"
-            ))
-        })?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(512 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            AppError::External(format!(
-                "read conversation adapter package artifact failed: {error}"
-            ))
-        })?;
-    if let Some(expected_size) = spec.artifact_size {
-        if bytes.len() as u64 != expected_size {
-            return Err(AppError::Validation(format!(
-                "conversation adapter package artifact size mismatch: expected {expected_size}, got {}",
-                bytes.len()
-            )));
+    let artifact_part = staging_dir.join("artifact.zip.part");
+    let client = crate::backend::http_client::shared_http_client()?;
+    let cancelled = || false;
+    let download_spec = crate::backend::http_client::DownloadSpec {
+        url: &spec.source.url,
+        path: &artifact_part,
+        max_bytes: 512 * 1024 * 1024,
+        expected_size: spec.artifact_size,
+        timeout: Duration::from_secs(60 * 5),
+    };
+    crate::backend::http_client::download_to_file(&client, download_spec, &cancelled)?;
+
+    let mut file =
+        fs::File::open(&artifact_part).map_err(|error| AppError::Storage(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| AppError::Storage(error.to_string()))?;
+        if count == 0 {
+            break;
         }
+        hasher.update(&buffer[..count]);
     }
-    let actual_hash = format!("{:x}", Sha256::digest(&bytes));
+    let actual_hash = format!("{:x}", hasher.finalize());
     if !actual_hash.eq_ignore_ascii_case(&expected_hash) {
+        let _ = fs::remove_file(&artifact_part);
         return Err(AppError::Validation(
             "conversation adapter package artifact hash mismatch".to_string(),
         ));
     }
+    file.seek(std::io::SeekFrom::Start(0))
+        .map_err(|error| AppError::Storage(error.to_string()))?;
 
-    extract_install_artifact_bytes(spec, bytes, staging_dir)
+    let result = extract_install_artifact_reader(spec, file, staging_dir);
+    let _ = fs::remove_file(&artifact_part);
+    result
 }
 
+#[cfg(test)]
 pub(super) fn extract_install_artifact_bytes(
     spec: &ConversationAdapterPackageInstallSpec,
     bytes: Vec<u8>,
     staging_dir: &Path,
 ) -> AppResult<PathBuf> {
+    extract_install_artifact_reader(spec, std::io::Cursor::new(bytes), staging_dir)
+}
+
+pub(super) fn extract_install_artifact_reader<R: Read + Seek>(
+    spec: &ConversationAdapterPackageInstallSpec,
+    reader: R,
+    staging_dir: &Path,
+) -> AppResult<PathBuf> {
     let extract_root = staging_dir.join("extracted");
     fs::create_dir_all(&extract_root).map_err(|error| AppError::Storage(error.to_string()))?;
-    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|error| {
+    let mut archive = zip::ZipArchive::new(reader).map_err(|error| {
         AppError::Validation(format!(
             "open conversation adapter package artifact failed: {error}"
         ))
@@ -481,7 +490,7 @@ pub(super) fn extract_install_artifact_bytes(
     }
 }
 
-fn persist_failed_conversation_adapter_package(
+async fn persist_failed_conversation_adapter_package(
     service: &AppService,
     spec: &ConversationAdapterPackageInstallSpec,
     current_dir: &Path,
@@ -527,7 +536,7 @@ fn persist_failed_conversation_adapter_package(
         created_at: now.clone(),
         updated_at: now,
     };
-    service.save_conversation_adapter_package(&package)
+    service.save_conversation_adapter_package(&package).await
 }
 
 fn validate_installed_package_for_spec(
@@ -726,7 +735,10 @@ pub(super) fn parse_github_install_source(
     })
 }
 
-fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) -> AppResult<()> {
+async fn clone_github_catalog_source(
+    location: &GitHubInstallLocation,
+    target: &Path,
+) -> AppResult<()> {
     if target.exists() {
         return Err(AppError::Conflict(format!(
             "conversation adapter package staging path already exists: {}",
@@ -745,15 +757,19 @@ fn clone_github_catalog_source(location: &GitHubInstallLocation, target: &Path) 
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_timeout(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(120),
-        1024 * 1024,
-        256 * 1024,
-    )
-    .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(120),
+        stdout_limit: 1024 * 1024,
+        stderr_limit: 256 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .map_err(|error| AppError::Process(format!("failed to run git clone: {error:?}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::External(format!("git clone failed: {stderr}")));
