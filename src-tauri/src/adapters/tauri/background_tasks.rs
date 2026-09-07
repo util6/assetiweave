@@ -1171,27 +1171,30 @@ impl BackgroundTaskRegistry {
         task_id: &str,
         result: Result<(Option<Value>, Vec<String>), AgentMarketError>,
     ) -> AppResult<AgentLifecycleTaskSnapshot> {
-        let runtime_result = result
-            .as_ref()
-            .map(|(value, _)| value.clone().unwrap_or(Value::Null))
-            .map_err(|error| crate::backend::runtime::AppError::from(error.clone()));
+        let (runtime_result, task_warnings, task_error) = match result {
+            Ok((value, warnings)) => (Ok(value.unwrap_or(Value::Null)), warnings, None),
+            Err(error) => {
+                let view = (&error).into();
+                (
+                    Err(crate::backend::runtime::AppError::from(error)),
+                    Vec::new(),
+                    Some(view),
+                )
+            }
+        };
         let runtime = self.finish_external_result(task_id, runtime_result)?;
         let mut snapshot: AgentLifecycleTaskSnapshot = self.decode(&runtime)?;
         snapshot.finished_at = runtime.finished_at.clone();
         snapshot.updated_at = Utc::now().to_rfc3339();
         snapshot.cancellable = false;
-        match result {
-            Ok((value, warnings)) if runtime.state == TaskState::Succeeded => {
-                snapshot.result = value;
-                snapshot.warnings = warnings;
-            }
-            Err(error) => snapshot.error = Some((&error).into()),
-            Ok(_) => {
-                snapshot.error = Some(
-                    (&AgentMarketError::new("task_state", "扩展生命周期任务未进入终态", false))
-                        .into(),
-                )
-            }
+        if runtime.state == TaskState::Succeeded {
+            snapshot.warnings = task_warnings;
+        } else if let Some(error) = task_error {
+            snapshot.error = Some(error);
+        } else {
+            snapshot.error = Some(
+                (&AgentMarketError::new("task_state", "扩展生命周期任务未进入终态", false)).into(),
+            );
         }
         self.write_projection(task_id, &snapshot)?;
         self.projection(task_id)
@@ -2334,9 +2337,9 @@ impl BackgroundTaskProjection for AgentLifecycleTaskSnapshot {
                 self.cancellable = false;
                 if self.error.is_none() {
                     self.error = runtime.error.as_ref().map(|error| {
-                        let mut market_error =
-                            AgentMarketError::new(&error.code, &error.message, error.retryable);
-                        market_error.details = error.details.clone();
+                        let market_error =
+                            AgentMarketError::new(&error.code, &error.message, error.retryable)
+                                .with_details(error.details.clone());
                         (&market_error).into()
                     });
                 }
@@ -2347,9 +2350,9 @@ impl BackgroundTaskProjection for AgentLifecycleTaskSnapshot {
                 self.cancellable = false;
                 self.result = None;
                 self.error = runtime.error.as_ref().map(|error| {
-                    let mut market_error =
-                        AgentMarketError::new(&error.code, &error.message, error.retryable);
-                    market_error.details = error.details.clone();
+                    let market_error =
+                        AgentMarketError::new(&error.code, &error.message, error.retryable)
+                            .with_details(error.details.clone());
                     (&market_error).into()
                 });
             }

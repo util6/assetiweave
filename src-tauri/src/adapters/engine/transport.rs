@@ -72,19 +72,19 @@ struct EngineResponse {
 pub(crate) struct EngineError {
     /// 错误分类名称 ("type")
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     /// 稳定错误代码
-    code: String,
+    pub(crate) code: String,
     /// 详细错误文本描述
-    message: String,
+    pub(crate) message: String,
     /// 针对开发者的修复提示 (Hint)
     #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
+    pub(crate) hint: Option<String>,
     /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<Value>,
+    pub(crate) details: Option<Value>,
     /// 是否建议调用方重试
-    retryable: bool,
+    pub(crate) retryable: bool,
 }
 
 pub(crate) async fn run_stdio() -> Result<(), String> {
@@ -312,7 +312,7 @@ impl EngineError {
         }
     }
 
-    fn from_app(error: AppError) -> Self {
+    pub(crate) fn from_app(error: AppError) -> Self {
         let view = error.view();
         let kind = match view.code.as_str() {
             "validation_error" => "validation",

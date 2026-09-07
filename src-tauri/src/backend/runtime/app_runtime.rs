@@ -188,12 +188,12 @@ impl AppRuntime {
             .join("agent-executions");
         let agent_runtime_manager =
             Arc::new(AgentRuntimeManager::new(pool.clone(), workspace_root));
-        let runtime_root = crate::backend::agent_market::default_runtime_root()
-            .map_err(|error| AppError::External(error.to_string()))?;
+        let runtime_root =
+            crate::backend::agent_market::default_runtime_root().map_err(AppError::from)?;
         agent_runtime_manager
             .recover_startup(&runtime_root)
             .await
-            .map_err(AppError::External)?;
+            .map_err(AppError::from)?;
         let migration_scope = db_path.to_string_lossy().to_string();
         if let Err(error) = crate::backend::agent_market::migrate_legacy_assignments(
             pool.clone(),
@@ -211,7 +211,7 @@ impl AppRuntime {
         agent_runtime_manager
             .reload()
             .await
-            .map_err(AppError::External)?;
+            .map_err(AppError::from)?;
         if role == RuntimeRole::ResidentHost {
             if let Err(error) = agent_runtime_manager.prepare_startup_health_refresh().await {
                 tracing::warn!(
@@ -538,7 +538,7 @@ impl AppRuntime {
                 let summary = runtime_manager
                     .refresh_installed_agent_health()
                     .await
-                    .map_err(AppError::External)?;
+                    .map_err(AppError::from)?;
                 Ok(serde_json::json!({
                     "checked": summary.checked,
                     "available": summary.available,
