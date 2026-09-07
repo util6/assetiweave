@@ -202,12 +202,12 @@ async fn materialize_and_activate(
 
     let definition = definition_for(item, distribution, &materialized)?;
     context.report_phase(LifecycleTaskPhase::ProbingProtocol);
-    let (protocol_status, protocol_error, mut warnings) =
+    let (protocol_status, mut protocol_error, mut warnings) =
         conformance(&definition, &service.runtime_root).await;
     if !matches!(protocol_status, ProtocolStatus::Ready)
         && matches!(materialized.ownership, Ownership::Managed)
     {
-        return Err(protocol_error.clone().unwrap_or_else(|| {
+        return Err(protocol_error.take().unwrap_or_else(|| {
             market_error(
                 "protocol_failed",
                 "Agent protocol conformance failed.",
@@ -248,8 +248,8 @@ async fn materialize_and_activate(
 
     context.report_phase(LifecycleTaskPhase::ActivatingDatabase);
     let now = chrono::Utc::now().to_rfc3339();
-    let protocol_error_code = protocol_error.as_ref().map(|error| error.code.clone());
-    let protocol_error_message = protocol_error.as_ref().map(|error| error.message.clone());
+    let protocol_error_code = protocol_error.as_ref().map(|error| error.code());
+    let protocol_error_message = protocol_error.as_ref().map(|error| error.message());
     let protocol_status_for_row = protocol_status.clone();
     let definition_json = serde_json::json!({
         "id": item.id,

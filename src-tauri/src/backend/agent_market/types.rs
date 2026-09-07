@@ -679,7 +679,7 @@ impl AgentInstallation {
 
     pub(crate) fn package_identity(
         &self,
-    ) -> Result<crate::backend::extension_kernel::PackageIdentity, String> {
+    ) -> Result<crate::backend::extension_kernel::PackageIdentity, AgentMarketError> {
         // PackageIdentity currently uses semver for every extension kind, but
         // ACP Agent versions are opaque observations. Keep lifecycle identity
         // stable and retain the real value only on AgentInstallation.
@@ -723,7 +723,7 @@ impl AgentInstallation {
         }
     }
 
-    pub(crate) fn package_manifest(&self) -> Result<AgentPackageManifest, String> {
+    pub(crate) fn package_manifest(&self) -> Result<AgentPackageManifest, AgentMarketError> {
         let identity = self.package_identity()?;
         let invocation = self.process_invocation();
         let availability_probe = crate::backend::extension_kernel::ProbeSpec {
@@ -784,21 +784,64 @@ impl AgentInstallation {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("{message}")]
-pub(crate) struct AgentMarketError {
-    pub(crate) code: String,
-    pub(crate) message: String,
-    pub(crate) agent_id: Option<String>,
-    pub(crate) phase: Option<String>,
-    pub(crate) retryable: bool,
-    pub(crate) action: Option<String>,
-    pub(crate) details: Option<Value>,
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum AgentMarketError {
+    #[error("Database error in agent market repository: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Agent catalog error: {0}")]
+    Catalog(#[from] crate::backend::agent_market::catalog::CatalogError),
+
+    #[error("Agent catalog validation failed: {message}")]
+    CatalogValidation {
+        message: String,
+        agent_id: Option<String>,
+        field: Option<String>,
+        details: Option<Value>,
+    },
+
+    #[error("Agent installation '{agent_id}' not found")]
+    InstallationNotFound { agent_id: String },
+
+    #[error("Agent distribution error [{code}]: {message}")]
+    Distribution {
+        code: String,
+        message: String,
+        agent_id: Option<String>,
+        distribution_id: Option<String>,
+        details: Option<Value>,
+    },
+
+    #[error("Agent host process error: {0}")]
+    Process(#[from] crate::backend::host_process::HostProcessError),
+
+    #[error("Agent runtime timeout: {message}")]
+    Timeout {
+        message: String,
+        agent_id: Option<String>,
+    },
+
+    #[error("Agent lifecycle error [{code}]: {message}")]
+    Lifecycle {
+        code: String,
+        message: String,
+        agent_id: Option<String>,
+        phase: Option<String>,
+        retryable: bool,
+        action: Option<String>,
+        details: Option<Value>,
+    },
+
+    #[error("Agent market IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Agent market serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 
 impl AgentMarketError {
     pub(crate) fn new(code: &str, message: &str, retryable: bool) -> Self {
-        Self {
+        Self::Lifecycle {
             code: code.to_string(),
             message: message.to_string(),
             agent_id: None,
@@ -807,6 +850,153 @@ impl AgentMarketError {
             action: None,
             details: None,
         }
+    }
+
+    pub(crate) fn contains(&self, pat: &str) -> bool {
+        self.to_string().contains(pat)
+    }
+
+    pub(crate) fn with_details(mut self, details: Option<Value>) -> Self {
+        match &mut self {
+            Self::Lifecycle { details: d, .. }
+            | Self::CatalogValidation { details: d, .. }
+            | Self::Distribution { details: d, .. } => {
+                *d = details;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    pub(crate) fn with_agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        let id = agent_id.into();
+        match &mut self {
+            Self::Lifecycle { agent_id: a, .. }
+            | Self::CatalogValidation { agent_id: a, .. }
+            | Self::Distribution { agent_id: a, .. }
+            | Self::Timeout { agent_id: a, .. } => {
+                *a = Some(id);
+            }
+            Self::InstallationNotFound { agent_id: a } => {
+                *a = id;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    pub(crate) fn code(&self) -> String {
+        match self {
+            Self::Database(_) => "storage_error".to_string(),
+            Self::Catalog(_) | Self::CatalogValidation { .. } => "validation_error".to_string(),
+            Self::InstallationNotFound { .. } => "agent_not_installed".to_string(),
+            Self::Distribution { code, .. } => code.clone(),
+            Self::Process(err) => match err {
+                crate::backend::host_process::HostProcessError::MissingProgram { .. } => {
+                    "not_found".to_string()
+                }
+                crate::backend::host_process::HostProcessError::Timeout { .. } => {
+                    "timeout".to_string()
+                }
+                crate::backend::host_process::HostProcessError::Cancelled => {
+                    "cancelled".to_string()
+                }
+                crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                    "output_limit_exceeded".to_string()
+                }
+                _ => "process_error".to_string(),
+            },
+            Self::Timeout { .. } => "timeout".to_string(),
+            Self::Lifecycle { code, .. } => code.clone(),
+            Self::Io(_) => "storage_error".to_string(),
+            Self::Serialization(_) => "storage_error".to_string(),
+        }
+    }
+
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::Database(_) => "The application could not access local storage.".to_string(),
+            Self::Catalog(err) => err.to_string(),
+            Self::CatalogValidation { message, .. } => message.clone(),
+            Self::InstallationNotFound { agent_id } => {
+                format!("Agent installation '{agent_id}' not found")
+            }
+            Self::Distribution { message, .. } => message.clone(),
+            Self::Process(err) => err.to_string(),
+            Self::Timeout { message, .. } => message.clone(),
+            Self::Lifecycle { message, .. } => message.clone(),
+            Self::Io(_) => "The application could not access local storage.".to_string(),
+            Self::Serialization(_) => "The application could not access local storage.".to_string(),
+        }
+    }
+
+    pub(crate) fn retryable(&self) -> bool {
+        match self {
+            Self::Database(_) | Self::Io(_) | Self::Serialization(_) => true,
+            Self::Catalog(_) | Self::CatalogValidation { .. } => false,
+            Self::InstallationNotFound { .. } => false,
+            Self::Distribution { code, .. } => {
+                matches!(
+                    code.as_str(),
+                    "runtime_missing" | "system_version_incompatible"
+                )
+            }
+            Self::Process(err) => match err {
+                crate::backend::host_process::HostProcessError::MissingProgram { .. }
+                | crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                    false
+                }
+                _ => true,
+            },
+            Self::Timeout { .. } => true,
+            Self::Lifecycle { retryable, .. } => *retryable,
+        }
+    }
+
+    pub(crate) fn details(&self) -> Option<&Value> {
+        match self {
+            Self::CatalogValidation { details, .. } => details.as_ref(),
+            Self::Distribution { details, .. } => details.as_ref(),
+            Self::Lifecycle { details, .. } => details.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn agent_id(&self) -> Option<&str> {
+        match self {
+            Self::CatalogValidation { agent_id, .. } => agent_id.as_deref(),
+            Self::InstallationNotFound { agent_id } => Some(agent_id.as_str()),
+            Self::Distribution { agent_id, .. } => agent_id.as_deref(),
+            Self::Timeout { agent_id, .. } => agent_id.as_deref(),
+            Self::Lifecycle { agent_id, .. } => agent_id.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn phase(&self) -> Option<&str> {
+        match self {
+            Self::Lifecycle { phase, .. } => phase.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn action(&self) -> Option<&str> {
+        match self {
+            Self::Lifecycle { action, .. } => action.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq<String> for AgentMarketError {
+    fn eq(&self, other: &String) -> bool {
+        self.to_string() == *other || self.code() == *other || self.message() == *other
+    }
+}
+
+impl PartialEq<&str> for AgentMarketError {
+    fn eq(&self, other: &&str) -> bool {
+        self.to_string() == *other || self.code() == *other || self.message() == *other
     }
 }
 
@@ -895,14 +1085,15 @@ pub(crate) struct AgentMarketErrorView {
 impl From<&AgentMarketError> for AgentMarketErrorView {
     fn from(value: &AgentMarketError) -> Self {
         Self {
-            code: value.code.clone(),
-            message: crate::backend::runtime::sanitize_public_message(&value.message),
-            agent_id: value.agent_id.clone(),
-            phase: value.phase.clone(),
-            retryable: value.retryable,
-            action: value.action.clone(),
+            code: value.code(),
+            message: crate::backend::runtime::sanitize_public_message(&value.message()),
+            agent_id: value.agent_id().map(str::to_string),
+            phase: value.phase().map(str::to_string),
+            retryable: value.retryable(),
+            action: value.action().map(str::to_string),
             details: value
-                .details
+                .details()
+                .cloned()
                 .as_ref()
                 .and_then(crate::backend::runtime::sanitize_details),
         }
@@ -978,33 +1169,68 @@ pub(crate) struct AgentInstallationView {
 }
 
 impl CatalogItem {
-    pub(crate) fn validate_basic(&self) -> Result<(), String> {
+    pub(crate) fn validate_basic(&self) -> Result<(), AgentMarketError> {
         if !is_valid_id(&self.id) {
-            return Err(format!("invalid catalog item id: {}", self.id));
+            return Err(AgentMarketError::CatalogValidation {
+                message: format!("invalid catalog item id: {}", self.id),
+                agent_id: Some(self.id.clone()),
+                field: Some("id".to_string()),
+                details: None,
+            });
         }
         if let Err(errors) = self.validate() {
             let field_errors = errors.field_errors();
             if field_errors.contains_key("display_name") {
-                return Err(format!("invalid display name for {}", self.id));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid display name for {}", self.id),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("display_name".to_string()),
+                    details: None,
+                });
             }
             if field_errors.contains_key("description") {
-                return Err(format!("invalid description for {}", self.id));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid description for {}", self.id),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("description".to_string()),
+                    details: None,
+                });
             }
             if field_errors.contains_key("version") {
-                return Err(format!("invalid observed version for {}", self.id));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid observed version for {}", self.id),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("version".to_string()),
+                    details: None,
+                });
             }
             if field_errors.contains_key("distributions") {
-                return Err(format!("catalog item has no distributions: {}", self.id));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("catalog item has no distributions: {}", self.id),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("distributions".to_string()),
+                    details: None,
+                });
             }
             let err_msg = crate::backend::runtime::validation_error(errors)
                 .view()
                 .message;
-            return Err(format!("{}: {}", self.id, err_msg));
+            return Err(AgentMarketError::CatalogValidation {
+                message: format!("{}: {}", self.id, err_msg),
+                agent_id: Some(self.id.clone()),
+                field: None,
+                details: None,
+            });
         }
         let mut ids = std::collections::HashSet::new();
         for distribution in &self.distributions {
             if !ids.insert(distribution.id()) {
-                return Err(format!("duplicate distribution id: {}", distribution.id()));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("duplicate distribution id: {}", distribution.id()),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("distributions".to_string()),
+                    details: None,
+                });
             }
             if distribution.id().is_empty()
                 || distribution
@@ -1012,7 +1238,12 @@ impl CatalogItem {
                     .iter()
                     .any(|arg| arg.contains('\0'))
             {
-                return Err(format!("invalid distribution: {}", distribution.id()));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid distribution: {}", distribution.id()),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("distributions".to_string()),
+                    details: None,
+                });
             }
             if let Some(args) = distribution.session_cleanup_args() {
                 let placeholder_count = args
@@ -1025,10 +1256,15 @@ impl CatalogItem {
                             || (arg.as_str() != "{session_id}" && arg.contains(['{', '}']))
                     })
                 {
-                    return Err(format!(
-                        "invalid session cleanup arguments: {}",
-                        distribution.id()
-                    ));
+                    return Err(AgentMarketError::CatalogValidation {
+                        message: format!(
+                            "invalid session cleanup arguments: {}",
+                            distribution.id()
+                        ),
+                        agent_id: Some(self.id.clone()),
+                        field: Some("session_cleanup_args".to_string()),
+                        details: None,
+                    });
                 }
             }
             if distribution
@@ -1036,10 +1272,15 @@ impl CatalogItem {
                 .iter()
                 .any(|marker| marker.is_empty() || marker.contains('\0'))
             {
-                return Err(format!(
-                    "invalid session cleanup not-found marker: {}",
-                    distribution.id()
-                ));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!(
+                        "invalid session cleanup not-found marker: {}",
+                        distribution.id()
+                    ),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("session_cleanup_not_found_markers".to_string()),
+                    details: None,
+                });
             }
             if let Distribution::System {
                 command_candidates, ..
@@ -1049,10 +1290,12 @@ impl CatalogItem {
                     .iter()
                     .any(|command| !is_safe_command_candidate(command))
                 {
-                    return Err(format!(
-                        "invalid system distribution: {}",
-                        distribution.id()
-                    ));
+                    return Err(AgentMarketError::CatalogValidation {
+                        message: format!("invalid system distribution: {}", distribution.id()),
+                        agent_id: Some(self.id.clone()),
+                        field: Some("command_candidates".to_string()),
+                        details: None,
+                    });
                 }
             }
             if let Distribution::Binary {
@@ -1068,22 +1311,42 @@ impl CatalogItem {
                         .chars()
                         .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
                 {
-                    return Err(format!(
-                        "invalid binary integrity metadata: {}",
-                        distribution.id()
-                    ));
+                    return Err(AgentMarketError::CatalogValidation {
+                        message: format!(
+                            "invalid binary integrity metadata: {}",
+                            distribution.id()
+                        ),
+                        agent_id: Some(self.id.clone()),
+                        field: Some("binary_integrity".to_string()),
+                        details: None,
+                    });
                 }
                 if !is_safe_relative_path(executable) {
-                    return Err(format!("invalid binary executable path: {}", executable));
+                    return Err(AgentMarketError::CatalogValidation {
+                        message: format!("invalid binary executable path: {}", executable),
+                        agent_id: Some(self.id.clone()),
+                        field: Some("executable".to_string()),
+                        details: None,
+                    });
                 }
             }
             if matches!(distribution, Distribution::Npx { package, version, bin, .. } if !is_valid_npm_package(package) || !is_fixed_version(version) || !is_safe_relative_path(bin))
             {
-                return Err(format!("invalid npx distribution: {}", distribution.id()));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid npx distribution: {}", distribution.id()),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("npx".to_string()),
+                    details: None,
+                });
             }
             if matches!(distribution, Distribution::Uvx { package, version, command, .. } if !is_valid_python_project(package) || !is_fixed_version(version) || !is_safe_relative_path(command))
             {
-                return Err(format!("invalid uvx distribution: {}", distribution.id()));
+                return Err(AgentMarketError::CatalogValidation {
+                    message: format!("invalid uvx distribution: {}", distribution.id()),
+                    agent_id: Some(self.id.clone()),
+                    field: Some("uvx".to_string()),
+                    details: None,
+                });
             }
         }
         Ok(())
@@ -1418,16 +1681,16 @@ mod tests {
 
     #[test]
     fn agent_market_error_view_redacts_infrastructure_diagnostics() {
-        let mut error = AgentMarketError::new(
+        let error = AgentMarketError::new(
             "uninstall_failed",
             "failed to remove /Users/util6/private-agent token=secret",
             true,
-        );
-        error.details = Some(serde_json::json!({
+        )
+        .with_details(Some(serde_json::json!({
             "path": "/Users/util6/private-agent",
             "token": "secret",
             "phase": "cleaning_up",
-        }));
+        })));
 
         let view = AgentMarketErrorView::from(&error);
         let serialized = serde_json::to_string(&view).unwrap();
@@ -1445,23 +1708,32 @@ mod tests {
         let mut item = item();
         item.display_name = "   ".to_string();
         let err = item.validate_basic().unwrap_err();
-        assert_eq!(err, format!("invalid display name for {}", item.id));
+        assert_eq!(
+            err.message(),
+            format!("invalid display name for {}", item.id)
+        );
 
         item.display_name = "Valid Name".to_string();
         item.description = "a".repeat(501);
         let err = item.validate_basic().unwrap_err();
-        assert_eq!(err, format!("invalid description for {}", item.id));
+        assert_eq!(
+            err.message(),
+            format!("invalid description for {}", item.id)
+        );
 
         item.description = "Valid description".to_string();
         item.version = "1.0\0.0".to_string();
         let err = item.validate_basic().unwrap_err();
-        assert_eq!(err, format!("invalid observed version for {}", item.id));
+        assert_eq!(
+            err.message(),
+            format!("invalid observed version for {}", item.id)
+        );
 
         item.version = "1.0.0".to_string();
         item.distributions = vec![];
         let err = item.validate_basic().unwrap_err();
         assert_eq!(
-            err,
+            err.message(),
             format!("catalog item has no distributions: {}", item.id)
         );
     }

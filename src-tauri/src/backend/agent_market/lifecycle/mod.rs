@@ -194,10 +194,10 @@ pub(crate) fn is_safe_managed_install_path(
 
 pub(crate) fn market_error(
     code: &str,
-    message: impl Into<String>,
+    message: impl std::fmt::Display,
     retryable: bool,
 ) -> AgentMarketError {
-    AgentMarketError::new(code, &message.into(), retryable)
+    AgentMarketError::new(code, &message.to_string(), retryable)
 }
 
 #[cfg(test)]
@@ -320,7 +320,7 @@ mod tests {
             .install(request_for(&service_v3, "update", "1.2.0"))
             .await
             .expect_err("failed fixture update");
-        assert_eq!(failed.code, "acp_connection_failed");
+        assert_eq!(failed.code(), "acp_connection_failed");
         let current = service_v3
             .repository
             .get(AGENT_ID)
@@ -437,7 +437,7 @@ mod tests {
             )
             .await
             .expect_err("cancelled reinstall");
-        assert_eq!(cancelled.code, "cancelled");
+        assert_eq!(cancelled.code(), "cancelled");
         let after_cancel = service_v3
             .repository
             .get(AGENT_ID)

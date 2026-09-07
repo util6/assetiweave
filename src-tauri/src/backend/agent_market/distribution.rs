@@ -1,6 +1,8 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use super::types::{CatalogItem, Distribution, DistributionCandidate, DistributionType};
+use super::types::{
+    AgentMarketError, CatalogItem, Distribution, DistributionCandidate, DistributionType,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SystemObservation {
@@ -39,7 +41,7 @@ impl DistributionSelector {
         item: &CatalogItem,
         context: &DistributionSelectionContext,
         explicit_distribution_id: Option<&str>,
-    ) -> Result<Vec<DistributionCandidate>, String> {
+    ) -> Result<Vec<DistributionCandidate>, AgentMarketError> {
         let mut candidates = item
             .distributions
             .iter()
@@ -56,13 +58,36 @@ impl DistributionSelector {
                 .iter()
                 .find(|candidate| candidate.distribution_id == explicit)
             else {
-                return Err(format!("distribution_unsupported: {explicit}"));
+                return Err(AgentMarketError::Distribution {
+                    code: "distribution_unsupported".to_string(),
+                    message: "The selected Agent distribution is unavailable on this platform."
+                        .to_string(),
+                    agent_id: Some(item.id.clone()),
+                    distribution_id: Some(explicit.to_string()),
+                    details: None,
+                });
             };
             if !selected.selectable {
-                return Err(selected
+                let code = selected
                     .reason_code
                     .clone()
-                    .unwrap_or_else(|| "distribution_unsupported".to_string()));
+                    .unwrap_or_else(|| "distribution_unsupported".to_string());
+                let message = match code.as_str() {
+                    "runtime_missing" => {
+                        "The selected Agent distribution requires a runtime that is not installed."
+                    }
+                    "system_version_incompatible" => {
+                        "The selected system Agent runtime could not be used."
+                    }
+                    _ => "The selected Agent distribution is unavailable on this platform.",
+                };
+                return Err(AgentMarketError::Distribution {
+                    code: code.clone(),
+                    message: message.to_string(),
+                    agent_id: Some(item.id.clone()),
+                    distribution_id: Some(explicit.to_string()),
+                    details: None,
+                });
             }
             for candidate in &mut candidates {
                 candidate.recommended = candidate.distribution_id == explicit;

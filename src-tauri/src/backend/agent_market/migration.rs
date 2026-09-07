@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::{
     lifecycle::AgentLifecycleService,
-    types::{AgentInstallStartRequest, Distribution},
+    types::{AgentInstallStartRequest, AgentMarketError, Distribution},
     AgentRuntimeManager,
 };
 
@@ -14,12 +14,13 @@ pub(crate) async fn migrate_legacy_assignments(
     pool: sqlx::SqlitePool,
     manager: Arc<AgentRuntimeManager>,
     scope_key: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, AgentMarketError> {
     let settings = crate::backend::app_settings::load_or_import_app_settings_sqlx(&pool)
         .await
-        .map_err(|error| error.to_string())?;
-    let catalog = crate::backend::agent_market::CatalogCache::best_available()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| {
+            AgentMarketError::new("settings_load_failed", &error.to_string(), false)
+        })?;
+    let catalog = crate::backend::agent_market::CatalogCache::best_available()?;
     let catalog_version = catalog.catalog().catalog_version.clone();
 
     let mut agent_ids = BTreeSet::new();
@@ -74,10 +75,9 @@ pub(crate) async fn migrate_legacy_assignments(
         .collect::<BTreeSet<_>>();
 
     let mut notices = Vec::new();
-    let runtime_root = super::default_runtime_root().map_err(|error| error.to_string())?;
+    let runtime_root = super::default_runtime_root()?;
     let settings_pool = pool.clone();
-    let lifecycle = AgentLifecycleService::new(pool, manager, runtime_root)
-        .map_err(|error| error.to_string())?;
+    let lifecycle = AgentLifecycleService::new(pool, manager, runtime_root)?;
     for agent_id in agent_ids {
         if lifecycle.repository.get(&agent_id).await?.is_some() {
             continue;
@@ -113,7 +113,7 @@ pub(crate) async fn migrate_legacy_assignments(
                     notices.push(format!("{agent_id}: installed with degraded health"));
                 }
             }
-            Err(error) => notices.push(format!("{agent_id}: {}", error.code)),
+            Err(error) => notices.push(format!("{agent_id}: {}", error.code())),
         }
     }
 
@@ -124,9 +124,13 @@ pub(crate) async fn migrate_legacy_assignments(
         "processedAgentIds": processed_ids,
         "notices": notices,
     });
-    let root = updated_settings
-        .as_object_mut()
-        .ok_or_else(|| "application settings must be an object".to_string())?;
+    let root = updated_settings.as_object_mut().ok_or_else(|| {
+        AgentMarketError::new(
+            "invalid_settings",
+            "application settings must be an object",
+            false,
+        )
+    })?;
     let migration = root
         .entry("agentMarketMigration".to_string())
         .or_insert_with(|| serde_json::json!({}));
@@ -147,7 +151,7 @@ pub(crate) async fn migrate_legacy_assignments(
         &updated_settings,
     )
     .await
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| AgentMarketError::new("settings_save_failed", &error.to_string(), false))?;
     Ok(
         updated_settings["agentMarketMigration"]["scopes"][migration_scope_id(scope_key)]
             ["notices"]
