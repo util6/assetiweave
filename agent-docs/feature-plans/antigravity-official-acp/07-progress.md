@@ -2,7 +2,7 @@
 
 | Task | 状态 | Commit | 关键证据 | 阻塞项 |
 |---|---|---|---|---|
-| AGACP-00 | PASS | pending | 5平台真实 archive 下载验证完成；SHA-256 与 executable layout 固化 | — |
+| AGACP-00 | PASS | `6048bed` | 5平台真实 archive 下载验证完成；SHA-256 与 executable layout 固化 | — |
 | AGACP-01 | NOT_RUN | — | 当前 connection 仍依赖 parse_session_models | — |
 | AGACP-02 | NOT_RUN | — | 当前 startup recovery 未比对 catalog protocol/distribution | — |
 | AGACP-03 | NOT_RUN | — | 当前 catalog 仍是 native/system agy | AGACP-01..02 |
