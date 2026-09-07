@@ -282,14 +282,13 @@ fn list_managed_log_files() -> Result<Vec<PathBuf>, LogAccessError> {
 }
 
 fn resolve_managed_log_file(file_name: Option<&str>) -> Result<PathBuf, LogAccessError> {
-    let log_files = list_managed_log_files()?;
-    if log_files.is_empty() {
-        return Err(LogAccessError::NoAvailableLogFiles);
-    }
-
     if let Some(file_name) = file_name.map(str::trim).filter(|name| !name.is_empty()) {
         if file_name.contains("..") || file_name.contains('/') || file_name.contains('\\') {
             return Err(LogAccessError::PathEscape(file_name.to_string()));
+        }
+        let log_files = list_managed_log_files()?;
+        if log_files.is_empty() {
+            return Err(LogAccessError::NoAvailableLogFiles);
         }
         return log_files
             .into_iter()
@@ -297,6 +296,7 @@ fn resolve_managed_log_file(file_name: Option<&str>) -> Result<PathBuf, LogAcces
             .ok_or_else(|| LogAccessError::FileNotFound(file_name.to_string()));
     }
 
+    let log_files = list_managed_log_files()?;
     log_files
         .into_iter()
         .next()
