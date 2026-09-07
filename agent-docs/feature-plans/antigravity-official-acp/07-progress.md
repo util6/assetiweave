@@ -2,10 +2,10 @@
 
 | Task | 状态 | Commit | 关键证据 | 阻塞项 |
 |---|---|---|---|---|
-| AGACP-00 | NOT_RUN | — | Registry 1.1.1 metadata 已审计；五平台 SHA-256 尚未计算 | 需下载约 2.6 GB 制品 |
+| AGACP-00 | PASS | pending | 5平台真实 archive 下载验证完成；SHA-256 与 executable layout 固化 | — |
 | AGACP-01 | NOT_RUN | — | 当前 connection 仍依赖 parse_session_models | — |
 | AGACP-02 | NOT_RUN | — | 当前 startup recovery 未比对 catalog protocol/distribution | — |
-| AGACP-03 | NOT_RUN | — | 当前 catalog 仍是 native/system agy | AGACP-00..02 |
+| AGACP-03 | NOT_RUN | — | 当前 catalog 仍是 native/system agy | AGACP-01..02 |
 | AGACP-04 | NOT_RUN | — | 当前 Native backend 仍有 antigravity selector | AGACP-03 |
 | AGACP-05 | NOT_RUN | — | 现有 fake ACP 可扩展 | AGACP-04 |
 | AGACP-06 | NOT_RUN | — | 旧 RC01 initialize 调查存在；1.1.1 E2E 未执行 | AGACP-05、credential |
@@ -15,11 +15,11 @@
 
 | Distribution | Size | SHA-256 | Layout | 状态 |
 |---|---:|---|---|---|
-| binary-darwin-aarch64 | 316014828 | MISSING_EVIDENCE | NOT_RUN | NOT_RUN |
-| binary-linux-x86_64 | 681969407 | MISSING_EVIDENCE | NOT_RUN | NOT_RUN |
-| binary-linux-aarch64 | 656572786 | MISSING_EVIDENCE | NOT_RUN | NOT_RUN |
-| binary-windows-x86_64 | 468238392 | MISSING_EVIDENCE | NOT_RUN | NOT_RUN |
-| binary-windows-aarch64 | 468521191 | MISSING_EVIDENCE | NOT_RUN | NOT_RUN |
+| binary-darwin-aarch64 | 316014828 | fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189 | agy_acp_server.par (802163856 bytes) | PASS |
+| binary-linux-x86_64 | 681969407 | 38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df | agy_acp_server.par (1880360328 bytes) | PASS |
+| binary-linux-aarch64 | 656572786 | ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398 | agy_acp_server.par (1862073131 bytes) | PASS |
+| binary-windows-x86_64 | 468238392 | 47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8 | agy_acp_server.exe (430801616 bytes) | PASS |
+| binary-windows-aarch64 | 468521191 | 35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc | agy_acp_server.exe (435075816 bytes) | PASS |
 
 ## 决策与偏差日志
 
