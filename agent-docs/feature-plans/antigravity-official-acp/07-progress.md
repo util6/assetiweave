@@ -3,7 +3,7 @@
 | Task | 状态 | Commit | 关键证据 | 阻塞项 |
 |---|---|---|---|---|
 | AGACP-00 | PASS | `6048bed` | 5平台真实 archive 下载验证完成；SHA-256 与 executable layout 固化 | — |
-| AGACP-01 | NOT_RUN | — | 当前 connection 仍依赖 parse_session_models | — |
+| AGACP-01 | PASS | `3a0e4d6` | ACP connection 与 model discovery 解耦；空模型仍保持 protocol ready/connected/execution_ready；生命周期测试对齐 C-04 | — |
 | AGACP-02 | NOT_RUN | — | 当前 startup recovery 未比对 catalog protocol/distribution | — |
 | AGACP-03 | NOT_RUN | — | 当前 catalog 仍是 native/system agy | AGACP-01..02 |
 | AGACP-04 | NOT_RUN | — | 当前 Native backend 仍有 antigravity selector | AGACP-03 |
@@ -28,4 +28,5 @@
 | 2026-09-07 | planning | modelDiscovery 初始 false；真实 1.1.1 session config 非空后才启用 | 未完成真实 smoke |
 | 2026-09-07 | planning | Team resume/history/live 暂时关闭；不保留 Direct-CLI fallback | 本专项文本 ACP 范围 |
 | 2026-09-07 | planning | connection probe cleanup 与业务 OneShot 删除契约分离 | Issue #18 与官方 delete 能力未确认 |
+| 2026-09-07 | AGACP-01 | lifecycle/mod.rs 故障恢复测试故障注入模式由 no_models 调整为 initialize_error | 符合契约 C-04（空模型非协议失败）；经用户决策批准扩展白名单 |
 

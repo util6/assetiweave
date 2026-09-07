@@ -359,9 +359,9 @@ mod tests {
         let active_program = second_install_dir.join(fixture_executable_name());
         std::fs::write(
             &active_program,
-            fixture_agent_script(&fixture_path, "no_models"),
+            fixture_agent_script(&fixture_path, "initialize_error"),
         )
-        .expect("replace fixture with an ACP agent that returns no models");
+        .expect("replace fixture with an ACP agent that fails to initialize");
         let scheduled = recovered_manager
             .prepare_startup_health_refresh()
             .await

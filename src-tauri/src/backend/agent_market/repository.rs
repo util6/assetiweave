@@ -38,7 +38,7 @@ impl AgentInstallationRepository {
     pub(crate) async fn list_registry_candidates(
         &self,
     ) -> Result<Vec<AgentInstallation>, AgentMarketError> {
-        let rows = sqlx::query("SELECT * FROM app_agent_installations WHERE enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' AND (protocol != 'acp' OR model_status = 'ready') ORDER BY agent_id")
+        let rows = sqlx::query("SELECT * FROM app_agent_installations WHERE enabled = 1 AND installation_status = 'ready' AND runtime_status = 'ready' AND protocol_status = 'ready' ORDER BY agent_id")
             .fetch_all(&self.pool)
             .await?;
         rows.into_iter().map(row_to_installation).collect()

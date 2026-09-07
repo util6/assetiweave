@@ -179,13 +179,29 @@ impl AcpExecutionBackend {
             }
         };
         let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
-        if cleanup.failures.is_empty() {
-            return outcome;
-        }
-        if outcome.is_ok() || !cleanup.process_reaped || !cleanup.workspace_removed {
+        if !cleanup.process_reaped || !cleanup.workspace_removed {
             return Err(AiExecutionError::CleanupFailed {
                 failures: cleanup.failures,
             });
+        }
+        let critical_failures = cleanup
+            .failures
+            .iter()
+            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .cloned()
+            .collect::<Vec<_>>();
+        if !critical_failures.is_empty() && outcome.is_ok() {
+            return Err(AiExecutionError::CleanupFailed {
+                failures: critical_failures,
+            });
+        }
+        if !cleanup.failures.is_empty() {
+            tracing::warn!(
+                action = "ai_execution.check_connection.cleanup_warning",
+                agent_id = %definition.id,
+                failures = ?cleanup.failures,
+                "ACP connection probe succeeded with non-critical cleanup warning"
+            );
         }
         outcome
     }
@@ -210,13 +226,29 @@ impl AcpExecutionBackend {
             }
         };
         let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
-        if cleanup.failures.is_empty() {
-            return outcome;
-        }
-        if outcome.is_ok() || !cleanup.process_reaped || !cleanup.workspace_removed {
+        if !cleanup.process_reaped || !cleanup.workspace_removed {
             return Err(AiExecutionError::CleanupFailed {
                 failures: cleanup.failures,
             });
+        }
+        let critical_failures = cleanup
+            .failures
+            .iter()
+            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .cloned()
+            .collect::<Vec<_>>();
+        if !critical_failures.is_empty() && outcome.is_ok() {
+            return Err(AiExecutionError::CleanupFailed {
+                failures: critical_failures,
+            });
+        }
+        if !cleanup.failures.is_empty() {
+            tracing::warn!(
+                action = "ai_execution.discover_models.cleanup_warning",
+                agent_id = %definition.id,
+                failures = ?cleanup.failures,
+                "ACP model discovery succeeded with non-critical cleanup warning"
+            );
         }
         outcome
     }
@@ -227,8 +259,8 @@ async fn run_connection_probe(
     definition: &AgentDefinition,
     request: &AiExecutionRequest,
 ) -> Result<(), AiExecutionError> {
-    let session = run_session_probe(guard, definition, request).await?;
-    parse_session_models(&session).map(|_| ())
+    let _session = run_session_probe(guard, definition, request).await?;
+    Ok(())
 }
 
 async fn run_session_probe(
@@ -2160,22 +2192,35 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn life_03_connection_probe_requires_a_non_empty_model_list() {
+    async fn life_03_connection_probe_succeeds_even_with_empty_model_list() {
         let (root, record) = test_paths("connection-probe-no-models");
         let workspace_root = root.join("workspaces");
         let backend = AcpExecutionBackend::new(workspace_root.clone());
 
-        let error = backend
+        backend
             .check_connection(&definition("no_models", &record))
             .await
-            .expect_err("an ACP session without models is not usable");
+            .expect("ACP connection probe succeeds even when model list is empty");
 
-        assert!(matches!(
-            error,
-            AiExecutionError::Protocol {
-                operation: "session_model_catalog_empty"
-            }
-        ));
+        let records = records(&record);
+        assert!(records.contains("\"event\":\"initialize\""));
+        assert!(records.contains("\"event\":\"new\""));
+        assert!(records.contains("\"event\":\"close\""));
+        assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn life_06_connection_probe_succeeds_when_delete_is_unsupported() {
+        let (root, record) = test_paths("connection-probe-no-delete");
+        let workspace_root = root.join("workspaces");
+        let backend = AcpExecutionBackend::new(workspace_root.clone());
+
+        backend
+            .check_connection(&definition("no_delete", &record))
+            .await
+            .expect("ACP connection probe succeeds when delete is unsupported");
+
         let records = records(&record);
         assert!(records.contains("\"event\":\"initialize\""));
         assert!(records.contains("\"event\":\"new\""));

@@ -593,51 +593,137 @@ impl AgentRuntimeManager {
         installation.runtime_error_code = None;
         installation.runtime_error_message = None;
         installation.runtime_checked_at = Some(now.clone());
-        let discovery = AcpExecutionBackend::new(self.workspace_root.clone())
-            .discover_models(&definition)
-            .await;
+
+        let backend = AcpExecutionBackend::new(self.workspace_root.clone());
+
+        // Stage 1: Connection Probe (initialize + session/new)
+        let connection_result = backend.check_connection(&definition).await;
+        installation.protocol_checked_at = Some(now.clone());
+
+        if let Err(error) = connection_result {
+            let message = model_discovery_error_message(&error);
+            if matches!(
+                error,
+                AiExecutionError::RuntimeUnavailable { .. } | AiExecutionError::Spawn { .. }
+            ) {
+                installation.installation_status = InstallationStatus::Broken;
+                installation.runtime_status = RuntimeStatus::Failed;
+                installation.runtime_error_code = Some("runtime_probe_failed".to_string());
+                installation.runtime_error_message = Some(message.clone());
+                installation.protocol_status = ProtocolStatus::Failed;
+                installation.protocol_error_code = Some("runtime_probe_failed".to_string());
+                installation.protocol_error_message = Some(message.clone());
+            } else if is_auth_error(&error) {
+                installation.protocol_status = ProtocolStatus::AuthRequired;
+                installation.protocol_error_code = Some("auth_required".to_string());
+                installation.protocol_error_message = Some(message.clone());
+            } else {
+                installation.protocol_status = ProtocolStatus::Failed;
+                installation.protocol_error_code = Some("connection_failed".to_string());
+                installation.protocol_error_message = Some(message.clone());
+            }
+            installation.model_status = Some("failed".to_string());
+            installation.model_error_code = installation.protocol_error_code.clone();
+            installation.model_checked_at = Some(now.clone());
+            installation.updated_at = now;
+            self.repository.update_health(&installation).await?;
+            let code = installation
+                .protocol_error_code
+                .as_deref()
+                .unwrap_or("connection_failed");
+            return Ok(unavailable_models(agent_id, code, &message));
+        }
+
+        // Connection probe succeeded: Protocol is Ready
+        installation.protocol_status = ProtocolStatus::Ready;
+        installation.protocol_error_code = None;
+        installation.protocol_error_message = None;
+
+        // Stage 2: Model Discovery
+        let discovery = backend.discover_models(&definition).await;
+        installation.model_checked_at = Some(now.clone());
         let result = match discovery {
             Ok((models, current_model_id)) => {
-                installation.protocol_status = ProtocolStatus::Ready;
-                installation.protocol_error_code = None;
-                installation.protocol_error_message = None;
-                installation.model_status = Some("ready".to_string());
-                installation.model_error_code = None;
-                AgentModelsResult {
-                    agent_id: agent_id.to_string(),
-                    available: true,
-                    current_model_id: current_model_id
-                        .or_else(|| models.first().map(|model| model.id.clone())),
-                    models,
-                    error_code: None,
-                    error: None,
+                if models.is_empty() {
+                    installation.model_status = Some("unsupported".to_string());
+                    installation.model_error_code = Some("model_list_empty".to_string());
+                    AgentModelsResult {
+                        agent_id: agent_id.to_string(),
+                        available: true,
+                        current_model_id: None,
+                        models: Vec::new(),
+                        error_code: Some("model_list_empty".to_string()),
+                        error: Some("No models advertised by ACP session".to_string()),
+                    }
+                } else {
+                    installation.model_status = Some("ready".to_string());
+                    installation.model_error_code = None;
+                    AgentModelsResult {
+                        agent_id: agent_id.to_string(),
+                        available: true,
+                        current_model_id: current_model_id
+                            .or_else(|| models.first().map(|model| model.id.clone())),
+                        models,
+                        error_code: None,
+                        error: None,
+                    }
                 }
             }
             Err(error) => {
                 let message = model_discovery_error_message(&error);
-                if matches!(
+                let is_empty = matches!(
                     error,
-                    AiExecutionError::RuntimeUnavailable { .. } | AiExecutionError::Spawn { .. }
-                ) {
-                    installation.installation_status = InstallationStatus::Broken;
-                    installation.runtime_status = RuntimeStatus::Failed;
-                    installation.runtime_error_code = Some("runtime_probe_failed".to_string());
-                    installation.runtime_error_message = Some(message.clone());
+                    AiExecutionError::Protocol {
+                        operation: "session_model_catalog_empty"
+                    }
+                );
+                if is_empty {
+                    installation.model_status = Some("unsupported".to_string());
+                    installation.model_error_code = Some("model_list_empty".to_string());
+                    AgentModelsResult {
+                        agent_id: agent_id.to_string(),
+                        available: true,
+                        current_model_id: None,
+                        models: Vec::new(),
+                        error_code: Some("model_list_empty".to_string()),
+                        error: Some(message),
+                    }
+                } else {
+                    installation.model_status = Some("failed".to_string());
+                    installation.model_error_code = Some("model_discovery_failed".to_string());
+                    AgentModelsResult {
+                        agent_id: agent_id.to_string(),
+                        available: true,
+                        current_model_id: None,
+                        models: Vec::new(),
+                        error_code: Some("model_discovery_failed".to_string()),
+                        error: Some(message),
+                    }
                 }
-                installation.protocol_status = ProtocolStatus::Failed;
-                installation.protocol_error_code = Some("model_list_unavailable".to_string());
-                installation.protocol_error_message = Some(message.clone());
-                installation.model_status = Some("failed".to_string());
-                installation.model_error_code = Some("model_list_unavailable".to_string());
-                unavailable_models(agent_id, "model_list_unavailable", &message)
             }
         };
-        installation.protocol_checked_at = Some(now.clone());
-        installation.model_checked_at = Some(now.clone());
         installation.updated_at = now;
         self.repository.update_health(&installation).await?;
         Ok(result)
     }
+}
+
+fn is_auth_error(error: &AiExecutionError) -> bool {
+    match error {
+        AiExecutionError::ProtocolDetail { detail, .. } => is_auth_message(detail),
+        AiExecutionError::Output { message } => is_auth_message(message),
+        _ => false,
+    }
+}
+
+fn is_auth_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("auth")
+        || lower.contains("login")
+        || lower.contains("sign in")
+        || lower.contains("unauthorized")
+        || lower.contains("unauthenticated")
+        || lower.contains("credential")
 }
 
 fn unavailable_models(agent_id: &str, code: &str, message: &str) -> AgentModelsResult {
@@ -1074,5 +1160,168 @@ mod tests {
         assert!(warnings.is_empty());
         assert!(active_install.join("agent").is_file());
         let _ = std::fs::remove_dir_all(runtime_root);
+    }
+
+    async fn acp_test_fixture(
+        mode: &str,
+    ) -> (
+        AgentRuntimeManager,
+        AgentInstallationRepository,
+        std::path::PathBuf,
+    ) {
+        let root =
+            std::env::temp_dir().join(format!("assetiweave-acp-health-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("app.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .expect("open db");
+        let pool = db.pool().clone();
+        let repository = AgentInstallationRepository::new(pool.clone());
+        let program =
+            crate::backend::host_process::resolve_host_executable("node").expect("node executable");
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("test-fixtures/fake-acp-agent.mjs");
+        let record = root.join("record.log");
+        let args = vec![
+            fixture.to_string_lossy().to_string(),
+            format!("--mode={mode}"),
+            format!("--record={}", record.to_string_lossy()),
+        ];
+        let now = chrono::Utc::now().to_rfc3339();
+        let installation = AgentInstallation {
+            agent_id: "test-agent".to_string(),
+            installation_id: uuid::Uuid::new_v4().to_string(),
+            display_name: "Test Agent".to_string(),
+            catalog_item_version: "1.0.0".to_string(),
+            agent_version: "1.0.0".to_string(),
+            protocol: AgentMarketProtocol::Acp,
+            distribution_id: "test-distribution".to_string(),
+            distribution_type: DistributionType::System,
+            ownership: Ownership::System,
+            install_dir: None,
+            resolved_program: program.clone(),
+            args: args.clone(),
+            definition_json: serde_json::json!({
+                "id": "test-agent",
+                "display_name": "Test Agent",
+                "protocol": "acp",
+                "program": program.to_string_lossy(),
+                "args": args,
+                "env": [
+                    { "name": "ASSETIWEAVE_FAKE_ACP_MODE", "value": mode },
+                    { "name": "ASSETIWEAVE_FAKE_ACP_RECORD_PATH", "value": record.to_string_lossy() }
+                ],
+            }),
+            integrity_json: None,
+            source_registry: "test".to_string(),
+            catalog_version: "1.0".to_string(),
+            enabled: true,
+            installation_status: InstallationStatus::Ready,
+            runtime_status: RuntimeStatus::Ready,
+            runtime_error_code: None,
+            runtime_error_message: None,
+            runtime_checked_at: Some(now.clone()),
+            protocol_status: ProtocolStatus::Ready,
+            protocol_error_code: None,
+            protocol_error_message: None,
+            protocol_checked_at: Some(now.clone()),
+            model_status: None,
+            model_error_code: None,
+            model_checked_at: None,
+            installed_at: now.clone(),
+            updated_at: now,
+        };
+        repository.upsert_active(&installation).await.unwrap();
+        let manager = AgentRuntimeManager::new(pool, root.join("workspaces"));
+        (manager, repository, root)
+    }
+
+    #[tokio::test]
+    async fn acp_health_probe_succeeds_when_models_empty_and_leaves_protocol_ready() {
+        let (manager, repository, root) = acp_test_fixture("no_models").await;
+
+        let models = manager
+            .probe_acp_health("test-agent")
+            .await
+            .expect("probe ACP health");
+        assert!(models.available);
+        assert!(models.models.is_empty());
+        assert_eq!(models.error_code.as_deref(), Some("model_list_empty"));
+
+        let installation = repository
+            .get("test-agent")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Ready);
+        assert_eq!(installation.model_status.as_deref(), Some("unsupported"));
+        assert!(installation.connected());
+        assert!(installation.execution_ready());
+
+        let candidates = repository.list_registry_candidates().await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].agent_id, "test-agent");
+
+        let reloaded = manager.reload().await.expect("reload candidates");
+        assert_eq!(reloaded, 1);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn acp_health_probe_marks_auth_required_when_auth_error() {
+        let (manager, repository, root) = acp_test_fixture("auth_error").await;
+
+        let models = manager
+            .probe_acp_health("test-agent")
+            .await
+            .expect("probe ACP health");
+        assert!(!models.available);
+        assert_eq!(models.error_code.as_deref(), Some("auth_required"));
+
+        let installation = repository
+            .get("test-agent")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.installation_status, InstallationStatus::Ready);
+        assert_eq!(installation.protocol_status, ProtocolStatus::AuthRequired);
+        assert_eq!(
+            installation.protocol_error_code.as_deref(),
+            Some("auth_required")
+        );
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn acp_health_probe_marks_failed_when_connection_fails() {
+        let (manager, repository, root) = acp_test_fixture("new_error").await;
+
+        let models = manager
+            .probe_acp_health("test-agent")
+            .await
+            .expect("probe ACP health");
+        assert!(!models.available);
+        assert_eq!(models.error_code.as_deref(), Some("connection_failed"));
+
+        let installation = repository
+            .get("test-agent")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Failed);
+        assert_eq!(
+            installation.protocol_error_code.as_deref(),
+            Some("connection_failed")
+        );
+        assert_eq!(installation.model_status.as_deref(), Some("failed"));
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

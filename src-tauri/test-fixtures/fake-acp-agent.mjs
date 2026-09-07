@@ -1,8 +1,12 @@
 import fs from "node:fs";
 import readline from "node:readline";
 
-const mode = process.env.ASSETIWEAVE_FAKE_ACP_MODE ?? "happy";
-const recordPath = process.env.ASSETIWEAVE_FAKE_ACP_RECORD_PATH;
+const args = process.argv.slice(2);
+const modeArg = args.find((arg) => arg.startsWith("--mode="))?.slice("--mode=".length);
+const recordPathArg = args.find((arg) => arg.startsWith("--record="))?.slice("--record=".length);
+
+const mode = modeArg ?? process.env.ASSETIWEAVE_FAKE_ACP_MODE ?? "happy";
+const recordPath = recordPathArg ?? process.env.ASSETIWEAVE_FAKE_ACP_RECORD_PATH;
 const sessionId = "fixture-session";
 let pendingPromptId;
 let pendingPermissionId;
@@ -60,6 +64,10 @@ function handleInitialize(message) {
   if (mode === "initialize_timeout") {
     return;
   }
+  if (mode === "initialize_auth_error") {
+    fail(message.id, -32000, "Authentication required: login required to use agent");
+    return;
+  }
   if (mode === "initialize_error") {
     fail(message.id);
     return;
@@ -91,6 +99,10 @@ function handleNewSession(message) {
     additionalDirectoryCount:
       message.params?.additionalDirectories?.length ?? 0,
   });
+  if (mode === "auth_error") {
+    fail(message.id, -32000, "Authentication required: please run login");
+    return;
+  }
   if (mode === "new_error") {
     fail(message.id);
     return;
