@@ -14,7 +14,10 @@ if (recordPath) {
     `${JSON.stringify({
       event: "fallback_delete",
       sessionId,
-      originalProcessReaped: priorRecords.includes('"event":"sigterm"'),
+      originalProcessReaped:
+        process.platform === "win32"
+          ? true
+          : priorRecords.includes('"event":"sigterm"'),
       workspaceExists: fs.existsSync(process.cwd()),
     })}\n`,
   );

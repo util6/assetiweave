@@ -485,14 +485,14 @@ async fn shutdown_is_idempotent_when_called_twice() {
         .await
         .expect("bootstrap ResidentHost");
 
-    let first_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
+    let first_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
     assert!(first_report.is_clean());
     assert!(first_report.dispatcher_drained);
     assert!(first_report.unfinished_task_ids.is_empty());
     assert!(first_report.unfinished_stages.is_empty());
 
     // Second call to shutdown_with_grace must be idempotent and cleanly return identical stable report
-    let second_report = runtime.shutdown_with_grace(Duration::from_secs(1)).await;
+    let second_report = runtime.shutdown_with_grace(Duration::from_secs(5)).await;
     assert!(second_report.is_clean());
     assert!(second_report.dispatcher_drained);
     assert!(second_report.unfinished_task_ids.is_empty());

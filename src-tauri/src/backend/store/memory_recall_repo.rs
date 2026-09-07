@@ -1,5 +1,5 @@
 use chrono::Utc;
-use sqlx::{pool::PoolConnection, Row, Sqlite, SqlitePool};
+use sqlx::{pool::PoolConnection, Sqlite, SqlitePool};
 
 use crate::backend::{
     models::{
@@ -8,6 +8,49 @@ use crate::backend::{
     },
     runtime::{AppError, AppResult},
 };
+
+#[derive(Debug, sqlx::FromRow)]
+struct MemoryRecallSessionRow {
+    id: String,
+    status: String,
+    scope_json: String,
+    execution_context_key: String,
+    agent_id: String,
+    model: Option<String>,
+    turn_count: i64,
+    active_turn_id: Option<String>,
+    last_error: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct MemoryRecallTurnRow {
+    id: String,
+    session_id: String,
+    sequence: i64,
+    conversation_session_id: String,
+    conversation_turn_id: String,
+    status: String,
+    structured_output_json: Option<String>,
+    last_error: Option<String>,
+    created_at: String,
+    updated_at: String,
+    user_text: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct RecoveryTurnRow {
+    id: String,
+    status: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SessionGateRow {
+    status: String,
+    turn_count: i64,
+    active_turn_id: Option<String>,
+}
 
 pub(crate) async fn create_memory_recall_session_sqlx(
     pool: &SqlitePool,
@@ -45,7 +88,7 @@ pub(crate) async fn load_memory_recall_session_sqlx(
     tenant_id: &str,
     session_id: &str,
 ) -> AppResult<Option<MemoryRecallSession>> {
-    let Some(row) = sqlx::query(
+    let Some(row) = sqlx::query_as::<_, MemoryRecallSessionRow>(
         r#"
         SELECT id, status, scope_json, execution_context_key, agent_id, model,
                turn_count, active_turn_id, last_error, created_at, updated_at
@@ -63,27 +106,20 @@ pub(crate) async fn load_memory_recall_session_sqlx(
     };
 
     let turns = load_memory_recall_turns_sqlx(pool, tenant_id, session_id).await?;
+    let status = decode_session_status(&row.status)?;
+    let scope = serde_json::from_str(&row.scope_json).map_err(AppError::external)?;
     Ok(Some(MemoryRecallSession {
-        id: row.try_get("id").map_err(AppError::external)?,
-        status: decode_session_status(
-            &row.try_get::<String, _>("status")
-                .map_err(AppError::external)?,
-        )?,
-        scope: serde_json::from_str(
-            &row.try_get::<String, _>("scope_json")
-                .map_err(AppError::external)?,
-        )
-        .map_err(AppError::external)?,
-        execution_context_key: row
-            .try_get("execution_context_key")
-            .map_err(AppError::external)?,
-        agent_id: row.try_get("agent_id").map_err(AppError::external)?,
-        model: row.try_get("model").map_err(AppError::external)?,
-        turn_count: row.try_get("turn_count").map_err(AppError::external)?,
-        active_turn_id: row.try_get("active_turn_id").map_err(AppError::external)?,
-        last_error: row.try_get("last_error").map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
+        id: row.id,
+        status,
+        scope,
+        execution_context_key: row.execution_context_key,
+        agent_id: row.agent_id,
+        model: row.model,
+        turn_count: row.turn_count,
+        active_turn_id: row.active_turn_id,
+        last_error: row.last_error,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
         turns,
     }))
 }
@@ -93,7 +129,7 @@ pub(crate) async fn load_memory_recall_turn_sqlx(
     tenant_id: &str,
     turn_id: &str,
 ) -> AppResult<Option<MemoryRecallTurn>> {
-    let Some(row) = sqlx::query(
+    let Some(row) = sqlx::query_as::<_, MemoryRecallTurnRow>(
         r#"
         SELECT r.id, r.session_id, r.sequence, r.conversation_session_id,
                r.conversation_turn_id, r.status, r.structured_output_json,
@@ -112,7 +148,7 @@ pub(crate) async fn load_memory_recall_turn_sqlx(
     else {
         return Ok(None);
     };
-    Ok(Some(map_turn(&row)?))
+    Ok(Some(map_turn(row)?))
 }
 
 pub(crate) async fn load_memory_recall_turns_sqlx(
@@ -120,7 +156,7 @@ pub(crate) async fn load_memory_recall_turns_sqlx(
     tenant_id: &str,
     session_id: &str,
 ) -> AppResult<Vec<MemoryRecallTurn>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, MemoryRecallTurnRow>(
         r#"
         SELECT r.id, r.session_id, r.sequence, r.conversation_session_id,
                r.conversation_turn_id, r.status, r.structured_output_json,
@@ -137,14 +173,14 @@ pub(crate) async fn load_memory_recall_turns_sqlx(
     .fetch_all(pool)
     .await
     .map_err(AppError::external)?;
-    rows.iter().map(map_turn).collect()
+    rows.into_iter().map(map_turn).collect()
 }
 
 pub(crate) async fn list_memory_recall_turns_for_recovery_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Vec<(String, MemoryRecallTurnStatus)>> {
-    let rows = sqlx::query(
+    let rows = sqlx::query_as::<_, RecoveryTurnRow>(
         "SELECT id, status FROM memory_recall_turns WHERE tenant_id = ?1 AND status IN ('queued', 'running') ORDER BY created_at, id",
     )
     .bind(tenant_id)
@@ -153,12 +189,8 @@ pub(crate) async fn list_memory_recall_turns_for_recovery_sqlx(
     .map_err(AppError::external)?;
     rows.into_iter()
         .map(|row| {
-            let id = row.try_get("id").map_err(AppError::external)?;
-            let status = decode_turn_status(
-                &row.try_get::<String, _>("status")
-                    .map_err(AppError::external)?,
-            )?;
-            Ok((id, status))
+            let status = decode_turn_status(&row.status)?;
+            Ok((row.id, status))
         })
         .collect()
 }
@@ -170,7 +202,7 @@ pub(crate) async fn create_memory_recall_turn_sqlx(
 ) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     let mut tx = pool.begin().await.map_err(AppError::external)?;
-    let session = sqlx::query(
+    let session = sqlx::query_as::<_, SessionGateRow>(
         "SELECT status, turn_count, active_turn_id FROM memory_recall_sessions WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
@@ -179,22 +211,18 @@ pub(crate) async fn create_memory_recall_turn_sqlx(
     .await
     .map_err(AppError::external)?
     .ok_or_else(|| AppError::NotFound(format!("Recall session not found: {}", turn.session_id)))?;
-    let status: String = session.try_get("status").map_err(AppError::external)?;
-    if status != MemoryRecallSessionStatus::Active.as_str() {
+    if session.status != MemoryRecallSessionStatus::Active.as_str() {
         return Err(AppError::Conflict(format!(
-            "Recall session is not active: {status}"
+            "Recall session is not active: {}",
+            session.status
         )));
     }
-    let active_turn_id: Option<String> = session
-        .try_get("active_turn_id")
-        .map_err(AppError::external)?;
-    if active_turn_id.is_some() {
+    if session.active_turn_id.is_some() {
         return Err(AppError::Conflict(
             "Recall session already has an active turn".to_string(),
         ));
     }
-    let expected_sequence: i64 = session.try_get("turn_count").map_err(AppError::external)?;
-    if turn.sequence != expected_sequence {
+    if turn.sequence != session.turn_count {
         return Err(AppError::Conflict(
             "Recall turn sequence is stale".to_string(),
         ));
@@ -422,31 +450,25 @@ async fn update_turn_status_sqlx(
     Ok(())
 }
 
-fn map_turn(row: &sqlx::sqlite::SqliteRow) -> AppResult<MemoryRecallTurn> {
+fn map_turn(row: MemoryRecallTurnRow) -> AppResult<MemoryRecallTurn> {
     let structured_output = row
-        .try_get::<Option<String>, _>("structured_output_json")?
-        .map(|value| serde_json::from_str(&value))
+        .structured_output_json
+        .as_deref()
+        .map(serde_json::from_str)
         .transpose()
         .map_err(AppError::external)?;
     Ok(MemoryRecallTurn {
-        id: row.try_get("id").map_err(AppError::external)?,
-        session_id: row.try_get("session_id").map_err(AppError::external)?,
-        sequence: row.try_get("sequence").map_err(AppError::external)?,
-        conversation_session_id: row
-            .try_get("conversation_session_id")
-            .map_err(AppError::external)?,
-        conversation_turn_id: row
-            .try_get("conversation_turn_id")
-            .map_err(AppError::external)?,
-        status: decode_turn_status(
-            &row.try_get::<String, _>("status")
-                .map_err(AppError::external)?,
-        )?,
-        user_text: row.try_get("user_text").map_err(AppError::external)?,
+        id: row.id,
+        session_id: row.session_id,
+        sequence: row.sequence,
+        conversation_session_id: row.conversation_session_id,
+        conversation_turn_id: row.conversation_turn_id,
+        status: decode_turn_status(&row.status)?,
+        user_text: row.user_text,
         structured_output,
-        last_error: row.try_get("last_error").map_err(AppError::external)?,
-        created_at: row.try_get("created_at").map_err(AppError::external)?,
-        updated_at: row.try_get("updated_at").map_err(AppError::external)?,
+        last_error: row.last_error,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
     })
 }
 

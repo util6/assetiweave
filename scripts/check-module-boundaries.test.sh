@@ -53,6 +53,30 @@ run_rejected_fixture new-sync-bridge \
 run_rejected_fixture application-target-catalog-bypass \
   src-tauri/src/backend/application/service.rs \
   'let _catalog = TargetCatalog::builtin();'
+run_rejected_fixture host-process-libc-kill \
+  src-tauri/src/backend/host_process.rs \
+  'unsafe { libc::kill(1, 9); }'
+run_rejected_fixture host-process-process-group-zero \
+  src-tauri/src/backend/host_process.rs \
+  'command.process_group(0);'
+run_rejected_fixture host-process-thread-spawn \
+  src-tauri/src/backend/host_process.rs \
+  'std::thread::spawn(|| {});'
+run_rejected_fixture host-process-thread-sleep \
+  src-tauri/src/backend/host_process.rs \
+  'thread::sleep(Duration::from_millis(15));'
+run_rejected_fixture host-process-std-command \
+  src-tauri/src/backend/host_process.rs \
+  'let _ = std::process::Command::new("sh");'
+run_rejected_fixture error-boundary-cross-module-string \
+  src-tauri/src/backend/runtime/new_service.rs \
+  'pub fn fixture_op() -> Result<(), String> { Ok(()) }'
+run_rejected_fixture error-boundary-map-err-external \
+  src-tauri/src/backend/runtime/app_runtime.rs \
+  'let _ = op().map_err(AppError::external);'
+run_rejected_fixture error-boundary-known-typed-to-string \
+  src-tauri/src/backend/runtime/new_service.rs \
+  'let _ = op().map_err(|e: sqlx::Error| e.to_string());'
 
 # Test runtime bridge zero-match checks (Issue #24 / B2-R14)
 # 1. Backend file with runtime bridge is rejected

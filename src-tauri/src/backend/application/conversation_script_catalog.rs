@@ -213,6 +213,7 @@ impl AppService {
             },
             &settings,
         )
+        .await
         .map_err(AppError::external)?;
         if params.dry_run {
             return Ok(json!({
@@ -903,6 +904,7 @@ impl AppService {
             },
             &settings,
         )
+        .await
         .map_err(AppError::external)?;
         let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
             .map_err(AppError::external)?;
@@ -1196,6 +1198,7 @@ async fn promote_conversation_adapter_workspace_package(
             },
             &settings,
         )
+        .await
         .map_err(AppError::external)?;
 
         let created_version_dir = if version_dir.exists() {
@@ -1233,6 +1236,7 @@ async fn promote_conversation_adapter_workspace_package(
             },
             &settings,
         )
+        .await
         .map_err(AppError::external)?;
         let adapter = crate::backend::conversations::adapter_from_registration_preview(preview)
             .map_err(AppError::external)?;

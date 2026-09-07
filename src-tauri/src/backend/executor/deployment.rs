@@ -14,56 +14,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-type LogField = (&'static str, String);
-
-fn log_action_info(message: &str, fields: &[LogField]) {
-    tracing::info!(action = "deployment_plan.action", ?fields, "{message}");
-}
-
-fn log_action_warn(message: &str, fields: &[LogField]) {
-    tracing::warn!(action = "deployment_plan.action", ?fields, "{message}");
-}
-
-fn log_action_error(message: &str, error: &str, fields: &[LogField]) {
-    tracing::error!(action = "deployment_plan.action", error = %error, ?fields, "{message}");
-}
-
-fn action_log_fields(
-    action: &DeploymentAction,
-    asset: Option<&Asset>,
-    profile: Option<&TargetProfile>,
-) -> Vec<LogField> {
-    let mut fields = vec![
-        ("action_id", action.id.clone()),
-        ("action_type", format!("{:?}", action.action_type)),
-        ("profile_id", action.profile_id.clone()),
-        ("target_path", action.target_path.clone()),
-        ("strategy", format!("{:?}", action.strategy)),
-    ];
-
-    if let Some(asset_id) = &action.asset_id {
-        fields.push(("asset_id", asset_id.clone()));
-    }
-    if let Some(source_path) = &action.source_path {
-        fields.push(("source_path", source_path.clone()));
-    }
-    if let Some(asset) = asset {
-        fields.extend([
-            ("skill_name", asset.name.clone()),
-            ("asset_kind", format!("{:?}", asset.kind)),
-            ("relative_path", asset.relative_path.clone()),
-        ]);
-    }
-    if let Some(profile) = profile {
-        fields.extend([
-            ("profile_name", profile.name.clone()),
-            ("app_kind", format!("{:?}", profile.app_kind)),
-        ]);
-    }
-
-    fields
-}
-
 pub(crate) async fn execute_deployment_plan(
     pool: &SqlitePool,
     tenant_id: &str,
@@ -103,48 +53,68 @@ pub(crate) async fn execute_deployment_plan(
         ) || !action.selectable
         {
             result.skipped_count += 1;
-            log_action_info(
-                "跳过不可执行的部署动作",
-                &action_log_fields(action, None, None),
+            tracing::info!(
+                action = "deployment_plan.action",
+                action_id = %action.id,
+                action_type = ?action.action_type,
+                profile_id = %action.profile_id,
+                strategy = ?action.strategy,
+                "跳过不可执行的部署动作"
             );
             continue;
         }
 
         let Some(asset_id) = action.asset_id.as_deref() else {
             result.skipped_count += 1;
-            log_action_warn(
-                "跳过缺少 skill 的部署动作",
-                &action_log_fields(action, None, None),
+            tracing::warn!(
+                action = "deployment_plan.action",
+                action_id = %action.id,
+                action_type = ?action.action_type,
+                profile_id = %action.profile_id,
+                strategy = ?action.strategy,
+                "跳过缺少 skill 的部署动作"
             );
             continue;
         };
         let Some(asset) = asset_map.get(asset_id) else {
             let message = format!("asset not found: {asset_id}");
             result.errors.push(message.clone());
-            log_action_error(
-                "部署动作失败：未找到 skill",
-                &message,
-                &action_log_fields(action, None, None),
+            tracing::error!(
+                action = "deployment_plan.action",
+                action_id = %action.id,
+                action_type = ?action.action_type,
+                profile_id = %action.profile_id,
+                error = %message,
+                "部署动作失败：未找到 skill"
             );
             continue;
         };
         let Some(profile) = profile_map.get(action.profile_id.as_str()) else {
             let message = format!("profile not found: {}", action.profile_id);
             result.errors.push(message.clone());
-            log_action_error(
-                "部署动作失败：未找到目标 APP 配置",
-                &message,
-                &action_log_fields(action, Some(asset), None),
+            tracing::error!(
+                action = "deployment_plan.action",
+                action_id = %action.id,
+                action_type = ?action.action_type,
+                profile_id = %action.profile_id,
+                skill_name = %asset.name,
+                error = %message,
+                "部署动作失败：未找到目标 APP 配置"
             );
             continue;
         };
         if let Err(error) = target_catalog.require_descriptor(&profile.target_provider_id) {
             let message = error.to_string();
             result.errors.push(message.clone());
-            log_action_error(
-                "部署动作失败：目标 Provider 不可用",
-                &message,
-                &action_log_fields(action, Some(asset), Some(profile)),
+            tracing::error!(
+                action = "deployment_plan.action",
+                action_id = %action.id,
+                action_type = ?action.action_type,
+                profile_id = %action.profile_id,
+                profile_name = %profile.name,
+                skill_name = %asset.name,
+                error = %message,
+                "部署动作失败：目标 Provider 不可用"
             );
             continue;
         }
@@ -152,29 +122,42 @@ pub(crate) async fn execute_deployment_plan(
         match execute_deployment_action(pool, tenant_id, profile, asset, action).await {
             Ok(()) => {
                 result.executed_count += 1;
-                log_action_info(
-                    "部署动作执行成功",
-                    &action_log_fields(action, Some(asset), Some(profile)),
+                tracing::info!(
+                    action = "deployment_plan.action",
+                    action_id = %action.id,
+                    action_type = ?action.action_type,
+                    profile_id = %action.profile_id,
+                    profile_name = %profile.name,
+                    skill_name = %asset.name,
+                    strategy = ?action.strategy,
+                    "部署动作执行成功"
                 );
             }
             Err(DeploymentError::Conflict(message)) => {
                 result.conflict_count += 1;
                 result.errors.push(message.clone());
-                log_action_warn(
-                    "部署动作出现冲突",
-                    &[
-                        action_log_fields(action, Some(asset), Some(profile)),
-                        vec![("error", message)],
-                    ]
-                    .concat(),
+                tracing::warn!(
+                    action = "deployment_plan.action",
+                    action_id = %action.id,
+                    action_type = ?action.action_type,
+                    profile_id = %action.profile_id,
+                    profile_name = %profile.name,
+                    skill_name = %asset.name,
+                    error = %message,
+                    "部署动作出现冲突"
                 );
             }
             Err(DeploymentError::Failure(message)) => {
                 result.errors.push(message.clone());
-                log_action_error(
-                    "部署动作执行失败",
-                    &message,
-                    &action_log_fields(action, Some(asset), Some(profile)),
+                tracing::error!(
+                    action = "deployment_plan.action",
+                    action_id = %action.id,
+                    action_type = ?action.action_type,
+                    profile_id = %action.profile_id,
+                    profile_name = %profile.name,
+                    skill_name = %asset.name,
+                    error = %message,
+                    "部署动作执行失败"
                 );
             }
         }

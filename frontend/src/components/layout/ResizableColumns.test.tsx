@@ -43,7 +43,6 @@ function createMockLocalStorage(): Storage {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
-
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("localStorage", createMockLocalStorage());

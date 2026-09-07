@@ -4,7 +4,7 @@
 //! 最终将格式化的 JSON 响应写回标准输出 (stdout) 的标准 Stdio 协议循环。
 
 use super::{policy, protocol, registry as command_registry, runtime};
-use crate::backend::runtime::AppError;
+use crate::backend::runtime::{AppError, WireError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
@@ -72,19 +72,19 @@ struct EngineResponse {
 pub(crate) struct EngineError {
     /// 错误分类名称 ("type")
     #[serde(rename = "type")]
-    kind: String,
+    pub(crate) kind: String,
     /// 稳定错误代码
-    code: String,
+    pub(crate) code: String,
     /// 详细错误文本描述
-    message: String,
+    pub(crate) message: String,
     /// 针对开发者的修复提示 (Hint)
     #[serde(skip_serializing_if = "Option::is_none")]
-    hint: Option<String>,
+    pub(crate) hint: Option<String>,
     /// 诊断细节数据 JSON
     #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<Value>,
+    pub(crate) details: Option<Value>,
     /// 是否建议调用方重试
-    retryable: bool,
+    pub(crate) retryable: bool,
 }
 
 pub(crate) async fn run_stdio() -> Result<(), String> {
@@ -312,8 +312,8 @@ impl EngineError {
         }
     }
 
-    fn from_app(error: AppError) -> Self {
-        let view = error.view();
+    pub(crate) fn from_app(error: AppError) -> Self {
+        let view: WireError = error.into();
         let kind = match view.code.as_str() {
             "validation_error" => "validation",
             "not_found" => "not_found",
@@ -373,6 +373,126 @@ mod tests {
         assert_eq!(error.kind, "unknown_method");
         assert_eq!(error.code, "unknown_method");
         assert!(error.hint.as_deref().unwrap_or_default().contains("schema"));
+    }
+
+    #[test]
+    fn error_taxonomy_tauri_engine_parity() {
+        use std::error::Error;
+
+        let cases: Vec<(AppError, &'static str, bool, Option<Value>)> = vec![
+            (
+                AppError::Validation("invalid param: id is required".to_string()),
+                "validation_error",
+                false,
+                None,
+            ),
+            (
+                AppError::NotFound("item 123 not found".to_string()),
+                "not_found",
+                false,
+                None,
+            ),
+            (
+                AppError::Conflict("version conflict".to_string()),
+                "conflict",
+                true,
+                None,
+            ),
+            (
+                AppError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "disk access denied",
+                )),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Codec(crate::backend::store::CodecError::Decode(
+                    serde_json::from_str::<i32>("bad").unwrap_err(),
+                )),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Cancelled("task cancelled by user".to_string()),
+                "cancelled",
+                true,
+                None,
+            ),
+            (
+                AppError::Timeout("operation timed out".to_string()),
+                "timeout",
+                true,
+                None,
+            ),
+            (
+                AppError::Storage("unrecoverable db block error".to_string()),
+                "storage_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Process("external process exited with code 1".to_string()),
+                "process_error",
+                true,
+                None,
+            ),
+            (
+                AppError::External("remote server failed".to_string()),
+                "external_error",
+                true,
+                None,
+            ),
+            (
+                AppError::Domain {
+                    code: "agent_not_found".to_string(),
+                    message: "agent agent-42 not found".to_string(),
+                    retryable: false,
+                    details: Some(json!({ "agentId": "agent-42" })),
+                },
+                "agent_not_found",
+                false,
+                Some(json!({ "agentId": "agent-42" })),
+            ),
+        ];
+
+        for (app_error, expected_code, expected_retryable, expected_details) in cases {
+            let tauri_view = app_error.view();
+            // Verify source before moving app_error into from_app
+            if let AppError::Io(_) = &app_error {
+                assert!(app_error.source().is_some());
+                assert!(app_error.source().unwrap().is::<std::io::Error>());
+            }
+            if let AppError::Codec(_) = &app_error {
+                assert!(app_error.source().is_some());
+                assert!(app_error
+                    .source()
+                    .unwrap()
+                    .is::<crate::backend::store::CodecError>());
+            }
+
+            let engine_error = EngineError::from_app(app_error);
+
+            // 1. Code parity
+            assert_eq!(tauri_view.code, expected_code);
+            assert_eq!(engine_error.code, expected_code);
+            assert_eq!(tauri_view.code, engine_error.code);
+
+            // 2. Retryable parity
+            assert_eq!(tauri_view.retryable, expected_retryable);
+            assert_eq!(engine_error.retryable, expected_retryable);
+            assert_eq!(tauri_view.retryable, engine_error.retryable);
+
+            // 3. Message parity
+            assert_eq!(tauri_view.message, engine_error.message);
+
+            // 4. Details parity
+            assert_eq!(tauri_view.details, expected_details);
+            assert_eq!(engine_error.details, expected_details);
+            assert_eq!(tauri_view.details, engine_error.details);
+        }
     }
 
     #[test]

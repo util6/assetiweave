@@ -35,7 +35,7 @@ impl UvxInstaller {
 }
 
 impl Installer for UvxInstaller {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
@@ -71,7 +71,7 @@ impl Installer for UvxInstaller {
         command
             .env("UV_TOOL_DIR", &tool_dir)
             .env("UV_TOOL_BIN_DIR", &bin_dir);
-        let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024)?;
+        let output = run_host_command(&mut command, context, 1024 * 1024, 256 * 1024).await?;
         if !output.status.success() {
             return Err(InstallError::Failed("uv tool install failed".to_string()));
         }

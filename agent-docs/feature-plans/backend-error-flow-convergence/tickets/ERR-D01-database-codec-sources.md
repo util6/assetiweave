@@ -11,12 +11,12 @@
 
 ## Steps
 
-- [ ] 增加 `sqlx_row_error_preserves_database_source_and_wire_code`：构造列类型不匹配，断言 source chain 包含 SQLx、wire code 为 `storage_error`、公开 message 不含 SQL。
-- [ ] 增加 `stored_json_error_preserves_codec_source_without_public_payload`：读取非法持久 JSON，断言内部 source 为 Serde、公开 message/details 不含原始 JSON。
-- [ ] 运行新测试，确认当前 `AppError::external` 产生错误分类或丢失 source 的 RED。
-- [ ] 为持久 codec 定义 `thiserror` typed error，区分 encode、decode 和 schema validation；通过 `#[from]` 进入 AppError 的 storage 分支。
-- [ ] 所有 `row.try_get` 直接使用 `?` 或 `map_err(AppError::Db)`；Serde 使用 typed codec conversion。
-- [ ] 删除 database/codec 分类内的 `map_err(AppError::external)` 和 `.to_string()` 往返。
+- [x] 增加 `sqlx_row_error_preserves_database_source_and_wire_code`：构造列类型不匹配，断言 source chain 包含 SQLx、wire code 为 `storage_error`、公开 message 不含 SQL。
+- [x] 增加 `stored_json_error_preserves_codec_source_without_public_payload`：读取非法持久 JSON，断言内部 source 为 Serde、公开 message/details 不含原始 JSON。
+- [x] 运行新测试，确认当前 `AppError::external` 产生错误分类或丢失 source 的 RED。
+- [x] 为持久 codec 定义 `thiserror` typed error，区分 encode、decode 和 schema validation；通过 `#[from]` 进入 AppError 的 storage 分支。
+- [x] 所有 `row.try_get` 直接使用 `?` 或 `map_err(AppError::Db)`；Serde 使用 typed codec conversion。
+- [x] 删除 database/codec 分类内的 `map_err(AppError::external)` 和 `.to_string()` 往返。
 
 ## Verify
 

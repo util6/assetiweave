@@ -755,10 +755,13 @@ mod tests {
             installation_id: Some("fixture-installation".to_string()),
             display_name: "Fake Native".to_string(),
             protocol: AgentProtocol::Native,
-            command: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("test-fixtures/fake-native-agent")
-                .to_string_lossy()
-                .into_owned(),
+            command: {
+                let base =
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-native-agent");
+                #[cfg(windows)]
+                let base = base.with_extension("cmd");
+                base.to_string_lossy().into_owned()
+            },
             args: vec!["unused-launch-arg-is-replaced-by-the-native-invocation".to_string()],
             env: vec![AgentEnvEntry::new(
                 "ASSETIWEAVE_FAKE_NATIVE_RECORD_PATH",

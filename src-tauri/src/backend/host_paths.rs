@@ -38,18 +38,97 @@ pub(crate) struct HostDirectories {
 
 impl HostDirectories {
     pub(crate) fn current() -> AppResult<Self> {
-        let base_dirs = directories::BaseDirs::new().ok_or_else(|| {
-            crate::backend::runtime::AppError::NotFound("无法确定用户基本目录".to_string())
-        })?;
-        let home = base_dirs.home_dir().to_path_buf();
+        let base_dirs = directories::BaseDirs::new();
+        let home = base_dirs
+            .as_ref()
+            .map(|b| b.home_dir().to_path_buf())
+            .or_else(dirs::home_dir)
+            .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .ok_or_else(|| {
+                crate::backend::runtime::AppError::NotFound("无法确定用户基本目录".to_string())
+            })?;
+
+        let config = base_dirs
+            .as_ref()
+            .map(|b| b.config_dir().to_path_buf())
+            .or_else(dirs::config_dir)
+            .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Roaming")
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    home.join(".config")
+                }
+            });
+
+        let local_data = base_dirs
+            .as_ref()
+            .map(|b| b.data_local_dir().to_path_buf())
+            .or_else(dirs::data_local_dir)
+            .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Local")
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    home.join("Library").join("Application Support")
+                }
+                #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+                {
+                    home.join(".local").join("share")
+                }
+            });
+
+        let data = base_dirs
+            .as_ref()
+            .map(|b| b.data_dir().to_path_buf())
+            .or_else(dirs::data_dir)
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    config.clone()
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    local_data.clone()
+                }
+            });
+
+        let cache = base_dirs
+            .as_ref()
+            .map(|b| b.cache_dir().to_path_buf())
+            .or_else(dirs::cache_dir)
+            .unwrap_or_else(|| {
+                #[cfg(target_os = "windows")]
+                {
+                    home.join("AppData").join("Local")
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    home.join("Library").join("Caches")
+                }
+                #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+                {
+                    home.join(".cache")
+                }
+            });
+
+        let workspace = std::env::current_dir()
+            .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?;
+
         Ok(Self {
-            config: base_dirs.config_dir().to_path_buf(),
-            local_data: base_dirs.data_local_dir().to_path_buf(),
-            data: base_dirs.data_dir().to_path_buf(),
-            cache: base_dirs.cache_dir().to_path_buf(),
-            workspace: std::env::current_dir()
-                .map_err(|error| crate::backend::runtime::AppError::External(error.to_string()))?,
             home,
+            config,
+            local_data,
+            data,
+            cache,
+            workspace,
         })
     }
 }

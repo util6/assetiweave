@@ -1,7 +1,4 @@
-use crate::backend::{
-    dto::SkillRemoteSource,
-    runtime::{AppError, AppResult},
-};
+use crate::backend::{dto::SkillRemoteSource, runtime::AppResult};
 use sqlx::{sqlite::SqliteRow, Row as SqlxRow, SqlitePool};
 
 use super::sql;
@@ -13,8 +10,7 @@ pub(crate) async fn list_skill_remote_sources_sqlx(
     let rows = sqlx::query(sql::LIST_SKILL_REMOTE_SOURCES)
         .bind(tenant_id)
         .fetch_all(pool)
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     rows.iter().map(map_sqlx_skill_remote_source).collect()
 }
 
@@ -27,8 +23,7 @@ pub(crate) async fn load_skill_remote_source_sqlx(
         .bind(tenant_id)
         .bind(asset_id)
         .fetch_optional(pool)
-        .await
-        .map_err(AppError::external)?
+        .await?
         .as_ref()
         .map(map_sqlx_skill_remote_source)
         .transpose()
@@ -55,8 +50,7 @@ pub(crate) async fn upsert_skill_remote_source_sqlx(
         .bind(&source.status)
         .bind(&source.message)
         .execute(pool)
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     Ok(())
 }
 
@@ -73,8 +67,7 @@ pub(crate) async fn update_skill_remote_check_result_sqlx(
         .bind(&source.status)
         .bind(&source.message)
         .execute(pool)
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     Ok(())
 }
 
@@ -85,26 +78,25 @@ pub(crate) async fn delete_orphan_skill_remote_sources_sqlx(
     sqlx::query(sql::DELETE_ORPHAN_SKILL_REMOTE_SOURCES)
         .bind(tenant_id)
         .execute(pool)
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     Ok(())
 }
 
 fn map_sqlx_skill_remote_source(row: &SqliteRow) -> AppResult<SkillRemoteSource> {
     Ok(SkillRemoteSource {
-        asset_id: row.try_get(0).map_err(AppError::external)?,
-        provider: row.try_get(1).map_err(AppError::external)?,
-        source_url: row.try_get(2).map_err(AppError::external)?,
-        repo_url: row.try_get(3).map_err(AppError::external)?,
-        branch: row.try_get(4).map_err(AppError::external)?,
-        path: row.try_get(5).map_err(AppError::external)?,
-        acquired_at: row.try_get(6).map_err(AppError::external)?,
-        acquired_tree_sha: row.try_get(7).map_err(AppError::external)?,
-        local_content_hash: row.try_get(8).map_err(AppError::external)?,
-        last_checked_at: row.try_get(9).map_err(AppError::external)?,
-        latest_tree_sha: row.try_get(10).map_err(AppError::external)?,
-        status: row.try_get(11).map_err(AppError::external)?,
-        message: row.try_get(12).map_err(AppError::external)?,
+        asset_id: row.try_get(0)?,
+        provider: row.try_get(1)?,
+        source_url: row.try_get(2)?,
+        repo_url: row.try_get(3)?,
+        branch: row.try_get(4)?,
+        path: row.try_get(5)?,
+        acquired_at: row.try_get(6)?,
+        acquired_tree_sha: row.try_get(7)?,
+        local_content_hash: row.try_get(8)?,
+        last_checked_at: row.try_get(9)?,
+        latest_tree_sha: row.try_get(10)?,
+        status: row.try_get(11)?,
+        message: row.try_get(12)?,
     })
 }
 

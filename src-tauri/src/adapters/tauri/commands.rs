@@ -449,17 +449,16 @@ pub(crate) async fn update_skill_backup_settings(
         .await;
 
     match &result {
-        Ok(settings) => tracing::info!(
+        Ok(_) => tracing::info!(
             action = "skill.backup.settings.update",
-            root_path = %settings.root_path,
-            expanded_root_path = %settings.expanded_root_path,
+            resource = "skill_backup",
             "更新 Skill 备份目录成功"
         ),
         Err(error) => tracing::error!(
             action = "skill.backup.settings.update",
-            root_path = ?root_path_input,
+            resource = "skill_backup",
             migrate = migrate_input,
-            error = %error,
+            error_code = %error.code(),
             "更新 Skill 备份目录失败"
         ),
     }
@@ -1037,7 +1036,11 @@ pub(crate) async fn create_profile(
     input: TargetProfileInput,
 ) -> RuntimeAppResult<TargetProfile> {
     let profile_name = input.name.clone();
-    let target_paths = input.target_paths.as_ref().map(|paths| paths.join(","));
+    let target_path_count = input
+        .target_paths
+        .as_ref()
+        .map(|paths| paths.len())
+        .unwrap_or(0);
     let app_kind = input.app_kind.map(|k| format!("{k:?}"));
     let result = AppService::from_runtime(&state.runtime)
         .create_profile(input)
@@ -1048,13 +1051,13 @@ pub(crate) async fn create_profile(
             action = "profile.create",
             profile_id = %profile.id,
             profile_name = %profile.name,
-            target_paths = ?profile.target_paths,
+            target_path_count = profile.target_paths.len(),
             "添加目标 APP 配置成功"
         ),
         Err(error) => tracing::error!(
             action = "profile.create",
             profile_name = %profile_name,
-            target_paths = ?target_paths,
+            target_path_count = target_path_count,
             app_kind = ?app_kind,
             error = %error,
             "添加目标 APP 配置失败"
@@ -1070,7 +1073,7 @@ pub(crate) async fn update_profile(
 ) -> RuntimeAppResult<TargetProfile> {
     let profile_id = profile.id.clone();
     let profile_name = profile.name.clone();
-    let target_paths = profile.target_paths.clone();
+    let target_path_count = profile.target_paths.len();
     let result = AppService::from_runtime(&state.runtime)
         .update_profile(profile)
         .await;
@@ -1080,14 +1083,14 @@ pub(crate) async fn update_profile(
             action = "profile.update",
             profile_id = %profile.id,
             profile_name = %profile.name,
-            target_paths = ?profile.target_paths,
+            target_path_count = profile.target_paths.len(),
             "更新目标 APP 配置成功"
         ),
         Err(error) => tracing::error!(
             action = "profile.update",
             profile_id = %profile_id,
             profile_name = %profile_name,
-            target_paths = ?target_paths,
+            target_path_count = target_path_count,
             error = %error,
             "更新目标 APP 配置失败"
         ),
@@ -2219,11 +2222,13 @@ pub(crate) async fn unregister_conversation_adapter(
 }
 
 #[tauri::command]
-pub(crate) fn try_run_conversation_adapter(
+pub(crate) async fn try_run_conversation_adapter(
     state: State<'_, AppState>,
     params: ExternalAdapterTryRunParams,
 ) -> RuntimeAppResult<crate::backend::conversations::ExternalAdapterRunResult> {
-    AppService::from_runtime(&state.runtime).try_run_conversation_adapter(params)
+    AppService::from_runtime(&state.runtime)
+        .try_run_conversation_adapter(params)
+        .await
 }
 
 #[tauri::command]
@@ -2231,12 +2236,9 @@ pub(crate) async fn project_conversation_command_parts(
     state: State<'_, AppState>,
     params: ConversationCommandProjectionParams,
 ) -> RuntimeAppResult<Vec<ConversationCommandProjection>> {
-    let runtime = state.runtime.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        AppService::from_runtime(&runtime).project_conversation_command_parts(params)
-    })
-    .await
-    .map_err(|error| AppError::External(error.to_string()))?
+    AppService::from_runtime(&state.runtime)
+        .project_conversation_command_parts(params)
+        .await
 }
 
 #[tauri::command]
@@ -3258,13 +3260,13 @@ pub(crate) fn reveal_path(path: String) -> RuntimeAppResult<()> {
     match &result {
         Ok(()) => tracing::info!(
             action = "path.reveal",
-            path = %path,
+            resource = "filesystem_path",
             "打开路径成功"
         ),
         Err(error) => tracing::error!(
             action = "path.reveal",
-            path = %path,
-            error = %error,
+            resource = "filesystem_path",
+            error_code = %error.code(),
             "打开路径失败"
         ),
     }
@@ -3304,12 +3306,12 @@ pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
 ) -> RuntimeAppResult<crate::backend::logs::LogSnapshot> {
-    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::External)
+    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::from)
 }
 
 #[tauri::command]
 pub(crate) fn logs_open_log_directory() -> RuntimeAppResult<()> {
-    crate::backend::logs::logs_open_log_directory().map_err(AppError::External)
+    crate::backend::logs::logs_open_log_directory().map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -3320,7 +3322,7 @@ pub(crate) fn logs_write_operation(
     fields: Option<BTreeMap<String, String>>,
 ) -> RuntimeAppResult<()> {
     crate::backend::logs::logs_write_operation(level, operation, message, fields)
-        .map_err(AppError::External)
+        .map_err(AppError::from)
 }
 
 #[tauri::command]

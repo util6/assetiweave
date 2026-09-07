@@ -64,10 +64,8 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
         .bind(since)
         .bind(until)
         .fetch_one(pool)
-        .await
-        .map_err(AppError::external)?
-        .try_get(0)
-        .map_err(AppError::external)?;
+        .await?
+        .try_get(0)?;
     const RECALL_PAGE_SQL: &str = r#"
       WITH all_questions AS (
         SELECT 'session' AS record_kind, s.source_id, s.id AS session_id,
@@ -118,8 +116,7 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
                 .map_err(|_| AppError::Validation("invalid Recall offset".to_string()))?,
         )
         .fetch_all(pool)
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     let total = usize::try_from(total_count)
         .map_err(|_| AppError::Validation("invalid Recall question count".to_string()))?;
     let selected = rows
@@ -144,11 +141,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
     );
     count.push_bind(tenant_id);
     push_session_recall_scope(&mut count, scope, since, until, include_unavailable);
-    let total_count = count
-        .build_query_scalar::<i64>()
-        .fetch_one(pool)
-        .await
-        .map_err(AppError::external)?;
+    let total_count = count.build_query_scalar::<i64>().fetch_one(pool).await?;
 
     let mut page = QueryBuilder::<Sqlite>::new(
         "SELECT 'session' AS record_kind,s.source_id,s.id AS session_id,s.title AS session_title,s.project_path,q.id AS question_id,ROW_NUMBER() OVER (PARTITION BY q.tenant_id, q.session_id ORDER BY q.created_at, q.id) - 1 AS question_index FROM conversation_questions q JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id WHERE q.tenant_id=",
@@ -165,11 +158,7 @@ async fn list_session_memory_recall_question_refs_sqlx(
         i64::try_from(offset)
             .map_err(|_| AppError::Validation("invalid Recall offset".to_string()))?,
     );
-    let rows = page
-        .build()
-        .fetch_all(pool)
-        .await
-        .map_err(AppError::external)?;
+    let rows = page.build().fetch_all(pool).await?;
     Ok((
         usize::try_from(total_count)
             .map_err(|_| AppError::Validation("invalid Recall question count".to_string()))?,
@@ -211,18 +200,18 @@ fn push_session_recall_scope(
 }
 
 fn map_memory_recall_question_ref(row: &SqliteRow) -> AppResult<MemoryRecallQuestionRef> {
-    let kind: String = row.try_get("record_kind").map_err(AppError::external)?;
+    let kind: String = row.try_get("record_kind")?;
     Ok(MemoryRecallQuestionRef {
         record_kind: if kind == "web" {
             MemoryRecordKind::Web
         } else {
             MemoryRecordKind::Session
         },
-        source_id: row.try_get("source_id").map_err(AppError::external)?,
-        session_id: row.try_get("session_id").map_err(AppError::external)?,
-        session_title: row.try_get("session_title").map_err(AppError::external)?,
-        project_path: row.try_get("project_path").map_err(AppError::external)?,
-        question_id: row.try_get("question_id").map_err(AppError::external)?,
-        question_index: row.try_get("question_index").map_err(AppError::external)?,
+        source_id: row.try_get("source_id")?,
+        session_id: row.try_get("session_id")?,
+        session_title: row.try_get("session_title")?,
+        project_path: row.try_get("project_path")?,
+        question_id: row.try_get("question_id")?,
+        question_index: row.try_get("question_index")?,
     })
 }

@@ -1,4 +1,4 @@
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::runtime::AppResult;
 #[cfg(test)]
 use sqlx::Row;
 use sqlx::SqlitePool;
@@ -22,8 +22,7 @@ pub(crate) async fn record_memory_usage_event_sqlx(
     .bind(use_id)
     .bind(used_at)
     .execute(pool)
-    .await
-    .map_err(AppError::external)?;
+    .await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -34,15 +33,15 @@ pub(crate) async fn count_memory_usage_events_sqlx(
     memory_kind: &str,
     memory_id: &str,
 ) -> AppResult<i64> {
-    sqlx::query_scalar(
+    let count = sqlx::query_scalar(
         "SELECT COUNT(*) FROM memory_usage_events WHERE tenant_id = ?1 AND memory_kind = ?2 AND memory_id = ?3",
     )
     .bind(tenant_id)
     .bind(memory_kind)
     .bind(memory_id)
     .fetch_one(pool)
-    .await
-    .map_err(AppError::external)
+    .await?;
+    Ok(count)
 }
 
 #[cfg(test)]
@@ -59,14 +58,13 @@ pub(crate) async fn list_memory_usage_events_sqlx(
     .bind(memory_kind)
     .bind(memory_id)
     .fetch_all(pool)
-    .await
-    .map_err(AppError::external)?;
+    .await?;
     rows.into_iter()
         .map(|row| {
             Ok((
-                row.try_get("use_kind").map_err(AppError::external)?,
-                row.try_get("use_id").map_err(AppError::external)?,
-                row.try_get("used_at").map_err(AppError::external)?,
+                row.try_get("use_kind")?,
+                row.try_get("use_id")?,
+                row.try_get("used_at")?,
             ))
         })
         .collect()

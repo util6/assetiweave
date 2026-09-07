@@ -20,22 +20,107 @@ use crate::backend::extension_kernel::TrustGate;
 
 impl From<AgentMarketError> for AppError {
     fn from(error: AgentMarketError) -> Self {
-        let details = error.details.or_else(|| {
-            if error.agent_id.is_some() || error.phase.is_some() || error.action.is_some() {
-                Some(serde_json::json!({
-                    "agentId": error.agent_id,
-                    "phase": error.phase,
-                    "action": error.action,
-                }))
-            } else {
-                None
+        match error {
+            AgentMarketError::Database(err) => Self::Db(err),
+            AgentMarketError::Catalog(err) => Self::Domain {
+                code: "invalid_catalog".to_string(),
+                message: err.to_string(),
+                retryable: false,
+                details: None,
+            },
+            AgentMarketError::CatalogValidation {
+                message,
+                agent_id,
+                field,
+                details,
+            } => {
+                let structured = details.or_else(|| {
+                    if agent_id.is_some() || field.is_some() {
+                        Some(serde_json::json!({
+                            "agentId": agent_id,
+                            "field": field,
+                        }))
+                    } else {
+                        None
+                    }
+                });
+                Self::Domain {
+                    code: "catalog_validation_failed".to_string(),
+                    message,
+                    retryable: false,
+                    details: structured,
+                }
             }
-        });
-        Self::Domain {
-            code: error.code,
-            message: error.message,
-            retryable: error.retryable,
-            details,
+            AgentMarketError::InstallationNotFound { agent_id } => Self::Domain {
+                code: "agent_not_installed".to_string(),
+                message: format!("Agent installation '{agent_id}' not found"),
+                retryable: false,
+                details: Some(serde_json::json!({ "agentId": agent_id })),
+            },
+            AgentMarketError::Distribution {
+                code,
+                message,
+                agent_id,
+                distribution_id,
+                details,
+            } => {
+                let retryable = matches!(
+                    code.as_str(),
+                    "runtime_missing" | "system_version_incompatible"
+                );
+                let structured = details.or_else(|| {
+                    if agent_id.is_some() || distribution_id.is_some() {
+                        Some(serde_json::json!({
+                            "agentId": agent_id,
+                            "distributionId": distribution_id,
+                        }))
+                    } else {
+                        None
+                    }
+                });
+                Self::Domain {
+                    code,
+                    message,
+                    retryable,
+                    details: structured,
+                }
+            }
+            AgentMarketError::Process(err) => err.into(),
+            AgentMarketError::Timeout { message, agent_id } => Self::Domain {
+                code: "timeout".to_string(),
+                message,
+                retryable: true,
+                details: agent_id.map(|id| serde_json::json!({ "agentId": id })),
+            },
+            AgentMarketError::Lifecycle {
+                code,
+                message,
+                agent_id,
+                phase,
+                retryable,
+                action,
+                details,
+            } => {
+                let structured = details.or_else(|| {
+                    if agent_id.is_some() || phase.is_some() || action.is_some() {
+                        Some(serde_json::json!({
+                            "agentId": agent_id,
+                            "phase": phase,
+                            "action": action,
+                        }))
+                    } else {
+                        None
+                    }
+                });
+                Self::Domain {
+                    code,
+                    message,
+                    retryable,
+                    details: structured,
+                }
+            }
+            AgentMarketError::Io(err) => Self::Io(err),
+            AgentMarketError::Serialization(err) => Self::Storage(err.to_string()),
         }
     }
 }
@@ -113,7 +198,7 @@ pub(crate) struct AgentMarketRefreshResult {
 
 impl AppService {
     pub(crate) fn refresh_agent_market_catalog(&self) -> AppResult<AgentMarketRefreshResult> {
-        let result = CatalogCache::refresh_default().map_err(AppError::external)?;
+        let result = CatalogCache::refresh_default()?;
         let (status, catalog, etag) = match result {
             crate::backend::agent_market::CatalogRefreshOutcome::Updated { catalog, etag } => {
                 ("updated", catalog, etag)
@@ -122,8 +207,7 @@ impl AppService {
                 ("not_modified", catalog, etag)
             }
         };
-        let active_catalog_version = CatalogCache::best_available()
-            .map_err(AppError::external)?
+        let active_catalog_version = CatalogCache::best_available()?
             .catalog()
             .catalog_version
             .clone();
@@ -142,7 +226,7 @@ impl AppService {
         &self,
         request: AgentMarketListRequest,
     ) -> AppResult<Vec<AgentMarketItemView>> {
-        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
+        let catalog = CatalogCache::best_available()?;
         let installations = self.list_agent_installations().await?;
         let context = host_distribution_context();
         let query = request
@@ -151,7 +235,8 @@ impl AppService {
             .unwrap_or_default()
             .trim()
             .to_ascii_lowercase();
-        catalog
+        let mut views = Vec::new();
+        for item in catalog
             .catalog()
             .items
             .iter()
@@ -173,44 +258,43 @@ impl AppService {
                         .iter()
                         .any(|installation| installation.agent_id == item.id)
             })
-            .map(|item| {
-                let mut item_context = context.clone();
-                probe_item_system_distributions(item, &mut item_context);
-                let candidates = DistributionSelector::select(item, &item_context, None)
-                    .map_err(distribution_selection_error)?;
-                let installed = installations
-                    .iter()
-                    .find(|installation| installation.agent_id == item.id)
-                    .map(installation_view);
-                let recommended_distribution_id = candidates
-                    .iter()
-                    .find(|candidate| candidate.recommended)
-                    .map(|candidate| candidate.distribution_id.clone());
-                Ok(AgentMarketItemView {
-                    id: item.id.clone(),
-                    catalog_version: catalog.catalog().catalog_version.clone(),
-                    display_name: item.display_name.clone(),
-                    description: item.description.clone(),
-                    protocol: item.protocol.clone(),
-                    version: item.version.clone(),
-                    installability: installability(item, &candidates),
-                    capabilities: item.capabilities.clone(),
-                    verification: item.verification.clone(),
-                    distributions: candidates,
-                    recommended_distribution_id,
-                    update_available: installed
-                        .as_ref()
-                        .is_some_and(|installation| installation.version != item.version),
-                    installed,
-                })
-            })
-            .collect::<Result<Vec<_>, AppError>>()
+        {
+            let mut item_context = context.clone();
+            probe_item_system_distributions(item, &mut item_context).await;
+            let candidates = DistributionSelector::select(item, &item_context, None)?;
+            let installed = installations
+                .iter()
+                .find(|installation| installation.agent_id == item.id)
+                .map(installation_view);
+            let recommended_distribution_id = candidates
+                .iter()
+                .find(|candidate| candidate.recommended)
+                .map(|candidate| candidate.distribution_id.clone());
+            views.push(AgentMarketItemView {
+                id: item.id.clone(),
+                catalog_version: catalog.catalog().catalog_version.clone(),
+                display_name: item.display_name.clone(),
+                description: item.description.clone(),
+                protocol: item.protocol.clone(),
+                version: item.version.clone(),
+                installability: installability(item, &candidates),
+                capabilities: item.capabilities.clone(),
+                verification: item.verification.clone(),
+                distributions: candidates,
+                recommended_distribution_id,
+                update_available: installed
+                    .as_ref()
+                    .is_some_and(|installation| installation.version != item.version),
+                installed,
+            });
+        }
+        Ok(views)
     }
 
     pub(crate) async fn list_agent_installations(&self) -> AppResult<Vec<AgentInstallation>> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        repository.list().await.map_err(AppError::external)
+        Ok(repository.list().await?)
     }
 
     pub(crate) async fn list_installed_agents(&self) -> AppResult<Vec<AgentInstallationView>> {
@@ -246,27 +330,26 @@ impl AppService {
     ) -> AppResult<AgentInstallationView> {
         let repository =
             crate::backend::agent_market::AgentInstallationRepository::new(self.db.pool().clone());
-        let mut installation = repository
-            .get(&agent_id)
-            .await
-            .map_err(AppError::external)?
-            .ok_or_else(|| {
-                AppError::from(AgentMarketError::new(
-                    "agent_not_installed",
-                    "The Agent is not installed.",
-                    false,
-                ))
-            })?;
+        let mut installation = repository.get(&agent_id).await?.ok_or_else(|| {
+            AppError::from(AgentMarketError::new(
+                "agent_not_installed",
+                "The Agent is not installed.",
+                false,
+            ))
+        })?;
         let now = chrono::Utc::now().to_rfc3339();
         let probe = if installation.resolved_program.is_file() {
-            Some(crate::backend::host_process::run_program_with_timeout(
-                &installation.resolved_program,
-                &["--version".to_string()],
-                None,
-                Duration::from_secs(8),
-                1024 * 1024,
-                256 * 1024,
-            ))
+            let spec = crate::backend::host_process::HostCommandSpec {
+                program: installation.resolved_program.clone(),
+                args: vec!["--version".to_string()],
+                env: Vec::new(),
+                working_dir: None,
+                stdin: crate::backend::host_process::HostInput::Null,
+                timeout: Duration::from_secs(8),
+                stdout_limit: 1024 * 1024,
+                stderr_limit: 256 * 1024,
+            };
+            Some(crate::backend::host_process::run_host_command_async(spec, None).await)
         } else {
             None
         };
@@ -338,14 +421,8 @@ impl AppService {
         }
         installation.runtime_checked_at = Some(now.clone());
         installation.updated_at = now;
-        repository
-            .update_health(&installation)
-            .await
-            .map_err(AppError::external)?;
-        self.agent_runtime_manager
-            .reload()
-            .await
-            .map_err(AppError::external)?;
+        repository.update_health(&installation).await?;
+        self.agent_runtime_manager.reload().await?;
         Ok(installation_view(&installation))
     }
 
@@ -374,7 +451,7 @@ impl AppService {
         &self,
         request: AgentInstallPreviewRequest,
     ) -> AppResult<AgentInstallPreview> {
-        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
+        let catalog = CatalogCache::best_available()?;
         let item = catalog.item(&request.agent_id).ok_or_else(|| {
             AppError::from(AgentMarketError::new(
                 "agent_not_found",
@@ -390,10 +467,9 @@ impl AppService {
             )));
         }
         let mut context = host_distribution_context();
-        probe_item_system_distributions(item, &mut context);
+        probe_item_system_distributions(item, &mut context).await;
         let candidates =
-            DistributionSelector::select(item, &context, request.distribution_id.as_deref())
-                .map_err(distribution_selection_error)?;
+            DistributionSelector::select(item, &context, request.distribution_id.as_deref())?;
         let selected = candidates
             .iter()
             .find(|candidate| {
@@ -402,8 +478,16 @@ impl AppService {
                         == Some(candidate.distribution_id.as_str())
             })
             .cloned()
-            .ok_or_else(|| "distribution_unsupported".to_string())
-            .map_err(AppError::external)?;
+            .ok_or_else(|| {
+                AppError::from(AgentMarketError::Distribution {
+                    code: "distribution_unsupported".to_string(),
+                    message: "The selected Agent distribution is unavailable on this platform."
+                        .to_string(),
+                    agent_id: Some(item.id.clone()),
+                    distribution_id: request.distribution_id.clone(),
+                    details: None,
+                })
+            })?;
         let current = self
             .list_agent_installations()
             .await?
@@ -483,7 +567,7 @@ impl AppService {
                     false,
                 ))
             })?;
-        let catalog = CatalogCache::best_available().map_err(AppError::external)?;
+        let catalog = CatalogCache::best_available()?;
         let item = catalog.item(&agent_id).ok_or_else(|| {
             AppError::from(AgentMarketError::new(
                 "agent_not_found",
@@ -642,12 +726,11 @@ impl AppService {
     }
 
     fn agent_lifecycle(&self) -> AppResult<AgentLifecycleService> {
-        AgentLifecycleService::new(
+        Ok(AgentLifecycleService::new(
             self.db.pool().clone(),
             self.agent_runtime_manager.clone(),
-            default_runtime_root().map_err(AppError::from)?,
-        )
-        .map_err(AppError::from)
+            default_runtime_root()?,
+        )?)
     }
 }
 
@@ -658,28 +741,6 @@ fn host_distribution_context() -> DistributionSelectionContext {
     context.npm_available = crate::backend::host_process::resolve_host_executable("npm").is_some();
     context.uv_available = crate::backend::host_process::resolve_host_executable("uv").is_some();
     context
-}
-
-fn distribution_selection_error(error: String) -> AppError {
-    let code = error
-        .split_once(':')
-        .map(|(code, _)| code)
-        .unwrap_or(error.as_str())
-        .trim();
-    let (message, retryable) = match code {
-        "runtime_missing" => (
-            "The selected Agent distribution requires a runtime that is not installed.",
-            true,
-        ),
-        "system_version_incompatible" => {
-            ("The selected system Agent runtime could not be used.", true)
-        }
-        _ => (
-            "The selected Agent distribution is unavailable on this platform.",
-            false,
-        ),
-    };
-    AppError::from(AgentMarketError::new(code, message, retryable))
 }
 
 fn installability(_item: &CatalogItem, candidates: &[DistributionCandidate]) -> String {
@@ -695,7 +756,10 @@ fn installability(_item: &CatalogItem, candidates: &[DistributionCandidate]) -> 
     "unsupported".to_string()
 }
 
-fn probe_item_system_distributions(item: &CatalogItem, context: &mut DistributionSelectionContext) {
+async fn probe_item_system_distributions(
+    item: &CatalogItem,
+    context: &mut DistributionSelectionContext,
+) {
     for distribution in &item.distributions {
         let Distribution::System {
             command_candidates, ..
@@ -719,7 +783,9 @@ fn probe_item_system_distributions(item: &CatalogItem, context: &mut Distributio
                 &result,
                 distribution,
                 &install_context,
-            ) {
+            )
+            .await
+            {
                 Ok(runtime) => SystemObservation {
                     resolved_program: Some(runtime.resolved_program),
                     version: Some(runtime.version),

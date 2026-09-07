@@ -1,8 +1,9 @@
 # 后端基础设施生态收口第二阶段 Execution Router
 
-> **2026-09-06 审计路由：** 原 `B2-G01` 的 `VERIFIED` 已被当前代码与发布证据反驳。
-> Issue #24 重新成为未完成状态。执行者必须转到
-> [`08-remediation-router.md`](08-remediation-router.md)，不得从旧卡重放已经完成的迁移。
+> **2026-09-06 审计纠偏结论：** 审计后纠偏卡 B2-R16 至 B2-G03 已全部实施并验收通过。
+> GitHub Actions CI [Run 34050901408](https://github.com/util6/assetiweave/actions/runs/34050901408) 5 个 jobs 100% 成功。
+> 详情见 [`08-remediation-router.md`](08-remediation-router.md) 与 [`10-remediation-verification-matrix.md`](10-remediation-verification-matrix.md)。
+> Issue #24 正式关闭。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 `superpowers:executing-plans`，一次执行一张卡。只有维护者明确安排并行工作时才使用 `superpowers:subagent-driven-development`。
 

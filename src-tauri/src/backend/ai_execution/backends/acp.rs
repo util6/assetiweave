@@ -1962,14 +1962,21 @@ mod tests {
         assert_eq!(result.text, "translated");
         let records = records(&record);
         assert!(!records.contains("\"event\":\"delete\""));
-        let reaped = records.find("\"event\":\"sigterm\"").expect("reap record");
-        let fallback = records
-            .find("\"event\":\"fallback_delete\"")
-            .expect("fallback record");
-        assert!(
-            reaped < fallback,
-            "fallback must run after ACP process reap"
-        );
+        #[cfg(unix)]
+        {
+            let reaped = records.find("\"event\":\"sigterm\"").expect("reap record");
+            let fallback = records
+                .find("\"event\":\"fallback_delete\"")
+                .expect("fallback record");
+            assert!(
+                reaped < fallback,
+                "fallback must run after ACP process reap"
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            assert!(records.contains("\"event\":\"fallback_delete\""));
+        }
         assert!(records.contains("\"sessionId\":\"fixture-session\""));
         assert!(records.contains("\"originalProcessReaped\":true"));
         assert!(records.contains("\"workspaceExists\":true"));

@@ -194,10 +194,10 @@ pub(crate) fn is_safe_managed_install_path(
 
 pub(crate) fn market_error(
     code: &str,
-    message: impl Into<String>,
+    message: impl std::fmt::Display,
     retryable: bool,
 ) -> AgentMarketError {
-    AgentMarketError::new(code, &message.into(), retryable)
+    AgentMarketError::new(code, &message.to_string(), retryable)
 }
 
 #[cfg(test)]
@@ -320,7 +320,7 @@ mod tests {
             .install(request_for(&service_v3, "update", "1.2.0"))
             .await
             .expect_err("failed fixture update");
-        assert_eq!(failed.code, "acp_connection_failed");
+        assert_eq!(failed.code(), "acp_connection_failed");
         let current = service_v3
             .repository
             .get(AGENT_ID)
@@ -356,7 +356,7 @@ mod tests {
                 .rich_history_replay
         );
 
-        let active_program = second_install_dir.join("bin/agent");
+        let active_program = second_install_dir.join(fixture_executable_name());
         std::fs::write(
             &active_program,
             fixture_agent_script(&fixture_path, "no_models"),
@@ -437,7 +437,7 @@ mod tests {
             )
             .await
             .expect_err("cancelled reinstall");
-        assert_eq!(cancelled.code, "cancelled");
+        assert_eq!(cancelled.code(), "cancelled");
         let after_cancel = service_v3
             .repository
             .get(AGENT_ID)
@@ -526,7 +526,7 @@ mod tests {
                     url: url.to_string(),
                     sha256: sha256(bytes),
                     size: Some(bytes.len() as u64),
-                    executable: "bin/agent".to_string(),
+                    executable: fixture_executable_name().to_string(),
                     launch_args: Vec::new(),
                     model_discovery_args: None,
                     session_cleanup_args: None,
@@ -536,6 +536,24 @@ mod tests {
         }
     }
 
+    fn fixture_executable_name() -> &'static str {
+        if cfg!(windows) {
+            "bin/agent.cmd"
+        } else {
+            "bin/agent"
+        }
+    }
+
+    #[cfg(windows)]
+    fn fixture_agent_script(path: &Path, mode: &str) -> Vec<u8> {
+        format!(
+            "@echo off\r\nset ASSETIWEAVE_FAKE_ACP_MODE={mode}\r\nnode \"{}\" %*\r\n",
+            path.display()
+        )
+        .into_bytes()
+    }
+
+    #[cfg(not(windows))]
     fn fixture_agent_script(path: &Path, mode: &str) -> Vec<u8> {
         format!(
             "#!/bin/sh\nexec env ASSETIWEAVE_FAKE_ACP_MODE={mode} node '{}'\n",

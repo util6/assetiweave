@@ -299,9 +299,13 @@ mod tests {
         .await;
         assert_eq!(missing, "program_not_found");
 
+        let node_exe = crate::backend::host_process::resolve_host_executable("node")
+            .unwrap_or_else(|| PathBuf::from("node"));
+        let node_path = node_exe.to_string_lossy();
+
         let timeout = invoke_code(
-            &invocation("/bin/sh"),
-            vec!["-c".into(), "sleep 2".into()],
+            &invocation(&node_path),
+            vec!["-e".into(), "setTimeout(() => {}, 2000)".into()],
             InvocationLimits {
                 timeout: Duration::from_millis(50),
                 stdout_limit: 64,
@@ -313,8 +317,8 @@ mod tests {
         assert_eq!(timeout, "timeout");
 
         let cancelled = invoke_code(
-            &invocation("/bin/sh"),
-            vec!["-c".into(), "sleep 2".into()],
+            &invocation(&node_path),
+            vec!["-e".into(), "setTimeout(() => {}, 2000)".into()],
             InvocationLimits {
                 timeout: Duration::from_secs(1),
                 stdout_limit: 64,
@@ -330,8 +334,8 @@ mod tests {
         assert_eq!(cancelled, "cancelled");
 
         let output_limit = invoke_code(
-            &invocation("/bin/sh"),
-            vec!["-c".into(), "printf 1234567890".into()],
+            &invocation(&node_path),
+            vec!["-e".into(), "process.stdout.write('1234567890')".into()],
             InvocationLimits {
                 timeout: Duration::from_secs(1),
                 stdout_limit: 4,
@@ -343,8 +347,8 @@ mod tests {
         assert_eq!(output_limit, "output_limit_exceeded");
 
         let nonzero = invoke_code(
-            &invocation("/bin/sh"),
-            vec!["-c".into(), "exit 7".into()],
+            &invocation(&node_path),
+            vec!["-e".into(), "process.exit(7)".into()],
             InvocationLimits {
                 timeout: Duration::from_secs(1),
                 stdout_limit: 64,

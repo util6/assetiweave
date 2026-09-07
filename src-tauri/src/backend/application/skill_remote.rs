@@ -130,15 +130,16 @@ impl AppService {
         let mut staging_guard = StagingDirectoryGuard {
             path: staging_dir.clone(),
         };
-        clone_github_skill(&location, &staging_dir, cancellation)?;
+        clone_github_skill(&location, &staging_dir, cancellation).await?;
         ensure_not_cancelled(cancellation)?;
         let skill_dir = resolve_cloned_skill_dir(&staging_dir, location.path.as_deref())?;
-        let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref());
-        let acquired_branch = location
-            .branch
-            .clone()
-            .or_else(|| git_current_branch(&staging_dir))
-            .unwrap_or_else(|| "HEAD".to_string());
+        let acquired_tree_sha = git_skill_tree_sha(&staging_dir, location.path.as_deref()).await;
+        let acquired_branch = match location.branch.clone() {
+            Some(branch) => branch,
+            None => git_current_branch(&staging_dir)
+                .await
+                .unwrap_or_else(|| "HEAD".to_string()),
+        };
         report_skill_acquire_phase(phase_sink, "importing");
         let import_result = self
             .import_skill_with_progress(
@@ -853,19 +854,19 @@ fn ensure_not_cancelled(cancellation: Option<&CancellationToken>) -> AppResult<(
     }
 }
 
-fn clone_github_skill(
+async fn clone_github_skill(
     location: &GitHubSkillLocation,
     target: &Path,
     cancellation: Option<&CancellationToken>,
 ) -> AppResult<()> {
     if target.exists() {
         return Err(AppError::Conflict(format!(
-            "skill acquire staging path already exists: {}",
+            "skill staging path already exists: {}",
             target.display()
         )));
     }
     if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent).map_err(|error| AppError::Storage(error.to_string()))?;
     }
 
     let mut command_args = vec!["clone".to_string(), "--depth".to_string(), "1".to_string()];
@@ -876,21 +877,24 @@ fn clone_github_skill(
         location.repo_url.clone(),
         target.to_string_lossy().to_string(),
     ]);
-    let output = crate::backend::host_process::run_program_with_cancellation(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(120),
-        1024 * 1024,
-        256 * 1024,
-        cancellation,
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled => {
-            AppError::Cancelled("skill acquire cancelled".to_string())
-        }
-        error => AppError::Process(format!("failed to run git clone: {error:?}")),
-    })?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(120),
+        stdout_limit: 1024 * 1024,
+        stderr_limit: 256 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, cancellation)
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::Cancelled => {
+                AppError::Cancelled("skill acquire cancelled".to_string())
+            }
+            error => AppError::Process(format!("failed to run git clone: {error:?}")),
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(AppError::Process(format!("git clone failed: {stderr}")));
@@ -898,30 +902,36 @@ fn clone_github_skill(
     Ok(())
 }
 
-fn git_current_branch(repo: &Path) -> Option<String> {
-    git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|branch| branch != "HEAD")
+async fn git_current_branch(repo: &Path) -> Option<String> {
+    git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .filter(|branch| branch != "HEAD")
 }
 
-fn git_skill_tree_sha(repo: &Path, skill_path: Option<&str>) -> Option<String> {
+async fn git_skill_tree_sha(repo: &Path, skill_path: Option<&str>) -> Option<String> {
     let revision = skill_path
         .and_then(clean_skill_subpath)
         .map(|path| format!("HEAD:{path}"))
         .unwrap_or_else(|| "HEAD^{tree}".to_string());
-    git_output(repo, &["rev-parse", &revision])
+    git_output(repo, &["rev-parse", &revision]).await
 }
 
-fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
+async fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     let mut command_args = vec!["-C".to_string(), repo.to_string_lossy().to_string()];
     command_args.extend(args.iter().map(|arg| (*arg).to_string()));
-    let output = crate::backend::host_process::run_program_with_timeout(
-        Path::new("git"),
-        &command_args,
-        None,
-        Duration::from_secs(30),
-        64 * 1024,
-        64 * 1024,
-    )
-    .ok()?;
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program: PathBuf::from("git"),
+        args: command_args,
+        env: Vec::new(),
+        working_dir: None,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: Duration::from_secs(30),
+        stdout_limit: 64 * 1024,
+        stderr_limit: 64 * 1024,
+    };
+    let output = crate::backend::host_process::run_host_command_async(spec, None)
+        .await
+        .ok()?;
     if !output.status.success() {
         return None;
     }

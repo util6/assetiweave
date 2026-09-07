@@ -30,9 +30,7 @@ pub(crate) fn default_sources_for_tenant(tenant_id: &str) -> Vec<Source> {
         .collect::<Vec<_>>();
     let default_skill_root =
         crate::backend::path_utils::default_skill_backup_root_for_tenant(tenant_id)
-            .and_then(|path| {
-                crate::backend::path_utils::normalize_path_for_storage(&path.to_string_lossy())
-            })
+            .and_then(|path| crate::backend::path_utils::normalize_std_path_for_storage(&path))
             .unwrap_or_else(|_| format!("~/.assetiweave/tenants/{tenant_id}/library/skills"));
     let candidates = [
         (

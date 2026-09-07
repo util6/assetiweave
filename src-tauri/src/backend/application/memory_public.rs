@@ -41,7 +41,7 @@ impl AppService {
         &self,
         params: MemoryScopeRebuildParams,
     ) -> AppResult<MemoryRebuildResult> {
-        if !crate::backend::app_settings::memory_generation_enabled_for_database(&self.db)? {
+        if !self.backend_settings()?.is_memory_generation_enabled() {
             return Ok(MemoryRebuildResult {
                 scope: params.scope,
                 queued: false,

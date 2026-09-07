@@ -199,20 +199,17 @@ pub fn run() {
         panic!("failed to install AssetIWeave process AppRuntime: {error}");
     }
     let agent_runtime = runtime.agent_runtime();
-    let conversation_full_sync_on_startup_enabled =
-        match backend::app_settings::conversation_full_sync_on_startup_enabled_for_database(
-            runtime.db(),
-        ) {
-            Ok(enabled) => enabled,
-            Err(error) => {
-                tracing::error!(
-                    action = "app.startup.conversation_sync_setting",
-                    error = %error,
-                    "failed to read Conversation startup sync setting"
-                );
-                true
-            }
-        };
+    let conversation_full_sync_on_startup_enabled = match runtime.backend_settings() {
+        Ok(settings) => settings.auto_full_sync_on_startup(),
+        Err(error) => {
+            tracing::error!(
+                action = "app.startup.conversation_sync_setting",
+                error = %error,
+                "failed to read Conversation startup sync setting"
+            );
+            true
+        }
+    };
     {
         let recovery_runtime = runtime.clone();
         tauri::async_runtime::spawn(async move {

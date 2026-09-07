@@ -27,6 +27,10 @@ check_max() {
   fi
 }
 
+# C-PROCESS-01 & B2-P03C: host_process must not retain sync runner primitives
+check_absent 'libc::kill|process_group\(0\)|std::thread::spawn|thread::sleep|std::process::Command' \
+  "$ROOT/src-tauri/src/backend/host_process.rs"
+
 # Tauri wrappers must reuse the process runtime and keyed locks, not reopen a
 # database or serialize all commands behind the removed global mutex.
 check_absent 'state\.lock|AppService::open_with_db_path' "$ROOT/src-tauri/src/adapters"
@@ -164,6 +168,23 @@ src-tauri/src/backend/search|0
 src-tauri/src/backend/store|0
 src-tauri/src/backend/target_catalog.rs|0
 EOF
+
+# Monotonic error flow guards (Issue #2 / ERR-00)
+# 1. Global bounds prevent untyped and string-mapped error expansion
+check_max 80 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src"
+check_max 850 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
+check_max 77 'AppError::External\([^)]*\.to_string\(\)' "$ROOT/src-tauri/src/backend"
+
+# 2. Runtime layer must not introduce cross-module String results
+check_absent 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src/backend/runtime"
+
+# 3. Runtime layer must not expand map_err(AppError::external), and runtime core forbids it entirely
+check_max 13 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime"
+check_absent 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime/app_runtime.rs"
+check_absent 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend/runtime/error.rs"
+
+# 4. Known typed errors must not be mapped to string losing source
+check_absent '(sqlx::Error|io::Error|HostProcessError).*to_string\(\)' "$ROOT/src-tauri/src/backend/runtime"
 
 # Frontend architecture boundaries: enforce services-only Tauri IPC via ESLint
 if [ -f "$ROOT/package.json" ]; then

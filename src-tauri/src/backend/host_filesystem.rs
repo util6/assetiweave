@@ -388,13 +388,46 @@ struct NormalizedPath {
 
 impl NormalizedPath {
     fn from_path(platform: HostPlatform, path: &Path) -> Self {
-        #[cfg(unix)]
-        {
-            if platform != HostPlatform::Windows {
-                return parse_unix_path(path);
-            }
+        if platform != HostPlatform::Windows {
+            return parse_unix_path(path);
         }
         parse_windows_path(path)
+    }
+}
+
+#[cfg(not(unix))]
+fn parse_unix_path(path: &Path) -> NormalizedPath {
+    let raw = path.to_string_lossy();
+    let value = raw.as_ref();
+    let (prefix, absolute, remainder) = if value.starts_with("//") && !value.starts_with("///") {
+        (OsString::from("//"), true, &value[2..])
+    } else if let Some(stripped) = value.strip_prefix('/') {
+        (OsString::from("/"), true, stripped)
+    } else {
+        (OsString::new(), false, value)
+    };
+
+    let mut components = Vec::<OsString>::new();
+    for part in remainder.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if components.last().is_some_and(|last| last != "..") {
+                    components.pop();
+                } else if !absolute {
+                    components.push(OsString::from(".."));
+                }
+            }
+            _ => {
+                components.push(OsString::from(part));
+            }
+        }
+    }
+
+    NormalizedPath {
+        prefix,
+        absolute,
+        components,
     }
 }
 

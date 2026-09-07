@@ -85,6 +85,7 @@ async fn command_projection_falls_back_to_core_projector_for_legacy_adapter() {
                 ],
             },
         )
+        .await
         .expect("project legacy adapter command through fallback");
 
     assert_eq!(projections.len(), 1);
@@ -161,6 +162,7 @@ async fn command_projection_falls_back_when_adapter_projector_is_unavailable() {
                 ],
             },
         )
+        .await
         .expect("fall back when the adapter projector is unavailable");
 
     assert_eq!(projections.len(), 1);
@@ -1444,7 +1446,6 @@ fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
     path
 }
 
-#[cfg(unix)]
 fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
     script
         .strip_prefix(root)
@@ -1453,7 +1454,6 @@ fn adapter_manifest_entry(root: &Path, script: &Path) -> String {
         .to_string()
 }
 
-#[cfg(unix)]
 async fn upsert_conversation_export_fixture(
     service: &AppService,
     root: &Path,
@@ -3840,8 +3840,10 @@ async fn refreshing_target_catalog_reconciles_existing_default_profiles() {
     assert_eq!(
         profile.target_paths,
         vec![
-            skill_target.to_string_lossy().to_string(),
-            prompt_target.to_string_lossy().to_string(),
+            crate::backend::path_utils::normalize_std_path_for_storage(&skill_target)
+                .expect("normalized skill target"),
+            crate::backend::path_utils::normalize_std_path_for_storage(&prompt_target)
+                .expect("normalized prompt target"),
         ]
     );
 

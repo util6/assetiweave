@@ -1,3 +1,4 @@
+use super::error::ProjectionError;
 use crate::backend::dto::ConversationCardRenderer;
 use crate::backend::models::ConversationCardKindDefinition;
 use crate::backend::models::{
@@ -78,7 +79,7 @@ pub(crate) fn project_conversation_content_card(
     part: &ConversationPart,
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Option<ConversationCard>, String> {
+) -> Result<Option<ConversationCard>, ProjectionError> {
     let source = ConversationCardProjectionSource {
         content_card: part.content_card.as_ref(),
         metadata_json: part.metadata_json.as_deref(),
@@ -134,7 +135,7 @@ pub(crate) fn project_conversation_content_cards(
     part: &ConversationPart,
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Vec<ConversationCard>, String> {
+) -> Result<Vec<ConversationCard>, ProjectionError> {
     Ok(
         project_conversation_content_card(part, adapter_id, card_kinds)?
             .into_iter()
@@ -145,15 +146,14 @@ pub(crate) fn project_conversation_content_cards(
 pub(crate) fn project_persisted_content_card(
     source: PersistedConversationCardProjectionSource<'_>,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Option<ResolvedConversationContentCard>, String> {
+) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
     let descriptor = source
         .content_card_json
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| {
-            serde_json::from_str::<ConversationContentCardDescriptor>(value).map_err(|error| {
-                format!("invalid persisted conversation content card JSON: {error}")
-            })
+            serde_json::from_str::<ConversationContentCardDescriptor>(value)
+                .map_err(ProjectionError::InvalidPersistedCardJson)
         })
         .transpose()?;
     project_resolved_content_card(
@@ -174,7 +174,7 @@ pub(crate) fn project_persisted_content_card(
 fn project_resolved_content_card(
     source: ConversationCardProjectionSource<'_>,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<Option<ResolvedConversationContentCard>, String> {
+) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
     let Some(mut card) = resolve_historical_content_card(source)? else {
         return Ok(None);
     };
@@ -189,7 +189,7 @@ fn project_resolved_content_card(
 
 pub(crate) fn resolve_historical_content_card(
     source: ConversationCardProjectionSource<'_>,
-) -> Result<Option<ResolvedConversationContentCard>, String> {
+) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
     resolve_content_card(source, CardParseMode::HistoricalRead)
 }
 
@@ -198,7 +198,7 @@ pub(crate) fn validate_normalized_content_card(
     adapter_id: &str,
     card_contract_version: Option<u32>,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<(), String> {
+) -> Result<(), ProjectionError> {
     let legacy = resolve_content_card(
         ConversationCardProjectionSource {
             content_card: None,
@@ -216,24 +216,24 @@ pub(crate) fn validate_normalized_content_card(
         return Ok(());
     };
     if card_contract_version != Some(CONTENT_CARD_SCHEMA_VERSION as u32) {
-        return Err(format!(
-            "adapter {adapter_id} must declare card_contract_version {CONTENT_CARD_SCHEMA_VERSION} before emitting content_card"
-        ));
+        return Err(ProjectionError::MissingContractVersion {
+            adapter_id: adapter_id.to_string(),
+            expected: CONTENT_CARD_SCHEMA_VERSION,
+        });
     }
     if descriptor.schema_version != CONTENT_CARD_SCHEMA_VERSION as u32 {
-        return Err(format!(
-            "conversation content card schema_version must be {CONTENT_CARD_SCHEMA_VERSION}"
-        ));
+        return Err(ProjectionError::UnsupportedSchemaVersion {
+            expected: CONTENT_CARD_SCHEMA_VERSION,
+            actual: Some(descriptor.schema_version as u64),
+        });
     }
     validate_card_kind(&descriptor.kind)?;
     let declaration = card_kinds
         .iter()
         .find(|declaration| declaration.id == descriptor.kind)
-        .ok_or_else(|| {
-            format!(
-                "adapter {adapter_id} emitted undeclared conversation card kind {:?}",
-                descriptor.kind
-            )
+        .ok_or_else(|| ProjectionError::UndeclaredCardKind {
+            adapter_id: adapter_id.to_string(),
+            kind: descriptor.kind.clone(),
         })?;
     let renderer_name = descriptor
         .renderer
@@ -245,19 +245,19 @@ pub(crate) fn validate_normalized_content_card(
         .iter()
         .any(|allowed| allowed == renderer_name)
     {
-        return Err(format!(
-            "conversation card kind {:?} does not allow renderer {renderer_name:?}",
-            descriptor.kind
-        ));
+        return Err(ProjectionError::RendererNotAllowed {
+            kind: descriptor.kind.clone(),
+            renderer: renderer_name.to_string(),
+        });
     }
     if let Some(legacy) = legacy {
         let kind_matches = legacy.kind == descriptor.kind
             || declaration.semantic_role.as_deref() == Some(legacy.kind.as_str());
         if !kind_matches || legacy.renderer != renderer {
-            return Err(format!(
-                "structured content_card for kind {:?} conflicts with legacy metadata content_card kind {:?}",
-                descriptor.kind, legacy.kind
-            ));
+            return Err(ProjectionError::LegacyConflict {
+                descriptor_kind: descriptor.kind.clone(),
+                legacy_kind: legacy.kind,
+            });
         }
     }
     Ok(())
@@ -268,7 +268,7 @@ pub(crate) fn canonicalize_normalized_content_card(
     adapter_id: &str,
     card_contract_version: Option<u32>,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<bool, String> {
+) -> Result<bool, ProjectionError> {
     validate_normalized_content_card(part, adapter_id, card_contract_version, card_kinds)?;
     let mut legacy_upgraded = false;
     if part.content_card.is_none()
@@ -298,10 +298,10 @@ pub(crate) fn canonicalize_normalized_content_card(
             });
             if let Some(declaration) = declarations.next() {
                 if declarations.next().is_some() {
-                    return Err(format!(
-                        "adapter {adapter_id} has ambiguous card kinds for legacy semantic role {:?}",
-                        legacy.kind
-                    ));
+                    return Err(ProjectionError::AmbiguousLegacySemanticRole {
+                        adapter_id: adapter_id.to_string(),
+                        semantic_role: legacy.kind,
+                    });
                 }
                 part.content_card = Some(ConversationContentCardDescriptor {
                     schema_version: CONTENT_CARD_SCHEMA_VERSION as u32,
@@ -319,11 +319,9 @@ pub(crate) fn canonicalize_normalized_content_card(
         let declaration = card_kinds
             .iter()
             .find(|declaration| declaration.id == descriptor.kind)
-            .ok_or_else(|| {
-                format!(
-                    "adapter {adapter_id} emitted undeclared conversation card kind {:?}",
-                    descriptor.kind
-                )
+            .ok_or_else(|| ProjectionError::UndeclaredCardKind {
+                adapter_id: adapter_id.to_string(),
+                kind: descriptor.kind.clone(),
             })?;
         descriptor.renderer = Some(declaration.default_renderer.clone());
     }
@@ -347,73 +345,75 @@ pub(crate) fn validate_manifest_card_kinds(
     adapter_id: &str,
     card_contract_version: Option<u32>,
     card_kinds: &[ConversationCardKindDefinition],
-) -> Result<(), String> {
+) -> Result<(), ProjectionError> {
     if let Some(version) = card_contract_version {
         if version != CONTENT_CARD_SCHEMA_VERSION as u32 {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card_contract_version must be {CONTENT_CARD_SCHEMA_VERSION}"
-            ));
+            )));
         }
     }
     if !card_kinds.is_empty() && card_contract_version.is_none() {
-        return Err("adapter card_kinds require card_contract_version 1".to_string());
+        return Err(ProjectionError::ManifestValidation(
+            "adapter card_kinds require card_contract_version 1".to_string(),
+        ));
     }
     let namespace = format!("{}.", adapter_id.trim());
     let mut ids = BTreeSet::new();
     for declaration in card_kinds {
         validate_card_kind(&declaration.id)?;
         if !declaration.id.starts_with(&namespace) {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card kind {:?} must use namespace {namespace:?}",
                 declaration.id
-            ));
+            )));
         }
         if !ids.insert(declaration.id.as_str()) {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter declares duplicate conversation card kind {:?}",
                 declaration.id
-            ));
+            )));
         }
         if let Some(semantic_role) = declaration.semantic_role.as_deref() {
             validate_card_kind(semantic_role)?;
         }
         let label = declaration.label.trim();
         if label.is_empty() || label.len() > 80 || label.chars().any(char::is_control) {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card kind {:?} must have a printable label of at most 80 bytes",
                 declaration.id
-            ));
+            )));
         }
         parse_renderer(&declaration.default_renderer)?;
         if declaration.allowed_renderers.is_empty() {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card kind {:?} must allow at least one renderer",
                 declaration.id
-            ));
+            )));
         }
         let mut renderers = BTreeSet::new();
         for renderer in &declaration.allowed_renderers {
             parse_renderer(renderer)?;
             if !renderers.insert(renderer.as_str()) {
-                return Err(format!(
+                return Err(ProjectionError::ManifestValidation(format!(
                     "adapter card kind {:?} declares duplicate renderer {renderer:?}",
                     declaration.id
-                ));
+                )));
             }
         }
         if !renderers.contains(declaration.default_renderer.as_str()) {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card kind {:?} default_renderer must be present in allowed_renderers",
                 declaration.id
-            ));
+            )));
         }
         if declaration.icon_hint.as_deref().is_some_and(|icon| {
             icon.trim().is_empty() || icon.len() > 64 || icon.chars().any(char::is_control)
         }) {
-            return Err(format!(
+            return Err(ProjectionError::ManifestValidation(format!(
                 "adapter card kind {:?} has an invalid icon_hint",
                 declaration.id
-            ));
+            )));
         }
     }
     Ok(())
@@ -422,12 +422,13 @@ pub(crate) fn validate_manifest_card_kinds(
 fn resolve_content_card(
     source: ConversationCardProjectionSource<'_>,
     mode: CardParseMode,
-) -> Result<Option<ResolvedConversationContentCard>, String> {
+) -> Result<Option<ResolvedConversationContentCard>, ProjectionError> {
     if let Some(descriptor) = source.content_card {
         if descriptor.schema_version != CONTENT_CARD_SCHEMA_VERSION as u32 {
-            return Err(format!(
-                "conversation content card schema_version must be {CONTENT_CARD_SCHEMA_VERSION}"
-            ));
+            return Err(ProjectionError::UnsupportedSchemaVersion {
+                expected: CONTENT_CARD_SCHEMA_VERSION,
+                actual: Some(descriptor.schema_version as u64),
+            });
         }
         validate_card_kind(&descriptor.kind)?;
         let renderer = match descriptor.renderer.as_deref() {
@@ -466,10 +467,13 @@ fn resolve_content_card(
     else {
         return Ok(None);
     };
-    let metadata = serde_json::from_str::<Value>(metadata_json)
-        .map_err(|error| format!("invalid conversation part metadata JSON: {error}"))?;
+    let metadata = serde_json::from_str::<Value>(metadata_json).map_err(|error| {
+        ProjectionError::Other(format!("invalid conversation part metadata JSON: {error}"))
+    })?;
     let Some(metadata) = metadata.as_object() else {
-        return Err("conversation part metadata must be a JSON object".to_string());
+        return Err(ProjectionError::Other(
+            "conversation part metadata must be a JSON object".to_string(),
+        ));
     };
     let Some(card) = metadata
         .get("content_card")
@@ -477,9 +481,9 @@ fn resolve_content_card(
     else {
         return Ok(None);
     };
-    let card = card
-        .as_object()
-        .ok_or_else(|| "conversation content_card must be a JSON object".to_string())?;
+    let card = card.as_object().ok_or_else(|| {
+        ProjectionError::Other("conversation content_card must be a JSON object".to_string())
+    })?;
 
     validate_schema_version(card)?;
     let kind = resolve_card_kind(card)?;
@@ -562,7 +566,7 @@ fn legacy_kind_from_metadata(metadata_json: Option<&str>) -> Option<String> {
     optional_string(card, "type")
 }
 
-fn validate_schema_version(card: &Map<String, Value>) -> Result<(), String> {
+fn validate_schema_version(card: &Map<String, Value>) -> Result<(), ProjectionError> {
     let Some(value) = card
         .get("schema_version")
         .or_else(|| card.get("schemaVersion"))
@@ -572,38 +576,42 @@ fn validate_schema_version(card: &Map<String, Value>) -> Result<(), String> {
     if value.as_u64() == Some(CONTENT_CARD_SCHEMA_VERSION) {
         return Ok(());
     }
-    Err(format!(
-        "conversation content card schema_version must be {CONTENT_CARD_SCHEMA_VERSION}"
-    ))
+    Err(ProjectionError::UnsupportedSchemaVersion {
+        expected: CONTENT_CARD_SCHEMA_VERSION,
+        actual: value.as_u64(),
+    })
 }
 
-fn resolve_card_kind(card: &Map<String, Value>) -> Result<String, String> {
+fn resolve_card_kind(card: &Map<String, Value>) -> Result<String, ProjectionError> {
     let kind = optional_string(card, "kind");
     let legacy_type = optional_string(card, "type");
     if let (Some(kind), Some(legacy_type)) = (&kind, &legacy_type) {
         if kind != legacy_type {
-            return Err(format!(
-                "conversation content card kind {kind:?} conflicts with legacy type {legacy_type:?}"
-            ));
+            return Err(ProjectionError::LegacyConflict {
+                descriptor_kind: kind.clone(),
+                legacy_kind: legacy_type.clone(),
+            });
         }
     }
-    kind.or(legacy_type)
-        .ok_or_else(|| "conversation content card kind is required".to_string())
+    kind.or(legacy_type).ok_or(ProjectionError::MissingCardKind)
 }
 
-fn validate_card_kind(kind: &str) -> Result<(), String> {
+fn validate_card_kind(kind: &str) -> Result<(), ProjectionError> {
     let mut bytes = kind.bytes();
     let Some(first) = bytes.next() else {
-        return Err("conversation content card kind is required".to_string());
+        return Err(ProjectionError::MissingCardKind);
     };
     let valid_first = first.is_ascii_lowercase() || first.is_ascii_digit();
     let valid_rest = bytes.all(|byte| {
         byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
     });
     if !valid_first || !valid_rest || kind.len() > MAX_CARD_KIND_LENGTH {
-        return Err(format!(
-            "invalid conversation content card kind {kind:?}; use 1-{MAX_CARD_KIND_LENGTH} lowercase ASCII letters, digits, dots, underscores, or hyphens"
-        ));
+        return Err(ProjectionError::InvalidCardKind {
+            kind: kind.to_string(),
+            reason: format!(
+                "use 1-{MAX_CARD_KIND_LENGTH} lowercase ASCII letters, digits, dots, underscores, or hyphens"
+            ),
+        });
     }
     Ok(())
 }
@@ -616,7 +624,7 @@ fn resolve_renderer(
     card: &Map<String, Value>,
     kind: &str,
     mode: CardParseMode,
-) -> Result<ConversationCardRenderer, String> {
+) -> Result<ConversationCardRenderer, ProjectionError> {
     let renderer = optional_string(card, "renderer");
     let presentation_renderer = card
         .get("presentation")
@@ -626,9 +634,9 @@ fn resolve_renderer(
 
     if let (Some(renderer), Some(presentation_renderer)) = (&renderer, &presentation_renderer) {
         if renderer != presentation_renderer {
-            return Err(format!(
+            return Err(ProjectionError::Other(format!(
                 "conversation content card renderer {renderer:?} conflicts with presentation renderer {presentation_renderer:?}"
-            ));
+            )));
         }
     }
 
@@ -640,9 +648,9 @@ fn resolve_renderer(
         if let Some(format) = legacy_format {
             let legacy = renderer_from_legacy_format(kind, Some(&format), mode)?;
             if parsed != legacy {
-                return Err(format!(
+                return Err(ProjectionError::Other(format!(
                     "conversation content card renderer {renderer:?} conflicts with legacy format {format:?}"
-                ));
+                )));
             }
         }
         return Ok(parsed);
@@ -651,7 +659,7 @@ fn resolve_renderer(
     renderer_from_legacy_format(kind, legacy_format.as_deref(), mode)
 }
 
-fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, String> {
+fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, ProjectionError> {
     match value {
         "markdown" => Ok(ConversationCardRenderer::Markdown),
         "plain" => Ok(ConversationCardRenderer::Plain),
@@ -661,7 +669,9 @@ fn parse_renderer(value: &str) -> Result<ConversationCardRenderer, String> {
         "command" => Ok(ConversationCardRenderer::Command),
         "terminal_output" => Ok(ConversationCardRenderer::TerminalOutput),
         "diff" => Ok(ConversationCardRenderer::Diff),
-        other => Err(format!("unsupported conversation card renderer {other:?}")),
+        other => Err(ProjectionError::UnsupportedRenderer {
+            renderer: other.to_string(),
+        }),
     }
 }
 
@@ -669,7 +679,7 @@ fn renderer_from_legacy_format(
     kind: &str,
     format: Option<&str>,
     mode: CardParseMode,
-) -> Result<ConversationCardRenderer, String> {
+) -> Result<ConversationCardRenderer, ProjectionError> {
     if kind == "command" {
         return Ok(ConversationCardRenderer::Command);
     }
@@ -682,9 +692,9 @@ fn renderer_from_legacy_format(
         Some("plain") if kind == "result" => Ok(ConversationCardRenderer::TerminalOutput),
         Some("plain") => Ok(ConversationCardRenderer::Plain),
         Some(other) => match mode {
-            CardParseMode::AdapterBoundary => {
-                Err(format!("unsupported conversation card renderer {other:?}"))
-            }
+            CardParseMode::AdapterBoundary => Err(ProjectionError::UnsupportedRenderer {
+                renderer: other.to_string(),
+            }),
             CardParseMode::HistoricalRead => Ok(ConversationCardRenderer::Plain),
         },
         None if kind == "result" => Ok(ConversationCardRenderer::TerminalOutput),
@@ -1008,6 +1018,7 @@ mod tests {
         let error = validate_normalized_content_card(&part, "fixture", Some(1), &declarations)
             .expect_err("different legacy semantics must conflict");
 
+        assert!(matches!(error, ProjectionError::LegacyConflict { .. }));
         assert!(error.contains("conflicts with legacy metadata"));
     }
 
@@ -1020,6 +1031,7 @@ mod tests {
         let error = validate_normalized_content_card(&part, "fixture", None, &[])
             .expect_err("invalid adapter-declared kind must fail validation");
 
+        assert!(matches!(error, ProjectionError::InvalidCardKind { .. }));
         assert!(error.contains("content card kind"));
     }
 
@@ -1029,6 +1041,7 @@ mod tests {
         let normalized = normalized_part_with_metadata(metadata);
         let error = validate_normalized_content_card(&normalized, "fixture", None, &[])
             .expect_err("unsupported new renderer must fail validation");
+        assert!(matches!(error, ProjectionError::UnsupportedRenderer { .. }));
         assert!(error.contains("unsupported conversation card renderer"));
 
         let historical = part_with_metadata(metadata);

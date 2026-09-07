@@ -10,12 +10,12 @@
 
 ## Steps
 
-- [ ] 为 `01-contract.md` 每项列出行为、source、删除和 wire parity 证据。
-- [ ] 重跑 `02-current-baseline.md` 四条查询；每个保留命中必须是精确私有 parser、test-only 或最外层 transport，且写出函数签名。
-- [ ] 确认 repository、runtime、projection 与 AppService 跨模块接口不返回 `Result<T,String>`。
-- [ ] 确认已知 SQLx/Serde/HostProcess/Extension 错误没有通过 `AppError::external` 或 `.to_string()` 分类。
-- [ ] 运行完整验证；任一失败时评论 `Status: INCOMPLETE` 并保持 Issue #2 OPEN。
-- [ ] 全部通过后发布矩阵、更新状态索引并关闭 Issue #2。
+- [x] 为 `01-contract.md` 每项列出行为、source、删除和 wire parity 证据。
+- [x] 重跑 `02-current-baseline.md` 四条查询；每个保留命中必须是精确私有 parser、test-only 或最外层 transport，且写出函数签名。
+- [x] 确认 repository、runtime、projection 与 AppService 跨模块接口不返回 `Result<T,String>`。
+- [x] 确认已知 SQLx/Serde/HostProcess/Extension 错误没有通过 `AppError::external` 或 `.to_string()` 分类。
+- [x] 运行完整验证；任一失败时评论 `Status: INCOMPLETE` 并保持 Issue #2 OPEN。
+- [x] 全部通过后发布矩阵、更新状态索引并关闭 Issue #2。
 
 ## Full verification
 

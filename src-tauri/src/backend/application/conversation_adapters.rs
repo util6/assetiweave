@@ -54,6 +54,7 @@ impl AppService {
         crate::backend::conversations::list_conversation_adapter_runtime_statuses_with_settings(
             &adapters, &sources, &settings,
         )
+        .await
         .map_err(conversation_external_error)
     }
 
@@ -66,6 +67,7 @@ impl AppService {
         let preview = crate::backend::conversations::register_external_adapter_with_settings(
             params, &settings,
         )
+        .await
         .map_err(conversation_external_error)?;
         let mut adapter =
             crate::backend::conversations::adapter_from_registration_preview(preview.clone())
@@ -197,16 +199,17 @@ impl AppService {
         }))
     }
 
-    pub(crate) fn try_run_conversation_adapter(
+    pub(crate) async fn try_run_conversation_adapter(
         &self,
         params: crate::backend::conversations::ExternalAdapterTryRunParams,
     ) -> AppResult<crate::backend::conversations::ExternalAdapterRunResult> {
         let settings = self.app_settings_value();
         crate::backend::conversations::try_run_external_adapter_with_settings(params, &settings)
+            .await
             .map_err(conversation_external_error)
     }
 
-    pub(crate) fn project_conversation_command_parts(
+    pub(crate) async fn project_conversation_command_parts(
         &self,
         params: crate::backend::conversations::ConversationCommandProjectionParams,
     ) -> AppResult<Vec<crate::backend::conversations::ConversationCommandProjection>> {
@@ -230,7 +233,9 @@ impl AppService {
                 &adapter,
                 &params.parts,
                 &settings,
-            ) {
+            )
+            .await
+            {
                 Ok(projections) => return Ok(projections),
                 Err(error) => tracing::warn!(
                     action = "conversation.command_projection.fallback",
@@ -247,6 +252,7 @@ impl AppService {
             &params.parts,
             &settings,
         )
+        .await
         .map_err(conversation_external_error)
     }
 
@@ -336,7 +342,7 @@ impl AppService {
         mut on_progress: F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         self.sync_conversations_with_progress_and_cancellation(params, None, &mut on_progress)
             .await
@@ -349,7 +355,7 @@ impl AppService {
         on_progress: &mut F,
     ) -> AppResult<Value>
     where
-        F: FnMut(usize, usize, Option<String>),
+        F: FnMut(usize, usize, Option<String>) + Send,
     {
         ensure_conversation_sync_not_cancelled(cancellation)?;
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
@@ -448,28 +454,19 @@ impl AppService {
                     .map_err(|error| AppError::External(error.to_string())),
                 None => Ok(()),
             };
-            let read_result = ready_check.and_then(|_| {
-                if !params.dry_run && web_record_source {
-                    crate::backend::conversations::run_conversation_harvester_with_control(
-                        adapter.as_ref(),
-                        &source,
-                        matches!(params.mode, ConversationSyncMode::Full),
-                        &settings,
-                        cancellation,
-                    )
-                    .map_err(conversation_external_error)
-                    .and_then(|_| {
-                        crate::backend::conversations::read_source_sessions_with_control(
+            let read_result = match ready_check {
+                Ok(()) => {
+                    if !params.dry_run && web_record_source {
+                        crate::backend::conversations::run_conversation_harvester_with_control(
                             adapter.as_ref(),
                             &source,
-                            &known_versions,
+                            matches!(params.mode, ConversationSyncMode::Full),
                             &settings,
                             cancellation,
-                            &mut on_read_progress,
                         )
-                        .map_err(conversation_external_error)
-                    })
-                } else {
+                        .await
+                        .map_err(conversation_external_error)?;
+                    }
                     crate::backend::conversations::read_source_sessions_with_control(
                         adapter.as_ref(),
                         &source,
@@ -478,9 +475,11 @@ impl AppService {
                         cancellation,
                         &mut on_read_progress,
                     )
+                    .await
                     .map_err(conversation_external_error)
                 }
-            });
+                Err(error) => Err(error),
+            };
             ensure_conversation_sync_not_cancelled(cancellation)?;
             let sync_result = match read_result {
                 Ok(read) if web_record_source => {

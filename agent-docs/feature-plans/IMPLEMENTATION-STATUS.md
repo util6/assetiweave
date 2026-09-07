@@ -1,6 +1,6 @@
 # Feature Plans 实施状态
 
-更新时间：2026-09-06
+更新时间：2026-09-07
 
 本文是 `agent-docs/feature-plans/` 的实施状态索引。各计划原文保留需求、约束和历史
 执行记录；当前代码、测试、Engine contract 和 Git 历史是实现事实的最终来源。
@@ -22,7 +22,8 @@ AppService/backend；Frontend 通过 `frontend/src/services/`，Go CLI 通过 Ru
 | `acp-agent-execution-runtime` | **Implemented** | ACP/Native runtime、persistent binding、取消、清理、错误和 OneShot/持久执行接入；现行 Rust 全量测试覆盖。 |
 | `agent-marketplace-dynamic-runtime` | **Implemented** | Catalog、安装生命周期、动态 runtime、跨租户任务、Frontend/CLI/Engine 接入，以及 release/static/network/real ACP E2E 校验。 |
 | `backend-architecture-convergence` | **Post-audit remediation** | 核心 Authority 已接入；当前 Agent Catalog release evidence 哈希与 bundled Catalog 不一致，Issue #1 保持 OPEN。 |
-| `backend-infrastructure-convergence-v2` | **Incomplete after audit** | Runtime/pool/event 主体完成；同步 HostProcess、严格 shutdown deadline、日志脱敏、lossy path、剩余 SQLx row 与当前 HEAD Windows 证据由重开的 Issue #24 继续收口。 |
+| `backend-infrastructure-convergence-v2` | **Implemented** | 审计后纠偏 B2-R16–G03 全量完成；GitHub Actions CI [Run 34050901408](https://github.com/util6/assetiweave/actions/runs/34050901408) 5/5 jobs 成功；Linux 897 passed，Windows 807 passed（包含 Job Object 后代管道回收测试），Go/Frontend/E2E 全绿，Issue #24 达成最终重新验收并关闭。 |
+| `backend-error-flow-convergence` | **Implemented** | 错误流收口 ERR-00–G01 全量完成；消除跨模块 `Result<T, String>`（生产跨模块接口 0 残留，精确保留 6 处最外层 transport、5 处私有校验/解析器与 2 处 test-only helper）；引入类型化 `MenuRepoError`、`AgentMarketError`、`LogSnapshotError`、`ProjectionError` 并保留 typed source；收紧 `AppError` 与 `WireError` 双适配器 parity；通过脱敏审计与全量测试门禁，Issue #2 达成终态验收并关闭。 |
 | `runtime-extension-refactor` | **Implemented** | Runtime、事件 outbox、extension kernel、能力边界和 interface coverage 已由生产 consumer 使用。 |
 | `conversation-semantic-projection-refactor` | **Implemented** | Question/Turn/Part/Content Node 读取合同、索引、维护审计、修复/回滚、取消协作式检查、CLI maintenance commands 已落地。历史数据库中无法逆向恢复的逐字段快照差异继续按保守策略保留。 |
 | `conversation-card-contract-v1` | **Implemented** | Card contract、结构化 Content Node、适配器输出与前端投影已由 Conversation 生产链路使用。 |
@@ -61,24 +62,24 @@ AppService/backend；Frontend 通过 `frontend/src/services/`，Go CLI 通过 Ru
 
 ## 4. 可复现验证
 
-以下命令在 2026-09-01 当前提交通过：
+以下命令在 2026-09-07 当前提交通过：
 
 | 层级 | 命令 | 结果 |
 |---|---|---|
 | Rust | `cargo fmt --all -- --check` | PASS |
-| Rust | `RUSTFLAGS='-Awarnings' cargo test --workspace --no-default-features -- --test-threads=1` | PASS：742 tests |
+| Rust | `cargo test --workspace` | PASS：905 tests |
 | Frontend | `pnpm typecheck` | PASS |
-| Frontend | `pnpm test` | PASS：114 files / 569 tests |
+| Frontend | `pnpm lint --quiet` | PASS |
+| Frontend | `pnpm format:check` | PASS |
+| Frontend | `pnpm test` | PASS：142 files / 699 tests |
 | Frontend | `pnpm build` | PASS |
 | Go | `go vet -C cli ./...` | PASS |
 | Go | `go test -C cli -race ./...` | PASS |
-| 边界 | `pnpm check:boundaries`、`pnpm test:boundaries` | PASS |
-| Contract | `ASSETIWEAVE_DB_PATH=/tmp/assetiweave-contract.sqlite pnpm cli:contract` 连续生成并比较 | PASS |
-| Surface | `pnpm gen:surface-matrix`、`pnpm check:surface-matrix` | PASS：42 explicit exemptions |
-| Skill | `python3 scripts/memory-skill-recall.test.py` | PASS：4 tests |
-| Agent Market | `node scripts/check-agent-catalog-release.mjs --static` | PASS：7 items |
-| Agent Market | `node scripts/check-agent-catalog-release.mjs --release --network` | PASS：catalog `2026.08.29.1` |
-| Agent Market | `node scripts/check-agent-catalog-release.mjs --release --e2e` | PASS：`opencode/binary-darwin-aarch64 1.18.19` |
+| CLI E2E | `go test -C cli -tags=e2e -count=1 ./tests/cli_e2e` | PASS：66.234s |
+| 边界 | `pnpm check:boundaries` | PASS |
+| Contract | `pnpm cli:contract && git diff --exit-code -- cli/internal/schema/contract.json` | PASS：0 contract drift |
+| Surface | `pnpm gen:surface-matrix && pnpm check:surface-matrix` | PASS：42 explicit exemptions |
+| 安全 | `cargo audit` | PASS：0 vulnerabilities (21 allowed warnings) |
 
 ## 5. 有意保留的历史项
 

@@ -11,13 +11,13 @@
 
 ## Steps
 
-- [ ] 统计 `Storage(String)`、`Process(String)`、`External(String)`、`Extension(String)` 与 `Domain { code }` 的生产构造点，确认前序卡已经提供 typed source。
-- [ ] 增加 taxonomy table test，逐个规范分类验证 code、retryable、message、details、source 和 Tauri/Engine parity。
-- [ ] 增加绝对路径、SQL、token、secret、password、prompt、environment 的公开序列化测试。
-- [ ] 将已知基础设施 String variant 替换为 typed `#[from]`/`#[source]` variant；未知 internal/external 分支保留 source，不接受仅 Display 字符串。
-- [ ] 将 `AppError -> WireError` 转换固定在 adapter 使用的显式 API；删除依赖 AppError 任意内部形状的直接序列化。
-- [ ] `Domain` 只保留协议透传确需的已验证 code；普通生产构造点迁入规范 variant。
-- [ ] 重新生成 Engine contract；WireError schema 和既有 code 无 diff。
+- [x] 统计 `Storage(String)`、`Process(String)`、`External(String)`、`Extension(String)` 与 `Domain { code }` 的生产构造点，确认前序卡已经提供 typed source。
+- [x] 增加 taxonomy table test，逐个规范分类验证 code、retryable、message、details、source 和 Tauri/Engine parity。
+- [x] 增加绝对路径、SQL、token、secret、password、prompt、environment 的公开序列化测试。
+- [x] 将已知基础设施 String variant 替换为 typed `#[from]`/`#[source]` variant；未知 internal/external 分支保留 source，不接受仅 Display 字符串。
+- [x] 将 `AppError -> WireError` 转换固定在 adapter 使用的显式 API；删除依赖 AppError 任意内部形状的直接序列化。
+- [x] `Domain` 只保留协议透传确需的已验证 code；普通生产构造点迁入规范 variant。
+- [x] 重新生成 Engine contract；WireError schema 和既有 code 无 diff。
 
 ## Verify
 

@@ -48,7 +48,7 @@ impl InstallContext {
 }
 
 pub(crate) trait Installer: Send + Sync {
-    fn materialize(
+    async fn materialize(
         &self,
         distribution: &Distribution,
         context: &InstallContext,
@@ -117,12 +117,12 @@ pub(crate) fn is_cancelled(context: &InstallContext) -> bool {
         .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
 }
 
-pub(crate) fn run_host_command(
+pub(crate) async fn run_host_command(
     command: &mut std::process::Command,
     context: &InstallContext,
     stdout_cap: usize,
     stderr_cap: usize,
-) -> Result<crate::backend::host_process::HostProcessOutput, InstallError> {
+) -> Result<crate::backend::host_process::HostCommandOutput, InstallError> {
     let cancellation_token = if let Some(flag) = context.cancellation.as_ref() {
         let token = tokio_util::sync::CancellationToken::new();
         if flag.load(std::sync::atomic::Ordering::Acquire) {
@@ -132,32 +132,52 @@ pub(crate) fn run_host_command(
     } else {
         None
     };
-    crate::backend::host_process::run_command_with_control(
-        command,
-        crate::backend::host_process::HostProcessControl {
-            timeout: context.timeout,
-            stdout_cap,
-            stderr_cap,
-            cancellation: cancellation_token
-                .as_ref()
-                .map(crate::backend::host_process::HostCancellation::Token),
-        },
-    )
-    .map_err(|error| match error {
-        crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
-        crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
-        crate::backend::host_process::HostProcessError::MissingProgram { program } => {
-            InstallError::Spawn(format!("program not found: {}", program.display()))
-        }
-        crate::backend::host_process::HostProcessError::Spawn(reason)
-        | crate::backend::host_process::HostProcessError::Output(reason)
-        | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
-            InstallError::Spawn(reason)
-        }
-        crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
-            InstallError::Spawn("process output exceeded configured limit".to_string())
-        }
-    })
+    let program = PathBuf::from(command.get_program());
+    let args: Vec<String> = command
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    let env: Vec<(String, String)> = command
+        .get_envs()
+        .filter_map(|(k, v)| {
+            v.map(|val| {
+                (
+                    k.to_string_lossy().to_string(),
+                    val.to_string_lossy().to_string(),
+                )
+            })
+        })
+        .collect();
+    let working_dir = command.get_current_dir().map(PathBuf::from);
+
+    let spec = crate::backend::host_process::HostCommandSpec {
+        program,
+        args,
+        env,
+        working_dir,
+        stdin: crate::backend::host_process::HostInput::Null,
+        timeout: context.timeout,
+        stdout_limit: stdout_cap,
+        stderr_limit: stderr_cap,
+    };
+
+    crate::backend::host_process::run_host_command_async(spec, cancellation_token.as_ref())
+        .await
+        .map_err(|error| match error {
+            crate::backend::host_process::HostProcessError::Cancelled => InstallError::Cancelled,
+            crate::backend::host_process::HostProcessError::Timeout { .. } => InstallError::Timeout,
+            crate::backend::host_process::HostProcessError::MissingProgram { program } => {
+                InstallError::Spawn(format!("program not found: {}", program.display()))
+            }
+            crate::backend::host_process::HostProcessError::Spawn(reason)
+            | crate::backend::host_process::HostProcessError::Output(reason)
+            | crate::backend::host_process::HostProcessError::Cleanup(reason) => {
+                InstallError::Spawn(reason)
+            }
+            crate::backend::host_process::HostProcessError::OutputLimitExceeded { .. } => {
+                InstallError::Spawn("process output exceeded configured limit".to_string())
+            }
+        })
 }
 
 pub(crate) fn runtime_from_local(

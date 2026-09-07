@@ -294,6 +294,8 @@ impl EventDispatcher {
     }
 
     async fn dispatch_tenant(&self, tenant_id: &str) -> DispatchCycleReport {
+        let span = tracing::info_span!("domain_events.dispatch_tenant", tenant = %tenant_id);
+        let _enter = span.enter();
         let mut report = DispatchCycleReport::default();
         for consumer in &self.consumers {
             let key = Self::retry_key(consumer.id(), tenant_id);
@@ -309,9 +311,11 @@ impl EventDispatcher {
                 Err(error) => {
                     // One consumer owns only its own offset and retry state. A
                     // failure must never prevent later consumers from running.
-                    eprintln!(
-                        "domain event consumer {} failed for tenant {tenant_id}: {error}",
-                        consumer.id()
+                    tracing::error!(
+                        consumer_id = %consumer.id(),
+                        tenant = %tenant_id,
+                        error = %error,
+                        "domain event consumer failed"
                     );
                     self.record_failure(key);
                     report.failures += 1;
@@ -336,8 +340,10 @@ impl EventDispatcher {
         let mut report = DispatchCycleReport::default();
         for tenant_id in tenant_ids {
             if let Err(error) = self.initialize_tenant(&tenant_id).await {
-                eprintln!(
-                    "domain event offset initialization failed for tenant {tenant_id}: {error}"
+                tracing::error!(
+                    tenant = %tenant_id,
+                    error = %error,
+                    "domain event offset initialization failed"
                 );
                 report.failures += 1;
                 continue;
@@ -532,13 +538,15 @@ impl EventDispatcherHandle {
                 Ok(Ok(report)) => report,
                 Ok(Err(_join_err)) => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
-                    let count_timeout = remaining.max(Duration::from_millis(50));
-                    let remaining_events =
-                        tokio::time::timeout(count_timeout, self.pending_event_count())
+                    let remaining_events = if !remaining.is_zero() {
+                        tokio::time::timeout(remaining, self.pending_event_count())
                             .await
                             .ok()
                             .and_then(|res| res.ok())
-                            .unwrap_or_default();
+                            .unwrap_or_default()
+                    } else {
+                        0
+                    };
                     EventDispatcherShutdownReport {
                         drained: false,
                         remaining_events,
@@ -547,14 +555,17 @@ impl EventDispatcherHandle {
                 }
                 Err(_elapsed) => {
                     task.abort();
+                    let _ = task.await;
                     let remaining = deadline.saturating_duration_since(Instant::now());
-                    let count_timeout = remaining.max(Duration::from_millis(50));
-                    let remaining_events =
-                        tokio::time::timeout(count_timeout, self.pending_event_count())
+                    let remaining_events = if !remaining.is_zero() {
+                        tokio::time::timeout(remaining, self.pending_event_count())
                             .await
                             .ok()
                             .and_then(|res| res.ok())
-                            .unwrap_or_default();
+                            .unwrap_or_default()
+                    } else {
+                        0
+                    };
                     EventDispatcherShutdownReport {
                         drained: false,
                         remaining_events,
@@ -610,5 +621,94 @@ mod tests {
         assert_eq!(retry_delay(4), Duration::from_secs(125));
         assert_eq!(retry_delay(5), Duration::from_secs(300));
         assert_eq!(retry_delay(20), Duration::from_secs(300));
+    }
+
+    #[tokio::test]
+    async fn stop_until_never_extends_an_expired_deadline() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("create test pool");
+
+        let _held = pool.acquire().await.expect("acquire connection");
+
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let shutdown_deadline = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let task = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            super::EventDispatcherShutdownReport::default()
+        });
+
+        let mut handle = super::EventDispatcherHandle {
+            cancellation,
+            notify,
+            shutdown_deadline,
+            pool,
+            consumer_ids: vec!["test_consumer".to_string()],
+            task: Some(task),
+        };
+
+        let start = tokio::time::Instant::now();
+        let deadline = start - Duration::from_millis(10);
+        let report = handle.stop_until(deadline).await;
+        let elapsed = start.elapsed();
+
+        assert!(report.timed_out, "report must indicate timed_out");
+        assert!(
+            elapsed <= Duration::from_millis(25),
+            "stop_until took {:?}, expected <= 25ms",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn stop_until_awaits_aborted_dispatcher_completion() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct DropGuard(Arc<AtomicBool>);
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let dropped_clone = dropped.clone();
+
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("create test pool");
+
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let notify = std::sync::Arc::new(tokio::sync::Notify::new());
+        let shutdown_deadline = std::sync::Arc::new(std::sync::Mutex::new(None));
+
+        let task = tokio::spawn(async move {
+            let _guard = DropGuard(dropped_clone);
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            super::EventDispatcherShutdownReport::default()
+        });
+
+        let mut handle = super::EventDispatcherHandle {
+            cancellation,
+            notify,
+            shutdown_deadline,
+            pool,
+            consumer_ids: vec![],
+            task: Some(task),
+        };
+
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(5);
+        let report = handle.stop_until(deadline).await;
+
+        assert!(report.timed_out, "must report timed_out");
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "aborted worker task must be awaited so its resources/guards are dropped before returning"
+        );
     }
 }

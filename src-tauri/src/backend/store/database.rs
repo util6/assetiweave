@@ -198,16 +198,14 @@ pub(crate) async fn seed_tenant_defaults_sqlx_with_catalog(
     let default_navigation_model = crate::backend::defaults::default_navigation_model();
     if count_rows(pool, tenant_id, "navigation_state").await? == 0 {
         super::menu_repo::seed_navigation_model_sqlx(pool, tenant_id, &default_navigation_model)
-            .await
-            .map_err(AppError::external)?;
+            .await?;
     } else {
         super::menu_repo::ensure_navigation_model_items_sqlx(
             pool,
             tenant_id,
             &default_navigation_model,
         )
-        .await
-        .map_err(AppError::external)?;
+        .await?;
     }
 
     if count_rows(pool, tenant_id, "app_shortcut_items").await? == 0 {

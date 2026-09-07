@@ -162,7 +162,8 @@ fn validate_catalog(catalog: &Catalog) -> Result<(), CatalogError> {
                 item.id
             )));
         }
-        item.validate_basic().map_err(CatalogError::Invalid)?;
+        item.validate_basic()
+            .map_err(|e| CatalogError::Invalid(e.to_string()))?;
         if item.verification.evidence_id.is_none()
             && matches!(
                 item.verification.status,
