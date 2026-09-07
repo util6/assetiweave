@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

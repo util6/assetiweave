@@ -191,11 +191,46 @@ impl AgentRuntimeManager {
         &self,
         runtime_root: &Path,
     ) -> Result<Vec<String>, AgentMarketError> {
+        let catalog = crate::backend::agent_market::CatalogCache::best_available().ok();
+        self.recover_startup_with_catalog(runtime_root, catalog.as_ref())
+            .await
+    }
+
+    pub(crate) async fn recover_startup_with_catalog(
+        &self,
+        runtime_root: &Path,
+        catalog: Option<&crate::backend::agent_market::catalog::CatalogService>,
+    ) -> Result<Vec<String>, AgentMarketError> {
         let installations = self.repository.list().await?;
         let mut warnings = cleanup_runtime_directories(runtime_root);
         for installation in installations {
             if installation.installation_status != InstallationStatus::Ready {
                 continue;
+            }
+            if let Some(catalog) = catalog {
+                if let Some(item) = catalog.item(&installation.agent_id) {
+                    let is_compatible = installation.protocol == item.protocol
+                        && item.distributions.iter().any(|dist| {
+                            dist.id() == installation.distribution_id
+                                && dist.distribution_type() == installation.distribution_type
+                        });
+                    if !is_compatible {
+                        let now = chrono::Utc::now().to_rfc3339();
+                        self.repository
+                            .mark_incompatible(
+                                &installation.agent_id,
+                                "catalog_distribution_incompatible",
+                                "The installed Agent distribution or protocol is incompatible with the active catalog.",
+                                &now,
+                            )
+                            .await?;
+                        warnings.push(format!(
+                            "{} marked incompatible: catalog_distribution_incompatible",
+                            installation.agent_id
+                        ));
+                        continue;
+                    }
+                }
             }
             let entry_error = if installation.ownership == Ownership::Managed
                 && !installation.install_dir.as_ref().is_some_and(|path| {
@@ -1321,6 +1356,179 @@ mod tests {
         assert_eq!(installation.model_status.as_deref(), Some("failed"));
         assert!(!installation.connected());
         assert!(!installation.execution_ready());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_marks_mismatched_legacy_native_installation_incompatible_and_excludes_from_registry(
+    ) {
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-legacy-reconcile-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("app.db");
+        let db = crate::backend::store::Database::open_initialized_async(&db_path)
+            .await
+            .expect("open db");
+        let pool = db.pool().clone();
+        let repository = AgentInstallationRepository::new(pool.clone());
+        let fake_agy = root.join("bin").join("agy");
+        std::fs::create_dir_all(fake_agy.parent().unwrap()).unwrap();
+        std::fs::write(&fake_agy, b"#!/bin/sh\necho 1.0.0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake_agy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let legacy_installation = AgentInstallation {
+            agent_id: "antigravity".to_string(),
+            installation_id: uuid::Uuid::new_v4().to_string(),
+            display_name: "Google Antigravity".to_string(),
+            catalog_item_version: "1.0.0".to_string(),
+            agent_version: "1.0.0".to_string(),
+            protocol: AgentMarketProtocol::Native,
+            distribution_id: "system-antigravity".to_string(),
+            distribution_type: DistributionType::System,
+            ownership: Ownership::System,
+            install_dir: None,
+            resolved_program: fake_agy.clone(),
+            args: vec![],
+            definition_json: definition_json(
+                "antigravity",
+                "Google Antigravity",
+                &AgentMarketProtocol::Native,
+                &fake_agy,
+                &[],
+            ),
+            integrity_json: None,
+            source_registry: "builtin".to_string(),
+            catalog_version: "2026.03.01.1".to_string(),
+            enabled: true,
+            installation_status: InstallationStatus::Ready,
+            runtime_status: RuntimeStatus::Ready,
+            runtime_error_code: None,
+            runtime_error_message: None,
+            runtime_checked_at: Some(now.clone()),
+            protocol_status: ProtocolStatus::Ready,
+            protocol_error_code: None,
+            protocol_error_message: None,
+            protocol_checked_at: Some(now.clone()),
+            model_status: None,
+            model_error_code: None,
+            model_checked_at: None,
+            installed_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        repository
+            .upsert_active(&legacy_installation)
+            .await
+            .unwrap();
+
+        let manager = AgentRuntimeManager::new(pool.clone(), root.join("workspaces"));
+
+        // 证明旧代码在未按 catalog 协调时仍会把 Native definition 发布到 Registry
+        let candidates = repository.list_registry_candidates().await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].agent_id, "antigravity");
+        assert_eq!(candidates[0].protocol, AgentMarketProtocol::Native);
+
+        let reloaded = manager.reload().await.unwrap();
+        assert_eq!(reloaded, 1);
+        let snapshot = manager.registry().snapshot();
+        let active_def = snapshot.get(&AgentId::parse("antigravity").unwrap());
+        assert!(active_def.is_some());
+        assert_eq!(active_def.unwrap().protocol, AgentProtocol::Native);
+
+        // 构造活动 catalog fixture：protocol 为 ACP，分发仅为 Binary
+        let active_catalog = crate::backend::agent_market::catalog::CatalogService::from_catalog(
+            crate::backend::agent_market::types::Catalog {
+                schema: "assetiweave.agent-market/v1".to_string(),
+                catalog_version: "2026.03.07.1".to_string(),
+                generated_at: now.clone(),
+                source: crate::backend::agent_market::types::CatalogSource {
+                    kind: "official".to_string(),
+                    upstream: "https://github.com/google/antigravity".to_string(),
+                    upstream_revision: "v1.1.1".to_string(),
+                },
+                items: vec![crate::backend::agent_market::types::CatalogItem {
+                    id: "antigravity".to_string(),
+                    display_name: "Google Antigravity".to_string(),
+                    description: "Google Antigravity ACP Agent".to_string(),
+                    protocol: AgentMarketProtocol::Acp,
+                    version: "1.1.1".to_string(),
+                    core_compatibility: Default::default(),
+                    capabilities: crate::backend::agent_market::types::CatalogCapabilities::fallback_for_protocol(&AgentMarketProtocol::Acp),
+                    verification: crate::backend::agent_market::types::Verification {
+                        status: crate::backend::agent_market::types::VerificationStatus::Experimental,
+                        tested_at: now.clone(),
+                        evidence_id: None,
+                    },
+                    upstream: crate::backend::agent_market::types::UpstreamSource {
+                        registry_id: "antigravity-acp".to_string(),
+                        homepage: "https://github.com/google/antigravity".to_string(),
+                        license: "Apache-2.0".to_string(),
+                    },
+                    distributions: vec![crate::backend::agent_market::types::Distribution::Binary {
+                        id: "binary-antigravity-darwin-arm64".to_string(),
+                        priority: 100,
+                        target: crate::backend::agent_market::types::Target {
+                            os: "darwin".to_string(),
+                            arch: "arm64".to_string(),
+                        },
+                        archive: "antigravity-darwin-arm64.tar.gz".to_string(),
+                        url: "https://example.com/antigravity.tar.gz".to_string(),
+                        sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                        size: Some(1024),
+                        executable: "antigravity.par".to_string(),
+                        launch_args: vec![],
+                        model_discovery_args: None,
+                        session_cleanup_args: None,
+                        session_cleanup_not_found_markers: vec![],
+                    }],
+                }],
+            }
+        );
+
+        // 执行启动协调（传入 active catalog）
+        let warnings = manager
+            .recover_startup_with_catalog(&root.join("runtime"), Some(&active_catalog))
+            .await
+            .unwrap();
+        assert!(!warnings.is_empty());
+
+        // 验证 SQLite 记录状态
+        let updated = repository
+            .get("antigravity")
+            .await
+            .unwrap()
+            .expect("record preserved");
+        assert_eq!(
+            updated.installation_status,
+            InstallationStatus::Incompatible
+        );
+        assert_eq!(
+            updated.runtime_error_code.as_deref(),
+            Some("catalog_distribution_incompatible")
+        );
+        assert!(!updated.connected());
+        assert!(!updated.execution_ready());
+
+        // 外部 agy 未被删除，原记录的 program / protocol 未被静默篡改
+        assert!(fake_agy.is_file());
+        assert_eq!(updated.resolved_program, fake_agy);
+        assert_eq!(updated.protocol, AgentMarketProtocol::Native);
+
+        // Registry 中无该 definition
+        let final_snapshot = manager.registry().snapshot();
+        let registered = final_snapshot.get(&AgentId::parse("antigravity").unwrap());
+        assert!(registered.is_none());
+
+        let candidates_after = repository.list_registry_candidates().await.unwrap();
+        assert!(candidates_after.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -133,6 +133,24 @@ impl AgentInstallationRepository {
         Ok(())
     }
 
+    pub(crate) async fn mark_incompatible(
+        &self,
+        agent_id: &str,
+        error_code: &str,
+        error_message: &str,
+        updated_at: &str,
+    ) -> Result<(), AgentMarketError> {
+        sqlx::query("UPDATE app_agent_installations SET installation_status = 'incompatible', runtime_error_code = ?1, runtime_error_message = ?2, runtime_checked_at = ?3, updated_at = ?4 WHERE agent_id = ?5")
+            .bind(error_code)
+            .bind(error_message)
+            .bind(updated_at)
+            .bind(updated_at)
+            .bind(agent_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub(crate) async fn delete(&self, agent_id: &str) -> Result<(), AgentMarketError> {
         sqlx::query("DELETE FROM app_agent_installations WHERE agent_id = ?1")
             .bind(agent_id)

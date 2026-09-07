@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use schemars::JsonSchema;
 use semver::Version;
@@ -768,7 +768,9 @@ impl AgentInstallation {
     }
 
     pub(crate) fn connected(&self) -> bool {
-        self.protocol_status == ProtocolStatus::Ready
+        self.enabled
+            && self.installation_status == InstallationStatus::Ready
+            && self.protocol_status == ProtocolStatus::Ready
     }
 
     pub(crate) fn execution_ready(&self) -> bool {
@@ -1621,6 +1623,17 @@ mod tests {
         installation.model_status = Some("ready".to_string());
         assert!(installation.connected());
         assert!(installation.execution_ready());
+
+        // Incompatible installation status falsifies connected and execution_ready
+        installation.installation_status = InstallationStatus::Incompatible;
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
+
+        // Disabled installation falsifies connected and execution_ready
+        installation.installation_status = InstallationStatus::Ready;
+        installation.enabled = false;
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
     }
 
     #[test]
