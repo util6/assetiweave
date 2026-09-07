@@ -145,7 +145,7 @@ test("bundled catalog antigravity item satisfies official ACP specification acro
   assert.equal(antigravity.upstream?.registryId, "antigravity-acp");
   assert.equal(antigravity.verification?.status, "experimental");
   assert.equal(antigravity.capabilities.textPrompt, true);
-  assert.equal(antigravity.capabilities.modelDiscovery, false);
+  assert.equal(antigravity.capabilities.modelDiscovery, true);
   assert.equal(antigravity.capabilities.resume, false);
   assert.equal(antigravity.capabilities.historyReplay, false);
   assert.equal(antigravity.capabilities.liveEvents, false);

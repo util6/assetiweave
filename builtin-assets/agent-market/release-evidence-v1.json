@@ -1,7 +1,7 @@
 {
   "schema": "assetiweave.agent-market/release-evidence/v1",
   "catalogVersion": "2026.08.29.1",
-  "catalogContentSha256": "14eccbd89255c5859c169ea4eb78887eadc7c07c78235c34e101ca59a8999fb5",
+  "catalogContentSha256": "f80e1fc48a29fab0850da7297f923215eafa557ce986a4abc810564154590fd4",
   "coreVersion": "0.6.1",
   "capturedAt": "2026-09-06T12:20:40Z",
   "upstream": {
@@ -110,11 +110,62 @@
         "method": "binary release extraction"
       },
       "acpConformance": {
-        "status": "experimental",
-        "initialize": "not_run",
-        "sessionNew": "not_run",
-        "sessionClose": "not_run",
-        "cleanShutdown": "not_run"
+        "status": "partial",
+        "initialize": "passed",
+        "sessionNew": "passed",
+        "sessionClose": "unsupported",
+        "cleanShutdown": "passed"
+      },
+      "realSmoke": {
+        "observedAt": "2026-09-07T14:50:07Z",
+        "host": {
+          "os": "darwin",
+          "arch": "aarch64"
+        },
+        "executable": "agy_acp_server.par",
+        "launchArgs": [],
+        "initialize": {
+          "status": "passed",
+          "protocolVersion": 1,
+          "agentInfo": {
+            "name": "antigravity-acp",
+            "title": "Google Antigravity",
+            "version": "agy_acp_server_1.1.1"
+          },
+          "capabilities": [
+            "loadSession",
+            "promptCapabilities",
+            "mcpCapabilities",
+            "sessionCapabilities",
+            "auth"
+          ]
+        },
+        "sessionNew": {
+          "status": "passed",
+          "configOptionCategories": [
+            "model",
+            "mode"
+          ]
+        },
+        "modelDiscovery": {
+          "status": "ready",
+          "count": 11,
+          "defaultModelId": "gemini-3.7-flash-high"
+        },
+        "prompt": {
+          "status": "passed",
+          "resultMarker": "ASSETIWEAVE_ACP_OK",
+          "stopReason": "end_turn"
+        },
+        "sessionClose": "unsupported",
+        "sessionDelete": "unsupported",
+        "cleanup": {
+          "processReaped": true,
+          "exitCode": 0,
+          "workspaceRemoved": true,
+          "orphanProcesses": 0
+        },
+        "authState": "authenticated"
       }
     },
     {

@@ -8,7 +8,7 @@
 | AGACP-03 | PASS | `62d1177` | 5平台 ACP binary 锁定；release evidence 完备；防伪造 conformance 门禁通过；前端 presentation 更新为 ACP Agent | — |
 | AGACP-04 | PASS | `45d76d9` | 移除 antigravity selector/parse_agy_models/废弃文件；严格走 ACP 路由；source guard 0 匹配通过 | — |
 | AGACP-05 | PASS | `230cec7` | 6 大端到端场景覆盖；安装/健康探针/动态Registry/多错误模式全数通过 | — |
-| AGACP-06 | NOT_RUN | — | 旧 RC01 initialize 调查存在；1.1.1 E2E 未执行 | AGACP-05、credential |
+| AGACP-06 | PASS | `2145df5` | 官方 1.1.1 Darwin aarch64 真实 smoke 通过；modelDiscovery=true；partial conformance 固化 | — |
 | AGACP-07 | NOT_RUN | — | — | AGACP-00..06 |
 
 ## 上游制品证据
@@ -29,4 +29,6 @@
 | 2026-09-07 | planning | Team resume/history/live 暂时关闭；不保留 Direct-CLI fallback | 本专项文本 ACP 范围 |
 | 2026-09-07 | planning | connection probe cleanup 与业务 OneShot 删除契约分离 | Issue #18 与官方 delete 能力未确认 |
 | 2026-09-07 | AGACP-01 | lifecycle/mod.rs 故障恢复测试故障注入模式由 no_models 调整为 initialize_error | 符合契约 C-04（空模型非协议失败）；经用户决策批准扩展白名单 |
+| 2026-09-07 | AGACP-06 | 官方 1.1.1 实测 session/new 返回 11 个模型，启用 modelDiscovery: true；因官方无 close/delete 声明，conformance 状态如实记录 partial，保持 experimental | Darwin aarch64 真实执行回包与 JSON-RPC 追踪 |
+
 

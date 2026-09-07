@@ -133,7 +133,7 @@
           "memory"
         ],
         "textPrompt": true,
-        "modelDiscovery": false,
+        "modelDiscovery": true,
         "resume": false,
         "historyReplay": false,
         "teamTools": false,
