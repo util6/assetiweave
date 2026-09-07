@@ -246,15 +246,19 @@ mod tests {
             .iter()
             .find(|item| item.id == "antigravity")
             .expect("Antigravity catalog item");
-        assert_eq!(antigravity.protocol, AgentMarketProtocol::Native);
-        assert!(antigravity.capabilities.resume);
-        assert!(antigravity.capabilities.history_replay);
-        assert!(antigravity.capabilities.live_events);
-        assert!(matches!(
-            antigravity.distributions.as_slice(),
-            [Distribution::System { command_candidates, .. }]
-                if command_candidates == &["agy".to_string()]
-        ));
+        assert_eq!(antigravity.protocol, AgentMarketProtocol::Acp);
+        assert_eq!(antigravity.version, "1.1.1");
+        assert_eq!(
+            antigravity.verification.status,
+            crate::backend::agent_market::types::VerificationStatus::Experimental
+        );
+        assert!(!antigravity.capabilities.resume);
+        assert!(!antigravity.capabilities.history_replay);
+        assert!(!antigravity.capabilities.live_events);
+        assert_eq!(antigravity.distributions.len(), 5);
+        for d in &antigravity.distributions {
+            assert!(matches!(d, Distribution::Binary { .. }));
+        }
         let json = serde_json::to_string(&catalog).expect("catalog json");
         assert!(!json.contains("npx -y"));
         assert!(!json.contains("latest"));

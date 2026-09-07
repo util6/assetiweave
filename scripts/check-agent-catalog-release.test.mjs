@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -99,13 +100,134 @@ test("release gate requires a real ACP package/release E2E record", () => {
 
 test("release gate requires native availability evidence for tested Agent items", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
+  const catalogFixture = path.join(directory, "catalog.json");
+  const evidenceFixture = path.join(directory, "evidence.json");
+  const catalog = JSON.parse(fs.readFileSync(CATALOG, "utf8"));
+  catalog.items.push({
+    id: "custom-native",
+    displayName: "Custom Native",
+    description: "Custom native agent",
+    protocol: "native",
+    version: "1.0.0",
+    capabilities: { purposes: ["memory"], textPrompt: true, modelDiscovery: false, resume: false, historyReplay: false, liveEvents: false, richHistoryReplay: false },
+    verification: { status: "tested", testedAt: "2026-08-20T00:00:00Z", evidenceId: "custom-native-evidence" },
+    upstream: { registryId: "custom-native", homepage: "https://example.com/native", license: "MIT" },
+    distributions: [{ id: "system-custom", type: "system", priority: 10, commandCandidates: ["custom"], versionArgs: ["--version"], launchArgs: [] }],
+  });
+  // Replace placeholder homepage for the mock
+  catalog.items[catalog.items.length - 1].upstream.homepage = "https://example-native-agent.org";
+  const evidence = JSON.parse(fs.readFileSync(path.join(ROOT, "builtin-assets", "agent-market", "release-evidence-v1.json"), "utf8"));
+  evidence.items.push({
+    evidenceId: "custom-native-evidence",
+    catalogItemId: "custom-native",
+    upstreamAgentId: "custom-native",
+    agentVersion: "1.0.0",
+    distributionId: "system-custom",
+    distributionType: "system",
+    install: { status: "passed", method: "system executable discovery", versionOutput: "1.0.0" },
+    nativeConformance: { status: "passed", availabilityProbe: "failed" },
+  });
+  const catalogBytes = Buffer.from(JSON.stringify(catalog));
+  evidence.catalogContentSha256 = crypto.createHash("sha256").update(catalogBytes).digest("hex");
+  fs.writeFileSync(catalogFixture, catalogBytes);
+  fs.writeFileSync(evidenceFixture, JSON.stringify(evidence));
+  const result = run(catalogFixture, "--release", evidenceFixture);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /tested native item requires availability evidence/i);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("bundled catalog antigravity item satisfies official ACP specification across 5 platforms", () => {
+  const antigravity = BUNDLED_CATALOG.items.find((item) => item.id === "antigravity");
+  assert.ok(antigravity, "antigravity item must exist in catalog");
+  assert.equal(antigravity.protocol, "acp");
+  assert.equal(antigravity.version, "1.1.1");
+  assert.equal(antigravity.upstream?.registryId, "antigravity-acp");
+  assert.equal(antigravity.verification?.status, "experimental");
+  assert.equal(antigravity.capabilities.textPrompt, true);
+  assert.equal(antigravity.capabilities.modelDiscovery, false);
+  assert.equal(antigravity.capabilities.resume, false);
+  assert.equal(antigravity.capabilities.historyReplay, false);
+  assert.equal(antigravity.capabilities.liveEvents, false);
+  assert.equal(antigravity.capabilities.teamTools, false);
+
+  const expectedDistributions = [
+    {
+      id: "binary-darwin-aarch64",
+      target: { os: "darwin", arch: "aarch64" },
+      archive: "zip",
+      url: "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
+      sha256: "fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189",
+      size: 316014828,
+      executable: "agy_acp_server.par",
+      launchArgs: [],
+    },
+    {
+      id: "binary-linux-x86_64",
+      target: { os: "linux", arch: "x86_64" },
+      archive: "zip",
+      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
+      sha256: "38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df",
+      size: 681969407,
+      executable: "agy_acp_server.par",
+      launchArgs: ["--uid="],
+    },
+    {
+      id: "binary-linux-aarch64",
+      target: { os: "linux", arch: "aarch64" },
+      archive: "zip",
+      url: "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
+      sha256: "ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398",
+      size: 656572786,
+      executable: "agy_acp_server.par",
+      launchArgs: ["--uid="],
+    },
+    {
+      id: "binary-windows-x86_64",
+      target: { os: "windows", arch: "x86_64" },
+      archive: "zip",
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+      sha256: "47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8",
+      size: 468238392,
+      executable: "agy_acp_server.exe",
+      launchArgs: [],
+    },
+    {
+      id: "binary-windows-aarch64",
+      target: { os: "windows", arch: "aarch64" },
+      archive: "zip",
+      url: "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+      sha256: "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc",
+      size: 468521191,
+      executable: "agy_acp_server.exe",
+      launchArgs: [],
+    },
+  ];
+
+  assert.equal(antigravity.distributions.length, 5);
+  for (const expected of expectedDistributions) {
+    const actual = antigravity.distributions.find((d) => d.id === expected.id);
+    assert.ok(actual, `distribution ${expected.id} must exist`);
+    assert.deepEqual(actual.target, expected.target);
+    assert.equal(actual.archive, expected.archive);
+    assert.equal(actual.url, expected.url);
+    assert.equal(actual.sha256, expected.sha256);
+    assert.equal(actual.size, expected.size);
+    assert.equal(actual.executable, expected.executable);
+    assert.deepEqual(actual.launchArgs, expected.launchArgs);
+  }
+});
+
+test("release gate rejects fraudulent passed ACP conformance evidence", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "assetiweave-agent-catalog-"));
   const evidenceFixture = path.join(directory, "evidence.json");
   const evidence = JSON.parse(fs.readFileSync(path.join(ROOT, "builtin-assets", "agent-market", "release-evidence-v1.json"), "utf8"));
-  delete evidence.items.find((item) => item.catalogItemId === "antigravity").nativeConformance;
+  const opencodeRecord = evidence.items.find((item) => item.catalogItemId === "opencode");
+  opencodeRecord.acpConformance.sessionClose = "not_run";
   fs.writeFileSync(evidenceFixture, JSON.stringify(evidence));
   const result = run(CATALOG, "--release", evidenceFixture);
   assert.notEqual(result.status, 0);
-  assert.match(result.stdout, /tested native item requires availability evidence/i);
+  assert.match(result.stdout, /passed ACP conformance evidence cannot contain incomplete or non-passed steps|tested item requires complete ACP conformance/i);
   fs.rmSync(directory, { recursive: true, force: true });
 });
 

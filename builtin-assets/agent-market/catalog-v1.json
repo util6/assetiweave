@@ -123,10 +123,10 @@
     },
     {
       "id": "antigravity",
-      "displayName": "Antigravity",
-      "description": "Google Antigravity CLI through the native Agent runtime",
-      "protocol": "native",
-      "version": "1.1.16",
+      "displayName": "Google Antigravity",
+      "description": "Google's agent with the Antigravity official ACP server",
+      "protocol": "acp",
+      "version": "1.1.1",
       "capabilities": {
         "purposes": [
           "card_translation",
@@ -134,33 +134,100 @@
         ],
         "textPrompt": true,
         "modelDiscovery": false,
-        "resume": true,
-        "historyReplay": true,
-        "liveEvents": true,
+        "resume": false,
+        "historyReplay": false,
+        "teamTools": false,
+        "liveEvents": false,
         "richHistoryReplay": false
       },
       "verification": {
-        "status": "tested",
-        "testedAt": "2026-08-20T00:00:00Z",
-        "evidenceId": "assetiweave-native-antigravity-1.1.15-system"
+        "status": "experimental",
+        "testedAt": "2026-09-07T00:00:00Z",
+        "evidenceId": "acp-registry-81bf71b5-antigravity-1.1.1-binary-darwin-aarch64"
       },
       "upstream": {
-        "registryId": "antigravity",
+        "registryId": "antigravity-acp",
         "homepage": "https://antigravity.google/product/antigravity-cli",
         "license": "proprietary"
       },
       "distributions": [
         {
-          "id": "system-antigravity",
-          "type": "system",
-          "priority": 10,
-          "commandCandidates": [
-            "agy"
-          ],
-          "versionArgs": [
-            "--version"
-          ],
-          "versionRange": "",
+          "id": "binary-darwin-aarch64",
+          "type": "binary",
+          "priority": 20,
+          "target": {
+            "os": "darwin",
+            "arch": "aarch64"
+          },
+          "archive": "zip",
+          "url": "https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-agy_acp_server_1.1.1-darwin-arm64.zip",
+          "sha256": "fdfa915652cdb7ba8085cc8fffed072cbe009251aa2c951aabdda07a8c28a189",
+          "size": 316014828,
+          "executable": "agy_acp_server.par",
+          "launchArgs": []
+        },
+        {
+          "id": "binary-linux-x86_64",
+          "type": "binary",
+          "priority": 20,
+          "target": {
+            "os": "linux",
+            "arch": "x86_64"
+          },
+          "archive": "zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-x86_64.zip",
+          "sha256": "38f62d01b32deb0907b3d39a71ec301fd36369f6ffd1cf262d4af385177f79df",
+          "size": 681969407,
+          "executable": "agy_acp_server.par",
+          "launchArgs": [
+            "--uid="
+          ]
+        },
+        {
+          "id": "binary-linux-aarch64",
+          "type": "binary",
+          "priority": 20,
+          "target": {
+            "os": "linux",
+            "arch": "aarch64"
+          },
+          "archive": "zip",
+          "url": "https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-agy_acp_server_1.1.1-linux-arm64.zip",
+          "sha256": "ed69e64b308fcb123ab54bf3277bf9cb0d651064f885ea5aab0ff520c7175398",
+          "size": 656572786,
+          "executable": "agy_acp_server.par",
+          "launchArgs": [
+            "--uid="
+          ]
+        },
+        {
+          "id": "binary-windows-x86_64",
+          "type": "binary",
+          "priority": 20,
+          "target": {
+            "os": "windows",
+            "arch": "x86_64"
+          },
+          "archive": "zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-x86_64.zip",
+          "sha256": "47cb50eef14f0a4655d78cfcfda869bcea7aaee5f9787e936bc2935ea612c3b8",
+          "size": 468238392,
+          "executable": "agy_acp_server.exe",
+          "launchArgs": []
+        },
+        {
+          "id": "binary-windows-aarch64",
+          "type": "binary",
+          "priority": 20,
+          "target": {
+            "os": "windows",
+            "arch": "aarch64"
+          },
+          "archive": "zip",
+          "url": "https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-agy_acp_server_1.1.1-windows-arm64.zip",
+          "sha256": "35f4b1f47ba6a3fea7b0a3e30010df5ea73a64b4f0e7cf991cddc673ddfbcafc",
+          "size": 468521191,
+          "executable": "agy_acp_server.exe",
           "launchArgs": []
         }
       ]

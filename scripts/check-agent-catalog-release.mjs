@@ -138,6 +138,9 @@ function checkEvidence(catalog, catalogBytes, evidence) {
         const conformancePassed = conformance?.status === "passed"
           && ["initialize", "sessionNew", "sessionClose", "cleanShutdown"].every((step) => conformance[step] === "passed");
         if (item.verification?.status === "tested" && !conformancePassed) errors.push(`${item.id}/${distribution.id}: tested item requires complete ACP conformance evidence`);
+        if (conformance?.status === "passed" && !conformancePassed) {
+          errors.push(`${item.id}/${distribution.id}: passed ACP conformance evidence cannot contain incomplete or non-passed steps`);
+        }
         if (conformancePassed && ["binary", "npx", "uvx"].includes(distribution.type)) passedManagedConformance = true;
       }
     }

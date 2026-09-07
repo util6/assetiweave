@@ -46,7 +46,7 @@ const legacyPresentationItems: Array<[string, string]> = [
   ["opencode", "ACP Agent"],
   ["gemini", "ACP Agent"],
   ["kiro", "ACP Agent"],
-  ["antigravity", "Native Agent"],
+  ["antigravity", "ACP Agent"],
   ["claude", "ACP Agent"],
   ["codex", "ACP Agent"],
   ["hermes", "ACP Agent"],
