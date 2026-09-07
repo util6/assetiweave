@@ -232,9 +232,16 @@ fn get_log_dir() -> Result<PathBuf, LogAccessError> {
 }
 
 fn ensure_default_log_file() -> Result<(), LogAccessError> {
-    if get_log_dir()?.join(APP_LOG_FILE_PREFIX).is_file() || !list_managed_log_files()?.is_empty() {
+    let log_dir = get_log_dir()?;
+    let default_log = log_dir.join(APP_LOG_FILE_PREFIX);
+    if default_log.is_file() || !list_managed_log_files()?.is_empty() {
         return Ok(());
     }
+
+    let _ = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&default_log);
 
     write_startup_log()
 }
