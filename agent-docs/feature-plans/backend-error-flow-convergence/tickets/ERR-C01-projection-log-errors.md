@@ -11,12 +11,12 @@
 
 ## Steps
 
-- [ ] 分类三个模块的 `Result<T,String>`：schema/kind/renderer 是 ProjectionError；路径/读取/打开/紧急写入是 LogAccessError。
-- [ ] 增加未知 card schema、非法 renderer、日志路径逃逸、日志读取 I/O 的行为测试；断言原有成功结果不变、失败保留 typed source 并安全映射。
-- [ ] 运行测试记录当前 String error 缺少 source/code 的 RED。
-- [ ] 使用 `thiserror` 定义两个局部 error enum；私有纯 parser 也返回所属 typed error，避免 caller 重新解析字符串。
-- [ ] AppService/adapter 只在领域边界转换为 AppError/WireError。
-- [ ] 三个模块公开/跨模块 `Result<T,String>` 为零；测试锁 helper 可保留并在交接注明 test-only。
+- [x] 分类三个模块的 `Result<T,String>`：schema/kind/renderer 是 ProjectionError；路径/读取/打开/紧急写入是 LogAccessError。
+- [x] 增加未知 card schema、非法 renderer、日志路径逃逸、日志读取 I/O 的行为测试；断言原有成功结果不变、失败保留 typed source 并安全映射。
+- [x] 运行测试记录当前 String error 缺少 source/code 的 RED。
+- [x] 使用 `thiserror` 定义两个局部 error enum；私有纯 parser 也返回所属 typed error，避免 caller 重新解析字符串。
+- [x] AppService/adapter 只在领域边界转换为 AppError/WireError。
+- [x] 三个模块公开/跨模块 `Result<T,String>` 为零；测试锁 helper 可保留并在交接注明 test-only。
 
 ## Verify
 

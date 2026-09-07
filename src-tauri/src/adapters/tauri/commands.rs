@@ -3306,12 +3306,12 @@ pub(crate) fn logs_get_snapshot(
     file_name: Option<String>,
     line_limit: Option<usize>,
 ) -> RuntimeAppResult<crate::backend::logs::LogSnapshot> {
-    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::External)
+    crate::backend::logs::logs_get_snapshot(file_name, line_limit).map_err(AppError::from)
 }
 
 #[tauri::command]
 pub(crate) fn logs_open_log_directory() -> RuntimeAppResult<()> {
-    crate::backend::logs::logs_open_log_directory().map_err(AppError::External)
+    crate::backend::logs::logs_open_log_directory().map_err(AppError::from)
 }
 
 #[tauri::command]
@@ -3322,7 +3322,7 @@ pub(crate) fn logs_write_operation(
     fields: Option<BTreeMap<String, String>>,
 ) -> RuntimeAppResult<()> {
     crate::backend::logs::logs_write_operation(level, operation, message, fields)
-        .map_err(AppError::External)
+        .map_err(AppError::from)
 }
 
 #[tauri::command]

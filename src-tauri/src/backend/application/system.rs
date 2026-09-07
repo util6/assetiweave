@@ -120,14 +120,13 @@ impl AppService {
         file_name: Option<String>,
         line_limit: Option<usize>,
     ) -> AppResult<crate::backend::logs::LogSnapshot> {
-        Ok(
-            crate::backend::logs::logs_get_snapshot(file_name, line_limit)
-                .map_err(AppError::external)?,
-        )
+        Ok(crate::backend::logs::logs_get_snapshot(
+            file_name, line_limit,
+        )?)
     }
 
     pub(crate) fn logs_open_log_directory(&self) -> AppResult<()> {
-        Ok(crate::backend::logs::logs_open_log_directory().map_err(AppError::external)?)
+        Ok(crate::backend::logs::logs_open_log_directory()?)
     }
 
     pub(crate) fn logs_write_operation(
@@ -137,10 +136,9 @@ impl AppService {
         message: String,
         fields: Option<BTreeMap<String, String>>,
     ) -> AppResult<()> {
-        Ok(
-            crate::backend::logs::logs_write_operation(level, operation, message, fields)
-                .map_err(AppError::external)?,
-        )
+        Ok(crate::backend::logs::logs_write_operation(
+            level, operation, message, fields,
+        )?)
     }
 
     pub(crate) fn app_settings_value(&self) -> Value {

@@ -251,6 +251,29 @@ impl From<crate::backend::projection::error::ProjectionError> for AppError {
     }
 }
 
+impl From<crate::backend::logs::LogAccessError> for AppError {
+    fn from(error: crate::backend::logs::LogAccessError) -> Self {
+        use crate::backend::logs::LogAccessError;
+        match error {
+            LogAccessError::Io { source, .. } => Self::Io(source),
+            LogAccessError::OpenDirectory(source) => Self::Io(source),
+            LogAccessError::PathEscape(path) => {
+                Self::Validation(format!("非法日志路径访问: {path}"))
+            }
+            LogAccessError::InvalidLogLevel(level) => {
+                Self::Validation(format!("不支持的日志级别: {level}"))
+            }
+            LogAccessError::FileNotFound(file_name) => {
+                Self::NotFound(format!("未找到指定日志文件: {file_name}"))
+            }
+            LogAccessError::NoAvailableLogFiles => Self::NotFound("未找到可用日志文件".to_string()),
+            LogAccessError::RuntimeConfig(message) => Self::External(message),
+            LogAccessError::PanicLogFailed(message) => Self::Storage(message),
+            LogAccessError::Other(message) => Self::External(message),
+        }
+    }
+}
+
 impl fmt::Display for AppErrorView {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.code, self.message)
@@ -480,5 +503,73 @@ mod tests {
         assert_eq!(view.code, "storage_error");
         assert!(!view.message.to_ascii_lowercase().contains("select"));
         assert!(!view.message.contains("not_an_integer"));
+    }
+
+    #[test]
+    fn projection_and_log_error_wire_parity() {
+        use crate::backend::logs::LogAccessError;
+        use crate::backend::projection::error::ProjectionError;
+        use std::error::Error;
+
+        // 1. 未知 card schema (UnsupportedSchemaVersion) -> Validation, wire code validation_error, non-retryable
+        let proj_schema_err = ProjectionError::UnsupportedSchemaVersion {
+            expected: 1,
+            actual: Some(999),
+        };
+        let app_err = AppError::from(proj_schema_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("schema_version"));
+        assert!(view.message.contains("1"));
+
+        // 2. 非法 renderer (UnsupportedRenderer) -> Validation, wire code validation_error, non-retryable
+        let proj_renderer_err = ProjectionError::UnsupportedRenderer {
+            renderer: "unknown_3d_canvas".to_string(),
+        };
+        let app_err = AppError::from(proj_renderer_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("unknown_3d_canvas"));
+
+        // 3. 日志路径逃逸 (PathEscape) -> Validation, wire code validation_error, non-retryable
+        let log_escape_err = LogAccessError::PathEscape("../../etc/passwd".to_string());
+        let app_err = AppError::from(log_escape_err);
+        assert!(matches!(app_err, AppError::Validation(_)));
+        assert_eq!(app_err.code(), "validation_error");
+        assert!(!app_err.retryable());
+        let view = app_err.view();
+        assert_eq!(view.code, "validation_error");
+        assert!(!view.retryable);
+        assert!(view.message.contains("非法日志路径访问"));
+
+        // 4. 日志读取 I/O (Io) -> Io, wire code storage_error, retryable, 保留 std::io::Error source
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "permission denied");
+        let log_io_err = LogAccessError::Io {
+            action: "打开日志文件",
+            path: Some(std::path::PathBuf::from("/var/log/app.log")),
+            source: io_err,
+        };
+        let app_err = AppError::from(log_io_err);
+        assert!(matches!(app_err, AppError::Io(_)));
+        assert_eq!(app_err.code(), "storage_error");
+        assert!(app_err.retryable());
+        assert!(app_err.source().is_some(), "source must be preserved");
+        let root_source = app_err.source().unwrap();
+        assert!(root_source.is::<std::io::Error>());
+        let view = app_err.view();
+        assert_eq!(view.code, "storage_error");
+        assert!(view.retryable);
+        assert_eq!(
+            view.message,
+            "The application could not access local storage."
+        );
     }
 }
