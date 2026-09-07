@@ -7,7 +7,7 @@
 | AGACP-02 | PASS | `069f0ec` | 启动协调对比 catalog protocol/distribution；失配标记 incompatible 且阻止进入 Registry；update 返回 agent_reinstall_required，放行 reinstall | — |
 | AGACP-03 | PASS | `62d1177` | 5平台 ACP binary 锁定；release evidence 完备；防伪造 conformance 门禁通过；前端 presentation 更新为 ACP Agent | — |
 | AGACP-04 | PASS | `45d76d9` | 移除 antigravity selector/parse_agy_models/废弃文件；严格走 ACP 路由；source guard 0 匹配通过 | — |
-| AGACP-05 | NOT_RUN | — | 现有 fake ACP 可扩展 | AGACP-04 |
+| AGACP-05 | PASS | `230cec7` | 6 大端到端场景覆盖；安装/健康探针/动态Registry/多错误模式全数通过 | — |
 | AGACP-06 | NOT_RUN | — | 旧 RC01 initialize 调查存在；1.1.1 E2E 未执行 | AGACP-05、credential |
 | AGACP-07 | NOT_RUN | — | — | AGACP-00..06 |
 

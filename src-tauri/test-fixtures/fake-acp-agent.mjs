@@ -72,8 +72,8 @@ function handleInitialize(message) {
     fail(message.id);
     return;
   }
-  const supportsClose = !["no_close", "initialize_timeout"].includes(mode);
-  const supportsDelete = !["initialize_timeout", "no_delete", "no_delete_empty"].includes(mode);
+  const supportsClose = !["no_close", "no_close_no_delete", "initialize_timeout"].includes(mode);
+  const supportsDelete = !["initialize_timeout", "no_delete", "no_delete_empty", "no_close_no_delete"].includes(mode);
   const supportsLoad = !["initialize_timeout", "no_load", "load_error"].includes(mode);
   const supportsResume = !["initialize_timeout", "no_resume", "resume_error"].includes(mode);
   respond(message.id, {
@@ -92,6 +92,24 @@ function handleInitialize(message) {
   });
 }
 
+function getRecordEventCount(targetEvent) {
+  if (!recordPath || !fs.existsSync(recordPath)) {
+    return 0;
+  }
+  try {
+    const content = fs.readFileSync(recordPath, "utf8");
+    return content.split("\n").filter((line) => {
+      try {
+        return JSON.parse(line).event === targetEvent;
+      } catch {
+        return false;
+      }
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
 function handleNewSession(message) {
   record("new", {
     cwd: message.params?.cwd,
@@ -102,6 +120,13 @@ function handleNewSession(message) {
   if (mode === "auth_error") {
     fail(message.id, -32000, "Authentication required: please run login");
     return;
+  }
+  if (mode === "model_discovery_error") {
+    const newCount = getRecordEventCount("new");
+    if (newCount === 2) {
+      fail(message.id, -32603, "Simulated model discovery session failure");
+      return;
+    }
   }
   if (mode === "new_error") {
     fail(message.id);
@@ -130,7 +155,7 @@ function handleSetConfig(message) {
     configId: message.params?.configId,
     value: message.params?.value,
   });
-  if (mode === "model_reject") {
+  if (mode === "model_reject" || mode === "model_discovery_error") {
     fail(message.id, -32602);
     return;
   }
@@ -184,6 +209,9 @@ function handlePrompt(message) {
   });
   const id = message.id;
   switch (mode) {
+    case "prompt_error":
+      fail(id, -32603, "Internal prompt execution error");
+      return;
     case "chunked":
       text("你");
       text("好🌍");
@@ -347,7 +375,7 @@ function handleResponse(message) {
 }
 
 const input = readline.createInterface({ input: process.stdin });
-const keepAlive = mode.startsWith("no_delete") ? setInterval(() => {}, 1_000) : undefined;
+const keepAlive = (mode.startsWith("no_delete") || mode === "no_close_no_delete" || mode === "cancel_wait") ? setInterval(() => {}, 1_000) : undefined;
 input.on("line", (line) => {
   let message;
   try {

@@ -1197,15 +1197,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(runtime_root);
     }
 
-    async fn acp_test_fixture(
+    async fn acp_test_fixture_with_id(
+        agent_id: &str,
         mode: &str,
     ) -> (
         AgentRuntimeManager,
         AgentInstallationRepository,
         std::path::PathBuf,
     ) {
-        let root =
-            std::env::temp_dir().join(format!("assetiweave-acp-health-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "assetiweave-acp-{}-{}",
+            agent_id,
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let db_path = root.join("app.db");
         let db = crate::backend::store::Database::open_initialized_async(&db_path)
@@ -1225,9 +1229,9 @@ mod tests {
         ];
         let now = chrono::Utc::now().to_rfc3339();
         let installation = AgentInstallation {
-            agent_id: "test-agent".to_string(),
+            agent_id: agent_id.to_string(),
             installation_id: uuid::Uuid::new_v4().to_string(),
-            display_name: "Test Agent".to_string(),
+            display_name: format!("{agent_id} Display"),
             catalog_item_version: "1.0.0".to_string(),
             agent_version: "1.0.0".to_string(),
             protocol: AgentMarketProtocol::Acp,
@@ -1238,8 +1242,8 @@ mod tests {
             resolved_program: program.clone(),
             args: args.clone(),
             definition_json: serde_json::json!({
-                "id": "test-agent",
-                "display_name": "Test Agent",
+                "id": agent_id,
+                "display_name": format!("{agent_id} Display"),
                 "protocol": "acp",
                 "program": program.to_string_lossy(),
                 "args": args,
@@ -1270,6 +1274,74 @@ mod tests {
         repository.upsert_active(&installation).await.unwrap();
         let manager = AgentRuntimeManager::new(pool, root.join("workspaces"));
         (manager, repository, root)
+    }
+
+    async fn acp_test_fixture(
+        mode: &str,
+    ) -> (
+        AgentRuntimeManager,
+        AgentInstallationRepository,
+        std::path::PathBuf,
+    ) {
+        acp_test_fixture_with_id("test-agent", mode).await
+    }
+
+    fn test_request(
+        agent_id: &str,
+        model: Option<&str>,
+    ) -> crate::backend::ai_execution::AiExecutionRequest {
+        use crate::backend::ai_execution::*;
+        AiExecutionRequest {
+            execution_id: format!("exec-{}", uuid::Uuid::new_v4()),
+            agent_id: AgentId::parse(agent_id).expect("valid agent id"),
+            purpose: AiExecutionPurpose::Translation,
+            session_mode: AgentSessionMode::OneShot,
+            prompt: "Please translate: Hello world".to_string(),
+            model: model.map(|m| m.to_string()),
+            limits: AiExecutionLimits {
+                total_timeout: Duration::from_secs(10),
+                initialize_timeout: Duration::from_secs(5),
+                config_rpc_timeout: Duration::from_secs(5),
+                cancel_grace: Duration::from_secs(2),
+                close_timeout: Duration::from_secs(2),
+                text_bytes: 1024 * 1024,
+                stderr_bytes: 64 * 1024,
+            },
+            cancellation: AiExecutionCancellation::default(),
+            progress: None,
+            tenant_id: None,
+            execution_context_key: None,
+            binding: None,
+            replay: false,
+            restore_only: false,
+            team_tools: None,
+            recall_tools: None,
+        }
+    }
+
+    fn read_record_events(record_file: &Path) -> Vec<serde_json::Value> {
+        if !record_file.is_file() {
+            return Vec::new();
+        }
+        let content = std::fs::read_to_string(record_file).unwrap_or_default();
+        content
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .collect()
+    }
+
+    fn assert_clean_workspaces(workspaces_dir: &Path) {
+        if workspaces_dir.exists() {
+            let entries = std::fs::read_dir(workspaces_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .collect::<Vec<_>>();
+            assert!(
+                entries.is_empty(),
+                "expected clean workspace directory, found: {:?}",
+                entries.iter().map(|e| e.path()).collect::<Vec<_>>()
+            );
+        }
     }
 
     #[tokio::test]
@@ -1531,5 +1603,392 @@ mod tests {
         assert!(candidates_after.is_empty());
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_1_normal_models_and_prompt() {
+        let (manager, repository, root) = acp_test_fixture_with_id("test-agent-s1", "happy").await;
+
+        // 1. Health Probe
+        let models = manager
+            .probe_acp_health("test-agent-s1")
+            .await
+            .expect("probe ACP health");
+        assert!(models.available);
+        assert_eq!(models.models.len(), 2);
+        assert_eq!(
+            models.current_model_id.as_deref(),
+            Some("fixture/model-fast")
+        );
+
+        // 2. Candidate & Reload to Registry
+        let candidates = repository.list_registry_candidates().await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].agent_id, "test-agent-s1");
+
+        let reloaded = manager.reload().await.expect("reload candidates");
+        assert_eq!(reloaded, 1);
+        let snapshot = manager.registry().snapshot();
+        let def = snapshot
+            .get(&AgentId::parse("test-agent-s1").unwrap())
+            .expect("registered");
+        assert_eq!(def.protocol, AgentProtocol::Acp);
+
+        // 3. SQLite State Verification
+        let installation = repository
+            .get("test-agent-s1")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Ready);
+        assert_eq!(installation.model_status.as_deref(), Some("ready"));
+        assert!(installation.connected());
+        assert!(installation.execution_ready());
+
+        // 4. Execution with specific model
+        let req = test_request("test-agent-s1", Some("fixture/model-accurate"));
+        let result = manager
+            .runtime()
+            .execute(req)
+            .await
+            .expect("execution succeeds");
+        assert_eq!(result.text, "translated");
+        assert_eq!(result.protocol, AgentProtocol::Acp);
+        assert_eq!(
+            result.requested_model.as_deref(),
+            Some("fixture/model-accurate")
+        );
+
+        // 5. Check Record Events: initialize, new, model(accurate), prompt, close, delete
+        let events = read_record_events(&root.join("record.log"));
+        assert!(events.iter().any(|e| e["event"] == "initialize"));
+        assert!(events.iter().any(|e| e["event"] == "new"));
+        let model_event = events.iter().find(|e| e["event"] == "model");
+        assert!(model_event.is_some());
+        assert_eq!(model_event.unwrap()["value"], "fixture/model-accurate");
+        assert!(events.iter().any(|e| e["event"] == "prompt"));
+        assert!(events.iter().any(|e| e["event"] == "close"));
+        assert!(events.iter().any(|e| e["event"] == "delete"));
+
+        // 6. Clean workspace assertion
+        assert_clean_workspaces(&root.join("workspaces"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_2_empty_models_and_default_model_prompt() {
+        let (manager, repository, root) =
+            acp_test_fixture_with_id("test-agent-s2", "no_models").await;
+
+        // 1. Health Probe with empty models
+        let models = manager
+            .probe_acp_health("test-agent-s2")
+            .await
+            .expect("probe ACP health");
+        assert!(models.available);
+        assert!(models.models.is_empty());
+        assert_eq!(models.error_code.as_deref(), Some("model_list_empty"));
+
+        // 2. SQLite State: Protocol is Ready, Model is unsupported, but execution_ready is true!
+        let installation = repository
+            .get("test-agent-s2")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Ready);
+        assert_eq!(installation.model_status.as_deref(), Some("unsupported"));
+        assert!(installation.connected());
+        assert!(installation.execution_ready());
+
+        // 3. Reload
+        let reloaded = manager.reload().await.expect("reload candidates");
+        assert_eq!(reloaded, 1);
+
+        // 4. Execute with default model (model: None)
+        let req = test_request("test-agent-s2", None);
+        let result = manager
+            .runtime()
+            .execute(req)
+            .await
+            .expect("execution succeeds with default model");
+        assert_eq!(result.text, "translated");
+        assert_eq!(result.requested_model, None);
+
+        // 5. Verify record: no "model" set_config_option event was called!
+        let events = read_record_events(&root.join("record.log"));
+        assert!(!events.iter().any(|e| e["event"] == "model"));
+        assert!(events.iter().any(|e| e["event"] == "prompt"));
+        assert!(events.iter().any(|e| e["event"] == "close"));
+        assert!(events.iter().any(|e| e["event"] == "delete"));
+
+        assert_clean_workspaces(&root.join("workspaces"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_3_model_discovery_error_leaves_protocol_ready() {
+        let (manager, repository, root) =
+            acp_test_fixture_with_id("test-agent-s3", "model_discovery_error").await;
+
+        // 1. Probe ACP health: Stage 1 (check_connection) passes, Stage 2 (discover_models) fails
+        let models = manager
+            .probe_acp_health("test-agent-s3")
+            .await
+            .expect("probe ACP health succeeds at manager level");
+        assert!(models.available);
+        assert!(models.models.is_empty());
+        assert_eq!(models.error_code.as_deref(), Some("model_discovery_failed"));
+
+        // 2. SQLite State: Protocol is Ready, Model is failed, connected/execution_ready are true!
+        let installation = repository
+            .get("test-agent-s3")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Ready);
+        assert_eq!(installation.model_status.as_deref(), Some("failed"));
+        assert_eq!(
+            installation.model_error_code.as_deref(),
+            Some("model_discovery_failed")
+        );
+        assert!(installation.connected());
+        assert!(installation.execution_ready());
+
+        // 3. Reloads into Registry
+        let reloaded = manager.reload().await.expect("reload candidates");
+        assert_eq!(reloaded, 1);
+
+        // 4. Default model execution succeeds
+        let req_default = test_request("test-agent-s3", None);
+        let result = manager
+            .runtime()
+            .execute(req_default)
+            .await
+            .expect("default model execution succeeds");
+        assert_eq!(result.text, "translated");
+
+        // 5. Explicit model selection fails (rejected by agent)
+        let req_model = test_request("test-agent-s3", Some("fixture/model-fast"));
+        let err = manager
+            .runtime()
+            .execute(req_model)
+            .await
+            .expect_err("explicit model selection should fail");
+        assert!(matches!(err, AiExecutionError::ModelSelectionFailed { .. }));
+
+        assert_clean_workspaces(&root.join("workspaces"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_4_auth_error_cleans_workspace_and_no_fallback() {
+        let (manager, repository, root) =
+            acp_test_fixture_with_id("test-agent-s4", "auth_error").await;
+
+        // 1. Probe ACP health fails with auth_required
+        let models = manager
+            .probe_acp_health("test-agent-s4")
+            .await
+            .expect("probe completes");
+        assert!(!models.available);
+        assert_eq!(models.error_code.as_deref(), Some("auth_required"));
+
+        // 2. SQLite State: Protocol is AuthRequired, disconnected
+        let installation = repository
+            .get("test-agent-s4")
+            .await
+            .unwrap()
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::AuthRequired);
+        assert_eq!(
+            installation.protocol_error_code.as_deref(),
+            Some("auth_required")
+        );
+        assert!(!installation.connected());
+        assert!(!installation.execution_ready());
+
+        // 3. Excluded from Registry candidates
+        let candidates = repository.list_registry_candidates().await.unwrap();
+        assert!(candidates.is_empty());
+
+        // 4. Directly load definition to verify execution phase error, clean workspace, and no fallback
+        let definition = definition_from_installation(&installation).unwrap();
+        manager
+            .registry_snapshot
+            .replace(AgentRegistry::from_definitions(vec![definition]).unwrap());
+
+        let err = manager
+            .runtime()
+            .execute(test_request("test-agent-s4", None))
+            .await
+            .expect_err("execution fails on auth error");
+        match err {
+            AiExecutionError::ProtocolDetail { operation, detail } => {
+                assert_eq!(operation, "session_new");
+                assert!(detail
+                    .to_ascii_lowercase()
+                    .contains("authentication required"));
+            }
+            AiExecutionError::Protocol { operation } => {
+                assert_eq!(operation, "session_new");
+            }
+            other => panic!("unexpected error on auth_error: {:?}", other),
+        }
+
+        // 5. Zero prompt events in fake ACP
+        let events = read_record_events(&root.join("record.log"));
+        assert!(!events.iter().any(|e| e["event"] == "prompt"));
+
+        // 6. Workspace completely cleaned up
+        assert_clean_workspaces(&root.join("workspaces"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_5_prompt_error_timeout_cancel_disconnect() {
+        // 5a. Prompt Error
+        {
+            let (manager, _, root) =
+                acp_test_fixture_with_id("test-agent-5a", "prompt_error").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let err = manager
+                .runtime()
+                .execute(test_request("test-agent-5a", None))
+                .await
+                .expect_err("prompt error expected");
+            match err {
+                AiExecutionError::ProtocolDetail { operation, detail } => {
+                    assert_eq!(operation, "prompt");
+                    assert!(detail.contains("Internal prompt execution error"));
+                }
+                AiExecutionError::Protocol { operation } => {
+                    assert_eq!(operation, "prompt");
+                }
+                other => panic!("unexpected error on prompt_error: {:?}", other),
+            }
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        // 5b. Timeout
+        {
+            let (manager, _, root) = acp_test_fixture_with_id("test-agent-5b", "cancel_wait").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let mut req = test_request("test-agent-5b", None);
+            req.limits.total_timeout = Duration::from_millis(300);
+            let err = manager
+                .runtime()
+                .execute(req)
+                .await
+                .expect_err("timeout expected");
+            assert!(matches!(err, AiExecutionError::Timeout { .. }));
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        // 5c. Cancel
+        {
+            let (manager, _, root) = acp_test_fixture_with_id("test-agent-5c", "cancel_wait").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let req = test_request("test-agent-5c", None);
+            let cancellation = req.cancellation.clone();
+            let runtime = manager.runtime();
+            let handle = tokio::spawn(async move { runtime.execute(req).await });
+
+            // Wait until the agent has actually received and started the prompt
+            let record_file = root.join("record.log");
+            let wait_start = std::time::Instant::now();
+            while wait_start.elapsed() < Duration::from_secs(3) {
+                let events = read_record_events(&record_file);
+                if events.iter().any(|e| e["event"] == "prompt") {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+
+            cancellation.cancel();
+            let err = handle.await.unwrap().expect_err("cancellation expected");
+            assert!(matches!(err, AiExecutionError::Cancelled { .. }));
+            let events = read_record_events(&root.join("record.log"));
+            assert!(events.iter().any(|e| e["event"] == "cancel"));
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        // 5d. Disconnect
+        {
+            let (manager, _, root) = acp_test_fixture_with_id("test-agent-5d", "disconnect").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let err = manager
+                .runtime()
+                .execute(test_request("test-agent-5d", None))
+                .await
+                .expect_err("disconnect expected");
+            assert!(matches!(
+                err,
+                AiExecutionError::Protocol { .. }
+                    | AiExecutionError::ProtocolDetail { .. }
+                    | AiExecutionError::AgentExited { .. }
+            ));
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[tokio::test]
+    async fn agacp_05_scene_6_cleanup_close_and_delete_supported_and_unsupported() {
+        // 6a. Supported close and delete
+        {
+            let (manager, _, root) = acp_test_fixture_with_id("test-agent-6a", "happy").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let res = manager
+                .runtime()
+                .execute(test_request("test-agent-6a", None))
+                .await
+                .expect("execution succeeds");
+            assert_eq!(res.text, "translated");
+            let events = read_record_events(&root.join("record.log"));
+            assert!(events.iter().any(|e| e["event"] == "close"));
+            assert!(events.iter().any(|e| e["event"] == "delete"));
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
+
+        // 6b. Unsupported close and delete without fallback -> CleanupFailed with delete_unsupported, but process and workspace cleaned cleanly
+        {
+            let (manager, _, root) =
+                acp_test_fixture_with_id("test-agent-6b", "no_close_no_delete").await;
+            let reloaded = manager.reload().await.unwrap();
+            assert_eq!(reloaded, 1);
+            let err = manager
+                .runtime()
+                .execute(test_request("test-agent-6b", None))
+                .await
+                .expect_err("without fallback, unsupported delete reports cleanup failure");
+            match err {
+                AiExecutionError::CleanupFailed { failures } => {
+                    assert!(
+                        failures.iter().any(|f| f == "delete_unsupported"),
+                        "failures must include delete_unsupported: {failures:?}"
+                    );
+                }
+                other => panic!("expected CleanupFailed error, got: {other:?}"),
+            }
+            let events = read_record_events(&root.join("record.log"));
+            assert!(!events.iter().any(|e| e["event"] == "close"));
+            assert!(!events.iter().any(|e| e["event"] == "delete"));
+            assert!(events
+                .iter()
+                .any(|e| e["event"] == "stdin_closed" || e["event"] == "sigterm"));
+            assert_clean_workspaces(&root.join("workspaces"));
+            let _ = std::fs::remove_dir_all(root);
+        }
     }
 }
