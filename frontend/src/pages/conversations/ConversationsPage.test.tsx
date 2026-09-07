@@ -462,7 +462,8 @@ describe("MarkdownContent", () => {
     expect(html).toContain("水平浏览分栏");
     expect(html).toContain('role="scrollbar"');
     expect(html).toContain("sticky bottom-0");
-    expect(html).toContain("min-h-[620px]");
+    expect(html).not.toContain("min-h-[620px]");
+    expect(html).toContain("min-h-0 flex-1");
   });
 
   it("shows the session summary as separate chips", () => {

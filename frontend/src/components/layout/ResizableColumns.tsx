@@ -81,7 +81,8 @@ export function ResizableColumns({
   scrollRightLabel,
   storageKey,
 }: ResizableColumnsProps) {
-  const { settings, settingsLoaded, setColumnLayoutAsync } = useAppSettings();
+  const { settings, settingsLoaded, settingsConfirmed, setColumnLayoutAsync } =
+    useAppSettings();
 
   const fallbackWeights = useMemo(
     () => columns.map((column) => column.defaultWeight),
@@ -139,9 +140,9 @@ export function ResizableColumns({
     weights,
   ]);
 
-  // 旧 localStorage 权重迁移至 SQLite 设置
+  // 旧 localStorage 权重迁移至 SQLite 设置（必须等待后端数据确认到达，禁止在启动缓存阶段回写）
   useEffect(() => {
-    if (!storageKey || !settingsLoaded) return;
+    if (!storageKey || !settingsConfirmed) return;
     if (migratedStorageKeyRef.current === storageKey) return;
 
     const existingInSettings = settings.columnLayouts?.[storageKey];
@@ -172,7 +173,7 @@ export function ResizableColumns({
     }
   }, [
     storageKey,
-    settingsLoaded,
+    settingsConfirmed,
     settings.columnLayouts,
     columns.length,
     fallbackWeights,
@@ -379,7 +380,7 @@ export function ResizableColumns({
     >
       <div className="min-h-0 min-w-0 overflow-hidden rounded-t-[inherit]">
         <div
-          className="resizable-columns-viewport min-h-0 min-w-0 overflow-x-auto overflow-y-hidden"
+          className="resizable-columns-viewport h-full min-h-0 min-w-0 overflow-x-auto overflow-y-hidden"
           ref={scrollViewportRef}
         >
           <Group

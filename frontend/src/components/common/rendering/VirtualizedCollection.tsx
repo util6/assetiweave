@@ -181,7 +181,9 @@ function VirtualizedCollectionInner<Item>(
     overscan: overscanForPhase(phase),
     rangeExtractor,
     useScrollendEvent: false,
-    useFlushSync: false,
+    // The destination shell must exist before the scrolled viewport is painted.
+    // Heavy content remains gated by DeferredSkeletonBoundary / RenderScheduler.
+    useFlushSync: true,
   });
 
   useImperativeHandle(

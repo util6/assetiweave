@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { RenderSafeScrollSurface } from "../../components/common/rendering/RenderSafeScrollSurface";
 import {
   ArrowDownWideNarrow,
   Filter,
@@ -258,7 +259,7 @@ export function CatalogPage({
   }
 
   return (
-    <section className="flex flex-1 flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
+    <section className="app-bounded-route flex flex-col gap-[var(--app-section-gap)] px-[var(--app-page-x)] py-[var(--app-page-y)]">
       <PageHeader
         actions={
           <PageMetrics
@@ -397,32 +398,38 @@ export function CatalogPage({
         ]}
       />
 
-      {catalog.loading ? (
-        <AppSkeleton
-          label={t("common.loading")}
-          layout="list"
-          layoutProps={{ rows: 8 }}
-          scope="content"
-        />
-      ) : (
-        <>
-          <DeploymentPlanPanel plan={catalog.plan} />
-          <AssetList
-            appShortcuts={catalog.appShortcuts}
-            assetMountStatuses={catalog.assetMountStatuses}
-            assets={visibleAssets}
-            expandedIds={catalog.expandedIds}
-            onDeleteAsset={setDeletingAsset}
-            onEditAsset={setEditingAsset}
-            onRevealPath={(path) => void catalog.revealPath(path)}
-            onToggleAsset={catalog.toggleAsset}
-            onToggleMount={catalog.toggleMountProfile}
-            profiles={catalog.profiles}
-            sources={catalog.sources}
-            viewMode={assetViewMode}
+      <RenderSafeScrollSurface
+        className="min-h-0 flex-1"
+        tabIndex={0}
+        aria-label={t("asset.list.aria")}
+      >
+        {catalog.loading ? (
+          <AppSkeleton
+            label={t("common.loading")}
+            layout="list"
+            layoutProps={{ rows: 8 }}
+            scope="content"
           />
-        </>
-      )}
+        ) : (
+          <>
+            <DeploymentPlanPanel plan={catalog.plan} />
+            <AssetList
+              appShortcuts={catalog.appShortcuts}
+              assetMountStatuses={catalog.assetMountStatuses}
+              assets={visibleAssets}
+              expandedIds={catalog.expandedIds}
+              onDeleteAsset={setDeletingAsset}
+              onEditAsset={setEditingAsset}
+              onRevealPath={(path) => void catalog.revealPath(path)}
+              onToggleAsset={catalog.toggleAsset}
+              onToggleMount={catalog.toggleMountProfile}
+              profiles={catalog.profiles}
+              sources={catalog.sources}
+              viewMode={assetViewMode}
+            />
+          </>
+        )}
+      </RenderSafeScrollSurface>
       <AssetEditDialog
         asset={currentEditingAsset}
         backupTask={backupTask}

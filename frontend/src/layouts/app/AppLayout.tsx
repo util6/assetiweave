@@ -125,6 +125,8 @@ export function AppLayout({
   );
   const layoutStyle = {
     "--app-sidebar-width": sideRailExpanded ? "216px" : "64px",
+    // Opt-in bounded routes share the existing titlebar + subnavigation offset.
+    "--app-route-viewport-height": "calc(100dvh - var(--app-toolbar-top))",
   } as CSSProperties;
 
   function handleRailItemSelect(item: RailMenuItem) {

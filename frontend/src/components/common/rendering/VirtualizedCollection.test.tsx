@@ -16,6 +16,8 @@ const items = Array.from({ length: 30 }, (_, index) => ({
 }));
 
 function setupDom() {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(224);
   const scrollElement = document.createElement("div");
   Object.defineProperty(scrollElement, "clientHeight", {
     configurable: true,
@@ -122,6 +124,20 @@ afterEach(() => {
 });
 
 describe("VirtualizedCollection", () => {
+  it("commits destination row shells before the scroll callback returns", () => {
+    const { scrollElement } = renderCollection();
+    act(() => {
+      scrollElement.scrollTop = 4000;
+      scrollElement.dispatchEvent(new Event("scroll"));
+      const indices = [
+        ...document.querySelectorAll("[data-virtual-item-key]"),
+      ].map((element) => Number(element.getAttribute("data-index")));
+      // Assert inside the batch: act's eventual flush must not hide a blank frame.
+      expect(Math.max(...indices)).toBeGreaterThan(12);
+      expect(Math.min(...indices)).toBeGreaterThan(0);
+    });
+  });
+
   it("uses coarse overscan values for each scroll phase", () => {
     expect(overscanForPhase("idle")).toBe(3);
     expect(overscanForPhase("moving")).toBe(5);

@@ -1351,7 +1351,7 @@
     font-size: 1em;
   }
 
-  .asset-list-surface {
+  .asset-list-surface.aurora-list-surface {
     background:
       linear-gradient(
         145deg,
@@ -1363,8 +1363,9 @@
         rgb(var(--color-status-remove) / 0.1),
         transparent 34%
       ),
-      rgb(var(--color-surface-lowest) / 0.72);
-    backdrop-filter: blur(12px);
+      rgb(var(--color-surface-lowest));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   /* Soft surfaces replace repeated horizontal rules with spacing, depth, and focus states. */
@@ -1746,4 +1747,24 @@
 .render-safe-content {
   content-visibility: auto;
   contain-intrinsic-size: auto var(--render-estimated-block-size);
+}
+
+/* Opt-in route viewport: other routes retain their existing document scrolling. */
+.app-bounded-route {
+  height: var(--app-route-viewport-height, 100dvh);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.app-bounded-route > header,
+.app-bounded-route > [data-toolbar-root],
+.app-bounded-route > .sticky {
+  flex-shrink: 0;
+}
+
+/* Toolbars stay outside bounded routes' scroll surfaces; retain their visual recipe. */
+.app-bounded-route > [data-toolbar-root],
+.app-bounded-route > .sticky {
+  position: relative;
+  top: auto;
 }

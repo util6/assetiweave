@@ -61,6 +61,7 @@ export function AssetRow({
         "aurora-list-row group cursor-pointer",
         expanded && "asset-expanded",
       )}
+      data-asset-id={asset.id}
       data-expanded={expanded}
       onClick={onToggleExpanded}
     >
@@ -109,7 +110,7 @@ export function AssetRow({
           </div>
         </div>
         <div
-          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-2xl border border-theme-control-border/65 bg-theme-control/48 p-1.5 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md max-[980px]:justify-start"
+          className="inline-flex w-fit max-w-full shrink-0 flex-wrap items-center justify-end gap-2 rounded-2xl border border-theme-control-border/65 bg-theme-control p-1.5 shadow-[var(--theme-shadow-control-inset)] max-[980px]:justify-start"
           onClick={(event) => event.stopPropagation()}
         >
           <QuickMountButtons

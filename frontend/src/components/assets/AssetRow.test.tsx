@@ -32,6 +32,7 @@ describe("AssetRow", () => {
 
     expect(html).toContain("https://github.com/anthropics/skills.git");
     expect(html).not.toContain("hash-like-source-id");
+    expect(html).not.toContain("backdrop-blur");
   });
 
   it("renders the repository source as a browser link", () => {

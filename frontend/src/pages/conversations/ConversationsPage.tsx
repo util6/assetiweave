@@ -1453,7 +1453,7 @@ export function resolveConversationNavigationTarget(
   };
 }
 
-function ConversationShell({
+export function ConversationShell({
   children,
   headerActions,
   onManualOpen,
@@ -1472,7 +1472,7 @@ function ConversationShell({
 }) {
   return (
     <div
-      className="flex w-full flex-1 flex-col px-[var(--app-page-x)] py-6"
+      className="app-bounded-route flex w-full flex-col px-[var(--app-page-x)] py-6"
       style={style}
     >
       <PageHeader
@@ -1505,7 +1505,7 @@ function ColumnPanel({
 }) {
   return (
     <section
-      className={`conversation-column flex min-h-0 flex-col ${className}`}
+      className={`conversation-column flex h-full min-h-0 flex-col ${className}`}
     >
       <header className="conversation-column-header flex h-12 shrink-0 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2">
@@ -1521,6 +1521,8 @@ function ColumnPanel({
       <RenderSafeScrollSurface
         className="conversation-column-scroll min-h-0 flex-1"
         ref={scrollRef}
+        tabIndex={0}
+        aria-label={title}
       >
         {children}
       </RenderSafeScrollSurface>
@@ -1912,7 +1914,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="conversation-session-browser conversation-surface mt-5 min-h-[620px] rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="conversation-session-browser conversation-surface mt-5 min-h-0 flex-1 rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
       columns={browserColumns}
       handleClassName="max-[1040px]:hidden"
       minimumWidth={columnMinWidth}
@@ -1967,7 +1969,7 @@ export const AppSessionBrowser = memo(function AppSessionBrowser({
           )}
         </ColumnPanel>
       ) : null}
-      <section className="conversation-column flex min-h-0 flex-col">
+      <section className="conversation-column flex h-full min-h-0 flex-col">
         <header className="conversation-column-header flex min-h-16 shrink-0 items-center justify-between gap-4 px-5 py-3">
           <div className="flex min-w-0 items-center gap-3">
             {selectedGroup ? (
@@ -2213,9 +2215,9 @@ export function ConversationContentSearchResults({
   return (
     <section
       aria-live="polite"
-      className="conversation-surface mt-4 overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.14)]"
+      className="conversation-search-results conversation-surface mt-4 flex min-h-0 max-h-[45%] shrink-0 flex-col overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.14)]"
     >
-      <header className="conversation-section-header grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+      <header className="conversation-section-header grid shrink-0 gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
         <div className="min-w-0">
           <h2 className="text-label-caps text-on-surface-variant">
             {t("conversation.search.resultsTitle")}
@@ -2286,90 +2288,99 @@ export function ConversationContentSearchResults({
           <div className="h-full w-full animate-pulse bg-status-update" />
         </div>
       ) : null}
-      {visibleHits.length === 0 ? (
-        <div className="px-4 py-6 text-body-sm text-on-surface-variant">
-          {loading
-            ? t("conversation.search.loading")
-            : t("conversation.search.empty")}
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {groupedHits.map((group) => (
-            <section className="conversation-search-group" key={group.cardType}>
-              <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 bg-theme-card-header/35 px-4 py-2">
-                <SearchCardTypeBadge
-                  cardType={group.cardType}
-                  colors={contentCardColors}
-                  t={t}
-                />
-                <span className="text-code-sm text-on-surface-muted">
-                  {t("conversation.search.groupCount", {
-                    count: group.hits.length,
-                  })}
-                </span>
-              </header>
-              <div className="grid gap-2">
-                {group.hits.map((hit) => {
-                  const appMeta = appMetaById?.get(hit.session.adapter_id);
-                  const appName = appMeta?.name ?? hit.session.adapter_id;
-                  return (
-                    <button
-                      aria-label={t("conversation.search.openHit", {
-                        title: hit.session.title,
-                        type: conversationSearchCardTypeLabel(
-                          conversationCardPresentationKind(
-                            hit.card_type,
-                            definitions.get(hit.card_type)?.semantic_role,
+      <RenderSafeScrollSurface
+        className="min-h-0 flex-1"
+        tabIndex={0}
+        aria-label={t("conversation.search.resultsTitle")}
+      >
+        {visibleHits.length === 0 ? (
+          <div className="px-4 py-6 text-body-sm text-on-surface-variant">
+            {loading
+              ? t("conversation.search.loading")
+              : t("conversation.search.empty")}
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {groupedHits.map((group) => (
+              <section
+                className="conversation-search-group"
+                key={group.cardType}
+              >
+                <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 bg-theme-card-header/35 px-4 py-2">
+                  <SearchCardTypeBadge
+                    cardType={group.cardType}
+                    colors={contentCardColors}
+                    t={t}
+                  />
+                  <span className="text-code-sm text-on-surface-muted">
+                    {t("conversation.search.groupCount", {
+                      count: group.hits.length,
+                    })}
+                  </span>
+                </header>
+                <div className="grid gap-2">
+                  {group.hits.map((hit) => {
+                    const appMeta = appMetaById?.get(hit.session.adapter_id);
+                    const appName = appMeta?.name ?? hit.session.adapter_id;
+                    return (
+                      <button
+                        aria-label={t("conversation.search.openHit", {
+                          title: hit.session.title,
+                          type: conversationSearchCardTypeLabel(
+                            conversationCardPresentationKind(
+                              hit.card_type,
+                              definitions.get(hit.card_type)?.semantic_role,
+                            ),
+                            t,
                           ),
-                          t,
-                        ),
-                      })}
-                      className="conversation-search-hit grid gap-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                      key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
-                      onClick={() => onOpenHit(hit)}
-                      type="button"
-                    >
-                      <span className="flex min-w-0 flex-wrap items-center gap-2">
-                        <SearchCardTypeBadge
-                          cardType={hit.card_type}
-                          colors={contentCardColors}
-                          t={t}
-                        />
-                        <SearchHitMetaChip
-                          accentColor={appMeta?.accentColor}
-                          label={t("conversation.search.appChip", {
-                            app: appName,
-                          })}
-                        />
-                        <SearchHitMetaChip
-                          className="font-mono"
-                          label={t("conversation.search.sessionChip", {
-                            sessionId: conversationIdFragment(hit.session.id),
-                          })}
-                        />
-                        <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
-                          {hit.session.title}
+                        })}
+                        className="conversation-search-hit grid gap-2 px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        key={`${hit.session.id}-${hit.block_id}-${hit.question_id}`}
+                        onClick={() => onOpenHit(hit)}
+                        type="button"
+                      >
+                        <span className="flex min-w-0 flex-wrap items-center gap-2">
+                          <SearchCardTypeBadge
+                            cardType={hit.card_type}
+                            colors={contentCardColors}
+                            t={t}
+                          />
+                          <SearchHitMetaChip
+                            accentColor={appMeta?.accentColor}
+                            label={t("conversation.search.appChip", {
+                              app: appName,
+                            })}
+                          />
+                          <SearchHitMetaChip
+                            className="font-mono"
+                            label={t("conversation.search.sessionChip", {
+                              sessionId: conversationIdFragment(hit.session.id),
+                            })}
+                          />
+                          <span className="min-w-0 truncate text-body-sm font-semibold text-on-surface">
+                            {hit.session.title}
+                          </span>
+                          <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
+                            {hit.question_title}
+                          </span>
                         </span>
-                        <span className="min-w-0 truncate text-code-sm text-on-surface-muted">
-                          {hit.question_title}
+                        <span className="line-clamp-2 text-body-sm text-on-surface-variant">
+                          {hit.snippet}
                         </span>
-                      </span>
-                      <span className="line-clamp-2 text-body-sm text-on-surface-variant">
-                        {hit.snippet}
-                      </span>
-                      {showProjectPath && hit.session.project_path ? (
-                        <span className="truncate font-mono text-code-sm text-on-surface-muted">
-                          {abbreviateHomePath(hit.session.project_path)}
-                        </span>
-                      ) : null}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+                        {showProjectPath && hit.session.project_path ? (
+                          <span className="truncate font-mono text-code-sm text-on-surface-muted">
+                            {abbreviateHomePath(hit.session.project_path)}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </RenderSafeScrollSurface>
     </section>
   );
 }
@@ -2855,7 +2866,7 @@ export function SessionQuestionWorkspace({
 
   if (questionListCollapsed) {
     return (
-      <section className="conversation-readable conversation-surface mt-5 min-h-[680px] overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]">
+      <section className="conversation-readable conversation-surface mt-5 min-h-0 flex-1 overflow-hidden rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]">
         {previewPanel}
       </section>
     );
@@ -2864,7 +2875,7 @@ export function SessionQuestionWorkspace({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="conversation-readable conversation-surface mt-5 min-h-[680px] rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
+      className="conversation-readable conversation-surface mt-5 min-h-0 flex-1 rounded-2xl shadow-[0_18px_42px_rgb(var(--theme-panel-shadow)/0.18)]"
       columns={[
         { defaultWeight: 0.42 },
         { defaultWeight: 1.58, minWidthScale: 1.35 },
@@ -3280,8 +3291,8 @@ export function QuestionPreview({
   }
 
   return (
-    <div className="conversation-readable flex min-h-full flex-col">
-      <header className="conversation-section-header px-5 py-4">
+    <div className="conversation-readable flex h-full min-h-0 flex-col">
+      <header className="conversation-section-header shrink-0 px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-start gap-3">
             {questionListToggle}
@@ -3322,6 +3333,8 @@ export function QuestionPreview({
         className="min-h-0 flex-1"
         onFocusCapture={handlePreviewFocus}
         ref={previewScrollRef}
+        tabIndex={0}
+        aria-label={title}
       >
         <RenderActivityProvider scrollElementRef={previewScrollRef}>
           <div className="render-safe-scroll-content px-5 py-5">
