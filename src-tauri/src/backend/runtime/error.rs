@@ -150,12 +150,15 @@ pub(crate) fn sanitize_public_message(message: &str) -> String {
         word.starts_with('/')
             || word.starts_with("~/")
             || word.get(1..3).is_some_and(|drive| {
-                drive.starts_with(':') && word.as_bytes().get(2) == Some(&b'\\')
+                drive.starts_with(':')
+                    && (word.as_bytes().get(2) == Some(&b'\\')
+                        || word.as_bytes().get(2) == Some(&b'/'))
             })
     });
     if contains_absolute_path
         || lower.contains("sql")
         || lower.contains("token")
+        || lower.contains("secret")
         || lower.contains("authorization")
         || lower.contains("password")
         || lower.contains("prompt=")
@@ -226,6 +229,18 @@ impl From<WireError> for AppError {
             retryable: error.retryable,
             details: error.details,
         }
+    }
+}
+
+impl From<&AppError> for WireError {
+    fn from(error: &AppError) -> Self {
+        error.view()
+    }
+}
+
+impl From<AppError> for WireError {
+    fn from(error: AppError) -> Self {
+        error.view()
     }
 }
 
@@ -571,5 +586,93 @@ mod tests {
             view.message,
             "The application could not access local storage."
         );
+    }
+
+    #[test]
+    fn sanitization_redacts_sensitive_keywords_in_public_message_and_details() {
+        use serde_json::json;
+
+        // 1. 绝对路径 (Unix, Tilde, Windows)
+        assert_eq!(
+            sanitize_public_message("error at /var/data/users.json occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at ~/Documents/keys.pem occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at C:\\Users\\Admin\\config.ini occurred"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("error at C:/Users/Admin/config.ini occurred"),
+            "The operation failed."
+        );
+
+        // 2. SQL
+        assert_eq!(
+            sanitize_public_message("SQL error near SELECT * FROM users"),
+            "The operation failed."
+        );
+
+        // 3. Token
+        assert_eq!(
+            sanitize_public_message("invalid bearer token=xyz123"),
+            "The operation failed."
+        );
+
+        // 4. Secret
+        assert_eq!(
+            sanitize_public_message("leaked secret value in header"),
+            "The operation failed."
+        );
+
+        // 5. Password
+        assert_eq!(
+            sanitize_public_message("invalid password provided for user"),
+            "The operation failed."
+        );
+
+        // 6. Prompt
+        assert_eq!(
+            sanitize_public_message("invalid syntax in prompt=system_prompt"),
+            "The operation failed."
+        );
+        assert_eq!(
+            sanitize_public_message("missing prompt: user_input"),
+            "The operation failed."
+        );
+
+        // 7. Environment
+        assert_eq!(
+            sanitize_public_message("failed to read environment variable PATH"),
+            "The operation failed."
+        );
+
+        // 8. Safe messages are preserved
+        assert_eq!(
+            sanitize_public_message("file not found: item-42"),
+            "file not found: item-42"
+        );
+
+        // 9. Details object sanitization
+        let details = json!({
+            "secret": "hidden123",
+            "token": "tok456",
+            "password": "pass",
+            "prompt": "my prompt text",
+            "environment": "production",
+            "safe_field": "safe_value",
+            "path_field": "/etc/shadow",
+        });
+        let sanitized = sanitize_details(&details).expect("sanitized object");
+        assert!(sanitized.get("secret").is_none());
+        assert!(sanitized.get("token").is_none());
+        assert!(sanitized.get("password").is_none());
+        assert!(sanitized.get("prompt").is_none());
+        assert!(sanitized.get("environment").is_none());
+        assert_eq!(sanitized["safe_field"], "safe_value");
+        assert_eq!(sanitized["path_field"], "<redacted>");
     }
 }
