@@ -9,7 +9,7 @@
 | AGACP-04 | PASS | `45d76d9` | 移除 antigravity selector/parse_agy_models/废弃文件；严格走 ACP 路由；source guard 0 匹配通过 | — |
 | AGACP-05 | PASS | `230cec7` | 6 大端到端场景覆盖；安装/健康探针/动态Registry/多错误模式全数通过 | — |
 | AGACP-06 | PASS | `2145df5` | 官方 1.1.1 Darwin aarch64 真实 smoke 通过；modelDiscovery=true；partial conformance 固化 | — |
-| AGACP-07 | NOT_RUN | — | — | AGACP-00..06 |
+| AGACP-07 | PASS | `4b5c085` | 04-verification-matrix 全部 12 项 Gate 自动化通过；零特化生产路径审计通过 | — |
 
 ## 上游制品证据
 
@@ -30,5 +30,7 @@
 | 2026-09-07 | planning | connection probe cleanup 与业务 OneShot 删除契约分离 | Issue #18 与官方 delete 能力未确认 |
 | 2026-09-07 | AGACP-01 | lifecycle/mod.rs 故障恢复测试故障注入模式由 no_models 调整为 initialize_error | 符合契约 C-04（空模型非协议失败）；经用户决策批准扩展白名单 |
 | 2026-09-07 | AGACP-06 | 官方 1.1.1 实测 session/new 返回 11 个模型，启用 modelDiscovery: true；因官方无 close/delete 声明，conformance 状态如实记录 partial，保持 experimental | Darwin aarch64 真实执行回包与 JSON-RPC 追踪 |
+| 2026-09-07 | AGACP-07 | 完成全局代码审计与全部 12 项 Gate 验证；所有测试与门禁 100% 绿色；专项圆满收官 | 900 cargo + 713 vitest + 12 node + Go CLI + E2E + 0 source guard violations |
+
 
 
