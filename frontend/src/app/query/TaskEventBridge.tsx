@@ -5,12 +5,14 @@ export interface TaskEventBridgeProps<State, Event> {
   queryKey: QueryKey;
   subscribe(listener: (event: Event) => void): Promise<() => void>;
   merge?(current: State | undefined, event: Event): State | undefined;
+  validateTenant?(event: Event): boolean | null;
 }
 
 export function TaskEventBridge<State, Event>({
   queryKey,
   subscribe,
   merge,
+  validateTenant,
 }: TaskEventBridgeProps<State, Event>): null {
   const queryClient = useQueryClient();
   const queryKeyRef = useRef(queryKey);
@@ -19,6 +21,8 @@ export function TaskEventBridge<State, Event>({
   mergeRef.current = merge;
   const subscribeRef = useRef(subscribe);
   subscribeRef.current = subscribe;
+  const validateTenantRef = useRef(validateTenant);
+  validateTenantRef.current = validateTenant;
 
   const keySerialized = JSON.stringify(queryKey);
 
@@ -31,6 +35,24 @@ export function TaskEventBridge<State, Event>({
       if (unmounted) return;
       const currentMerge = mergeRef.current;
       const currentKey = queryKeyRef.current;
+      const validate = validateTenantRef.current;
+
+      if (validate) {
+        const match = validate(event);
+        if (match === false) {
+          // 属于其他租户的任务事件，丢弃
+          return;
+        }
+        if (match === null) {
+          // 缺乏租户归属信息的事件，仅触发当前租户重新校验，严禁盲写缓存
+          void queryClient.invalidateQueries(
+            { queryKey: currentKey, exact: true },
+            { cancelRefetch: false },
+          );
+          return;
+        }
+      }
+
       if (currentMerge) {
         queryClient.setQueryData<State>(currentKey, (current) =>
           currentMerge(current, event),

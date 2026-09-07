@@ -25,6 +25,7 @@ export const saveAppSettingsMutationKey = ["app-settings", "save"] as const;
 export function settingsQueryOptions() {
   return queryOptions<AppSettingsFile>({
     queryKey: appSettingsKey,
+    networkMode: "always",
     queryFn: async () => {
       const file = await getAppSettings();
       const normalized = normalizeStoredSettings(file.settings);
@@ -53,6 +54,7 @@ export function useSaveAppSettings(
   return useMutation(
     {
       mutationKey: saveAppSettingsMutationKey,
+      networkMode: "always",
       scope: { id: "app-settings" },
       mutationFn: async (settings: AppSettings) => {
         return await saveAppSettings(settings);

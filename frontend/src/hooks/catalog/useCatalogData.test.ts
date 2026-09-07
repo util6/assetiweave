@@ -7,6 +7,8 @@ import { act, renderHook } from "@testing-library/react";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryScopeProvider } from "../../app/query/QueryScopeProvider";
+import { catalogKeys } from "../../app/query/catalogQueries";
+import { fallbackNavigationModel } from "../../mock/catalog";
 import { useCatalogData } from "./useCatalogData";
 
 const updateNavigationModelMock = vi.hoisted(() => vi.fn());
@@ -144,5 +146,76 @@ describe("useCatalogData navigation persistence", () => {
 
     expect(updateNavigationModelMock).toHaveBeenCalledTimes(1);
     expect(updateNavigationModelMock).toHaveBeenCalledWith(secondModel);
+  });
+
+  it("clears optimistic navigation once save settles to avoid masking query updates", async () => {
+    const { result } = renderHook(() => useCatalogData(), { wrapper });
+    const nextModel = {
+      ...result.current.navigationModel,
+      activeSubNavId: "groups",
+    };
+
+    act(() => {
+      result.current.deferNavigationModelSave(nextModel);
+    });
+    expect(result.current.navigationModel.activeSubNavId).toBe("groups");
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    // 保存完成后，query 数据更新能正常呈现，而不会被乐观状态遮蔽
+    const updatedQueryModel = {
+      ...nextModel,
+      activeSubNavId: "conversations",
+    };
+    await act(async () => {
+      queryClient.setQueryData(
+        catalogKeys.navigation({ tenantId: "default", epoch: 1 }),
+        updatedQueryModel,
+      );
+      await vi.runAllTimersAsync();
+    });
+
+    expect(result.current.navigationModel.activeSubNavId).toBe("conversations");
+  });
+
+  it("resets optimistic navigation immediately when active tenant changes", async () => {
+    const { result } = renderHook(() => useCatalogData(), { wrapper });
+    const tenantAModel = {
+      ...result.current.navigationModel,
+      activeSubNavId: "conversations",
+    };
+
+    act(() => {
+      result.current.deferNavigationModelSave(tenantAModel);
+    });
+    expect(result.current.navigationModel.activeSubNavId).toBe("conversations");
+
+    // 租户切换到 tenant-b
+    const tenantBModel = {
+      ...fallbackNavigationModel,
+      activeSubNavId: "team",
+    };
+    queryClient.setQueryData(
+      catalogKeys.navigation({ tenantId: "tenant-b", epoch: 1 }),
+      tenantBModel,
+    );
+
+    await act(async () => {
+      queryClient.setQueryData(["tenants", "active"], {
+        id: "tenant-b",
+        name: "Tenant B Workspace",
+        slug: "tenant-b",
+        kind: "local_workspace",
+        status: "active",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      });
+      await vi.runAllTimersAsync();
+    });
+
+    // 租户切换后，乐观导航应被清空，并正确呈现新租户 B 的导航缓存 "team"
+    expect(result.current.navigationModel.activeSubNavId).toBe("team");
   });
 });

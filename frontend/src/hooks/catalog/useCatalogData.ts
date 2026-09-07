@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -41,18 +41,27 @@ export function useCatalogData() {
   const [optimisticNavigation, setOptimisticNavigation] =
     useState<NavigationModel | null>(null);
 
-  const { save: saveNav, schedule: scheduleNav } =
-    useSaveNavigation(activeScope);
+  // 租户/作用域切换时立即清除乐观导航，防止上一租户状态遮蔽新租户 Query 缓存
+  useEffect(() => {
+    setOptimisticNavigation(null);
+  }, [activeScope.tenantId, activeScope.epoch]);
+
+  const { save: saveNav, schedule: scheduleNav } = useSaveNavigation(
+    activeScope,
+    {
+      onSettled: () => {
+        setOptimisticNavigation(null);
+      },
+    },
+  );
 
   const saveNavigationModel = async (nextModel: NavigationModel) => {
     setOptimisticNavigation(nextModel);
     try {
       const saved = await saveNav(nextModel);
-      setOptimisticNavigation(null);
       return saved;
-    } catch (err) {
+    } finally {
       setOptimisticNavigation(null);
-      throw err;
     }
   };
 

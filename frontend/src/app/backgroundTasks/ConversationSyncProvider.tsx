@@ -13,6 +13,7 @@ import { useQueryScope } from "../query/QueryScopeProvider";
 import { taskKeys } from "../query/taskKeys";
 import { TaskEventBridge } from "../query/TaskEventBridge";
 import type { QueryScope } from "../query/catalogQueries";
+import { isTerminalStatus } from "./taskMergeUtils";
 
 export interface ConversationSyncContextValue {
   startSync: (params: {
@@ -49,6 +50,7 @@ export function conversationSyncQueryOptions(scope: QueryScope) {
       const snapshots = await listConversationSyncTasks();
       return mergeConversationTaskSnapshots(snapshots, EMPTY_TASKS);
     },
+    networkMode: "always",
     structuralSharing: (oldData, newData) => {
       const current =
         (oldData as ConversationSyncTaskMap | undefined) ?? EMPTY_TASKS;
@@ -228,19 +230,23 @@ export function mergeConversationTaskSnapshot(
     return incoming;
   }
 
+  const currentIsTerminal = isTerminalStatus(current.status);
+  const incomingIsTerminal = isTerminalStatus(incoming.status);
+  const effectiveStatus =
+    currentIsTerminal && !incomingIsTerminal ? current.status : incoming.status;
+
   const currentKind = normalizeConversationRecordKind(current.record_kind);
   const incomingKind = normalizeConversationRecordKind(incoming.record_kind);
   const fallbackKind = normalizeConversationRecordKind(fallbackScope);
 
   const preserveFinishedAt =
     current.finished_at &&
-    !incoming.finished_at &&
-    current.status !== "running" &&
-    incoming.status !== "running";
+    (!incoming.finished_at || (currentIsTerminal && !incomingIsTerminal));
 
   return {
     ...current,
     ...incoming,
+    status: effectiveStatus,
     record_kind: incomingKind ?? currentKind ?? fallbackKind ?? null,
     finished_at: preserveFinishedAt
       ? current.finished_at

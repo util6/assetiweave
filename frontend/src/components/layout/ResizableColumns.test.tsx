@@ -2,7 +2,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ResizableColumns,
   calculateScrollThumb,
@@ -14,18 +14,39 @@ const mockSetColumnLayoutAsync = vi.fn(async () => {});
 const mockSettings = {
   columnLayouts: {} as Record<string, number[]>,
 };
+let mockSettingsConfirmed = true;
 
 vi.mock("../../store/settings/useAppSettings", () => ({
   useAppSettings: () => ({
     setColumnLayout: vi.fn(),
     setColumnLayoutAsync: mockSetColumnLayoutAsync,
     settings: mockSettings,
+    settingsConfirmed: mockSettingsConfirmed,
     settingsLoaded: true,
   }),
 }));
 
+function createMockLocalStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    clear: vi.fn(() => values.clear()),
+    getItem: vi.fn((key: string) => values.get(key) ?? null),
+    key: vi.fn((index: number) => Array.from(values.keys())[index] ?? null),
+    removeItem: vi.fn((key: string) => values.delete(key)),
+    setItem: vi.fn((key: string, value: string) => values.set(key, value)),
+  };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("localStorage", createMockLocalStorage());
   localStorage.clear();
 
   class MockResizeObserver {
@@ -211,6 +232,33 @@ describe("ResizableColumns", () => {
     });
 
     expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it("does not migrate localStorage weights to settings when settingsConfirmed is false", async () => {
+    mockSettingsConfirmed = false;
+    const storageKey = "test_columns_unconfirmed";
+    localStorage.setItem(storageKey, JSON.stringify([0.5, 1.5]));
+
+    render(
+      <ResizableColumns
+        ariaLabel="Resize columns"
+        columns={[{ defaultWeight: 1 }, { defaultWeight: 1 }]}
+        minimumWidth={200}
+        scrollBarLabel="Scroll columns"
+        scrollLeftLabel="Scroll columns left"
+        scrollRightLabel="Scroll columns right"
+        storageKey={storageKey}
+      >
+        <div>Left</div>
+        <div>Right</div>
+      </ResizableColumns>,
+      { wrapper: createWrapper() },
+    );
+
+    expect(mockSetColumnLayoutAsync).not.toHaveBeenCalled();
+    expect(localStorage.getItem(storageKey)).toBe(JSON.stringify([0.5, 1.5]));
+
+    mockSettingsConfirmed = true;
   });
 
   it("sanitizes persisted weights before using them", () => {

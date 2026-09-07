@@ -103,6 +103,7 @@ export function useUpdateAssetDescription(
 > {
   const queryClient = useQueryClient();
   return useMutation({
+    networkMode: "always",
     mutationFn: ({
       assetId,
       description,
@@ -122,7 +123,12 @@ export function useUpdateAssetDescription(
   });
 }
 
-export function useSaveNavigation(scope: QueryScope): {
+export function useSaveNavigation(
+  scope: QueryScope,
+  options?: {
+    onSettled?: (result: { success: boolean; model: NavigationModel }) => void;
+  },
+): {
   save(model: NavigationModel): Promise<NavigationModel>;
   schedule(model: NavigationModel): void;
 } {
@@ -132,6 +138,7 @@ export function useSaveNavigation(scope: QueryScope): {
 
   const mutation = useMutation({
     mutationKey: catalogKeys.navigation(scope),
+    networkMode: "always",
     scope: { id: JSON.stringify(catalogKeys.navigation(scope)) },
     mutationFn: async ({
       model,
@@ -148,6 +155,12 @@ export function useSaveNavigation(scope: QueryScope): {
         queryClient.setQueryData(catalogKeys.navigation(scope), saved);
       }
     },
+    onSettled: (data, error, variables) => {
+      options?.onSettled?.({
+        success: !error,
+        model: data?.saved ?? variables.model,
+      });
+    },
   });
 
   useEffect(() => {
@@ -157,7 +170,7 @@ export function useSaveNavigation(scope: QueryScope): {
         timerRef.current = null;
       }
     };
-  }, []);
+  }, [scope.tenantId, scope.epoch]);
 
   function schedule(model: NavigationModel) {
     const sequence = ++sequenceRef.current;
@@ -189,6 +202,7 @@ export function useSaveAppShortcuts(scope: QueryScope) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationKey: catalogKeys.shortcuts(scope),
+    networkMode: "always",
     mutationFn: async (shortcuts: AppShortcut[]) => {
       queryClient.setQueryData(catalogKeys.shortcuts(scope), shortcuts);
       return await updateAppShortcuts(shortcuts);

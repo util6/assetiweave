@@ -9,6 +9,7 @@ import { useQueryScope } from "../query/QueryScopeProvider";
 import { taskKeys } from "../query/taskKeys";
 import { TaskEventBridge } from "../query/TaskEventBridge";
 import type { QueryScope } from "../query/catalogQueries";
+import { isTerminalStatus } from "./taskMergeUtils";
 
 export interface TeamTaskContextValue {
   tasks: TeamRuntimeTaskSnapshot[];
@@ -20,6 +21,7 @@ export function teamRunQueryOptions(scope: QueryScope) {
   return queryOptions<TeamRuntimeTaskSnapshot[]>({
     queryKey: taskKeys.resource(scope, "team-run"),
     queryFn: listTeamRunTasks,
+    networkMode: "always",
     structuralSharing: (oldData, newData) => {
       const current = (oldData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
       const incoming = (newData as TeamRuntimeTaskSnapshot[] | undefined) ?? [];
@@ -111,6 +113,21 @@ export function mergeTeamRunTasks(
   const snapshots = Array.isArray(incoming) ? incoming : [incoming];
   const byId = new Map(current.map((task) => [task.task_id, task]));
   for (const task of snapshots) {
+    const existing = byId.get(task.task_id);
+    if (existing) {
+      const existingIsTerminal = isTerminalStatus(existing.state);
+      const incomingIsTerminal = isTerminalStatus(task.state);
+      if (existingIsTerminal && !incomingIsTerminal) {
+        // 保留终态状态，防止旧轮询将完成状态覆写回 running
+        byId.set(task.task_id, {
+          ...task,
+          state: existing.state,
+          finished_at: existing.finished_at ?? task.finished_at,
+          error: existing.error ?? task.error,
+        });
+        continue;
+      }
+    }
     byId.set(task.task_id, task);
   }
   return [...byId.values()];

@@ -17,6 +17,7 @@ import { useQueryScope } from "../query/QueryScopeProvider";
 import { taskKeys } from "../query/taskKeys";
 import { TaskEventBridge } from "../query/TaskEventBridge";
 import type { QueryScope } from "../query/catalogQueries";
+import { checkEventTenantMatch, mergeTaskSnapshot } from "./taskMergeUtils";
 
 export interface CatalogTaskContextValue {
   sourceScan: SourceScanTaskSnapshot | null;
@@ -37,10 +38,12 @@ export function sourceScanQueryOptions(scope: QueryScope) {
     queryKey: taskKeys.resource(scope, "catalog-source-scan"),
     queryFn: async () => selectLatest(await listSourceScanTasks()),
     structuralSharing: (oldData, newData) =>
-      (newData as SourceScanTaskSnapshot | null) ??
-      (oldData as SourceScanTaskSnapshot | null) ??
-      null,
+      mergeTaskSnapshot(
+        oldData as SourceScanTaskSnapshot | null,
+        newData as SourceScanTaskSnapshot | null,
+      ),
     staleTime: 1000,
+    networkMode: "always",
   });
 }
 
@@ -49,10 +52,12 @@ export function batchMountQueryOptions(scope: QueryScope) {
     queryKey: taskKeys.resource(scope, "catalog-batch-mount"),
     queryFn: async () => selectLatest(await listBatchMountTasks()),
     structuralSharing: (oldData, newData) =>
-      (newData as BatchMountTaskSnapshot | null) ??
-      (oldData as BatchMountTaskSnapshot | null) ??
-      null,
+      mergeTaskSnapshot(
+        oldData as BatchMountTaskSnapshot | null,
+        newData as BatchMountTaskSnapshot | null,
+      ),
     staleTime: 1000,
+    networkMode: "always",
   });
 }
 
@@ -93,15 +98,17 @@ export function CatalogTaskProvider({
   return (
     <>
       <TaskEventBridge<SourceScanTaskSnapshot | null, SourceScanTaskSnapshot>
-        merge={(_, incoming) =>
-          Array.isArray(incoming) ? selectLatest(incoming) : incoming
+        merge={mergeTaskSnapshot}
+        validateTenant={(event) =>
+          checkEventTenantMatch(event, activeScope.tenantId)
         }
         queryKey={scanQueryKey}
         subscribe={subscribeSourceScanTasks}
       />
       <TaskEventBridge<BatchMountTaskSnapshot | null, BatchMountTaskSnapshot>
-        merge={(_, incoming) =>
-          Array.isArray(incoming) ? selectLatest(incoming) : incoming
+        merge={mergeTaskSnapshot}
+        validateTenant={(event) =>
+          checkEventTenantMatch(event, activeScope.tenantId)
         }
         queryKey={mountQueryKey}
         subscribe={subscribeBatchMountTasks}

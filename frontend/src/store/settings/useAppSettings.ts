@@ -39,6 +39,7 @@ export interface AppSettingsContextValue {
   settings: AppSettings;
   settingsError: string | null;
   settingsLoaded: boolean;
+  settingsConfirmed: boolean;
   storageInfo: AppSettingsStorageInfo;
   updateSetting: <Key extends keyof AppSettings>(
     key: Key,
@@ -121,6 +122,7 @@ export function useAppSettings(): AppSettingsContextValue {
         : null;
 
   const settingsLoaded = !query.isLoading;
+  const settingsConfirmed = !isEnabled || (query.isFetched && query.dataUpdatedAt > 0);
 
   const storageInfo: AppSettingsStorageInfo = {
     ...defaultStorageInfo,
@@ -194,6 +196,7 @@ export function useAppSettings(): AppSettingsContextValue {
     setColumnLayout,
     setColumnLayoutAsync,
     settings,
+    settingsConfirmed,
     settingsError,
     settingsLoaded,
     storageInfo,
