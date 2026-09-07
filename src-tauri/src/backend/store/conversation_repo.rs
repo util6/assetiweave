@@ -2012,8 +2012,7 @@ pub(crate) async fn list_conversation_block_locators_sqlx(
                 part,
                 &adapter_id,
                 &card_kinds,
-            )
-            .map_err(AppError::external)?,
+            )?,
         );
         Ok::<_, AppError>(projected)
     })?;
@@ -2201,8 +2200,7 @@ pub(crate) async fn load_conversation_block_detail_sqlx(
         &part,
         &adapter_id,
         &card_kinds,
-    )
-    .map_err(AppError::external)?;
+    )?;
     let card = cards
         .iter()
         .find(|card| card.node_id == block_id)
@@ -2905,18 +2903,22 @@ pub(super) fn project_question_content_nodes(
     adapter_id: &str,
     card_kinds: &[ConversationCardKindDefinition],
 ) -> AppResult<Vec<ConversationContentNode>> {
-    project_conversation_content_nodes(question_id, question_turns, parts, |part| {
-        crate::backend::projection::conversation_cards::project_conversation_content_cards(
-            part, adapter_id, card_kinds,
-        )
-        .map(|cards| {
-            cards
-                .into_iter()
-                .map(ConversationContentNodeCandidate::from)
-                .collect()
-        })
-    })
-    .map_err(AppError::external)
+    Ok(project_conversation_content_nodes(
+        question_id,
+        question_turns,
+        parts,
+        |part| {
+            crate::backend::projection::conversation_cards::project_conversation_content_cards(
+                part, adapter_id, card_kinds,
+            )
+            .map(|cards| {
+                cards
+                    .into_iter()
+                    .map(ConversationContentNodeCandidate::from)
+                    .collect()
+            })
+        },
+    )?)
 }
 
 pub(crate) async fn load_recent_conversation_sync_deltas_sqlx(
@@ -3310,8 +3312,7 @@ pub(crate) async fn hydrate_conversation_search_matches_sqlx(
                         .get(&session.session.adapter_id)
                         .map(Vec::as_slice)
                         .unwrap_or_default(),
-                )
-                .map_err(AppError::external)?;
+                )?;
             let card = cards
                 .iter()
                 .find(|card| card.node_id == matched.document_id)
@@ -5360,8 +5361,7 @@ pub(super) fn append_projected_cards_to_question_aggregate(
 ) -> AppResult<()> {
     let cards = crate::backend::projection::conversation_cards::project_conversation_content_cards(
         part, adapter_id, card_kinds,
-    )
-    .map_err(AppError::external)?;
+    )?;
     for card in cards {
         let semantic_role = card
             .semantic_role

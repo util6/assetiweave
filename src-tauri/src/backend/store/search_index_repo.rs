@@ -381,8 +381,7 @@ pub(crate) async fn load_conversation_search_index_documents_sqlx(
                     &part,
                     &adapter_id,
                     &card_kinds,
-                )
-                .map_err(AppError::external)?;
+                )?;
             let question_title = search_question_title(row.question_title.clone(), &row.user_text);
             for card in cards {
                 let card_kind = card.kind;

@@ -229,6 +229,28 @@ impl From<WireError> for AppError {
     }
 }
 
+impl From<crate::backend::projection::error::ProjectionError> for AppError {
+    fn from(error: crate::backend::projection::error::ProjectionError) -> Self {
+        use crate::backend::projection::error::ProjectionError;
+        match error {
+            ProjectionError::InvalidPersistedCardJson(source) => {
+                Self::Codec(crate::backend::store::CodecError::Decode(source))
+            }
+            ProjectionError::UnsupportedSchemaVersion { .. }
+            | ProjectionError::MissingCardKind
+            | ProjectionError::InvalidCardKind { .. }
+            | ProjectionError::UndeclaredCardKind { .. }
+            | ProjectionError::UnsupportedRenderer { .. }
+            | ProjectionError::RendererNotAllowed { .. }
+            | ProjectionError::MissingContractVersion { .. }
+            | ProjectionError::AmbiguousLegacySemanticRole { .. }
+            | ProjectionError::LegacyConflict { .. }
+            | ProjectionError::ManifestValidation(_) => Self::Validation(error.to_string()),
+            ProjectionError::Other(message) => Self::Validation(message),
+        }
+    }
+}
+
 impl fmt::Display for AppErrorView {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{}: {}", self.code, self.message)
