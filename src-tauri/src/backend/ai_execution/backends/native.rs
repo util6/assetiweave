@@ -23,8 +23,6 @@ use crate::backend::{
     host_process::resolve_host_executable,
 };
 
-use super::antigravity;
-
 pub(crate) struct NativeExecutionBackend {
     workspace_root: PathBuf,
 }
@@ -58,8 +56,7 @@ impl NativeExecutionBackend {
         guard.preserve_workspace = matches!(request.session_mode, AgentSessionMode::Persistent);
 
         let outcome = {
-            let execution =
-                run_selected_native_execution(&mut guard, definition, &request, started);
+            let execution = run_native_execution(&mut guard, definition, &request, started);
             tokio::pin!(execution);
             let cancellation = request.cancellation.cancelled();
             tokio::pin!(cancellation);
@@ -249,18 +246,17 @@ impl NativeExecutionBackend {
         let _discovery_elapsed = output.elapsed;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let models = parse_agy_models(&stdout);
+        let models = parse_native_models(&stdout);
         let current_model_id = models.first().map(|m| m.id.clone());
         Ok((models, current_model_id))
     }
 }
 
-pub(crate) fn parse_agy_models(stdout: &str) -> Vec<AgentModelOption> {
+pub(crate) fn parse_native_models(stdout: &str) -> Vec<AgentModelOption> {
     stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .filter(|line| !line.eq_ignore_ascii_case("Fetching available models..."))
         .filter_map(|line| {
             let mut fields = line.splitn(2, '\t');
             let id = fields.next().unwrap_or("").trim();
@@ -558,21 +554,6 @@ async fn run_native_execution(
     })
 }
 
-async fn run_selected_native_execution(
-    guard: &mut NativeExecutionGuard,
-    definition: &AgentDefinition,
-    request: &AiExecutionRequest,
-    started: Instant,
-) -> Result<AiExecutionResult, AiExecutionError> {
-    // Provider-specific selection belongs inside Agent Execution. Team,
-    // transport, and frontend callers continue to see one Native boundary.
-    if definition.id.as_str() == "antigravity" {
-        antigravity::run(guard, definition, request, started).await
-    } else {
-        run_native_execution(guard, definition, request, started).await
-    }
-}
-
 fn process_native_line(
     line: &[u8],
     accumulated_text: &mut String,
@@ -700,23 +681,23 @@ mod tests {
     };
 
     #[test]
-    fn test_parse_agy_models_tsv() {
-        let sample = "Fetching available models...\ngemini-3.7-flash-high\tGemini 3.7 Flash (High)\ngemini-3.7-flash-medium\tGemini 3.7 Flash (Medium)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n";
-        let models = parse_agy_models(sample);
+    fn test_parse_native_models_tsv() {
+        let sample = "model-alpha-1\tModel Alpha 1\nmodel-beta-2\tModel Beta 2\nmodel-gamma-3\tModel Gamma 3\n";
+        let models = parse_native_models(sample);
         assert_eq!(models.len(), 3);
-        assert_eq!(models[0].id, "gemini-3.7-flash-high");
-        assert_eq!(models[0].label, "Gemini 3.7 Flash (High)");
-        assert_eq!(models[1].id, "gemini-3.7-flash-medium");
-        assert_eq!(models[2].id, "claude-sonnet-4-6");
+        assert_eq!(models[0].id, "model-alpha-1");
+        assert_eq!(models[0].label, "Model Alpha 1");
+        assert_eq!(models[1].id, "model-beta-2");
+        assert_eq!(models[2].id, "model-gamma-3");
     }
 
     #[test]
-    fn test_parse_agy_models_bare() {
-        let sample = "gemini-3.7-flash-high\ngemini-3.7-flash-medium\n";
-        let models = parse_agy_models(sample);
+    fn test_parse_native_models_bare() {
+        let sample = "model-alpha-1\nmodel-beta-2\n";
+        let models = parse_native_models(sample);
         assert_eq!(models.len(), 2);
-        assert_eq!(models[0].id, "gemini-3.7-flash-high");
-        assert_eq!(models[0].label, "gemini-3.7-flash-high");
+        assert_eq!(models[0].id, "model-alpha-1");
+        assert_eq!(models[0].label, "model-alpha-1");
     }
 
     #[test]

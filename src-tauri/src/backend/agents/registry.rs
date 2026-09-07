@@ -170,10 +170,10 @@ impl AgentRegistry {
             builtin_agent(
                 "antigravity",
                 "Antigravity",
-                AgentProtocol::Native,
-                "agy",
+                AgentProtocol::Acp,
+                "antigravity-acp",
                 [],
-                "agy",
+                "antigravity-acp",
             ),
             builtin_agent(
                 "claude",
@@ -421,8 +421,7 @@ fn builtin_agent<const N: usize>(
             availability_command,
             ["--version"],
         )),
-        model_discovery: (id == "opencode" || id == "antigravity")
-            .then(|| AgentCommandDefinition::new(["models"])),
+        model_discovery: (id == "opencode").then(|| AgentCommandDefinition::new(["models"])),
         session_cleanup: (id == "opencode")
             .then(|| AgentCommandDefinition::new(["session", "delete", "{session_id}"])),
         session_cleanup_not_found_markers: (id == "opencode")
@@ -533,7 +532,7 @@ mod tests {
         for (id, command, args, protocol) in [
             ("gemini", "gemini", vec!["--acp"], AgentProtocol::Acp),
             ("kiro", "kiro-cli-chat", vec!["acp"], AgentProtocol::Acp),
-            ("antigravity", "agy", vec![], AgentProtocol::Native),
+            ("antigravity", "antigravity-acp", vec![], AgentProtocol::Acp),
             (
                 "claude",
                 "npx",
@@ -561,14 +560,17 @@ mod tests {
         assert!(registry
             .catalog()
             .iter()
-            .all(|entry| entry.protocol == "acp" || entry.id == "antigravity"));
-        assert!(
-            registry
-                .get(&AgentId::parse("antigravity").unwrap())
-                .expect("Antigravity definition")
-                .declared_capabilities
-                .text_prompt
-        );
+            .all(|entry| entry.protocol == "acp"));
+        let antigravity_def = registry
+            .get(&AgentId::parse("antigravity").unwrap())
+            .expect("Antigravity definition");
+        assert_eq!(antigravity_def.protocol, AgentProtocol::Acp);
+        assert_eq!(antigravity_def.command, "antigravity-acp");
+        assert!(antigravity_def.model_discovery.is_none());
+        assert!(!antigravity_def.declared_capabilities.team_tools);
+        assert!(antigravity_def.declared_capabilities.history_replay);
+        assert!(antigravity_def.declared_capabilities.resume);
+        assert!(antigravity_def.declared_capabilities.text_prompt);
     }
 
     #[test]

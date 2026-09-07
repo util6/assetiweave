@@ -6,7 +6,7 @@
 | AGACP-01 | PASS | `3a0e4d6` | ACP connection 与 model discovery 解耦；空模型仍保持 protocol ready/connected/execution_ready；生命周期测试对齐 C-04 | — |
 | AGACP-02 | PASS | `069f0ec` | 启动协调对比 catalog protocol/distribution；失配标记 incompatible 且阻止进入 Registry；update 返回 agent_reinstall_required，放行 reinstall | — |
 | AGACP-03 | PASS | `62d1177` | 5平台 ACP binary 锁定；release evidence 完备；防伪造 conformance 门禁通过；前端 presentation 更新为 ACP Agent | — |
-| AGACP-04 | NOT_RUN | — | 当前 Native backend 仍有 antigravity selector | AGACP-03 |
+| AGACP-04 | PASS | `45d76d9` | 移除 antigravity selector/parse_agy_models/废弃文件；严格走 ACP 路由；source guard 0 匹配通过 | — |
 | AGACP-05 | NOT_RUN | — | 现有 fake ACP 可扩展 | AGACP-04 |
 | AGACP-06 | NOT_RUN | — | 旧 RC01 initialize 调查存在；1.1.1 E2E 未执行 | AGACP-05、credential |
 | AGACP-07 | NOT_RUN | — | — | AGACP-00..06 |
