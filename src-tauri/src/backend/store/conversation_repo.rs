@@ -212,9 +212,17 @@ pub(crate) struct ConversationImportResult {
     pub(crate) session_count: usize,
     pub(crate) skipped_session_count: usize,
     pub(crate) changed_session_count: usize,
+    #[serde(default)]
+    pub(crate) failed_session_count: usize,
     pub(crate) turn_count: usize,
     pub(crate) warning_count: usize,
     pub(crate) warnings: Vec<String>,
+    #[serde(default)]
+    pub(crate) session_failures: Vec<crate::backend::models::SessionSyncFailure>,
+    #[serde(default)]
+    pub(crate) session_warnings: Vec<crate::backend::models::SessionSyncWarning>,
+    #[serde(default)]
+    pub(crate) status: crate::backend::models::ConversationSyncStatus,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -1309,9 +1317,13 @@ pub(crate) async fn import_conversation_sessions_with_control_sqlx(
             session_count: sessions.len(),
             skipped_session_count: 0,
             changed_session_count: 0,
+            failed_session_count: 0,
             turn_count,
             warning_count: 0,
             warnings: Vec::new(),
+            session_failures: Vec::new(),
+            session_warnings: Vec::new(),
+            status: ConversationSyncStatus::Completed,
         });
     }
 
@@ -1489,9 +1501,395 @@ pub(crate) async fn import_conversation_sessions_with_control_sqlx(
         session_count: sessions.len(),
         skipped_session_count,
         changed_session_count,
+        failed_session_count: 0,
         turn_count,
         warning_count,
         warnings,
+        session_failures: Vec::new(),
+        session_warnings: Vec::new(),
+        status: ConversationSyncStatus::Completed,
+    })
+}
+
+pub(crate) async fn import_conversation_sessions_advanced_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    source: &ConversationSource,
+    sessions: &[NormalizedConversationSession],
+    discovered_external_ids: Option<&BTreeSet<String>>,
+    descriptor_versions: Option<&BTreeMap<String, String>>,
+    mut session_failures: Vec<crate::backend::models::SessionSyncFailure>,
+    session_warnings: Vec<crate::backend::models::SessionSyncWarning>,
+    adapter_content_hash: Option<&str>,
+    card_contract_version: Option<u32>,
+    payload_policy_version: u32,
+    dry_run: bool,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    on_progress: &mut impl FnMut(usize, usize),
+) -> AppResult<ConversationImportResult> {
+    ensure_sync_import_active(cancellation)?;
+    on_progress(0, sessions.len());
+    ensure_sync_import_active(cancellation)?;
+    let turn_count = sessions.iter().map(|session| session.turns.len()).sum();
+    let initial_failed_count = session_failures.len();
+    if dry_run {
+        on_progress(sessions.len(), sessions.len());
+        ensure_sync_import_active(cancellation)?;
+        let status = if !session_failures.is_empty() {
+            if !sessions.is_empty() {
+                ConversationSyncStatus::PartialSuccess
+            } else {
+                ConversationSyncStatus::Failed
+            }
+        } else {
+            ConversationSyncStatus::Completed
+        };
+        return Ok(ConversationImportResult {
+            source_id: source.id.clone(),
+            adapter_id: source.adapter_id.clone(),
+            dry_run: true,
+            sync_run_id: None,
+            session_count: sessions.len() + initial_failed_count,
+            skipped_session_count: 0,
+            changed_session_count: 0,
+            failed_session_count: initial_failed_count,
+            turn_count,
+            warning_count: session_warnings.len(),
+            warnings: session_warnings.iter().map(|w| w.message.clone()).collect(),
+            session_failures,
+            session_warnings,
+            status,
+        });
+    }
+
+    audit_invalid_conversation_question_turns_sqlx(pool, tenant_id).await?;
+
+    let now = Utc::now().to_rfc3339();
+    let sync_run_id = stable_id("conversation-sync", &[&source.id, &now]);
+    let mut skipped_session_count = 0usize;
+    let mut changed_session_count = 0usize;
+
+    // 先记录读取阶段失败的会话到 observation 表 (dirty = 1, presence = present)
+    for failure in &session_failures {
+        let observed_version = descriptor_versions.and_then(|map| {
+            map.get(failure.session_external_id.as_str())
+                .map(|s| s.as_str())
+        });
+        let _ = record_conversation_session_failure_sqlx(
+            pool,
+            tenant_id,
+            &source.id,
+            "session",
+            &failure.session_external_id,
+            observed_version,
+            &failure.error_code,
+            &failure.error_message,
+            &failure.stage,
+            failure.retryable,
+        )
+        .await;
+    }
+
+    let incoming_session_ids = discovered_external_ids
+        .map(|external_ids| {
+            external_ids
+                .iter()
+                .map(|external_id| stable_id("conversation-session", &[&source.id, external_id]))
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_else(|| {
+            let mut ids = sessions
+                .iter()
+                .map(|session| {
+                    stable_id("conversation-session", &[&source.id, &session.external_id])
+                })
+                .collect::<BTreeSet<_>>();
+            for failure in &session_failures {
+                ids.insert(stable_id(
+                    "conversation-session",
+                    &[&source.id, &failure.session_external_id],
+                ));
+            }
+            ids
+        });
+
+    let mut completed_session_count = 0;
+    let mut all_changed_session_ids = Vec::new();
+
+    for normalized in sessions {
+        ensure_sync_import_active(cancellation)?;
+        let session = conversation_session_from_normalized(source, normalized, &now);
+        let mut tx = match pool.begin().await {
+            Ok(tx) => tx,
+            Err(err) => {
+                let sanitized =
+                    crate::backend::models::sanitize_sync_error_message(&err.to_string());
+                session_failures.push(crate::backend::models::SessionSyncFailure {
+                    session_external_id: normalized.external_id.clone(),
+                    stage: "storage".to_string(),
+                    error_code: "transaction_begin_failed".to_string(),
+                    error_message: sanitized.clone(),
+                    retryable: true,
+                });
+                let _ = record_conversation_session_failure_sqlx(
+                    pool,
+                    tenant_id,
+                    &source.id,
+                    "session",
+                    &normalized.external_id,
+                    session.source_fingerprint.as_deref(),
+                    "transaction_begin_failed",
+                    &sanitized,
+                    "storage",
+                    true,
+                )
+                .await;
+                completed_session_count += 1;
+                on_progress(completed_session_count, sessions.len());
+                continue;
+            }
+        };
+
+        let session_import_res: AppResult<Option<String>> = async {
+            let change_kind =
+                if conversation_session_exists_sqlx_tx(&mut tx, tenant_id, &session.id).await? {
+                    "updated"
+                } else {
+                    "new"
+                };
+            if conversation_session_is_unchanged_sqlx_tx(&mut tx, tenant_id, &session, normalized)
+                .await?
+            {
+                // 未变更会话：推进 observation clean (dirty = 0)
+                upsert_single_session_observation_clean_sqlx_tx(
+                    &mut tx,
+                    tenant_id,
+                    &source.id,
+                    "session",
+                    &session.external_id,
+                    session.source_fingerprint.as_deref().unwrap_or(&now),
+                    &now,
+                    adapter_content_hash,
+                    card_contract_version,
+                    payload_policy_version,
+                )
+                .await?;
+                tx.commit().await.map_err(AppError::external)?;
+                return Ok(None);
+            }
+            sqlx::query(
+                "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active'",
+            )
+            .bind(&now)
+            .bind(tenant_id)
+            .bind(&session.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::external)?;
+            upsert_conversation_session_sqlx_tx(&mut tx, tenant_id, &session).await?;
+            for turn in &normalized.turns {
+                if turn.user_text.trim().is_empty() {
+                    continue;
+                }
+                let stored_turn = conversation_turn_from_normalized(&session.id, turn, &now);
+                upsert_conversation_turn_sqlx_tx(&mut tx, tenant_id, &stored_turn).await?;
+                replace_conversation_parts_sqlx_tx(
+                    &mut tx,
+                    tenant_id,
+                    &stored_turn.id,
+                    &turn.parts,
+                )
+                .await?;
+            }
+            prune_conversation_turns_sqlx_tx(&mut tx, tenant_id, &session.id, normalized).await?;
+            ensure_question_groups_for_session_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
+                .await?;
+            rebuild_session_question_aggregates_sqlx_tx(&mut tx, tenant_id, &session.id, &now)
+                .await?;
+            insert_conversation_sync_delta_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                &sync_run_id,
+                "session",
+                &session.id,
+                change_kind,
+                &now,
+            )
+            .await?;
+
+            // 原子检查点：在同一事务中将 observation 标记为 clean
+            upsert_single_session_observation_clean_sqlx_tx(
+                &mut tx,
+                tenant_id,
+                &source.id,
+                "session",
+                &session.external_id,
+                session.source_fingerprint.as_deref().unwrap_or(&now),
+                &now,
+                adapter_content_hash,
+                card_contract_version,
+                payload_policy_version,
+            )
+            .await?;
+
+            tx.commit().await.map_err(AppError::external)?;
+            Ok(Some(session.id.clone()))
+        }.await;
+
+        match session_import_res {
+            Ok(Some(changed_id)) => {
+                changed_session_count += 1;
+                all_changed_session_ids.push(changed_id);
+            }
+            Ok(None) => {
+                skipped_session_count += 1;
+            }
+            Err(err) => {
+                let err_str = err.to_string();
+                let sanitized = crate::backend::models::sanitize_sync_error_message(&err_str);
+                session_failures.push(crate::backend::models::SessionSyncFailure {
+                    session_external_id: session.external_id.clone(),
+                    stage: "storage".to_string(),
+                    error_code: "storage_error".to_string(),
+                    error_message: sanitized.clone(),
+                    retryable: true,
+                });
+                let _ = record_conversation_session_failure_sqlx(
+                    pool,
+                    tenant_id,
+                    &source.id,
+                    "session",
+                    &session.external_id,
+                    session.source_fingerprint.as_deref(),
+                    "storage_error",
+                    &sanitized,
+                    "storage",
+                    true,
+                )
+                .await;
+            }
+        }
+        completed_session_count += 1;
+        on_progress(completed_session_count, sessions.len());
+    }
+
+    let is_cancelled = cancellation.is_some_and(tokio_util::sync::CancellationToken::is_cancelled);
+
+    // Missing 对账（仅在非主动取消时进行，防止取消时误将未处理会话当成 missing）
+    let missing_or_restored_session_ids = if !is_cancelled {
+        let mut tx = pool.begin().await.map_err(AppError::external)?;
+        let missing_ids = mark_missing_conversation_sessions_sqlx_tx(
+            &mut tx,
+            tenant_id,
+            &source.id,
+            &incoming_session_ids,
+            &sync_run_id,
+            &now,
+        )
+        .await?;
+        tx.commit().await.map_err(AppError::external)?;
+        missing_ids
+    } else {
+        Vec::new()
+    };
+
+    let total_failed = session_failures.len();
+    let status = if is_cancelled {
+        ConversationSyncStatus::Cancelled
+    } else if total_failed > 0 {
+        if changed_session_count > 0 || skipped_session_count > 0 {
+            ConversationSyncStatus::PartialSuccess
+        } else {
+            ConversationSyncStatus::Failed
+        }
+    } else {
+        ConversationSyncStatus::Completed
+    };
+
+    let status_str = match status {
+        ConversationSyncStatus::Completed => "completed",
+        ConversationSyncStatus::PartialSuccess => "partial_success",
+        ConversationSyncStatus::Failed => "failed",
+        ConversationSyncStatus::Cancelled => "cancelled",
+        ConversationSyncStatus::Running => "running",
+    };
+
+    let error_summary = if total_failed > 0 {
+        Some(format!("{total_failed} session(s) failed during sync"))
+    } else {
+        None
+    };
+
+    let mut final_tx = pool.begin().await.map_err(AppError::external)?;
+    sqlx::query(
+        r#"
+        UPDATE conversation_sources
+        SET last_synced_at = ?1, last_sync_status = ?2, updated_at = ?1
+        WHERE tenant_id = ?3 AND id = ?4
+        "#,
+    )
+    .bind(&now)
+    .bind(status_str)
+    .bind(tenant_id)
+    .bind(&source.id)
+    .execute(&mut *final_tx)
+    .await
+    .map_err(AppError::external)?;
+
+    insert_sync_run_sqlx_tx(
+        &mut final_tx,
+        tenant_id,
+        &ConversationSyncRun {
+            id: sync_run_id.clone(),
+            source_id: Some(source.id.clone()),
+            adapter_id: Some(source.adapter_id.clone()),
+            status,
+            started_at: now.clone(),
+            finished_at: Some(now.clone()),
+            session_count: (sessions.len() + initial_failed_count) as i64,
+            turn_count: turn_count as i64,
+            warning_count: session_warnings.len() as i64,
+            error_message: error_summary,
+        },
+    )
+    .await?;
+
+    if !all_changed_session_ids.is_empty() || !missing_or_restored_session_ids.is_empty() {
+        let revision =
+            super::bump_conversation_search_source_revision_sqlx_tx(&mut *final_tx, tenant_id)
+                .await?;
+        let mut affected = all_changed_session_ids;
+        affected.extend(missing_or_restored_session_ids);
+        crate::backend::events::append_outbox_event_sqlx_tx(
+            &mut final_tx,
+            &DomainEvent::conversation_source_committed(
+                tenant_id,
+                &sync_run_id,
+                &source.id,
+                revision,
+                affected,
+            ),
+        )
+        .await?;
+    }
+    final_tx.commit().await.map_err(AppError::external)?;
+
+    let string_warnings = session_warnings.iter().map(|w| w.message.clone()).collect();
+    Ok(ConversationImportResult {
+        source_id: source.id.clone(),
+        adapter_id: source.adapter_id.clone(),
+        dry_run: false,
+        sync_run_id: Some(sync_run_id),
+        session_count: sessions.len() + initial_failed_count,
+        skipped_session_count,
+        changed_session_count,
+        failed_session_count: total_failed,
+        turn_count,
+        warning_count: session_warnings.len(),
+        warnings: string_warnings,
+        session_failures,
+        session_warnings,
+        status,
     })
 }
 
@@ -8886,6 +9284,7 @@ pub(crate) async fn load_conversation_session_versions_sqlx(
         SELECT external_id, hydrated_version
         FROM conversation_session_observations
         WHERE tenant_id = ?1 AND source_id = ?2 AND record_kind = ?3
+          AND dirty = 0
           AND COALESCE(hydrated_adapter_hash, '') = COALESCE(?4, '')
           AND COALESCE(hydrated_card_contract_version, 0) = COALESCE(?5, 0)
           AND COALESCE(hydrated_payload_policy_version, 0) = ?6
@@ -8983,6 +9382,117 @@ pub(crate) async fn mark_conversation_payload_policy_applied_sqlx(
     Ok(())
 }
 
+pub(crate) async fn record_conversation_session_failure_sqlx(
+    pool: &sqlx::SqlitePool,
+    tenant_id: &str,
+    source_id: &str,
+    record_kind: &str,
+    external_id: &str,
+    observed_version: Option<&str>,
+    error_code: &str,
+    error_message: &str,
+    error_stage: &str,
+    retryable: bool,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let ver = observed_version.unwrap_or("");
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_session_observations (
+            tenant_id, source_id, record_kind, external_id, observed_version,
+            last_seen_at, source_presence, dirty,
+            error_code, error_message, error_stage, retryable,
+            attempt_count, last_attempt_at, last_failure_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'present', 1, ?7, ?8, ?9, ?10, 1, ?6, ?6)
+        ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
+            observed_version = CASE
+                WHEN excluded.observed_version != '' THEN excluded.observed_version
+                ELSE conversation_session_observations.observed_version
+            END,
+            last_seen_at = excluded.last_seen_at,
+            source_presence = 'present',
+            dirty = 1,
+            error_code = excluded.error_code,
+            error_message = excluded.error_message,
+            error_stage = excluded.error_stage,
+            retryable = excluded.retryable,
+            attempt_count = conversation_session_observations.attempt_count + 1,
+            last_attempt_at = excluded.last_attempt_at,
+            last_failure_at = excluded.last_failure_at
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_kind)
+    .bind(external_id)
+    .bind(ver)
+    .bind(&now)
+    .bind(error_code)
+    .bind(error_message)
+    .bind(error_stage)
+    .bind(if retryable { 1 } else { 0 })
+    .execute(pool)
+    .await
+    .map_err(AppError::external)?;
+
+    Ok(())
+}
+
+pub(crate) async fn upsert_single_session_observation_clean_sqlx_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tenant_id: &str,
+    source_id: &str,
+    record_kind: &str,
+    external_id: &str,
+    version_token: &str,
+    now: &str,
+    adapter_content_hash: Option<&str>,
+    card_contract_version: Option<u32>,
+    payload_policy_version: u32,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO conversation_session_observations (
+            tenant_id, source_id, record_kind, external_id, observed_version,
+            hydrated_version, last_seen_at, source_presence, dirty,
+            hydrated_adapter_hash, hydrated_card_contract_version,
+            hydrated_payload_policy_version,
+            error_code, error_message, error_stage, retryable,
+            attempt_count, last_attempt_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, 'present', 0, ?7, ?8, ?9, NULL, NULL, NULL, NULL, 1, ?6)
+        ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
+            observed_version = excluded.observed_version,
+            hydrated_version = excluded.hydrated_version,
+            last_seen_at = excluded.last_seen_at,
+            source_presence = 'present',
+            dirty = 0,
+            hydrated_adapter_hash = excluded.hydrated_adapter_hash,
+            hydrated_card_contract_version = excluded.hydrated_card_contract_version,
+            hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
+            error_code = NULL,
+            error_message = NULL,
+            error_stage = NULL,
+            retryable = NULL,
+            attempt_count = conversation_session_observations.attempt_count + 1,
+            last_attempt_at = excluded.last_attempt_at
+        "#,
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(record_kind)
+    .bind(external_id)
+    .bind(version_token)
+    .bind(now)
+    .bind(adapter_content_hash)
+    .bind(card_contract_version.map(i64::from))
+    .bind(i64::from(payload_policy_version))
+    .execute(&mut **tx)
+    .await
+    .map_err(AppError::external)?;
+
+    Ok(())
+}
+
 pub(crate) async fn persist_conversation_session_observations_sqlx(
     pool: &sqlx::SqlitePool,
     tenant_id: &str,
@@ -9018,8 +9528,10 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     tenant_id, source_id, record_kind, external_id, observed_version,
                     hydrated_version, last_seen_at, source_presence, dirty,
                     hydrated_adapter_hash, hydrated_card_contract_version,
-                    hydrated_payload_policy_version
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)
+                    hydrated_payload_policy_version,
+                    error_code, error_message, error_stage, retryable,
+                    attempt_count, last_attempt_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, NULL, NULL, NULL, NULL, 1, ?7)
                 ON CONFLICT(tenant_id, source_id, record_kind, external_id) DO UPDATE SET
                     observed_version = excluded.observed_version,
                     hydrated_version = excluded.hydrated_version,
@@ -9028,6 +9540,10 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
                     hydrated_adapter_hash = excluded.hydrated_adapter_hash,
                     hydrated_card_contract_version = excluded.hydrated_card_contract_version,
                     hydrated_payload_policy_version = excluded.hydrated_payload_policy_version,
+                    error_code = NULL,
+                    error_message = NULL,
+                    error_stage = NULL,
+                    retryable = NULL,
                     dirty = 0
                 "#,
             )
@@ -9046,6 +9562,7 @@ pub(crate) async fn persist_conversation_session_observations_sqlx(
             .await
             .map_err(AppError::external)?;
         } else {
+            // Note: Keep dirty and error info intact if already dirty/failed!
             sqlx::query(
                 r#"
                 INSERT INTO conversation_session_observations (

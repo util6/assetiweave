@@ -1061,7 +1061,7 @@ describe("ConversationContentCards", () => {
     expect(html).not.toContain("data-result-format=");
   });
 
-  it("renders successful result cards as status summaries instead of stdout", () => {
+  it("hides successful result cards instead of rendering contentless status summaries", () => {
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={buildConversationContentBlocks(
@@ -1087,10 +1087,73 @@ describe("ConversationContentCards", () => {
       />,
     );
 
-    expect(html).toContain('data-result-summary="success"');
-    expect(html).toContain("成功");
-    expect(html).toContain("退出码 0");
-    expect(html).not.toContain("large stdout");
+    expect(html).not.toContain('data-content-type="result"');
+    expect(html).not.toContain('data-result-summary="success"');
+  });
+
+  it("retains failure diagnostics when a result part failed", () => {
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks(
+          [],
+          [
+            {
+              node_id: "conversation-part-failed-result",
+              part_id: "conversation-part-failed-result",
+              adapter_id: "antigravity",
+              kind: "antigravity.result",
+              semantic_role: "result",
+              renderer: "terminal_output",
+              role: "tool",
+              body: "Error: command failed with exit code 1",
+              status: "failed",
+              exit_code: 1,
+              legacy_anchor_ids: [],
+            },
+          ],
+        )}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(html).toContain('data-result-summary="failure"');
+    expect(html).toContain("失败");
+    expect(html).toContain("退出码 1");
+    expect(html).toContain("Error: command failed with exit code 1");
+  });
+
+  it("hides multi-line successful antigravity tool results to prevent contentless cards with only status and line count", () => {
+    const antigravityOutput = Array.from({ length: 26 }, (_, i) => `Downloaded line ${i + 1}`).join("\n");
+    const html = renderToStaticMarkup(
+      <ConversationContentCards
+        blocks={buildConversationContentBlocks(
+          [],
+          [
+            {
+              node_id: "conversation-part-5a28a4dc",
+              part_id: "conversation-part-5a28a4dc",
+              adapter_id: "antigravity",
+              kind: "antigravity.result",
+              semantic_role: "result",
+              renderer: "terminal_output",
+              role: "tool",
+              body: antigravityOutput,
+              status: "success",
+              exit_code: 0,
+              legacy_anchor_ids: [],
+            },
+          ],
+        )}
+        t={t}
+        visibility={{ result: true }}
+      />,
+    );
+
+    expect(html).not.toContain('data-content-type="result"');
+    expect(html).not.toContain('data-result-summary="success"');
+    expect(html).not.toContain("5a28a4dc");
+    expect(html).not.toContain("26");
   });
 
   it("hides placeholder-only successful result cards", () => {

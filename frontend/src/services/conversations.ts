@@ -137,7 +137,26 @@ export type ImportConversationSourceProgress = "validating" | "source" | "sync";
 export type StartConversationSync = typeof syncConversations;
 
 export type ConversationSyncTaskStatus =
-  "running" | "cancelling" | "completed" | "failed" | "cancelled";
+  | "running"
+  | "cancelling"
+  | "completed"
+  | "partial_success"
+  | "failed"
+  | "cancelled";
+
+export interface SessionSyncFailure {
+  session_external_id: string;
+  stage: string;
+  error_code: string;
+  error_message: string;
+  retryable: boolean;
+}
+
+export interface SessionSyncWarning {
+  session_external_id?: string | null;
+  code: string;
+  message: string;
+}
 
 const CONVERSATION_SYNC_TASK_UPDATED_EVENT = "conversation-sync-task-updated";
 const CONVERSATION_SEARCH_INDEX_TASK_UPDATED_EVENT =

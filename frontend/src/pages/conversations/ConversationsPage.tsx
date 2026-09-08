@@ -701,7 +701,7 @@ export function ConversationsPage({
       return;
     }
     if (
-      syncTask.status === "completed" &&
+      (syncTask.status === "completed" || syncTask.status === "partial_success") &&
       dismissedConversationSyncProgressTaskKeys.has(
         conversationSyncProgressTaskKey(currentRecordKind, syncTask.id),
       )
@@ -3547,19 +3547,57 @@ function formatConversationSyncFailureItems(
   sourceLabel: (sourceId: string | null | undefined) => string,
   t: Translator,
 ) {
-  if (!isPlainRecord(task.result) || !Array.isArray(task.result.errors)) {
+  if (!isPlainRecord(task.result)) {
     return undefined;
   }
 
-  const items = task.result.errors
-    .map((rawError) =>
-      formatConversationSyncFailureItem(rawError, sourceLabel, t),
-    )
-    .filter((item): item is { message: string; source: string } =>
-      Boolean(item),
-    );
+  const items: { message: string; source: string }[] = [];
+
+  if (Array.isArray(task.result.errors)) {
+    for (const rawError of task.result.errors) {
+      const item = formatConversationSyncFailureItem(rawError, sourceLabel, t);
+      if (item) {
+        items.push(item);
+      }
+    }
+  }
+
+  if (Array.isArray(task.result.results)) {
+    for (const res of task.result.results) {
+      if (isPlainRecord(res) && Array.isArray(res.session_failures)) {
+        const adapterId = stringRecordValue(res.adapter_id);
+        const sourceId = stringRecordValue(res.source_id);
+        const sourceName = sourceId ? sourceLabel(sourceId) : null;
+        for (const failure of res.session_failures) {
+          if (isPlainRecord(failure)) {
+            const externalId =
+              stringRecordValue(failure.session_external_id) ?? "unknown";
+            const stage = stringRecordValue(failure.stage) ?? "sync";
+            const errorCode = stringRecordValue(failure.error_code) ?? "error";
+            const rawMsg = stringRecordValue(failure.error_message);
+            const retryable = Boolean(failure.retryable);
+            const src = [sourceName ?? sourceId, adapterId, `会话 ${externalId}`]
+              .filter(Boolean)
+              .join(" · ");
+            const compactMsg = compactConversationSyncFailureMessage(rawMsg, t);
+            const msg = `[${stage}/${errorCode}] ${compactMsg}${retryable ? " (可重试)" : ""}`;
+            items.push({
+              message: sanitizeSyncPath(msg),
+              source: src,
+            });
+          }
+        }
+      }
+    }
+  }
 
   return items.length > 0 ? items : undefined;
+}
+
+function sanitizeSyncPath(text: string): string {
+  return text
+    .replace(/(?:(?:\/Users|\/home)\/[^/\s]+)/g, "~")
+    .replace(/[a-zA-Z]:\\Users\\[^\\\s]+/g, "~");
 }
 
 function formatConversationSyncFailureItem(

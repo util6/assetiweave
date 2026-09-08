@@ -338,19 +338,50 @@ function displayTurns(turns) {
     }));
 }
 
+const DEFAULT_PATCH_BUDGET_BYTES = 16 * 1024 * 1024;
+
+function getPatchBudget() {
+  const envVal = process.env.ASSETIWEAVE_PATCH_BUDGET_BYTES;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_PATCH_BUDGET_BYTES;
+}
+
 function canonicalSummaryDiff(entries) {
   if (!Array.isArray(entries)) return null;
-  const files = [];
+  const validEntries = [];
+  let totalBytes = 0;
+
   for (const entry of entries) {
     if (!entry || typeof entry !== "object" || typeof entry.patch !== "string" || !entry.patch.trim()) continue;
     const filePath = String(entry.file ?? entry.path ?? "").replace(/^[./\\]+/, "").replaceAll("\\", "/");
     if (!filePath) continue;
     const patch = entry.patch.replace(/\r\n?/g, "\n").trim();
+    totalBytes += Buffer.byteLength(patch, "utf8");
+    validEntries.push({ filePath, patch, status: entry.status });
+  }
+
+  if (validEntries.length === 0) return null;
+
+  const budget = getPatchBudget();
+  if (totalBytes > budget) {
+    return {
+      reduced: true,
+      fileCount: validEntries.length,
+      originalBytes: totalBytes,
+      filePaths: validEntries.map((e) => e.filePath),
+    };
+  }
+
+  const files = [];
+  for (const { filePath, patch, status: rawStatus } of validEntries) {
     if (patch.startsWith("diff --git ")) {
       files.push(patch);
       continue;
     }
-    const status = String(entry.status ?? "modified").toLowerCase();
+    const status = String(rawStatus ?? "modified").toLowerCase();
     const oldPath = status === "added" || status === "new" ? "/dev/null" : `a/${filePath}`;
     const newPath = status === "deleted" || status === "removed" ? "/dev/null" : `b/${filePath}`;
     files.push([
@@ -360,15 +391,47 @@ function canonicalSummaryDiff(entries) {
       patch,
     ].join("\n"));
   }
-  return files.length ? files.join("\n") : null;
+  return {
+    reduced: false,
+    text: files.join("\n"),
+  };
 }
 
 function attachSummaryDiff(parts, summaryDiffs) {
-  const diff = canonicalSummaryDiff(summaryDiffs);
-  if (!diff) return false;
+  const result = canonicalSummaryDiff(summaryDiffs);
+  if (!result) return false;
   const target = parts.find((part) => part?.kind === "file_change" && !part.text);
   if (!target) return false;
-  target.text = diff;
+
+  if (result.reduced) {
+    const textLines = [
+      "# File changes reduced: patch payload exceeded safety budget",
+      `# Total files changed: ${result.fileCount}`,
+      `# Total original patch size: ${result.originalBytes} bytes`,
+      "# Retained representation: available file paths and summary statistics",
+      "",
+      "Files:",
+      ...result.filePaths.map((p) => `- ${p}`),
+      "",
+      "[Content truncated]",
+    ];
+    target.text = textLines.join("\n");
+    const meta = parseStructuredMetadata(target.metadata_json);
+    meta.truncated = true;
+    meta.content_reduced = true;
+    meta.original_file_count = result.fileCount;
+    meta.original_bytes = result.originalBytes;
+    meta.retained_representation = "file_paths_and_statistics";
+    meta.truncation_reason = "patch_payload_exceeded_safety_budget";
+    target.metadata_json = JSON.stringify(meta);
+
+    emit("warning", {
+      message: `OpenCode summary diff content reduced (${result.fileCount} files, ${result.originalBytes} bytes): exceeded safety budget`,
+    });
+    return true;
+  }
+
+  target.text = result.text;
   return true;
 }
 
@@ -472,7 +535,27 @@ function readTurnsBySession(dbPath, messageColumns, partColumns, sessionIds) {
     : dataCol
       ? sqlCoalesce([jsonExtract(dataCol, "$.time.created"), jsonExtract(dataCol, "$.created_at"), jsonExtract(dataCol, "$.time")])
       : "NULL";
-  const summaryDiffsExpr = dataCol ? jsonExtract(dataCol, "$.summary.diffs") : "NULL";
+  const summaryDiffsExpr = dataCol
+    ? `CASE
+         WHEN ${quoteIdent(dataCol)} IS NOT NULL
+          AND json_valid(${quoteIdent(dataCol)})
+          AND json_type(${quoteIdent(dataCol)}, '$.summary.diffs') = 'array'
+         THEN (
+           SELECT json_group_array(
+             json_object(
+               'file', json_extract(value, '$.file'),
+               'path', json_extract(value, '$.path'),
+               'status', json_extract(value, '$.status'),
+               'patch', json_extract(value, '$.patch')
+             )
+           )
+           FROM json_each(${quoteIdent(dataCol)}, '$.summary.diffs')
+           WHERE json_extract(value, '$.patch') IS NOT NULL
+             AND trim(json_extract(value, '$.patch')) != ''
+         )
+         ELSE NULL
+       END`
+    : "NULL";
   const msgSql = `SELECT ${quoteIdent(msgId)} AS id, ${quoteIdent(msgSession)} AS session_id, ${roleExpr} AS role, ${timestampExpr} AS timestamp, NULL AS data, ${summaryDiffsExpr} AS summary_diffs FROM message WHERE ${quoteIdent(msgSession)} IN (${sessionList}) ORDER BY rowid ASC`;
   const currentBySession = new Map();
   const summaryDiffsBySession = new Map();

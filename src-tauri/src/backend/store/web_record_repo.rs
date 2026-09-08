@@ -43,6 +43,10 @@ pub(crate) async fn import_web_record_sessions_sqlx(
             turn_count,
             warning_count: 0,
             warnings: Vec::new(),
+            failed_session_count: 0,
+            session_failures: Vec::new(),
+            session_warnings: Vec::new(),
+            status: crate::backend::models::ConversationSyncStatus::Completed,
         });
     }
 
@@ -167,6 +171,10 @@ pub(crate) async fn import_web_record_sessions_sqlx(
         turn_count,
         warning_count,
         warnings: Vec::new(),
+        failed_session_count: 0,
+        session_failures: Vec::new(),
+        session_warnings: Vec::new(),
+        status: crate::backend::models::ConversationSyncStatus::Completed,
     })
 }
 

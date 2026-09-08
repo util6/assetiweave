@@ -118,6 +118,129 @@ test("OpenCode keeps a simple shell Part without a persisted projection", () => 
   }
 });
 
+test("OpenCode skips large before/after fields with no patch and keeps valid patch entries", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-large-diff-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const hugeBefore = "A".repeat(200000);
+    const hugeAfter = "B".repeat(200000);
+    const summary = JSON.stringify({
+      role: "user",
+      time: { created: "2026-08-06T00:00:00Z" },
+      summary: {
+        diffs: [
+          {
+            file: "large-unused.ts",
+            before: hugeBefore,
+            after: hugeAfter,
+            status: "modified",
+          },
+          {
+            file: "src/valid.ts",
+            before: hugeBefore,
+            after: hugeAfter,
+            status: "modified",
+            patch: "@@ -1 +1 @@\n-old line\n+new line",
+          },
+          {
+            file: "empty-patch.ts",
+            status: "modified",
+            patch: "   ",
+          },
+          {
+            file: "src/second.ts",
+            status: "added",
+            patch: "@@ -0,0 +1 @@\n+added line",
+          },
+        ],
+      },
+    });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-large', 'Large fixture', '/tmp/project', '2026-08-06T00:00:02Z');",
+      `INSERT INTO message VALUES ('message-user', 'session-large', '${sqlString(summary)}');`,
+      `INSERT INTO part VALUES ('part-user', 'message-user', 'session-large', '${sqlString(JSON.stringify({ type: "text", text: "测试超大摘要" }))}');`,
+      `INSERT INTO message VALUES ('message-assistant', 'session-large', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-patch', 'message-assistant', 'session-large', '${sqlString(JSON.stringify({ type: "patch", hash: "patch-hash", files: ["src/valid.ts", "src/second.ts"] }))}');`,
+    ].join("\n"));
+
+    const session = readFixtureSession(dbPath);
+    const parts = session.turns[0].parts;
+    const fileChanges = parts.filter((part) => part.kind === "file_change");
+    assert.ok(fileChanges.length > 0);
+    for (const part of parts) {
+      assert.ok(!part.text?.includes("AAAAAA"), "Unused before data must not appear in output");
+      assert.ok(!part.text?.includes("BBBBBB"), "Unused after data must not appear in output");
+    }
+    const allDiffText = fileChanges.map((p) => p.text).join("\n");
+    assert.match(allDiffText, /diff --git a\/src\/valid\.ts b\/src\/valid\.ts/);
+    assert.match(allDiffText, /diff --git a\/src\/second\.ts b\/src\/second\.ts/);
+    assert.ok(!allDiffText.includes("large-unused.ts"));
+    assert.ok(!allDiffText.includes("empty-patch.ts"));
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("OpenCode degrades oversized patch payloads exceeding budget to file paths, statistics, and warnings", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-opencode-budget-"));
+  try {
+    const dbPath = path.join(fixtureRoot, "opencode.db");
+    const patchContent = "@@ -1 +1 @@\n" + "+line\n".repeat(200);
+    const summary = JSON.stringify({
+      role: "user",
+      time: { created: "2026-08-06T00:00:00Z" },
+      summary: {
+        diffs: [
+          { file: "src/a.ts", status: "modified", patch: patchContent },
+          { file: "src/b.ts", status: "modified", patch: patchContent },
+        ],
+      },
+    });
+    runSqlite(dbPath, [
+      "CREATE TABLE session (id TEXT, title TEXT, project TEXT, updated_at TEXT);",
+      "CREATE TABLE message (id TEXT, session_id TEXT, data TEXT);",
+      "CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, data TEXT);",
+      "INSERT INTO session VALUES ('session-budget', 'Budget fixture', '/tmp/project', '2026-08-06T00:00:02Z');",
+      `INSERT INTO message VALUES ('message-user', 'session-budget', '${sqlString(summary)}');`,
+      `INSERT INTO part VALUES ('part-user', 'message-user', 'session-budget', '${sqlString(JSON.stringify({ type: "text", text: "测试超载降级" }))}');`,
+      `INSERT INTO message VALUES ('message-assistant', 'session-budget', '${sqlString(JSON.stringify({ role: "assistant", time: { created: "2026-08-06T00:00:01Z" } }))}');`,
+      `INSERT INTO part VALUES ('part-patch', 'message-assistant', 'session-budget', '${sqlString(JSON.stringify({ type: "patch", hash: "patch-hash", files: ["src/a.ts", "src/b.ts"] }))}');`,
+    ].join("\n"));
+
+    const result = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      env: { ...process.env, ASSETIWEAVE_PATCH_BUDGET_BYTES: "500" },
+      input: JSON.stringify({ method: "read_session", source: { location: dbPath }, params: {} }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const messages = result.stdout.trim().split("\n").map((line) => JSON.parse(line));
+    const warnings = messages.filter((entry) => entry.type === "warning");
+    assert.ok(warnings.length > 0, "Must emit structured warning on truncation");
+    assert.match(warnings[0].message, /OpenCode summary diff content reduced/);
+
+    const session = messages.find((entry) => entry.type === "item")?.item?.session;
+    assert.ok(session);
+    const part = session.turns[0].parts.find((p) => p.kind === "file_change");
+    assert.ok(part);
+    assert.match(part.text, /# File changes reduced: patch payload exceeded safety budget/);
+    assert.match(part.text, /- src\/a\.ts/);
+    assert.match(part.text, /- src\/b\.ts/);
+    assert.match(part.text, /\[Content truncated\]/);
+
+    const meta = JSON.parse(part.metadata_json);
+    assert.equal(meta.truncated, true);
+    assert.equal(meta.content_reduced, true);
+    assert.equal(meta.original_file_count, 2);
+    assert.ok(meta.original_bytes > 500);
+    assert.equal(meta.retained_representation, "file_paths_and_statistics");
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
 function readFixtureSession(dbPath) {
   const result = spawnSync(process.execPath, [adapterPath], {
     encoding: "utf8",
@@ -138,3 +261,4 @@ function runSqlite(dbPath, sql) {
 function sqlString(value) {
   return value.replaceAll("'", "''");
 }
+

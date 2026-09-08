@@ -646,7 +646,9 @@ function ConversationContentCard({
         );
   const canExpandDiff =
     resultPresentation?.type === "file-change" && block.text.trim().length > 0;
-  const canExpandResult = canExpandDiff || preview.hasOverflow;
+  const canExpandResult =
+    canExpandDiff ||
+    (resultPresentation?.type !== "success" && preview.hasOverflow);
 
   return (
     <section
@@ -1352,8 +1354,9 @@ function shouldDisplayContentBlock(block: ConversationContentBlock) {
   const renderer = block.renderer ?? legacyRenderer(block.type, block.format);
   const text = block.text.trim();
   if (renderer === "diff") return text.length > 0;
+  if (isSuccessfulResult(block)) return false;
   if (/^(?:\{\}|\[\]|null|undefined)$/i.test(text)) return false;
-  return text.length > 0 || !isSuccessfulResult(block);
+  return text.length > 0 || isFailedResult(block);
 }
 
 function createBlock(

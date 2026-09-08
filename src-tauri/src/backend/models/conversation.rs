@@ -156,12 +156,67 @@ pub enum ConversationGroupingOrigin {
     Manual,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversationSyncStatus {
     Running,
+    #[default]
     Completed,
+    PartialSuccess,
     Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSyncFailure {
+    pub session_external_id: String,
+    pub stage: String,
+    pub error_code: String,
+    pub error_message: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSyncWarning {
+    pub session_external_id: Option<String>,
+    pub code: String,
+    pub message: String,
+}
+
+pub fn sanitize_sync_error_message(message: &str) -> String {
+    let mut sanitized = message.to_string();
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            sanitized = sanitized.replace(&home, "~");
+        }
+    }
+    if let Ok(userprofile) = std::env::var("USERPROFILE") {
+        if !userprofile.is_empty() {
+            sanitized = sanitized.replace(&userprofile, "~");
+        }
+    }
+    let re_mac = regex_replace_user_path(&sanitized, "/Users/");
+    let re_linux = regex_replace_user_path(&re_mac, "/home/");
+    re_linux.chars().take(1000).collect()
+}
+
+fn regex_replace_user_path(text: &str, prefix: &str) -> String {
+    let mut result = String::new();
+    let mut remaining = text;
+    while let Some(idx) = remaining.find(prefix) {
+        result.push_str(&remaining[..idx]);
+        let after_prefix = &remaining[idx + prefix.len()..];
+        if let Some(slash_idx) = after_prefix.find('/') {
+            result.push_str("~/");
+            remaining = &after_prefix[slash_idx + 1..];
+        } else {
+            result.push_str("~");
+            remaining = "";
+            break;
+        }
+    }
+    result.push_str(remaining);
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -798,5 +853,19 @@ mod tests {
         assert_eq!(groups[0].origin, ConversationGroupingOrigin::AutoMerged);
         assert_eq!(groups[1].turn_ids, vec!["t4"]);
         assert_eq!(groups[1].origin, ConversationGroupingOrigin::Imported);
+    }
+
+    #[test]
+    fn sanitize_sync_error_message_masks_unix_user_paths() {
+        let raw = "Error reading /Users/bob/project/data.json: timed out";
+        let sanitized = sanitize_sync_error_message(raw);
+        assert_eq!(sanitized, "Error reading ~/project/data.json: timed out");
+
+        let raw_linux = "Error reading /home/alice/project/data.json: process exit 1";
+        let sanitized_linux = sanitize_sync_error_message(raw_linux);
+        assert_eq!(
+            sanitized_linux,
+            "Error reading ~/project/data.json: process exit 1"
+        );
     }
 }

@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.3.8",
+      "channel": "stable",
+      "released_at": "2026-09-08T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.opencode-session-1.3.8-universal.zip",
+      "artifact_size": 68207,
+      "artifact_sha256": "3ab8b1f37d4b173a1d64fbabf82be54dbb89f020d246589114a36b12e13fd7d5",
+      "changelog_markdown": "## 1.3.8\n\n- Extract only required summary diff fields (file, path, status, patch) from OpenCode SQLite to eliminate hydration timeouts on oversized diffs without patch content.\n- Degrade oversized patch payloads exceeding protocol safety budgets to file paths, summary statistics, and truncation metadata with structured warnings.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/opencode"
+      }
+    },
+    {
       "version": "1.3.7",
       "channel": "stable",
       "released_at": "2026-08-26T00:00:00Z",

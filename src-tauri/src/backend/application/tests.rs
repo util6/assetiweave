@@ -1842,6 +1842,238 @@ esac
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn conversation_sync_isolates_single_session_failure_and_retries_dirty() {
+    let root = std::env::temp_dir().join(format!("assetiweave-fault-isolation-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .unwrap();
+
+    let marker_path = root.join("fail_marker");
+    fs::write(&marker_path, "fail").unwrap();
+    let marker_str = marker_path.to_string_lossy();
+
+    let script_content = format!(
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{{"type":"item","item":{{"kind":"session_descriptor","external_id":"session-1","version_token":"v1"}}}}'
+    printf '%s\n' '{{"type":"item","item":{{"kind":"session_descriptor","external_id":"session-2","version_token":"v1"}}}}'
+    printf '%s\n' '{{"type":"item","item":{{"kind":"session_descriptor","external_id":"session-3","version_token":"v1"}}}}'
+    printf '%s\n' '{{"type":"complete","item":{{"session_count":3,"snapshot_complete":true}}}}'
+    ;;
+  *session-2*)
+    if [ -f "{marker_str}" ]; then
+      echo "/Users/testuser/source/session2.json: process failed with crash" >&2
+      exit 1
+    else
+      printf '%s\n' '{{"type":"item","item":{{"kind":"session","session":{{"external_id":"session-2","source_fingerprint":"v1","turns":[{{"external_id":"turn-2","turn_index":0,"user_text":"Hello 2","parts":[]}}]}}}}}}'
+      printf '%s\n' '{{"type":"complete","item":{{"session_count":1}}}}'
+    fi
+    ;;
+  *session-1*)
+    printf '%s\n' '{{"type":"item","item":{{"kind":"session","session":{{"external_id":"session-1","source_fingerprint":"v1","turns":[{{"external_id":"turn-1","turn_index":0,"user_text":"Hello 1","parts":[]}}]}}}}}}'
+    printf '%s\n' '{{"type":"complete","item":{{"session_count":1}}}}'
+    ;;
+  *session-3*)
+    printf '%s\n' '{{"type":"item","item":{{"kind":"session","session":{{"external_id":"session-3","source_fingerprint":"v1","turns":[{{"external_id":"turn-3","turn_index":0,"user_text":"Hello 3","parts":[]}}]}}}}}}'
+    printf '%s\n' '{{"type":"complete","item":{{"session_count":1}}}}'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#
+    );
+    let script = write_executable_script(&root, "adapter.sh", &script_content);
+
+    let adapter_id = format!("fixture-fault-{}", Uuid::new_v4());
+    let source_id = format!("{adapter_id}-source");
+    let manifest_path = root.join(format!("{adapter_id}.json"));
+    fs::write(
+        &manifest_path,
+        serde_json::json!({
+            "schema_version": 1,
+            "id": &adapter_id,
+            "name": "Fixture fault adapter",
+            "version": "0.1.0",
+            "protocol_version": 1,
+            "command": [adapter_manifest_entry(&root, &script)],
+            "capabilities": ["list_sessions", "read_session"],
+            "input_kinds": ["directory"]
+        })
+        .to_string(),
+    )
+    .expect("write adapter manifest");
+
+    let now = "2026-01-01T00:00:00Z".to_string();
+    let adapter = ConversationAdapter {
+        id: adapter_id.clone(),
+        name: "Fixture fault adapter".to_string(),
+        kind: ConversationAdapterKind::External,
+        version: "0.1.0".to_string(),
+        enabled: true,
+        manifest_path: Some(manifest_path.to_string_lossy().to_string()),
+        executable_path: Some(script.to_string_lossy().to_string()),
+        content_hash: None,
+        trusted_hash: None,
+        trust_state: ConversationAdapterTrustState::Trusted,
+        protocol_version: Some(1),
+        capabilities: vec!["list_sessions".to_string(), "read_session".to_string()],
+        input_kinds: vec![ConversationSourceKind::Directory],
+        card_contract_version: None,
+        card_kinds: Vec::new(),
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+    let source = ConversationSource {
+        id: source_id.clone(),
+        adapter_id: adapter_id.clone(),
+        name: "Fixture fault source".to_string(),
+        kind: ConversationSourceKind::Directory,
+        location: root.to_string_lossy().to_string(),
+        config_json: None,
+        enabled: true,
+        last_synced_at: None,
+        last_sync_status: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let pool = service.db.pool();
+    let tenant_id = service.tenant_id();
+    crate::backend::store::upsert_conversation_adapter_sqlx(pool, tenant_id, &adapter)
+        .await
+        .unwrap();
+    crate::backend::store::upsert_conversation_source_sqlx(pool, tenant_id, &source)
+        .await
+        .unwrap();
+
+    // Round 1: session-2 fails, session-1 and session-3 succeed
+    let result1 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Full,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result1["results"][0]["status"], "partial_success");
+    let failures = result1["results"][0]["session_failures"]
+        .as_array()
+        .unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["session_external_id"], "session-2");
+    assert_eq!(failures[0]["stage"], "adapter");
+    assert_eq!(failures[0]["error_code"], "adapter_process_error");
+    assert_eq!(failures[0]["retryable"], true);
+    let failure_msg = failures[0]["error_message"].as_str().unwrap();
+    assert!(failure_msg.contains("~/source/session2.json"));
+    assert!(!failure_msg.contains("/Users/testuser/"));
+
+    // Verify DB state after Round 1
+    let session_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(session_count, 2);
+
+    let (s2_dirty, s2_err_code, s2_err_msg, s2_attempts): (i64, Option<String>, Option<String>, i64) =
+        sqlx::query_as(
+            "SELECT dirty, error_code, error_message, attempt_count FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+        )
+        .bind(tenant_id)
+        .bind(&source_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(s2_dirty, 1);
+    assert_eq!(s2_err_code.as_deref(), Some("adapter_process_error"));
+    assert!(s2_err_msg
+        .as_deref()
+        .unwrap()
+        .contains("~/source/session2.json"));
+    assert!(!s2_err_msg.as_deref().unwrap().contains("/Users/testuser/"));
+    assert_eq!(s2_attempts, 1);
+
+    let (s1_dirty, s1_err_code): (i64, Option<String>) = sqlx::query_as(
+        "SELECT dirty, error_code FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-1'",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(s1_dirty, 0);
+    assert!(s1_err_code.is_none());
+
+    // Round 2: fix session-2, perform incremental sync
+    fs::remove_file(&marker_path).unwrap();
+
+    let result2 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Incremental,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result2["results"][0]["status"], "completed");
+    assert_eq!(result2["results"][0]["active_session_count"], 1);
+
+    let session_count_r2: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM conversation_sessions WHERE tenant_id = ?1 AND source_id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(&source_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(session_count_r2, 3);
+
+    let (s2_r2_dirty, s2_r2_err_code, s2_r2_err_msg): (i64, Option<String>, Option<String>) =
+        sqlx::query_as(
+            "SELECT dirty, error_code, error_message FROM conversation_session_observations WHERE tenant_id = ?1 AND source_id = ?2 AND external_id = 'session-2'",
+        )
+        .bind(tenant_id)
+        .bind(&source_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(s2_r2_dirty, 0);
+    assert!(s2_r2_err_code.is_none());
+    assert!(s2_r2_err_msg.is_none());
+
+    // Round 3: incremental sync again, all clean, zero active sessions
+    let result3 = service
+        .sync_conversations(ConversationSyncParams {
+            source_id: Some(source_id.clone()),
+            adapter_id: None,
+            record_kind: Some("session".to_string()),
+            mode: ConversationSyncMode::Incremental,
+            dry_run: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(result3["results"][0]["status"], "completed");
+    assert_eq!(result3["results"][0]["active_session_count"], 0);
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn conversation_session_export_dry_run_calls_adapter_without_writing_file() {
     let root = std::env::temp_dir().join(format!(
         "assetiweave-conversation-export-dry-run-{}",

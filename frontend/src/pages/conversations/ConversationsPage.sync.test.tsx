@@ -234,6 +234,48 @@ describe("ConversationsPage sync scope", () => {
     },
   );
 
+  it("renders structured session failure items with sanitized paths on partial_success", async () => {
+    conversationSyncTaskMock.current = {
+      adapter_id: "opencode",
+      dry_run: false,
+      error: null,
+      finished_at: "2026-06-15T00:01:00Z",
+      id: "sync-partial-1",
+      record_kind: "session",
+      result: {
+        results: [
+          {
+            adapter_id: "opencode",
+            source_id: "source-1",
+            status: "partial_success",
+            session_failures: [
+              {
+                session_external_id: "session-xyz",
+                stage: "read",
+                error_code: "adapter_timeout",
+                error_message:
+                  "/Users/secretuser/workspace/repo timed out after 120s",
+                retryable: true,
+              },
+            ],
+          },
+        ],
+        errors: [],
+      },
+      source_id: "source-1",
+      started_at: "2026-06-15T00:00:00Z",
+      status: "partial_success",
+    };
+
+    renderConversationsPage("session");
+
+    await waitFor(() => {
+      expect(screen.queryByText(/\/Users\/secretuser/)).toBeNull();
+      expect(screen.getByText(/\[read\/adapter_timeout\]/)).toBeTruthy();
+      expect(screen.getByText(/可重试/)).toBeTruthy();
+    });
+  });
+
   it("uses the notification outlet instead of an inline status report after exporting from detail view", async () => {
     const onNotify = vi.fn((_: Parameters<ConversationNotify>[0]) => undefined);
     listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);

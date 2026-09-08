@@ -1,6 +1,8 @@
 use super::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::backend::models::{sanitize_sync_error_message, SessionSyncFailure, SessionSyncWarning};
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ConversationSourceReadResult {
     pub(crate) sessions: Vec<NormalizedConversationSession>,
@@ -10,6 +12,8 @@ pub(crate) struct ConversationSourceReadResult {
     pub(crate) skipped_session_count: usize,
     pub(crate) legacy_cards_upgraded: usize,
     pub(crate) incremental: bool,
+    pub(crate) session_failures: Vec<SessionSyncFailure>,
+    pub(crate) session_warnings: Vec<SessionSyncWarning>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -69,6 +73,15 @@ pub(crate) async fn read_source_sessions_with_control(
         let sessions = result.sessions;
         on_progress(sessions.len(), sessions.len());
         super::external::ensure_read_not_cancelled(cancellation)?;
+        let warnings = result
+            .warnings
+            .into_iter()
+            .map(|w| SessionSyncWarning {
+                session_external_id: None,
+                code: "adapter_warning".to_string(),
+                message: sanitize_sync_error_message(&w),
+            })
+            .collect();
         return Ok(ConversationSourceReadResult {
             session_descriptors: Vec::new(),
             discovered_session_count: sessions.len(),
@@ -77,6 +90,8 @@ pub(crate) async fn read_source_sessions_with_control(
             legacy_cards_upgraded: result.legacy_cards_upgraded,
             sessions,
             incremental: false,
+            session_failures: Vec::new(),
+            session_warnings: warnings,
         });
     };
     let descriptors = deduplicate_session_descriptors(&discovery.session_descriptors)?;
@@ -93,44 +108,80 @@ pub(crate) async fn read_source_sessions_with_control(
             skipped_session_count: discovered_session_count,
             legacy_cards_upgraded: 0,
             incremental: true,
+            session_failures: Vec::new(),
+            session_warnings: Vec::new(),
         });
     }
 
     let mut sessions = Vec::with_capacity(active.len());
+    let mut session_failures = Vec::new();
+    let mut session_warnings = Vec::new();
     let mut empty_session_count = 0usize;
     let mut legacy_cards_upgraded = 0usize;
     for (index, descriptor) in active.iter().enumerate() {
-        let result = reader.read(Some(&descriptor.external_id)).await?;
+        super::external::ensure_read_not_cancelled(cancellation)?;
+        let read_result = reader.read(Some(&descriptor.external_id)).await;
         on_progress(index + 1, active.len());
         super::external::ensure_read_not_cancelled(cancellation)?;
-        legacy_cards_upgraded += result.legacy_cards_upgraded;
-        let mut read = result.sessions;
-        if read.is_empty() {
-            // Session was discovered by list_sessions but has no readable
-            // content yet (e.g. an active session that just started and has
-            // no complete turns). Skip it — the next sync will pick it up
-            // once content is available.
-            empty_session_count += 1;
-            continue;
+        match read_result {
+            Ok(result) => {
+                legacy_cards_upgraded += result.legacy_cards_upgraded;
+                for w in result.warnings {
+                    session_warnings.push(SessionSyncWarning {
+                        session_external_id: Some(descriptor.external_id.clone()),
+                        code: "adapter_warning".to_string(),
+                        message: sanitize_sync_error_message(&w),
+                    });
+                }
+                let mut read = result.sessions;
+                if read.is_empty() {
+                    empty_session_count += 1;
+                    continue;
+                }
+                if read.len() != 1 || read[0].external_id != descriptor.external_id {
+                    let err_msg = format!(
+                        "conversation adapter {} returned {} sessions for active session {}",
+                        adapter.id,
+                        read.len(),
+                        descriptor.external_id
+                    );
+                    session_failures.push(SessionSyncFailure {
+                        session_external_id: descriptor.external_id.clone(),
+                        stage: "validate".to_string(),
+                        error_code: "session_mismatch".to_string(),
+                        error_message: sanitize_sync_error_message(&err_msg),
+                        retryable: true,
+                    });
+                    continue;
+                }
+                if !session_matches_descriptor(&read[0], descriptor) {
+                    empty_session_count += 1;
+                    continue;
+                }
+                sessions.append(&mut read);
+            }
+            Err(AppError::Cancelled(msg)) => {
+                return Err(AppError::Cancelled(msg));
+            }
+            Err(err) => {
+                let err_str = err.to_string();
+                let lower = err_str.to_ascii_lowercase();
+                let (code, stage) = if lower.contains("timed out") || lower.contains("timeout") {
+                    ("adapter_timeout", "read")
+                } else if lower.contains("exit") || lower.contains("process") {
+                    ("adapter_process_error", "adapter")
+                } else {
+                    ("adapter_error", "read")
+                };
+                session_failures.push(SessionSyncFailure {
+                    session_external_id: descriptor.external_id.clone(),
+                    stage: stage.to_string(),
+                    error_code: code.to_string(),
+                    error_message: sanitize_sync_error_message(&err_str),
+                    retryable: true,
+                });
+            }
         }
-        if read.len() != 1 || read[0].external_id != descriptor.external_id {
-            return Err(AppError::external(format!(
-                "conversation adapter {} returned {} sessions for active session {}",
-                adapter.id,
-                read.len(),
-                descriptor.external_id
-            )));
-        }
-        if !session_matches_descriptor(&read[0], descriptor) {
-            // Discovery and hydration are separate adapter calls. A live
-            // session can advance between them, so importing this snapshot
-            // would pair new content with a stale discovery token. Leave it
-            // dirty and let the next incremental sync retry it instead of
-            // failing the entire source.
-            empty_session_count += 1;
-            continue;
-        }
-        sessions.append(&mut read);
     }
 
     let discovered_session_count = descriptors.len();
@@ -143,6 +194,8 @@ pub(crate) async fn read_source_sessions_with_control(
         legacy_cards_upgraded,
         sessions,
         incremental: true,
+        session_failures,
+        session_warnings,
     })
 }
 

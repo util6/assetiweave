@@ -7,6 +7,22 @@
   "record_kind": "session",
   "releases": [
     {
+      "version": "1.6.3",
+      "channel": "stable",
+      "released_at": "2026-09-01T00:00:00Z",
+      "core_compatibility": ">=0.5.2, <1.0.0",
+      "artifact_url": "https://github.com/util6/assetiweave/releases/download/conversation-adapter-packages-main/io.github.util6.codex-session-1.6.3-universal.zip",
+      "artifact_size": 116669,
+      "artifact_sha256": "ee9ebe13eb6bae631278e6b3cab79a4348ba5b72233825b4834e0a395e2b559d",
+      "changelog_markdown": "## 1.6.3\n\n- Keep list_sessions output bounded by excluding titles and query only the requested thread during incremental reads.\n- Raise the sqlite3 output buffer for large full-sync result sets.",
+      "breaking_change": false,
+      "runtime_protocol": "stdio-ndjson-v1",
+      "source": {
+        "type": "github",
+        "url": "https://github.com/util6/assetiweave/tree/main/builtin-assets/adapters/codex"
+      }
+    },
+    {
       "version": "1.6.2",
       "channel": "stable",
       "released_at": "2026-08-29T00:00:00Z",

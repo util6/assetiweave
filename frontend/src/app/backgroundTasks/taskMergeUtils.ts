@@ -1,5 +1,6 @@
 const TERMINAL_STATUSES = new Set([
   "completed",
+  "partial_success",
   "failed",
   "cancelled",
   "canceled",

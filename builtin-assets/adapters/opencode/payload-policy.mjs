@@ -67,7 +67,9 @@ export function normalizeSessionPayload(session) {
         setExecutionMetadata(part, metadata, executionKind, null);
       } else if (part.kind === "file_change" || executionKind === "file_change") {
         part.kind = "file_change";
-        part.text = canonicalUnifiedDiff(part.text);
+        if (!metadata.content_reduced) {
+          part.text = canonicalUnifiedDiff(part.text);
+        }
         if (part.text) setFileChangeCard(part, metadata);
         else setEmptyFileChangeResultCard(part, metadata);
       } else if (executionKind === "read" || executionKind === "search" || (

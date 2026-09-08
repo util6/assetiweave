@@ -524,25 +524,40 @@ impl AppService {
                             .map(|descriptor| descriptor.external_id.clone())
                             .collect::<std::collections::BTreeSet<_>>()
                     });
-                    let result =
-                        crate::backend::store::import_conversation_sessions_with_control_sqlx(
-                            pool,
-                            tenant_id,
-                            &source,
-                            &read.sessions,
-                            discovered_external_ids.as_ref(),
-                            params.dry_run,
-                            cancellation,
-                            &mut |done, total| {
-                                on_progress(
-                                    completed_source_count,
-                                    total_source_count,
-                                    Some(format!("{} · 写入会话 {done}/{total}", source.name,)),
-                                )
-                            },
-                        )
-                        .await
-                        .map_err(conversation_storage_error)?;
+                    let descriptor_versions = {
+                        let mut map = std::collections::BTreeMap::new();
+                        for descriptor in &read.session_descriptors {
+                            map.insert(
+                                descriptor.external_id.clone(),
+                                descriptor.version_token.clone(),
+                            );
+                        }
+                        map
+                    };
+                    let result = crate::backend::store::import_conversation_sessions_advanced_sqlx(
+                        pool,
+                        tenant_id,
+                        &source,
+                        &read.sessions,
+                        discovered_external_ids.as_ref(),
+                        Some(&descriptor_versions),
+                        read.session_failures.clone(),
+                        read.session_warnings.clone(),
+                        adapter_content_hash.as_deref(),
+                        card_contract_version,
+                        payload_policy_version,
+                        params.dry_run,
+                        cancellation,
+                        &mut |done, total| {
+                            on_progress(
+                                completed_source_count,
+                                total_source_count,
+                                Some(format!("{} · 写入会话 {done}/{total}", source.name,)),
+                            )
+                        },
+                    )
+                    .await
+                    .map_err(conversation_storage_error)?;
                     let retained_session_count = persist_successful_conversation_observation(
                         pool,
                         tenant_id,
