@@ -1,10 +1,15 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
-    time::{Duration, SystemTime},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant, SystemTime},
 };
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
 use crate::backend::{
@@ -18,7 +23,7 @@ use crate::backend::{
     ai_execution::{
         backends::{acp::AcpExecutionBackend, native::NativeExecutionBackend},
         executor::AgentExecutor,
-        AgentExecutionRuntime, AiExecutionError,
+        AgentExecutionRuntime, AiExecutionCancellation, AiExecutionError,
     },
     extension_kernel::DomainPackageSystem,
 };
@@ -83,6 +88,58 @@ impl crate::backend::extension_kernel::DomainPackageSystem for AgentPackageSyste
     }
 }
 
+const MODEL_CACHE_TTL: Duration = Duration::from_secs(30);
+const MODEL_NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct AgentProbeIdentity {
+    agent_id: String,
+    installation_id: String,
+    definition_digest: String,
+    enabled: bool,
+    executable_present: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CachedModelProbe {
+    identity: AgentProbeIdentity,
+    timestamp: Instant,
+    result: AgentModelsResult,
+}
+
+#[derive(Clone, Debug)]
+struct SharedProbeError {
+    code: String,
+    message: String,
+    retryable: bool,
+    agent_id: String,
+}
+
+impl SharedProbeError {
+    fn from_error(agent_id: &str, error: &AgentMarketError) -> Self {
+        Self {
+            code: error.code(),
+            message: error.message(),
+            retryable: error.retryable(),
+            agent_id: agent_id.to_string(),
+        }
+    }
+
+    fn into_error(self) -> AgentMarketError {
+        AgentMarketError::new(&self.code, &self.message, self.retryable)
+            .with_agent_id(self.agent_id)
+    }
+}
+
+type SharedProbeResult = Result<AgentModelsResult, SharedProbeError>;
+
+struct ProbeFlight {
+    result: tokio::sync::Mutex<Option<SharedProbeResult>>,
+    notify: tokio::sync::Notify,
+    cancellation: AiExecutionCancellation,
+    callers: AtomicUsize,
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeManager {
     repository: AgentInstallationRepository,
@@ -90,6 +147,8 @@ pub(crate) struct AgentRuntimeManager {
     registry_snapshot: Arc<crate::backend::extension_kernel::RegistrySnapshot<AgentRegistry>>,
     executor: Arc<AgentExecutor>,
     workspace_root: PathBuf,
+    models_cache: Arc<tokio::sync::RwLock<HashMap<String, CachedModelProbe>>>,
+    probe_flights: Arc<tokio::sync::Mutex<HashMap<AgentProbeIdentity, Arc<ProbeFlight>>>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -121,6 +180,8 @@ impl AgentRuntimeManager {
             registry_snapshot,
             executor,
             workspace_root,
+            models_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            probe_flights: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -142,6 +203,11 @@ impl AgentRuntimeManager {
     }
 
     pub(crate) async fn reload(&self) -> Result<u64, AgentMarketError> {
+        self.invalidate_all_acp_probe_state().await;
+        self.reload_registry().await
+    }
+
+    async fn reload_registry(&self) -> Result<u64, AgentMarketError> {
         let installations = self.repository.list_registry_candidates().await?;
         let definitions = installations
             .iter()
@@ -324,14 +390,14 @@ impl AgentRuntimeManager {
                 AgentMarketProtocol::Acp => match self.probe_acp_health(&agent_id).await {
                     Ok(result) => result.available,
                     Err(error) => {
-                        self.reload().await?;
+                        self.reload_registry().await?;
                         return Err(error);
                     }
                 },
                 AgentMarketProtocol::Native => match self.probe_native_health(&agent_id).await {
                     Ok(result) => result.available,
                     Err(error) => {
-                        self.reload().await?;
+                        self.reload_registry().await?;
                         return Err(error);
                     }
                 },
@@ -343,7 +409,7 @@ impl AgentRuntimeManager {
                 summary.unavailable += 1;
             }
         }
-        self.reload().await?;
+        self.reload_registry().await?;
         Ok(summary)
     }
 
@@ -352,7 +418,7 @@ impl AgentRuntimeManager {
         agent_id: &str,
     ) -> Result<AgentConnectionResult, AgentMarketError> {
         let result = self.probe_native_health(agent_id).await?;
-        self.reload().await?;
+        self.reload_registry().await?;
         Ok(result)
     }
 
@@ -415,7 +481,7 @@ impl AgentRuntimeManager {
         installation.protocol_checked_at = Some(now.clone());
         installation.updated_at = now;
         self.repository.update_health(&installation).await?;
-        self.reload().await?;
+        self.reload_registry().await?;
         Ok(result)
     }
 
@@ -537,17 +603,179 @@ impl AgentRuntimeManager {
         &self,
         agent_id: &str,
     ) -> Result<AgentModelsResult, AgentMarketError> {
-        let result = self.probe_acp_health(agent_id).await?;
-        self.reload().await?;
+        let installation = self.current_acp_installation(agent_id).await?;
+        let identity = probe_identity(&installation);
+        let result = self.run_acp_probe(agent_id, identity, true).await?;
+        self.reload_registry().await?;
         Ok(result)
+    }
+
+    pub(crate) async fn get_or_refresh_acp_models(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentModelsResult, AgentMarketError> {
+        let installation = self.current_acp_installation(agent_id).await?;
+        if !installation.enabled {
+            return Ok(unavailable_models(
+                agent_id,
+                "agent_disabled",
+                "The ACP Agent is disabled.",
+            ));
+        }
+        let identity = probe_identity(&installation);
+        if let Some(result) = self.cached_acp_models(agent_id, &identity).await {
+            return Ok(result);
+        }
+        self.run_acp_probe(agent_id, identity, false).await
     }
 
     async fn probe_acp_health(
         &self,
         agent_id: &str,
     ) -> Result<AgentModelsResult, AgentMarketError> {
+        let installation = self.current_acp_installation(agent_id).await?;
+        let identity = probe_identity(&installation);
+        self.run_acp_probe(agent_id, identity, true).await
+    }
+
+    pub(crate) async fn cancel_acp_probe(&self, agent_id: &str) -> bool {
+        let flights = self.probe_flights.lock().await;
+        let mut cancelled = false;
+        for (identity, flight) in flights.iter() {
+            if identity.agent_id == agent_id {
+                flight.cancellation.cancel();
+                cancelled = true;
+            }
+        }
+        cancelled
+    }
+
+    pub(crate) async fn release_acp_probe_caller(&self, agent_id: &str) -> bool {
+        let flights = self.probe_flights.lock().await;
+        let mut cancelled = false;
+        for (identity, flight) in flights.iter() {
+            if identity.agent_id != agent_id {
+                continue;
+            }
+            let previous = flight.callers.load(Ordering::Acquire);
+            if previous > 0 && flight.callers.fetch_sub(1, Ordering::AcqRel) == 1 {
+                flight.cancellation.cancel();
+                cancelled = true;
+            }
+        }
+        cancelled
+    }
+
+    async fn invalidate_all_acp_probe_state(&self) {
+        self.models_cache.write().await.clear();
+        let flights = self.probe_flights.lock().await;
+        for flight in flights.values() {
+            flight.cancellation.cancel();
+        }
+    }
+
+    async fn current_acp_installation(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentInstallation, AgentMarketError> {
+        let installation = self.repository.get(agent_id).await?.ok_or_else(|| {
+            AgentMarketError::InstallationNotFound {
+                agent_id: agent_id.to_string(),
+            }
+        })?;
+        if installation.protocol != AgentMarketProtocol::Acp {
+            return Err(AgentMarketError::new(
+                "protocol_mismatch",
+                "The installed Agent does not use ACP.",
+                false,
+            ));
+        }
+        Ok(installation)
+    }
+
+    async fn cached_acp_models(
+        &self,
+        agent_id: &str,
+        identity: &AgentProbeIdentity,
+    ) -> Option<AgentModelsResult> {
+        let cache = self.models_cache.read().await;
+        let cached = cache.get(agent_id)?;
+        let ttl = if cached.result.available {
+            MODEL_CACHE_TTL
+        } else {
+            MODEL_NEGATIVE_CACHE_TTL
+        };
+        (cached.identity == *identity && cached.timestamp.elapsed() < ttl)
+            .then(|| cached.result.clone())
+    }
+
+    async fn run_acp_probe(
+        &self,
+        agent_id: &str,
+        identity: AgentProbeIdentity,
+        force_refresh: bool,
+    ) -> Result<AgentModelsResult, AgentMarketError> {
+        if !force_refresh {
+            if let Some(result) = self.cached_acp_models(agent_id, &identity).await {
+                return Ok(result);
+            }
+        }
+
+        let (flight, leader) = {
+            let mut flights = self.probe_flights.lock().await;
+            if let Some(flight) = flights.get(&identity) {
+                flight.callers.fetch_add(1, Ordering::AcqRel);
+                (Arc::clone(flight), false)
+            } else {
+                let flight = Arc::new(ProbeFlight {
+                    result: tokio::sync::Mutex::new(None),
+                    notify: tokio::sync::Notify::new(),
+                    cancellation: AiExecutionCancellation::default(),
+                    callers: AtomicUsize::new(1),
+                });
+                flights.insert(identity.clone(), Arc::clone(&flight));
+                (flight, true)
+            }
+        };
+
+        if leader {
+            let outcome = self
+                .probe_acp_health_uncached(agent_id, identity.clone(), flight.cancellation.clone())
+                .await;
+            let shared = outcome
+                .as_ref()
+                .map(|result| result.clone())
+                .map_err(|error| SharedProbeError::from_error(agent_id, error));
+            *flight.result.lock().await = Some(shared.clone());
+            flight.notify.notify_waiters();
+            self.probe_flights.lock().await.remove(&identity);
+            outcome
+        } else {
+            loop {
+                if let Some(result) = flight.result.lock().await.clone() {
+                    return result.map_err(SharedProbeError::into_error);
+                }
+                flight.notify.notified().await;
+            }
+        }
+    }
+
+    async fn probe_acp_health_uncached(
+        &self,
+        agent_id: &str,
+        expected_identity: AgentProbeIdentity,
+        cancellation: AiExecutionCancellation,
+    ) -> Result<AgentModelsResult, AgentMarketError> {
         let mutation_gate = self.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
+        if cancellation.is_cancelled() {
+            return Err(AgentMarketError::new(
+                "cancelled",
+                "The ACP probe was cancelled.",
+                true,
+            ));
+        }
+
         let mut installation = self.repository.get(agent_id).await?.ok_or_else(|| {
             AgentMarketError::InstallationNotFound {
                 agent_id: agent_id.to_string(),
@@ -629,117 +857,184 @@ impl AgentRuntimeManager {
         installation.runtime_error_message = None;
         installation.runtime_checked_at = Some(now.clone());
 
-        let backend = AcpExecutionBackend::new(self.workspace_root.clone());
-
-        // Stage 1: Connection Probe (initialize + session/new)
-        let connection_result = backend.check_connection(&definition).await;
-        installation.protocol_checked_at = Some(now.clone());
-
-        if let Err(error) = connection_result {
-            let message = model_discovery_error_message(&error);
-            if matches!(
-                error,
-                AiExecutionError::RuntimeUnavailable { .. } | AiExecutionError::Spawn { .. }
-            ) {
-                installation.installation_status = InstallationStatus::Broken;
-                installation.runtime_status = RuntimeStatus::Failed;
-                installation.runtime_error_code = Some("runtime_probe_failed".to_string());
-                installation.runtime_error_message = Some(message.clone());
-                installation.protocol_status = ProtocolStatus::Failed;
-                installation.protocol_error_code = Some("runtime_probe_failed".to_string());
-                installation.protocol_error_message = Some(message.clone());
-            } else if is_auth_error(&error) {
-                installation.protocol_status = ProtocolStatus::AuthRequired;
-                installation.protocol_error_code = Some("auth_required".to_string());
-                installation.protocol_error_message = Some(message.clone());
-            } else {
-                installation.protocol_status = ProtocolStatus::Failed;
-                installation.protocol_error_code = Some("connection_failed".to_string());
-                installation.protocol_error_message = Some(message.clone());
-            }
-            installation.model_status = Some("failed".to_string());
-            installation.model_error_code = installation.protocol_error_code.clone();
-            installation.model_checked_at = Some(now.clone());
-            installation.updated_at = now;
-            self.repository.update_health(&installation).await?;
-            let code = installation
-                .protocol_error_code
-                .as_deref()
-                .unwrap_or("connection_failed");
-            return Ok(unavailable_models(agent_id, code, &message));
+        let identity = probe_identity(&installation);
+        if identity != expected_identity {
+            tracing::debug!(
+                action = "agent_market.acp_probe.identity_changed",
+                agent_id,
+                "ACP probe identity changed before the process started"
+            );
         }
+        let backend = AcpExecutionBackend::new(self.workspace_root.clone());
+        let probe_outcome = backend
+            .probe_connection_and_models(&definition, cancellation)
+            .await;
 
-        // Connection probe succeeded: Protocol is Ready
-        installation.protocol_status = ProtocolStatus::Ready;
-        installation.protocol_error_code = None;
-        installation.protocol_error_message = None;
-
-        // Stage 2: Model Discovery
-        let discovery = backend.discover_models(&definition).await;
-        installation.model_checked_at = Some(now.clone());
-        let result = match discovery {
-            Ok((models, current_model_id)) => {
-                if models.is_empty() {
-                    installation.model_status = Some("unsupported".to_string());
-                    installation.model_error_code = Some("model_list_empty".to_string());
-                    AgentModelsResult {
-                        agent_id: agent_id.to_string(),
-                        available: true,
-                        current_model_id: None,
-                        models: Vec::new(),
-                        error_code: Some("model_list_empty".to_string()),
-                        error: Some("No models advertised by ACP session".to_string()),
-                    }
-                } else {
-                    installation.model_status = Some("ready".to_string());
-                    installation.model_error_code = None;
-                    AgentModelsResult {
-                        agent_id: agent_id.to_string(),
-                        available: true,
-                        current_model_id: current_model_id
-                            .or_else(|| models.first().map(|model| model.id.clone())),
-                        models,
-                        error_code: None,
-                        error: None,
-                    }
+        let result = match probe_outcome {
+            crate::backend::ai_execution::backends::acp::AcpProbeOutcome::ConnectionFailed(
+                error,
+            ) => {
+                if let AiExecutionError::Cancelled { .. } = &error {
+                    return Err(AgentMarketError::new(
+                        "cancelled",
+                        "The ACP probe was cancelled.",
+                        true,
+                    ));
                 }
-            }
-            Err(error) => {
+                installation.protocol_checked_at = Some(now.clone());
                 let message = model_discovery_error_message(&error);
-                let is_empty = matches!(
+                if matches!(
                     error,
-                    AiExecutionError::Protocol {
-                        operation: "session_model_catalog_empty"
-                    }
-                );
-                if is_empty {
-                    installation.model_status = Some("unsupported".to_string());
-                    installation.model_error_code = Some("model_list_empty".to_string());
-                    AgentModelsResult {
-                        agent_id: agent_id.to_string(),
-                        available: true,
-                        current_model_id: None,
-                        models: Vec::new(),
-                        error_code: Some("model_list_empty".to_string()),
-                        error: Some(message),
-                    }
+                    AiExecutionError::RuntimeUnavailable { .. } | AiExecutionError::Spawn { .. }
+                ) {
+                    installation.installation_status = InstallationStatus::Broken;
+                    installation.runtime_status = RuntimeStatus::Failed;
+                    installation.runtime_error_code = Some("runtime_probe_failed".to_string());
+                    installation.runtime_error_message = Some(message.clone());
+                    installation.protocol_status = ProtocolStatus::Failed;
+                    installation.protocol_error_code = Some("runtime_probe_failed".to_string());
+                    installation.protocol_error_message = Some(message.clone());
+                } else if is_auth_error(&error) {
+                    installation.protocol_status = ProtocolStatus::AuthRequired;
+                    installation.protocol_error_code = Some("auth_required".to_string());
+                    installation.protocol_error_message = Some(message.clone());
                 } else {
-                    installation.model_status = Some("failed".to_string());
-                    installation.model_error_code = Some("model_discovery_failed".to_string());
-                    AgentModelsResult {
-                        agent_id: agent_id.to_string(),
-                        available: true,
-                        current_model_id: None,
-                        models: Vec::new(),
-                        error_code: Some("model_discovery_failed".to_string()),
-                        error: Some(message),
+                    installation.protocol_status = ProtocolStatus::Failed;
+                    installation.protocol_error_code = Some("connection_failed".to_string());
+                    installation.protocol_error_message = Some(message.clone());
+                }
+                installation.model_status = Some("failed".to_string());
+                installation.model_error_code = installation.protocol_error_code.clone();
+                installation.model_checked_at = Some(now.clone());
+                let code = installation
+                    .protocol_error_code
+                    .as_deref()
+                    .unwrap_or("connection_failed");
+                unavailable_models(agent_id, code, &message)
+            }
+            crate::backend::ai_execution::backends::acp::AcpProbeOutcome::Connected { models } => {
+                // Connection probe succeeded: Protocol is Ready
+                installation.protocol_checked_at = Some(now.clone());
+                installation.protocol_status = ProtocolStatus::Ready;
+                installation.protocol_error_code = None;
+                installation.protocol_error_message = None;
+
+                installation.model_checked_at = Some(now.clone());
+                match models {
+                    Ok((models, current_model_id)) => {
+                        if models.is_empty() {
+                            installation.model_status = Some("unsupported".to_string());
+                            installation.model_error_code = Some("model_list_empty".to_string());
+                            AgentModelsResult {
+                                agent_id: agent_id.to_string(),
+                                available: true,
+                                current_model_id: None,
+                                models: Vec::new(),
+                                error_code: Some("model_list_empty".to_string()),
+                                error: Some("No models advertised by ACP session".to_string()),
+                            }
+                        } else {
+                            installation.model_status = Some("ready".to_string());
+                            installation.model_error_code = None;
+                            AgentModelsResult {
+                                agent_id: agent_id.to_string(),
+                                available: true,
+                                current_model_id: current_model_id
+                                    .or_else(|| models.first().map(|model| model.id.clone())),
+                                models,
+                                error_code: None,
+                                error: None,
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let message = model_discovery_error_message(&error);
+                        let code = model_error_code(&error);
+                        if code == "model_list_empty" {
+                            installation.model_status = Some("unsupported".to_string());
+                            installation.model_error_code = Some(code.to_string());
+                            AgentModelsResult {
+                                agent_id: agent_id.to_string(),
+                                available: true,
+                                current_model_id: None,
+                                models: Vec::new(),
+                                error_code: Some(code.to_string()),
+                                error: Some(message),
+                            }
+                        } else {
+                            installation.model_status = Some("failed".to_string());
+                            installation.model_error_code = Some(code.to_string());
+                            AgentModelsResult {
+                                agent_id: agent_id.to_string(),
+                                available: true,
+                                current_model_id: None,
+                                models: Vec::new(),
+                                error_code: Some(code.to_string()),
+                                error: Some(message),
+                            }
+                        }
                     }
                 }
             }
         };
         installation.updated_at = now;
         self.repository.update_health(&installation).await?;
+        self.models_cache.write().await.insert(
+            agent_id.to_string(),
+            CachedModelProbe {
+                identity,
+                timestamp: Instant::now(),
+                result: result.clone(),
+            },
+        );
         Ok(result)
+    }
+}
+
+fn probe_identity(installation: &AgentInstallation) -> AgentProbeIdentity {
+    let mut digest = Sha256::new();
+    digest.update(installation.agent_id.as_bytes());
+    digest.update([0]);
+    digest.update(installation.installation_id.as_bytes());
+    digest.update([0]);
+    digest.update(installation.catalog_item_version.as_bytes());
+    digest.update([0]);
+    digest.update(installation.agent_version.as_bytes());
+    digest.update([0]);
+    digest.update(installation.distribution_id.as_bytes());
+    digest.update([0]);
+    digest.update(installation.definition_json.to_string().as_bytes());
+    digest.update([0]);
+    digest.update(installation.resolved_program.to_string_lossy().as_bytes());
+    digest.update([0]);
+    for arg in &installation.args {
+        digest.update(arg.as_bytes());
+        digest.update([0]);
+    }
+    digest.update([installation.enabled as u8]);
+    digest.update([installation.resolved_program.is_file() as u8]);
+    AgentProbeIdentity {
+        agent_id: installation.agent_id.clone(),
+        installation_id: installation.installation_id.clone(),
+        definition_digest: format!("{:x}", digest.finalize()),
+        enabled: installation.enabled,
+        executable_present: installation.resolved_program.is_file(),
+    }
+}
+
+fn model_error_code(error: &AiExecutionError) -> &'static str {
+    match error {
+        AiExecutionError::Protocol {
+            operation: "session_model_catalog_empty",
+        } => "model_list_empty",
+        AiExecutionError::Protocol {
+            operation: "session_model_catalog_invalid",
+        } => "model_catalog_invalid",
+        AiExecutionError::Timeout { .. }
+        | AiExecutionError::Protocol {
+            operation: "session_new_timeout" | "spawn_timeout",
+        } => "model_discovery_timeout",
+        _ => "model_discovery_failed",
     }
 }
 
@@ -1300,10 +1595,12 @@ mod tests {
             model: model.map(|m| m.to_string()),
             limits: AiExecutionLimits {
                 total_timeout: Duration::from_secs(10),
+                spawn_timeout: Duration::from_secs(10),
                 initialize_timeout: Duration::from_secs(5),
                 config_rpc_timeout: Duration::from_secs(5),
                 cancel_grace: Duration::from_secs(2),
                 close_timeout: Duration::from_secs(2),
+                cleanup_timeout: Duration::from_secs(10),
                 text_bytes: 1024 * 1024,
                 stderr_bytes: 64 * 1024,
             },
@@ -1342,6 +1639,110 @@ mod tests {
                 entries.iter().map(|e| e.path()).collect::<Vec<_>>()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn acp_model_requests_share_one_probe_and_force_refresh_bypasses_cache() {
+        let (manager, repository, root) = acp_test_fixture("happy").await;
+
+        let (first, second) = tokio::join!(
+            manager.get_or_refresh_acp_models("test-agent"),
+            manager.get_or_refresh_acp_models("test-agent"),
+        );
+        assert!(first.unwrap().available);
+        assert!(second.unwrap().available);
+
+        let events = read_record_events(&root.join("record.log"));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "initialize")
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "new")
+                .count(),
+            1
+        );
+
+        let refreshed = manager
+            .probe_acp_health("test-agent")
+            .await
+            .expect("forced ACP health refresh");
+        assert!(refreshed.available);
+        let events = read_record_events(&root.join("record.log"));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "initialize")
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event["event"] == "new")
+                .count(),
+            2
+        );
+
+        repository
+            .update_enabled("test-agent", false, &chrono::Utc::now().to_rfc3339())
+            .await
+            .expect("disable fixture Agent");
+        let disabled = manager
+            .get_or_refresh_acp_models("test-agent")
+            .await
+            .expect("disabled Agent model result");
+        assert!(!disabled.available);
+        assert_eq!(disabled.error_code.as_deref(), Some("agent_disabled"));
+
+        repository
+            .delete("test-agent")
+            .await
+            .expect("uninstall fixture Agent");
+        let error = manager
+            .get_or_refresh_acp_models("test-agent")
+            .await
+            .expect_err("uninstalled Agent must not use the model cache");
+        assert_eq!(error.code(), "agent_not_installed");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn cancelling_acp_probe_reaps_the_process_without_marking_health_failed() {
+        let (manager, repository, root) = acp_test_fixture("initialize_timeout").await;
+        let manager = Arc::new(manager);
+        let task_manager = Arc::clone(&manager);
+        let task =
+            tokio::spawn(async move { task_manager.get_or_refresh_acp_models("test-agent").await });
+
+        for _ in 0..50 {
+            if !manager.probe_flights.lock().await.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(manager.release_acp_probe_caller("test-agent").await);
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("cancelled probe should finish")
+            .expect("probe task should not panic");
+        let error = result.expect_err("cancelled probe should return an error");
+        assert_eq!(error.code(), "cancelled");
+
+        let installation = repository
+            .get("test-agent")
+            .await
+            .expect("load installation")
+            .expect("installation exists");
+        assert_eq!(installation.protocol_status, ProtocolStatus::Ready);
+        assert_clean_workspaces(&root.join("workspaces"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[tokio::test]
@@ -1738,7 +2139,7 @@ mod tests {
             .expect("probe ACP health succeeds at manager level");
         assert!(models.available);
         assert!(models.models.is_empty());
-        assert_eq!(models.error_code.as_deref(), Some("model_discovery_failed"));
+        assert_eq!(models.error_code.as_deref(), Some("model_catalog_invalid"));
 
         // 2. SQLite State: Protocol is Ready, Model is failed, connected/execution_ready are true!
         let installation = repository
@@ -1750,7 +2151,7 @@ mod tests {
         assert_eq!(installation.model_status.as_deref(), Some("failed"));
         assert_eq!(
             installation.model_error_code.as_deref(),
-            Some("model_discovery_failed")
+            Some("model_catalog_invalid")
         );
         assert!(installation.connected());
         assert!(installation.execution_ready());

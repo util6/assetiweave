@@ -150,10 +150,12 @@ impl fmt::Debug for AiTeamTools {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AiExecutionLimits {
     pub(crate) total_timeout: Duration,
+    pub(crate) spawn_timeout: Duration,
     pub(crate) initialize_timeout: Duration,
     pub(crate) config_rpc_timeout: Duration,
     pub(crate) cancel_grace: Duration,
     pub(crate) close_timeout: Duration,
+    pub(crate) cleanup_timeout: Duration,
     pub(crate) text_bytes: usize,
     pub(crate) stderr_bytes: usize,
 }
@@ -162,10 +164,12 @@ impl Default for AiExecutionLimits {
     fn default() -> Self {
         Self {
             total_timeout: Duration::from_secs(180),
+            spawn_timeout: Duration::from_secs(30),
             initialize_timeout: Duration::from_secs(10),
             config_rpc_timeout: Duration::from_secs(5),
             cancel_grace: Duration::from_secs(2),
             close_timeout: Duration::from_secs(2),
+            cleanup_timeout: Duration::from_secs(10),
             text_bytes: 1024 * 1024,
             stderr_bytes: 256 * 1024,
         }
@@ -326,10 +330,12 @@ mod tests {
         let limits = AiExecutionLimits::default();
 
         assert_eq!(limits.total_timeout.as_secs(), 180);
+        assert_eq!(limits.spawn_timeout.as_secs(), 30);
         assert_eq!(limits.initialize_timeout.as_secs(), 10);
         assert_eq!(limits.config_rpc_timeout.as_secs(), 5);
         assert_eq!(limits.cancel_grace.as_secs(), 2);
         assert_eq!(limits.close_timeout.as_secs(), 2);
+        assert_eq!(limits.cleanup_timeout.as_secs(), 10);
         assert_eq!(limits.text_bytes, 1024 * 1024);
         assert_eq!(limits.stderr_bytes, 256 * 1024);
     }

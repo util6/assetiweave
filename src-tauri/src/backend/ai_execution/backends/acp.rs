@@ -178,7 +178,8 @@ impl AcpExecutionBackend {
                 }
             }
         };
-        let cleanup = guard.cleanup(outcome.is_err(), &request, definition).await;
+        let cleanup =
+            cleanup_with_deadline(&mut guard, outcome.is_err(), &request, definition).await;
         if !cleanup.process_reaped || !cleanup.workspace_removed {
             return Err(AiExecutionError::CleanupFailed {
                 failures: cleanup.failures,
@@ -252,6 +253,75 @@ impl AcpExecutionBackend {
         }
         outcome
     }
+
+    pub(crate) async fn probe_connection_and_models(
+        &self,
+        definition: &AgentDefinition,
+        cancellation: AiExecutionCancellation,
+    ) -> AcpProbeOutcome {
+        let mut request = model_discovery_request(definition);
+        request.cancellation = cancellation;
+        let workspace = match create_workspace(&self.workspace_root) {
+            Ok(workspace) => workspace,
+            Err(error) => return AcpProbeOutcome::ConnectionFailed(error),
+        };
+        let mut guard = AcpExecutionGuard::new(workspace);
+        let session_outcome = {
+            let probe = run_session_probe(&mut guard, definition, &request);
+            tokio::pin!(probe);
+            match tokio::time::timeout(request.limits.total_timeout, &mut probe).await {
+                Ok(outcome) => outcome,
+                Err(_) => {
+                    request.cancellation.cancel();
+                    Err(timeout_error(definition, request.limits.total_timeout))
+                }
+            }
+        };
+
+        let (probe_outcome, cleanup_failed_flag) = match session_outcome {
+            Ok(session) => {
+                let models = parse_session_models(&session);
+                (AcpProbeOutcome::Connected { models }, false)
+            }
+            Err(error) => (AcpProbeOutcome::ConnectionFailed(error), true),
+        };
+
+        let cleanup =
+            cleanup_with_deadline(&mut guard, cleanup_failed_flag, &request, definition).await;
+        if !cleanup.process_reaped || !cleanup.workspace_removed {
+            return AcpProbeOutcome::ConnectionFailed(AiExecutionError::CleanupFailed {
+                failures: cleanup.failures,
+            });
+        }
+        let critical_failures = cleanup
+            .failures
+            .iter()
+            .filter(|failure| failure.as_str() != "delete_unsupported")
+            .cloned()
+            .collect::<Vec<_>>();
+        if !critical_failures.is_empty() && !cleanup_failed_flag {
+            return AcpProbeOutcome::ConnectionFailed(AiExecutionError::CleanupFailed {
+                failures: critical_failures,
+            });
+        }
+        if !cleanup.failures.is_empty() {
+            tracing::warn!(
+                action = "ai_execution.probe_connection_and_models.cleanup_warning",
+                agent_id = %definition.id,
+                failures = ?cleanup.failures,
+                "ACP probe succeeded with non-critical cleanup warning"
+            );
+        }
+        probe_outcome
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum AcpProbeOutcome {
+    ConnectionFailed(AiExecutionError),
+    Connected {
+        models: Result<(Vec<AgentModelOption>, Option<String>), AiExecutionError>,
+    },
 }
 
 async fn run_connection_probe(
@@ -269,13 +339,21 @@ async fn run_session_probe(
     request: &AiExecutionRequest,
 ) -> Result<agent_client_protocol::schema::v1::NewSessionResponse, AiExecutionError> {
     request.report_phase(AiExecutionPhase::Spawning);
-    let process = ManagedAgentProcess::spawn(
-        definition,
-        Some(&guard.workspace),
-        request.limits.stderr_bytes,
-    )
-    .await
-    .map_err(|error| map_process_error(definition, error))?;
+    let process = tokio::select! {
+        result = tokio::time::timeout(
+            request.limits.spawn_timeout,
+            ManagedAgentProcess::spawn(
+                definition,
+                Some(&guard.workspace),
+                request.limits.stderr_bytes,
+            ),
+        ) => result
+            .map_err(|_| AiExecutionError::Protocol { operation: "spawn_timeout" })?
+            .map_err(|error| map_process_error(definition, error))?,
+        _ = request.cancellation.cancelled() => {
+            return Err(cancelled_error(definition));
+        }
+    };
     guard.process = Some(process);
 
     let (stdin, stdout) = guard
@@ -299,6 +377,9 @@ async fn run_session_probe(
     let (protocol, _channels) = tokio::select! {
         biased;
         result = &mut connect => result.map_err(|error| map_acp_error("initialize", error))?,
+        _ = request.cancellation.cancelled() => {
+            return Err(cancelled_error(definition));
+        }
         exit = process.wait_for_exit() => {
             return Err(AiExecutionError::AgentExited {
                 code: exit.and_then(|exit| exit.code),
@@ -308,19 +389,22 @@ async fn run_session_probe(
     guard.protocol = Some(protocol);
 
     request.report_phase(AiExecutionPhase::CreatingSession);
-    let session = tokio::time::timeout(
-        request.limits.config_rpc_timeout,
-        guard
-            .protocol
-            .as_ref()
-            .expect("protocol stored before session")
-            .new_session(guard.workspace.clone()),
-    )
-    .await
-    .map_err(|_| AiExecutionError::Protocol {
-        operation: "session_new_timeout",
-    })?
-    .map_err(|error| map_acp_error("session_new", error))?;
+    let new_session = guard
+        .protocol
+        .as_ref()
+        .expect("protocol stored before session")
+        .new_session(guard.workspace.clone());
+    tokio::pin!(new_session);
+    let session = tokio::select! {
+        result = tokio::time::timeout(request.limits.config_rpc_timeout, &mut new_session) => result
+            .map_err(|_| AiExecutionError::Protocol {
+                operation: "session_new_timeout",
+            })?
+            .map_err(|error| map_acp_error("session_new", error))?,
+        _ = request.cancellation.cancelled() => {
+            return Err(cancelled_error(definition));
+        }
+    };
     guard.session_id = Some(session.session_id.clone());
     Ok(session)
 }
@@ -334,11 +418,13 @@ fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest 
         prompt: "ACP connection probe".to_string(),
         model: None,
         limits: AiExecutionLimits {
-            total_timeout: std::time::Duration::from_secs(35),
-            initialize_timeout: std::time::Duration::from_secs(15),
-            config_rpc_timeout: std::time::Duration::from_secs(15),
+            total_timeout: std::time::Duration::from_secs(65),
+            spawn_timeout: std::time::Duration::from_secs(10),
+            initialize_timeout: std::time::Duration::from_secs(30),
+            config_rpc_timeout: std::time::Duration::from_secs(30),
             cancel_grace: std::time::Duration::from_secs(2),
-            close_timeout: std::time::Duration::from_secs(2),
+            close_timeout: std::time::Duration::from_secs(5),
+            cleanup_timeout: std::time::Duration::from_secs(10),
             text_bytes: 1024,
             stderr_bytes: 64 * 1024,
         },
@@ -368,7 +454,8 @@ fn parse_session_models(
     let value = serde_json::to_value(session).map_err(|_| AiExecutionError::Protocol {
         operation: "session_model_catalog_serialize",
     })?;
-    let config_options = array_field(&value, &["config_options", "configOptions"]);
+    let config_options =
+        strict_array_field(&value, &["config_options", "configOptions"])?.unwrap_or_default();
     let model_option = config_options.iter().find(|option| {
         let category = string_field(option, &["category"]).unwrap_or_default();
         let id = string_field(option, &["id"]).unwrap_or_default();
@@ -378,10 +465,18 @@ fn parse_session_models(
     });
 
     if let Some(model_option) = model_option {
-        let models = array_field(model_option, &["options"])
+        let Some(raw_options) = strict_array_field(model_option, &["options"])? else {
+            return Err(AiExecutionError::Protocol {
+                operation: "session_model_catalog_invalid",
+            });
+        };
+        let models = raw_options
             .into_iter()
-            .filter_map(parse_model_option)
-            .collect::<Vec<_>>();
+            .map(parse_model_option)
+            .collect::<Option<Vec<_>>>()
+            .ok_or(AiExecutionError::Protocol {
+                operation: "session_model_catalog_invalid",
+            })?;
         let current_model_id = string_field(
             model_option,
             &[
@@ -397,10 +492,16 @@ fn parse_session_models(
         }
     }
 
-    let models = array_field(&value, &["available_models", "availableModels"])
-        .into_iter()
-        .filter_map(parse_model_option)
-        .collect::<Vec<_>>();
+    let models = match strict_array_field(&value, &["available_models", "availableModels"])? {
+        None => Vec::new(),
+        Some(raw_options) => raw_options
+            .into_iter()
+            .map(parse_model_option)
+            .collect::<Option<Vec<_>>>()
+            .ok_or(AiExecutionError::Protocol {
+                operation: "session_model_catalog_invalid",
+            })?,
+    };
     let current_model_id = string_field(&value, &["current_model_id", "currentModelId"]);
     if models.is_empty() {
         return Err(AiExecutionError::Protocol {
@@ -410,12 +511,50 @@ fn parse_session_models(
     Ok((models, current_model_id))
 }
 
-fn array_field<'a>(value: &'a Value, names: &[&str]) -> Vec<&'a Value> {
-    names
-        .iter()
-        .find_map(|name| value.get(*name).and_then(Value::as_array))
-        .map(|items| items.iter().collect())
-        .unwrap_or_default()
+fn strict_array_field<'a>(
+    value: &'a Value,
+    names: &[&str],
+) -> Result<Option<Vec<&'a Value>>, AiExecutionError> {
+    let Some(raw) = names.iter().find_map(|name| value.get(*name)) else {
+        return Ok(None);
+    };
+    let Some(array) = raw.as_array() else {
+        return Err(AiExecutionError::Protocol {
+            operation: "session_model_catalog_invalid",
+        });
+    };
+    Ok(Some(array.iter().collect()))
+}
+
+async fn cleanup_with_deadline(
+    guard: &mut AcpExecutionGuard,
+    cancel_before_close: bool,
+    request: &AiExecutionRequest,
+    definition: &AgentDefinition,
+) -> CleanupReport {
+    let deadline = Instant::now() + request.limits.cleanup_timeout;
+    match tokio::time::timeout(
+        request.limits.cleanup_timeout,
+        guard.cleanup(cancel_before_close, request, definition),
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(_) => {
+            request.cancellation.cancel();
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                CleanupReport::timed_out()
+            } else {
+                match tokio::time::timeout(remaining, guard.cleanup(true, request, definition))
+                    .await
+                {
+                    Ok(report) => report,
+                    Err(_) => CleanupReport::timed_out(),
+                }
+            }
+        }
+    }
 }
 
 fn string_field(value: &Value, names: &[&str]) -> Option<String> {
@@ -1276,7 +1415,6 @@ impl AcpExecutionGuard {
         if self.cleaned {
             return CleanupReport::already_cleaned();
         }
-        self.cleaned = true;
         let mut report = CleanupReport::default();
         let mut standard_delete_failure = None;
         if self.session_id.is_some() {
@@ -1473,6 +1611,7 @@ impl AcpExecutionGuard {
                 }
             }
         };
+        self.cleaned = true;
         report
     }
 }
@@ -1503,6 +1642,13 @@ impl CleanupReport {
         Self {
             process_reaped: true,
             workspace_removed: true,
+            ..Self::default()
+        }
+    }
+
+    fn timed_out() -> Self {
+        Self {
+            failures: vec!["cleanup_timeout".to_owned()],
             ..Self::default()
         }
     }
@@ -1604,6 +1750,7 @@ mod tests {
                 config_rpc_timeout: Duration::from_secs(2),
                 cancel_grace: Duration::from_millis(500),
                 close_timeout: Duration::from_millis(500),
+                cleanup_timeout: Duration::from_secs(2),
                 text_bytes: 1024,
                 stderr_bytes: 1024,
                 ..AiExecutionLimits::default()
@@ -2051,11 +2198,10 @@ mod tests {
                     request(None),
                 )
                 .await;
-
-            assert!(matches!(
-                result,
-                Err(AiExecutionError::CleanupFailed { .. })
-            ));
+            assert!(
+                matches!(result, Err(AiExecutionError::CleanupFailed { .. })),
+                "unexpected result"
+            );
             assert!(records(&record).contains("\"event\":\"fallback_delete\""));
             assert_eq!(fs::read_dir(&workspace_root).unwrap().count(), 0);
             let _ = fs::remove_dir_all(root);

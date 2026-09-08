@@ -211,6 +211,7 @@
     "check_agent_connection",
     "check_agent_runtime",
     "list_agent_models",
+    "cancel_agent_model_probe",
     "check_opencode_translation_availability",
     "translate_conversation_card_with_opencode",
     "translate_conversation_card",
@@ -10496,6 +10497,35 @@
             "description": "Registered Agent identifier",
             "aliases": [
               "agentId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "cancel_agent_model_probe",
+      "canonical_method": "agent.models.probe.cancel",
+      "description": "Cancel an in-flight Agent ACP model probe",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "agentId"
+        ],
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "Registered Agent identifier",
+            "aliases": [
+              "agent_id"
             ]
           }
         },

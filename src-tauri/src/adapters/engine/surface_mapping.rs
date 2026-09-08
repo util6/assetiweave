@@ -71,6 +71,11 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "agent.models.probe.cancel",
+        tauri_command: Some("cancel_agent_model_probe"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "agent.runtime.check",
         tauri_command: Some("check_agent_runtime"),
         note: None,

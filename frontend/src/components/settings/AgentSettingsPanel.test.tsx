@@ -18,6 +18,7 @@ const agentRuntime = vi.hoisted(() => ({
   listAgentMarket: undefined as undefined | typeof listAgentMarketMock,
   listAgentCatalog: vi.fn(),
   listAgentModels: vi.fn(),
+  cancelAgentModelProbe: vi.fn(),
   checkAgentConnection: vi.fn(),
   previewAgentInstallation: vi.fn(),
   startAgentInstallation: vi.fn(),
@@ -429,7 +430,7 @@ describe("AgentSettingsPanel", () => {
     );
   });
 
-  it("syncs the Agent status when model discovery succeeds", async () => {
+  it("does not let model discovery overwrite the authoritative Agent status", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     listAgentMarketMock.mockResolvedValue([
       createMarketItem("antigravity", true, "native", true),
@@ -476,7 +477,12 @@ describe("AgentSettingsPanel", () => {
     await waitFor(() =>
       expect(agentRuntime.listAgentModels).toHaveBeenCalledWith("antigravity"),
     );
-    await waitFor(() => expect(within(row).getByText("可用")).toBeTruthy());
+    expect(within(row).getByText("不可用")).toBeTruthy();
+    const closeButtons = screen.getAllByRole("button", { name: "关闭" });
+    fireEvent.click(closeButtons[closeButtons.length - 1]);
+    expect(agentRuntime.cancelAgentModelProbe).toHaveBeenCalledWith(
+      "antigravity",
+    );
   });
 
   it("keeps a native Agent available when only model discovery fails", async () => {

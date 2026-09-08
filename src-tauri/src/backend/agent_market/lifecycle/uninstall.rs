@@ -15,6 +15,10 @@ pub(crate) async fn run(
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
 ) -> Result<AgentInstallation, AgentMarketError> {
+    service
+        .runtime_manager
+        .cancel_acp_probe(&request.agent_id)
+        .await;
     if let Some(sink) = phase_sink.as_ref() {
         sink(LifecycleTaskPhase::Preparing);
     }

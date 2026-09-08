@@ -16,6 +16,7 @@
 | `agent.market.list` | `list_agent_market` | `assetiweave-cli agent market list` | `list_agent_market` | `read` | `false` |
 | `agent.market.refresh.run` | `refresh_agent_market` | `assetiweave-cli agent market refresh` | `refresh_agent_market` | `high-risk-write` | `true` |
 | `agent.models.list` | `list_agent_models` | — | `list_agent_models` | `read` | `false` |
+| `agent.models.probe.cancel` | `cancel_agent_model_probe` | — | `cancel_agent_model_probe` | `write` | `false` |
 | `agent.runtime.check` | `check_agent_runtime` | `assetiweave-cli agent check` | `check_agent_runtime` | `read` | `false` |
 | `agent.uninstall.preview` | `preview_agent_uninstall` | `assetiweave-cli agent uninstall preview` | `preview_agent_uninstall` | `read` | `false` |
 | `agent.uninstall.run` | `uninstall_agent` | `assetiweave-cli agent uninstall` | — | `high-risk-write` | `true` |

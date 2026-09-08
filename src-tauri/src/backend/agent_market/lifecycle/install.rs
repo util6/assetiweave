@@ -39,6 +39,10 @@ pub(crate) async fn run(
     cancellation: Option<Arc<AtomicBool>>,
     phase_sink: Option<Arc<dyn Fn(LifecycleTaskPhase) + Send + Sync>>,
 ) -> Result<InstallOutcome, AgentMarketError> {
+    service
+        .runtime_manager
+        .cancel_acp_probe(&request.agent_id)
+        .await;
     let mutation_gate = service.runtime_manager.mutation_gate(&request.agent_id);
     let _mutation_lease = mutation_gate.write().await;
     let item = service.catalog.item(&request.agent_id).ok_or_else(|| {

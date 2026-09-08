@@ -1936,6 +1936,16 @@ pub(crate) async fn list_agent_models(
 }
 
 #[tauri::command]
+pub(crate) async fn cancel_agent_model_probe(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> RuntimeAppResult<()> {
+    AppService::from_runtime(&state.runtime)
+        .cancel_agent_model_probe(agent_id)
+        .await
+}
+
+#[tauri::command]
 pub(crate) async fn check_opencode_translation_availability(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<OpencodeTranslationAvailability> {
@@ -3918,6 +3928,7 @@ pub(crate) fn command_handler(
         disable_agent,
         check_agent_connection,
         list_agent_models,
+        cancel_agent_model_probe,
         check_opencode_translation_availability,
         check_prompt_optimization_availability,
         translate_conversation_card_with_opencode,

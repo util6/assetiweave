@@ -3370,6 +3370,18 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "cancel_agent_model_probe",
+        "agent.models.probe.cancel",
+        "Cancel an in-flight Agent ACP model probe",
+        Write,
+        App,
+        false,
+        AgentToggleParams,
+        ServiceAsync => |service, params| service.cancel_agent_model_probe(params.agent_id).await,
+        &[param!("agentId", "Registered Agent identifier", ["agent_id"])],
+        None
+    ),
+    command!(
         "check_opencode_translation_availability",
         "conversation.card.translation.opencode-status",
         "Check whether opencode is available for content card translation",

@@ -525,20 +525,28 @@ export function AgentSettingsPanel({
         if (modelRequestId.current !== requestId) return;
         setModelResult(result);
         setModelError(result.error || "");
-        setConnectionStates((current) => {
-          if (result.available) {
-            return { ...current, [agent.id]: "available" };
-          }
-          if (agent.protocol.toLowerCase() === "acp") {
-            return { ...current, [agent.id]: "failed" };
-          }
-          return current;
-        });
-        if (!result.available && result.error) {
-          setConnectionMessages((current) => ({
-            ...current,
-            [agent.id]: result.error || "",
-          }));
+        if (
+          agent.installed &&
+          typeof agentRuntime.getInstalledAgent === "function"
+        ) {
+          void agentRuntime
+            .getInstalledAgent(agent.id)
+            .then((installation) => {
+              if (modelRequestId.current !== requestId) return;
+              setMarketCatalog(
+                (current) =>
+                  current?.map((item) =>
+                    item.id === agent.id
+                      ? { ...item, installed: installation }
+                      : item,
+                  ) ?? current,
+              );
+              setConnectionStates((current) => ({
+                ...current,
+                [agent.id]: installationConnectionState(installation),
+              }));
+            })
+            .catch(() => undefined);
         }
       })
       .catch((error: unknown) => {
@@ -553,12 +561,18 @@ export function AgentSettingsPanel({
   }
 
   function closeModelDialog() {
+    const agentId = modelAgent?.id;
     modelRequestId.current += 1;
     setModelAgent(null);
     setModelResult(null);
     setModelQuery("");
     setModelError("");
     setModelLoading(false);
+    if (agentId && typeof agentRuntime.cancelAgentModelProbe === "function") {
+      void Promise.resolve(agentRuntime.cancelAgentModelProbe(agentId)).catch(
+        () => undefined,
+      );
+    }
   }
 
   const allModelOptions = modelResult?.models || [];
@@ -945,8 +959,15 @@ function marketConnectionState(
   item: agentRuntime.AgentMarketItem,
 ): AgentConnectionState {
   if (!item.installed) return "not-installed";
-  if (item.installed.healthStale) return "not-tested";
-  return item.installed.executionReady ? "available" : "failed";
+  return installationConnectionState(item.installed);
+}
+
+function installationConnectionState(
+  installation: agentRuntime.AgentInstallationView,
+): AgentConnectionState {
+  if (!installation.enabled || !installation.installed) return "not-installed";
+  if (installation.healthStale) return "not-tested";
+  return installation.executionReady ? "available" : "failed";
 }
 
 function ModelOptionButton({

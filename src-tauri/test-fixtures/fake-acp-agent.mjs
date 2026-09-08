@@ -92,24 +92,6 @@ function handleInitialize(message) {
   });
 }
 
-function getRecordEventCount(targetEvent) {
-  if (!recordPath || !fs.existsSync(recordPath)) {
-    return 0;
-  }
-  try {
-    const content = fs.readFileSync(recordPath, "utf8");
-    return content.split("\n").filter((line) => {
-      try {
-        return JSON.parse(line).event === targetEvent;
-      } catch {
-        return false;
-      }
-    }).length;
-  } catch {
-    return 0;
-  }
-}
-
 function handleNewSession(message) {
   record("new", {
     cwd: message.params?.cwd,
@@ -122,11 +104,22 @@ function handleNewSession(message) {
     return;
   }
   if (mode === "model_discovery_error") {
-    const newCount = getRecordEventCount("new");
-    if (newCount === 2) {
-      fail(message.id, -32603, "Simulated model discovery session failure");
-      return;
-    }
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "fixture/model-fast",
+          options: [
+            { value: "", name: "" },
+          ],
+        },
+      ],
+    });
+    return;
   }
   if (mode === "new_error") {
     fail(message.id);

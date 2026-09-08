@@ -94,6 +94,7 @@ impl AgentLifecycleService {
         agent_id: &str,
         enabled: bool,
     ) -> Result<AgentInstallation, AgentMarketError> {
+        self.runtime_manager.cancel_acp_probe(agent_id).await;
         let mutation_gate = self.runtime_manager.mutation_gate(agent_id);
         let _mutation_lease = mutation_gate.write().await;
         let installation = self

@@ -326,6 +326,11 @@ export async function listAgentModels(
   });
 }
 
+export async function cancelAgentModelProbe(agentId: string): Promise<void> {
+  if (!isTauriRuntime()) return;
+  await invoke<void>("cancel_agent_model_probe", { agentId });
+}
+
 export async function listAgentMarket(
   request: AgentMarketListRequest = {},
 ): Promise<AgentMarketItem[]> {

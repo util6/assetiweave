@@ -127,7 +127,7 @@ impl AppService {
         }) {
             return self
                 .agent_runtime_manager
-                .refresh_acp_health(agent_id.as_str())
+                .get_or_refresh_acp_models(agent_id.as_str())
                 .await
                 .map_err(AppError::external);
         }
@@ -146,6 +146,15 @@ impl AppService {
             agent_id,
         )
         .await)
+    }
+
+    pub(crate) async fn cancel_agent_model_probe(&self, agent_id: String) -> AppResult<()> {
+        let agent_id =
+            AgentId::parse(agent_id).map_err(|error| AppError::Validation(error.to_string()))?;
+        self.agent_runtime_manager
+            .release_acp_probe_caller(agent_id.as_str())
+            .await;
+        Ok(())
     }
 }
 
