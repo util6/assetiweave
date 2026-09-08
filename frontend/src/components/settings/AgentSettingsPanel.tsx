@@ -524,30 +524,9 @@ export function AgentSettingsPanel({
       .then((result) => {
         if (modelRequestId.current !== requestId) return;
         setModelResult(result);
-        setModelError(result.error || "");
-        if (
-          agent.installed &&
-          typeof agentRuntime.getInstalledAgent === "function"
-        ) {
-          void agentRuntime
-            .getInstalledAgent(agent.id)
-            .then((installation) => {
-              if (modelRequestId.current !== requestId) return;
-              setMarketCatalog(
-                (current) =>
-                  current?.map((item) =>
-                    item.id === agent.id
-                      ? { ...item, installed: installation }
-                      : item,
-                  ) ?? current,
-              );
-              setConnectionStates((current) => ({
-                ...current,
-                [agent.id]: installationConnectionState(installation),
-              }));
-            })
-            .catch(() => undefined);
-        }
+        setModelError(
+          formatModelErrorMessage(result.error_code, result.error, t),
+        );
       })
       .catch((error: unknown) => {
         if (modelRequestId.current !== requestId) return;
@@ -1077,6 +1056,32 @@ function errorMessage(error: unknown) {
     if (typeof message === "string" && message.trim()) return message;
   }
   return "Agent 操作失败";
+}
+
+function formatModelErrorMessage(
+  errorCode: string | null | undefined,
+  error: string | null | undefined,
+  t: Translator,
+): string {
+  if (errorCode === "model_list_empty") {
+    return t("settings.agents.modelError.modelListEmpty");
+  }
+  if (
+    errorCode === "session_model_catalog_invalid" ||
+    errorCode === "model_catalog_invalid"
+  ) {
+    return t("settings.agents.modelError.catalogInvalid");
+  }
+  if (errorCode === "model_discovery_timeout") {
+    return t("settings.agents.modelError.timeout");
+  }
+  if (errorCode === "unsupported") {
+    return t("settings.agents.modelError.unsupported");
+  }
+  if (errorCode === "model_discovery_failed") {
+    return error || t("settings.agents.modelError.failed");
+  }
+  return error || "";
 }
 
 function applyConnectionResult(

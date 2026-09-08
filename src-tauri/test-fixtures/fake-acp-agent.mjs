@@ -4,18 +4,51 @@ import readline from "node:readline";
 const args = process.argv.slice(2);
 const modeArg = args.find((arg) => arg.startsWith("--mode="))?.slice("--mode=".length);
 const recordPathArg = args.find((arg) => arg.startsWith("--record="))?.slice("--record=".length);
+const counterPathArg = args.find((arg) => arg.startsWith("--counter-path="))?.slice("--counter-path=".length);
 
 const mode = modeArg ?? process.env.ASSETIWEAVE_FAKE_ACP_MODE ?? "happy";
 const recordPath = recordPathArg ?? process.env.ASSETIWEAVE_FAKE_ACP_RECORD_PATH;
+const counterPath = counterPathArg ?? process.env.ASSETIWEAVE_FAKE_ACP_COUNTER_PATH;
+
+const startDelayMs = Number(
+  args.find((arg) => arg.startsWith("--start-delay-ms="))?.slice("--start-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_START_DELAY_MS ?? 0
+);
+const initDelayMs = Number(
+  args.find((arg) => arg.startsWith("--init-delay-ms="))?.slice("--init-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_INIT_DELAY_MS ?? 0
+);
+const newDelayMs = Number(
+  args.find((arg) => arg.startsWith("--new-delay-ms="))?.slice("--new-delay-ms=".length) ??
+  process.env.ASSETIWEAVE_FAKE_ACP_NEW_DELAY_MS ?? 0
+);
+
+function delay(ms) {
+  if (!ms || ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const sessionId = "fixture-session";
 let pendingPromptId;
 let pendingPermissionId;
 
 function record(event, fields = {}) {
-  if (!recordPath) {
-    return;
+  if (recordPath) {
+    fs.appendFileSync(recordPath, `${JSON.stringify({ event, ...fields })}\n`);
   }
-  fs.appendFileSync(recordPath, `${JSON.stringify({ event, ...fields })}\n`);
+}
+
+record("spawn", { pid: process.pid, mode });
+if (counterPath) {
+  fs.appendFileSync(counterPath, `${process.pid}\n`);
+}
+
+if (mode === "exit_nonzero") {
+  process.exit(1);
+}
+
+if (startDelayMs > 0) {
+  await delay(startDelayMs);
 }
 
 function send(message) {
@@ -56,13 +89,19 @@ function finishPrompt(id, stopReason = "end_turn") {
   respond(id, { stopReason });
 }
 
-function handleInitialize(message) {
+async function handleInitialize(message) {
   record("initialize", {
     clientName: message.params?.clientInfo?.name,
     terminal: message.params?.clientCapabilities?.terminal,
   });
+  if (initDelayMs > 0) {
+    await delay(initDelayMs);
+  }
   if (mode === "initialize_timeout") {
     return;
+  }
+  if (mode === "exit_on_init") {
+    process.exit(2);
   }
   if (mode === "initialize_auth_error") {
     fail(message.id, -32000, "Authentication required: login required to use agent");
@@ -92,15 +131,80 @@ function handleInitialize(message) {
   });
 }
 
-function handleNewSession(message) {
+async function handleNewSession(message) {
   record("new", {
     cwd: message.params?.cwd,
     mcpCount: message.params?.mcpServers?.length ?? -1,
     additionalDirectoryCount:
       message.params?.additionalDirectories?.length ?? 0,
   });
+  if (newDelayMs > 0) {
+    await delay(newDelayMs);
+  }
+  if (mode === "new_timeout" || mode === "session_new_timeout") {
+    return;
+  }
   if (mode === "auth_error") {
     fail(message.id, -32000, "Authentication required: please run login");
+    return;
+  }
+  if (mode === "new_error") {
+    fail(message.id);
+    return;
+  }
+  if (mode === "corrupt_catalog" || mode === "corrupt_config") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "fixture/model-fast",
+          options: [
+            { value: "", name: "" },
+          ],
+        },
+      ],
+    });
+    return;
+  }
+  if (mode === "corrupt_options") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          options: "not-an-array",
+        },
+      ],
+    });
+    return;
+  }
+  if (mode === "unsupported_models") {
+    respond(message.id, {
+      sessionId,
+    });
+    return;
+  }
+  if (mode === "empty_model_options") {
+    respond(message.id, {
+      sessionId,
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "",
+          options: [],
+        },
+      ],
+    });
     return;
   }
   if (mode === "model_discovery_error") {
@@ -119,10 +223,6 @@ function handleNewSession(message) {
         },
       ],
     });
-    return;
-  }
-  if (mode === "new_error") {
-    fail(message.id);
     return;
   }
   respond(message.id, {
@@ -369,7 +469,7 @@ function handleResponse(message) {
 
 const input = readline.createInterface({ input: process.stdin });
 const keepAlive = (mode.startsWith("no_delete") || mode === "no_close_no_delete" || mode === "cancel_wait") ? setInterval(() => {}, 1_000) : undefined;
-input.on("line", (line) => {
+input.on("line", async (line) => {
   let message;
   try {
     message = JSON.parse(line);
@@ -379,9 +479,9 @@ input.on("line", (line) => {
   }
 
   if (message.method === "initialize") {
-    handleInitialize(message);
+    await handleInitialize(message);
   } else if (message.method === "session/new") {
-    handleNewSession(message);
+    await handleNewSession(message);
   } else if (message.method === "session/set_config_option") {
     handleSetConfig(message);
   } else if (message.method === "session/load") {

@@ -184,6 +184,14 @@ export const settingsEn = {
   "settings.agents.modelCurrentSection": "Current model",
   "settings.agents.modelAvailableSection": "Other available models",
   "settings.agents.modelNoMatches": "No matching models.",
+  "settings.agents.modelError.modelListEmpty":
+    "No selectable models advertised by this Agent",
+  "settings.agents.modelError.catalogInvalid":
+    "Model catalog response is malformed or invalid",
+  "settings.agents.modelError.timeout": "Model discovery timed out",
+  "settings.agents.modelError.unsupported":
+    "Agent does not support dynamic model selection",
+  "settings.agents.modelError.failed": "Model discovery failed",
   "settings.agents.connectionAvailable": "Connection available",
   "settings.agents.connectionFailed": "Connection failed",
   "settings.agents.connectionCliFallback": "CLI fallback used",

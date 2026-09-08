@@ -529,6 +529,56 @@ describe("AgentSettingsPanel", () => {
     expect(within(row).getByText("可用")).toBeTruthy();
   });
 
+  it("decouples model dialog error from main card connection state and renders localized errors", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    listAgentMarketMock.mockResolvedValue([
+      createMarketItem("antigravity", true, "acp", true),
+    ]);
+    agentRuntime.checkAgentConnection.mockResolvedValue({
+      agent_id: "antigravity",
+      available: true,
+      installed: true,
+      connected: true,
+      version: "antigravity 1.0.0",
+      connection_method: "acp",
+      error_code: null,
+      error: null,
+      installation_status: "ready",
+      runtime_status: "ready",
+      protocol_status: "ready",
+      execution_ready: true,
+      health_stale: false,
+    });
+    agentRuntime.listAgentModels.mockResolvedValue({
+      agent_id: "antigravity",
+      available: true,
+      models: [],
+      current_model_id: null,
+      error_code: "model_list_empty",
+      error: "model_list_empty",
+    });
+
+    renderPanel({ view: "settings" });
+
+    const row = (
+      await screen.findByRole("heading", { name: "Antigravity" })
+    ).closest("article") as HTMLElement;
+    await waitFor(() => expect(within(row).getByText("可用")).toBeTruthy());
+
+    // Open model dialog
+    fireEvent.click(
+      within(row).getByRole("button", { name: "模型 Antigravity" }),
+    );
+
+    // Modal opens and renders the localized empty model message
+    await waitFor(() => {
+      expect(screen.getByText("当前 Agent 未声明可选模型列表")).toBeTruthy();
+    });
+
+    // Main card status must remain "可用" and not be degraded or polluted
+    expect(within(row).getByText("可用")).toBeTruthy();
+  });
+
   it("lists catalog versions without compatibility gating", async () => {
     agentRuntime.listAgentMarket = listAgentMarketMock;
     const item = createMarketItem("opencode", false);

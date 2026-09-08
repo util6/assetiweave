@@ -7,6 +7,7 @@ use std::{
 use agent_client_protocol::schema::v1::{
     EnvVariable, McpServer, McpServerStdio, SessionId, StopReason,
 };
+use serde::Serialize;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -17,7 +18,10 @@ use crate::backend::{
             AcpConnectConfig, AcpError, AcpProtocol, AcpProtocolChannels, AcpRuntimeEvent,
             AcpToolStatus,
         },
-        types::{AgentDefinition, AgentModelOption, AgentProtocol, SESSION_ID_PLACEHOLDER},
+        types::{
+            AgentConnectionResult, AgentDefinition, AgentModelOption, AgentModelsResult,
+            AgentProtocol, SESSION_ID_PLACEHOLDER,
+        },
     },
     ai_execution::{
         AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionError,
@@ -258,70 +262,431 @@ impl AcpExecutionBackend {
         &self,
         definition: &AgentDefinition,
         cancellation: AiExecutionCancellation,
-    ) -> AcpProbeOutcome {
+    ) -> AcpProbeReport {
+        let probe_start = Instant::now();
         let mut request = model_discovery_request(definition);
         request.cancellation = cancellation;
         let workspace = match create_workspace(&self.workspace_root) {
             Ok(workspace) => workspace,
-            Err(error) => return AcpProbeOutcome::ConnectionFailed(error),
+            Err(error) => {
+                return AcpProbeReport {
+                    protocol_connection: AcpProtocolConnectionOutcome::Failed {
+                        stage: AcpConnectionStage::Spawn,
+                        error_code: "workspace_create_failed".to_string(),
+                        error_message: error.to_string(),
+                    },
+                    model_discovery: AcpModelDiscoveryOutcome::Skipped,
+                    cleanup: AcpCleanupOutcome {
+                        process_reaped: true,
+                        workspace_removed: true,
+                        timed_out: false,
+                        failures: Vec::new(),
+                    },
+                    timings: AcpProbeTimings {
+                        spawn_duration_ms: 0,
+                        initialize_duration_ms: 0,
+                        session_new_duration_ms: 0,
+                        model_discovery_duration_ms: 0,
+                        cleanup_duration_ms: 0,
+                        total_duration_ms: probe_start.elapsed().as_millis() as u64,
+                    },
+                };
+            }
         };
         let mut guard = AcpExecutionGuard::new(workspace);
-        let session_outcome = {
-            let probe = run_session_probe(&mut guard, definition, &request);
-            tokio::pin!(probe);
-            match tokio::time::timeout(request.limits.total_timeout, &mut probe).await {
-                Ok(outcome) => outcome,
-                Err(_) => {
-                    request.cancellation.cancel();
-                    Err(timeout_error(definition, request.limits.total_timeout))
-                }
-            }
-        };
+        let mut timings = AcpProbeTimings::default();
 
-        let (probe_outcome, cleanup_failed_flag) = match session_outcome {
+        let (session_outcome, session_stage) =
+            run_session_probe_with_timings(&mut guard, definition, &request, &mut timings).await;
+
+        let (protocol_connection, model_discovery, cleanup_failed_flag) = match session_outcome {
             Ok(session) => {
-                let models = parse_session_models(&session);
-                (AcpProbeOutcome::Connected { models }, false)
+                let model_start = Instant::now();
+                let discovery = match parse_session_models(&session) {
+                    Ok((models, current_model_id)) => {
+                        if models.is_empty() {
+                            AcpModelDiscoveryOutcome::Empty
+                        } else {
+                            AcpModelDiscoveryOutcome::Success {
+                                models,
+                                current_model_id,
+                            }
+                        }
+                    }
+                    Err(err) => match err {
+                        AiExecutionError::Protocol {
+                            operation: "session_model_catalog_empty",
+                        } => AcpModelDiscoveryOutcome::Empty,
+                        AiExecutionError::Protocol {
+                            operation: "session_model_catalog_invalid",
+                        } => AcpModelDiscoveryOutcome::Invalid {
+                            error_code: "model_catalog_invalid".to_string(),
+                            error_message: "The ACP session model catalog is malformed or invalid."
+                                .to_string(),
+                        },
+                        AiExecutionError::Protocol {
+                            operation: "session_model_catalog_unsupported",
+                        } => AcpModelDiscoveryOutcome::Unsupported,
+                        AiExecutionError::Timeout { .. } => AcpModelDiscoveryOutcome::Timeout,
+                        other => AcpModelDiscoveryOutcome::Failed {
+                            error_code: "model_discovery_failed".to_string(),
+                            error_message: other.to_string(),
+                        },
+                    },
+                };
+                timings.model_discovery_duration_ms = model_start.elapsed().as_millis() as u64;
+                (AcpProtocolConnectionOutcome::Connected, discovery, false)
             }
-            Err(error) => (AcpProbeOutcome::ConnectionFailed(error), true),
+            Err(error) => {
+                let outcome = if matches!(error, AiExecutionError::Cancelled { .. }) {
+                    AcpProtocolConnectionOutcome::Cancelled
+                } else {
+                    let code = connection_error_code(&error);
+                    let message = error.to_string();
+                    AcpProtocolConnectionOutcome::Failed {
+                        stage: session_stage,
+                        error_code: code.to_string(),
+                        error_message: message,
+                    }
+                };
+                (outcome, AcpModelDiscoveryOutcome::Skipped, true)
+            }
         };
 
+        let cleanup_start = Instant::now();
         let cleanup =
             cleanup_with_deadline(&mut guard, cleanup_failed_flag, &request, definition).await;
-        if !cleanup.process_reaped || !cleanup.workspace_removed {
-            return AcpProbeOutcome::ConnectionFailed(AiExecutionError::CleanupFailed {
-                failures: cleanup.failures,
-            });
+        timings.cleanup_duration_ms = cleanup_start.elapsed().as_millis() as u64;
+        timings.total_duration_ms = probe_start.elapsed().as_millis() as u64;
+
+        let timed_out = cleanup.failures.iter().any(|f| f == "cleanup_timeout");
+        let cleanup_outcome = AcpCleanupOutcome {
+            process_reaped: cleanup.process_reaped,
+            workspace_removed: cleanup.workspace_removed,
+            timed_out,
+            failures: cleanup.failures.clone(),
+        };
+
+        if (!cleanup.process_reaped || !cleanup.workspace_removed)
+            && !matches!(protocol_connection, AcpProtocolConnectionOutcome::Cancelled)
+        {
+            return AcpProbeReport {
+                protocol_connection: AcpProtocolConnectionOutcome::Failed {
+                    stage: AcpConnectionStage::Cleanup,
+                    error_code: "cleanup_failed".to_string(),
+                    error_message: "Failed to reap child process or remove workspace".to_string(),
+                },
+                model_discovery: AcpModelDiscoveryOutcome::Skipped,
+                cleanup: cleanup_outcome,
+                timings,
+            };
         }
+
         let critical_failures = cleanup
             .failures
             .iter()
             .filter(|failure| failure.as_str() != "delete_unsupported")
             .cloned()
             .collect::<Vec<_>>();
-        if !critical_failures.is_empty() && !cleanup_failed_flag {
-            return AcpProbeOutcome::ConnectionFailed(AiExecutionError::CleanupFailed {
-                failures: critical_failures,
-            });
+        if !critical_failures.is_empty()
+            && !cleanup_failed_flag
+            && !matches!(protocol_connection, AcpProtocolConnectionOutcome::Cancelled)
+        {
+            return AcpProbeReport {
+                protocol_connection: AcpProtocolConnectionOutcome::Failed {
+                    stage: AcpConnectionStage::Cleanup,
+                    error_code: "cleanup_failed".to_string(),
+                    error_message: format!(
+                        "Cleanup reported critical failures: {:?}",
+                        critical_failures
+                    ),
+                },
+                model_discovery: AcpModelDiscoveryOutcome::Skipped,
+                cleanup: cleanup_outcome,
+                timings,
+            };
         }
+
         if !cleanup.failures.is_empty() {
             tracing::warn!(
                 action = "ai_execution.probe_connection_and_models.cleanup_warning",
                 agent_id = %definition.id,
                 failures = ?cleanup.failures,
-                "ACP probe succeeded with non-critical cleanup warning"
+                "ACP probe finished with non-critical cleanup warning"
             );
         }
-        probe_outcome
+
+        AcpProbeReport {
+            protocol_connection,
+            model_discovery,
+            cleanup: cleanup_outcome,
+            timings,
+        }
     }
 }
 
-#[derive(Debug)]
-pub(crate) enum AcpProbeOutcome {
-    ConnectionFailed(AiExecutionError),
-    Connected {
-        models: Result<(Vec<AgentModelOption>, Option<String>), AiExecutionError>,
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct AcpProbeTimings {
+    pub(crate) spawn_duration_ms: u64,
+    pub(crate) initialize_duration_ms: u64,
+    pub(crate) session_new_duration_ms: u64,
+    pub(crate) model_discovery_duration_ms: u64,
+    pub(crate) cleanup_duration_ms: u64,
+    pub(crate) total_duration_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) enum AcpConnectionStage {
+    Spawn,
+    Transport,
+    Initialize,
+    SessionNew,
+    Cleanup,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) enum AcpProtocolConnectionOutcome {
+    Connected,
+    Failed {
+        stage: AcpConnectionStage,
+        error_code: String,
+        error_message: String,
     },
+    Cancelled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) enum AcpModelDiscoveryOutcome {
+    Success {
+        models: Vec<AgentModelOption>,
+        current_model_id: Option<String>,
+    },
+    Empty,
+    Invalid {
+        error_code: String,
+        error_message: String,
+    },
+    Timeout,
+    Unsupported,
+    Failed {
+        error_code: String,
+        error_message: String,
+    },
+    Skipped,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct AcpCleanupOutcome {
+    pub(crate) process_reaped: bool,
+    pub(crate) workspace_removed: bool,
+    pub(crate) timed_out: bool,
+    pub(crate) failures: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct AcpProbeReport {
+    pub(crate) protocol_connection: AcpProtocolConnectionOutcome,
+    pub(crate) model_discovery: AcpModelDiscoveryOutcome,
+    pub(crate) cleanup: AcpCleanupOutcome,
+    pub(crate) timings: AcpProbeTimings,
+}
+
+impl AcpProbeReport {
+    pub(crate) fn protocol_connected(&self) -> bool {
+        matches!(
+            self.protocol_connection,
+            AcpProtocolConnectionOutcome::Connected
+        )
+    }
+
+    pub(crate) fn to_connection_result(
+        &self,
+        agent_id: &str,
+        version: Option<&str>,
+        installation_status: Option<&str>,
+        runtime_status: Option<&str>,
+        protocol_status: Option<&str>,
+    ) -> AgentConnectionResult {
+        match &self.protocol_connection {
+            AcpProtocolConnectionOutcome::Connected => AgentConnectionResult {
+                agent_id: agent_id.to_string(),
+                available: true,
+                installed: true,
+                connected: true,
+                version: version.map(ToString::to_string),
+                connection_method: Some("acp".to_string()),
+                error_code: None,
+                error: None,
+                installation_status: installation_status.map(ToString::to_string),
+                runtime_status: runtime_status.map(ToString::to_string),
+                protocol_status: protocol_status.map(ToString::to_string),
+                execution_ready: true,
+                health_stale: false,
+            },
+            AcpProtocolConnectionOutcome::Failed {
+                error_code,
+                error_message,
+                ..
+            } => AgentConnectionResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                installed: true,
+                connected: false,
+                version: version.map(ToString::to_string),
+                connection_method: Some("acp".to_string()),
+                error_code: Some(error_code.clone()),
+                error: Some(error_message.clone()),
+                installation_status: installation_status.map(ToString::to_string),
+                runtime_status: runtime_status.map(ToString::to_string),
+                protocol_status: protocol_status.map(ToString::to_string),
+                execution_ready: false,
+                health_stale: false,
+            },
+            AcpProtocolConnectionOutcome::Cancelled => AgentConnectionResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                installed: true,
+                connected: false,
+                version: version.map(ToString::to_string),
+                connection_method: Some("acp".to_string()),
+                error_code: Some("cancelled".to_string()),
+                error: Some("The ACP probe was cancelled.".to_string()),
+                installation_status: installation_status.map(ToString::to_string),
+                runtime_status: runtime_status.map(ToString::to_string),
+                protocol_status: protocol_status.map(ToString::to_string),
+                execution_ready: false,
+                health_stale: false,
+            },
+        }
+    }
+
+    pub(crate) fn to_models_result(&self, agent_id: &str) -> AgentModelsResult {
+        match &self.protocol_connection {
+            AcpProtocolConnectionOutcome::Connected => match &self.model_discovery {
+                AcpModelDiscoveryOutcome::Success {
+                    models,
+                    current_model_id,
+                } => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: current_model_id
+                        .clone()
+                        .or_else(|| models.first().map(|m| m.id.clone())),
+                    models: models.clone(),
+                    error_code: None,
+                    error: None,
+                },
+                AcpModelDiscoveryOutcome::Empty => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some("model_list_empty".to_string()),
+                    error: Some("No models advertised by ACP session".to_string()),
+                },
+                AcpModelDiscoveryOutcome::Invalid {
+                    error_code,
+                    error_message,
+                } => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some(error_code.clone()),
+                    error: Some(error_message.clone()),
+                },
+                AcpModelDiscoveryOutcome::Timeout => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some("model_discovery_timeout".to_string()),
+                    error: Some("Model discovery timed out".to_string()),
+                },
+                AcpModelDiscoveryOutcome::Unsupported => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some("unsupported".to_string()),
+                    error: Some("Agent does not support dynamic model selection".to_string()),
+                },
+                AcpModelDiscoveryOutcome::Failed {
+                    error_code,
+                    error_message,
+                } => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: true,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some(error_code.clone()),
+                    error: Some(error_message.clone()),
+                },
+                AcpModelDiscoveryOutcome::Skipped => AgentModelsResult {
+                    agent_id: agent_id.to_string(),
+                    available: false,
+                    current_model_id: None,
+                    models: Vec::new(),
+                    error_code: Some("connection_failed".to_string()),
+                    error: Some("Connection failed before model discovery".to_string()),
+                },
+            },
+            AcpProtocolConnectionOutcome::Failed {
+                error_code,
+                error_message,
+                ..
+            } => AgentModelsResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                current_model_id: None,
+                models: Vec::new(),
+                error_code: Some(error_code.clone()),
+                error: Some(error_message.clone()),
+            },
+            AcpProtocolConnectionOutcome::Cancelled => AgentModelsResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                current_model_id: None,
+                models: Vec::new(),
+                error_code: Some("cancelled".to_string()),
+                error: Some("ACP probe was cancelled".to_string()),
+            },
+        }
+    }
+}
+
+fn connection_error_code(error: &AiExecutionError) -> &'static str {
+    match error {
+        AiExecutionError::Protocol {
+            operation: "spawn_timeout",
+        } => "spawn_timeout",
+        AiExecutionError::Protocol {
+            operation: "session_new_timeout",
+        } => "session_new_timeout",
+        AiExecutionError::Timeout { .. } => "initialize_timeout",
+        AiExecutionError::Spawn { .. } | AiExecutionError::RuntimeUnavailable { .. } => {
+            "agent_spawn_failed"
+        }
+        other if is_auth_error(other) => "auth_required",
+        _ => "connection_failed",
+    }
+}
+
+fn is_auth_error(error: &AiExecutionError) -> bool {
+    match error {
+        AiExecutionError::ProtocolDetail { detail, .. } => is_auth_message(detail),
+        AiExecutionError::Output { message } => is_auth_message(message),
+        _ => false,
+    }
+}
+
+fn is_auth_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("auth")
+        || lower.contains("login")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("credential")
 }
 
 async fn run_connection_probe(
@@ -338,7 +703,22 @@ async fn run_session_probe(
     definition: &AgentDefinition,
     request: &AiExecutionRequest,
 ) -> Result<agent_client_protocol::schema::v1::NewSessionResponse, AiExecutionError> {
+    let mut timings = AcpProbeTimings::default();
+    let (res, _) = run_session_probe_with_timings(guard, definition, request, &mut timings).await;
+    res
+}
+
+async fn run_session_probe_with_timings(
+    guard: &mut AcpExecutionGuard,
+    definition: &AgentDefinition,
+    request: &AiExecutionRequest,
+    timings: &mut AcpProbeTimings,
+) -> (
+    Result<agent_client_protocol::schema::v1::NewSessionResponse, AiExecutionError>,
+    AcpConnectionStage,
+) {
     request.report_phase(AiExecutionPhase::Spawning);
+    let spawn_start = Instant::now();
     let process = tokio::select! {
         result = tokio::time::timeout(
             request.limits.spawn_timeout,
@@ -347,24 +727,45 @@ async fn run_session_probe(
                 Some(&guard.workspace),
                 request.limits.stderr_bytes,
             ),
-        ) => result
-            .map_err(|_| AiExecutionError::Protocol { operation: "spawn_timeout" })?
-            .map_err(|error| map_process_error(definition, error))?,
+        ) => match result {
+            Ok(Ok(proc)) => proc,
+            Ok(Err(error)) => {
+                timings.spawn_duration_ms = spawn_start.elapsed().as_millis() as u64;
+                return (Err(map_process_error(definition, error)), AcpConnectionStage::Spawn);
+            }
+            Err(_) => {
+                timings.spawn_duration_ms = spawn_start.elapsed().as_millis() as u64;
+                return (Err(AiExecutionError::Protocol { operation: "spawn_timeout" }), AcpConnectionStage::Spawn);
+            }
+        },
         _ = request.cancellation.cancelled() => {
-            return Err(cancelled_error(definition));
+            timings.spawn_duration_ms = spawn_start.elapsed().as_millis() as u64;
+            return (Err(cancelled_error(definition)), AcpConnectionStage::Spawn);
         }
     };
+    timings.spawn_duration_ms = spawn_start.elapsed().as_millis() as u64;
     guard.process = Some(process);
 
-    let (stdin, stdout) = guard
+    let init_start = Instant::now();
+    let (stdin, stdout) = match guard
         .process
         .as_ref()
         .expect("process stored before stdio")
         .take_stdio()
         .await
-        .map_err(|_| AiExecutionError::Protocol {
-            operation: "take_stdio",
-        })?;
+    {
+        Ok(pair) => pair,
+        Err(_) => {
+            timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+            return (
+                Err(AiExecutionError::Protocol {
+                    operation: "take_stdio",
+                }),
+                AcpConnectionStage::Transport,
+            );
+        }
+    };
+
     let mut config = AcpConnectConfig::new(request.limits.initialize_timeout);
     config.event_channel_capacity = PROTOCOL_EVENT_CAPACITY;
     request.report_phase(AiExecutionPhase::Initializing);
@@ -376,19 +777,29 @@ async fn run_session_probe(
     tokio::pin!(connect);
     let (protocol, _channels) = tokio::select! {
         biased;
-        result = &mut connect => result.map_err(|error| map_acp_error("initialize", error))?,
+        result = &mut connect => match result {
+            Ok(p) => p,
+            Err(error) => {
+                timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+                return (Err(map_acp_error("initialize", error)), AcpConnectionStage::Initialize);
+            }
+        },
         _ = request.cancellation.cancelled() => {
-            return Err(cancelled_error(definition));
+            timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+            return (Err(cancelled_error(definition)), AcpConnectionStage::Initialize);
         }
         exit = process.wait_for_exit() => {
-            return Err(AiExecutionError::AgentExited {
+            timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
+            return (Err(AiExecutionError::AgentExited {
                 code: exit.and_then(|exit| exit.code),
-            });
+            }), AcpConnectionStage::Initialize);
         }
     };
+    timings.initialize_duration_ms = init_start.elapsed().as_millis() as u64;
     guard.protocol = Some(protocol);
 
     request.report_phase(AiExecutionPhase::CreatingSession);
+    let session_start = Instant::now();
     let new_session = guard
         .protocol
         .as_ref()
@@ -396,17 +807,27 @@ async fn run_session_probe(
         .new_session(guard.workspace.clone());
     tokio::pin!(new_session);
     let session = tokio::select! {
-        result = tokio::time::timeout(request.limits.config_rpc_timeout, &mut new_session) => result
-            .map_err(|_| AiExecutionError::Protocol {
-                operation: "session_new_timeout",
-            })?
-            .map_err(|error| map_acp_error("session_new", error))?,
+        result = tokio::time::timeout(request.limits.config_rpc_timeout, &mut new_session) => match result {
+            Ok(Ok(sess)) => sess,
+            Ok(Err(error)) => {
+                timings.session_new_duration_ms = session_start.elapsed().as_millis() as u64;
+                return (Err(map_acp_error("session_new", error)), AcpConnectionStage::SessionNew);
+            }
+            Err(_) => {
+                timings.session_new_duration_ms = session_start.elapsed().as_millis() as u64;
+                return (Err(AiExecutionError::Protocol {
+                    operation: "session_new_timeout",
+                }), AcpConnectionStage::SessionNew);
+            }
+        },
         _ = request.cancellation.cancelled() => {
-            return Err(cancelled_error(definition));
+            timings.session_new_duration_ms = session_start.elapsed().as_millis() as u64;
+            return (Err(cancelled_error(definition)), AcpConnectionStage::SessionNew);
         }
     };
+    timings.session_new_duration_ms = session_start.elapsed().as_millis() as u64;
     guard.session_id = Some(session.session_id.clone());
-    Ok(session)
+    (Ok(session), AcpConnectionStage::SessionNew)
 }
 
 fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest {
@@ -489,26 +910,42 @@ fn parse_session_models(
         .or_else(|| string_field(&value, &["current_model_id", "currentModelId"]));
         if !models.is_empty() {
             return Ok((models, current_model_id));
+        } else {
+            return Err(AiExecutionError::Protocol {
+                operation: "session_model_catalog_empty",
+            });
         }
     }
 
-    let models = match strict_array_field(&value, &["available_models", "availableModels"])? {
-        None => Vec::new(),
-        Some(raw_options) => raw_options
+    let raw_available = strict_array_field(&value, &["available_models", "availableModels"])?;
+    if let Some(raw_options) = raw_available {
+        let models = raw_options
             .into_iter()
             .map(parse_model_option)
             .collect::<Option<Vec<_>>>()
             .ok_or(AiExecutionError::Protocol {
                 operation: "session_model_catalog_invalid",
-            })?,
-    };
-    let current_model_id = string_field(&value, &["current_model_id", "currentModelId"]);
-    if models.is_empty() {
+            })?;
+        let current_model_id = string_field(&value, &["current_model_id", "currentModelId"]);
+        if !models.is_empty() {
+            return Ok((models, current_model_id));
+        } else {
+            return Err(AiExecutionError::Protocol {
+                operation: "session_model_catalog_empty",
+            });
+        }
+    }
+
+    let has_config = value.get("config_options").is_some() || value.get("configOptions").is_some();
+    if has_config {
         return Err(AiExecutionError::Protocol {
             operation: "session_model_catalog_empty",
         });
     }
-    Ok((models, current_model_id))
+
+    Err(AiExecutionError::Protocol {
+        operation: "session_model_catalog_unsupported",
+    })
 }
 
 fn strict_array_field<'a>(
@@ -2598,5 +3035,112 @@ mod tests {
         assert!(second.process_reaped);
         assert!(second.failures.is_empty());
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_probe_connection_and_models_report_complete_stages() {
+        // Happy path
+        {
+            let (root, record) = test_paths("probe-happy");
+            let workspace_root = root.join("workspaces");
+            let backend = AcpExecutionBackend::new(workspace_root);
+            let def = definition("happy", &record);
+            let report = backend
+                .probe_connection_and_models(&def, AiExecutionCancellation::default())
+                .await;
+
+            assert_eq!(
+                report.protocol_connection,
+                AcpProtocolConnectionOutcome::Connected
+            );
+            match &report.model_discovery {
+                AcpModelDiscoveryOutcome::Success {
+                    models,
+                    current_model_id,
+                } => {
+                    assert!(!models.is_empty());
+                    assert_eq!(current_model_id.as_deref(), Some("fixture/model-fast"));
+                }
+                other => panic!("expected model discovery success, got {:?}", other),
+            }
+            assert!(report.cleanup.process_reaped);
+            assert!(report.cleanup.workspace_removed);
+            assert!(!report.cleanup.timed_out);
+            assert!(report.timings.total_duration_ms > 0);
+
+            let conn_res =
+                report.to_connection_result(def.id.as_str(), Some("v1"), None, None, None);
+            assert!(conn_res.available);
+            assert!(conn_res.connected);
+            assert_eq!(conn_res.error_code, None);
+
+            let models_res = report.to_models_result(def.id.as_str());
+            assert!(models_res.available);
+            assert_eq!(models_res.models.len(), 2);
+            assert_eq!(models_res.error_code, None);
+            let _ = fs::remove_dir_all(root);
+        }
+
+        // Init error path: model discovery skipped
+        {
+            let (root, record) = test_paths("probe-init-error");
+            let workspace_root = root.join("workspaces");
+            let backend = AcpExecutionBackend::new(workspace_root);
+            let def = definition("initialize_error", &record);
+            let report = backend
+                .probe_connection_and_models(&def, AiExecutionCancellation::default())
+                .await;
+
+            match &report.protocol_connection {
+                AcpProtocolConnectionOutcome::Failed {
+                    stage, error_code, ..
+                } => {
+                    assert_eq!(*stage, AcpConnectionStage::Initialize);
+                    assert_eq!(error_code, "connection_failed");
+                }
+                other => panic!("expected failed initialize connection, got {:?}", other),
+            }
+            assert_eq!(report.model_discovery, AcpModelDiscoveryOutcome::Skipped);
+            assert!(report.cleanup.process_reaped);
+            assert!(report.cleanup.workspace_removed);
+
+            let conn_res = report.to_connection_result(def.id.as_str(), None, None, None, None);
+            assert!(!conn_res.available);
+            assert!(!conn_res.connected);
+            assert_eq!(conn_res.error_code.as_deref(), Some("connection_failed"));
+
+            let models_res = report.to_models_result(def.id.as_str());
+            assert!(!models_res.available);
+            assert!(models_res.models.is_empty());
+            assert_eq!(models_res.error_code.as_deref(), Some("connection_failed"));
+            let _ = fs::remove_dir_all(root);
+        }
+
+        // Empty models path: protocol connected, models empty
+        {
+            let (root, record) = test_paths("probe-empty-models");
+            let workspace_root = root.join("workspaces");
+            let backend = AcpExecutionBackend::new(workspace_root);
+            let def = definition("empty_model_options", &record);
+            let report = backend
+                .probe_connection_and_models(&def, AiExecutionCancellation::default())
+                .await;
+
+            assert_eq!(
+                report.protocol_connection,
+                AcpProtocolConnectionOutcome::Connected
+            );
+            assert_eq!(report.model_discovery, AcpModelDiscoveryOutcome::Empty);
+
+            let conn_res = report.to_connection_result(def.id.as_str(), None, None, None, None);
+            assert!(conn_res.available);
+            assert!(conn_res.connected);
+
+            let models_res = report.to_models_result(def.id.as_str());
+            assert!(models_res.available);
+            assert!(models_res.models.is_empty());
+            assert_eq!(models_res.error_code.as_deref(), Some("model_list_empty"));
+            let _ = fs::remove_dir_all(root);
+        }
     }
 }

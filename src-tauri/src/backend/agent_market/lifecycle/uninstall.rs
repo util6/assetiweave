@@ -17,7 +17,7 @@ pub(crate) async fn run(
 ) -> Result<AgentInstallation, AgentMarketError> {
     service
         .runtime_manager
-        .cancel_acp_probe(&request.agent_id)
+        .invalidate_agent_state(&request.agent_id)
         .await;
     if let Some(sink) = phase_sink.as_ref() {
         sink(LifecycleTaskPhase::Preparing);

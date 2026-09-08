@@ -30,28 +30,10 @@ impl AppService {
                 installation.protocol
                     == crate::backend::agent_market::types::AgentMarketProtocol::Acp
             }) {
-            let models = self
-                .agent_runtime_manager
-                .refresh_acp_health(agent_id.as_str())
+            self.agent_runtime_manager
+                .refresh_acp_connection(agent_id.as_str())
                 .await
-                .map_err(AppError::external)?;
-            AgentConnectionResult {
-                agent_id: agent_id.to_string(),
-                available: models.available,
-                installed: true,
-                connected: models.available,
-                version: existing_installation
-                    .as_ref()
-                    .map(|installation| installation.agent_version.clone()),
-                connection_method: Some("acp".to_string()),
-                error_code: models.error_code,
-                error: models.error,
-                installation_status: None,
-                runtime_status: None,
-                protocol_status: None,
-                execution_ready: false,
-                health_stale: false,
-            }
+                .map_err(AppError::external)?
         } else if matches!(mode, AgentConnectionCheckMode::Connection)
             && existing_installation.as_ref().is_some_and(|installation| {
                 installation.protocol

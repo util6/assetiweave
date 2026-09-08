@@ -41,7 +41,7 @@ pub(crate) async fn run(
 ) -> Result<InstallOutcome, AgentMarketError> {
     service
         .runtime_manager
-        .cancel_acp_probe(&request.agent_id)
+        .invalidate_agent_state(&request.agent_id)
         .await;
     let mutation_gate = service.runtime_manager.mutation_gate(&request.agent_id);
     let _mutation_lease = mutation_gate.write().await;
