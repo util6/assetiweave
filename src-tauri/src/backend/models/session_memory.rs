@@ -25,12 +25,24 @@ impl SessionMemoryJobStatus {
     }
 }
 
+impl Default for SessionMemoryJobStatus {
+    fn default() -> Self {
+        Self::Queued
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SessionMemoryStatus {
     Active,
     Invalid,
     Failed,
+}
+
+impl Default for SessionMemoryStatus {
+    fn default() -> Self {
+        Self::Active
+    }
 }
 
 impl SessionMemoryStatus {
@@ -90,7 +102,7 @@ impl RecentMemoryEventCategory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub(crate) struct SessionMemoryJob {
     pub(crate) tenant_id: String,
     pub(crate) id: String,
@@ -116,9 +128,14 @@ pub(crate) struct SessionMemoryJob {
     pub(crate) retry_count: i64,
     pub(crate) retry_at: Option<String>,
     pub(crate) watermark: Option<i64>,
+    pub(crate) recipe_id: Option<String>,
+    pub(crate) recipe_revision: Option<i64>,
+    pub(crate) recipe_content_hash: Option<String>,
+    pub(crate) budget_policy_version: Option<String>,
+    pub(crate) work_order_json: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub(crate) struct SessionMemory {
     pub(crate) tenant_id: String,
     pub(crate) id: String,
@@ -141,6 +158,9 @@ pub(crate) struct SessionMemory {
     pub(crate) generated_at: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
+    pub(crate) recipe_id: Option<String>,
+    pub(crate) recipe_content_hash: Option<String>,
+    pub(crate) work_order_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -14,16 +14,21 @@ pub(crate) const SESSION_MEMORY_PROMPT_VERSION: &str = "session-memory-prompt.v1
 pub(crate) const SESSION_MEMORY_JOB_LEASE: Duration = Duration::minutes(2);
 const SESSION_IDLE_DELAY: Duration = Duration::minutes(30);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SessionMemoryJobCandidate {
     pub(crate) session_id: String,
     pub(crate) source_id: String,
     pub(crate) source_revision: i64,
     pub(crate) source_fingerprint: String,
     pub(crate) not_before: String,
+    pub(crate) recipe_id: Option<String>,
+    pub(crate) recipe_revision: Option<i64>,
+    pub(crate) recipe_content_hash: Option<String>,
+    pub(crate) budget_policy_version: Option<String>,
+    pub(crate) work_order_json: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct SessionMemoryPersistInput {
     pub(crate) memory_id: String,
     pub(crate) tenant_id: String,
@@ -47,6 +52,9 @@ pub(crate) struct SessionMemoryPersistInput {
     pub(crate) ownership_token: String,
     pub(crate) references: Vec<SessionMemoryReferenceInput>,
     pub(crate) events: Vec<RecentMemoryEventInput>,
+    pub(crate) recipe_id: Option<String>,
+    pub(crate) recipe_content_hash: Option<String>,
+    pub(crate) work_order_json: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -278,15 +286,38 @@ fn candidate_with_not_before(
         .and_then(crate::backend::models::parse_conversation_timestamp)
         .map(|value| (value + SESSION_IDLE_DELAY).to_rfc3339())
         .unwrap_or_else(|| now.to_string());
+    let default_recipe = crate::backend::models::MemoryRecipe::default_builtin();
+    let recipe_snapshot = crate::backend::models::MemoryRecipeSnapshot::from(&default_recipe);
+    let budget_policy = crate::backend::models::BoundedMemoryBudgetPolicy::default();
+    let source_fingerprint = candidate
+        .source_fingerprint
+        .clone()
+        .unwrap_or_else(|| fallback_fingerprint(&candidate.id, source_revision));
+    let work_order = crate::backend::models::MemoryExecutionWorkOrder::new(
+        format!("wo-{}", uuid::Uuid::new_v4()),
+        candidate.id.clone(),
+        candidate.source_id.clone(),
+        source_revision,
+        source_fingerprint.clone(),
+        &default_recipe,
+        budget_policy,
+        now.to_string(),
+    );
+    let work_order_json = serde_json::to_string(&work_order).ok();
+
     SessionMemoryJobCandidate {
         session_id: candidate.id.clone(),
         source_id: candidate.source_id.clone(),
         source_revision,
-        source_fingerprint: candidate
-            .source_fingerprint
-            .clone()
-            .unwrap_or_else(|| fallback_fingerprint(&candidate.id, source_revision)),
+        source_fingerprint,
         not_before,
+        recipe_id: Some(recipe_snapshot.recipe_id),
+        recipe_revision: Some(recipe_snapshot.revision),
+        recipe_content_hash: Some(recipe_snapshot.content_hash),
+        budget_policy_version: Some(
+            crate::backend::models::DEFAULT_BUDGET_POLICY_VERSION.to_string(),
+        ),
+        work_order_json,
     }
 }
 
@@ -321,7 +352,7 @@ async fn insert_job_sqlx(
     .await
 }
 
-async fn insert_job_candidate_sqlx(
+pub(crate) async fn insert_job_candidate_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     candidate: &SessionMemoryJobCandidate,
@@ -329,8 +360,17 @@ async fn insert_job_candidate_sqlx(
     sync_run_id: &str,
     now: &str,
 ) -> AppResult<usize> {
+    let recipe_hash = candidate
+        .recipe_content_hash
+        .as_deref()
+        .unwrap_or("default");
+    let budget_version = candidate
+        .budget_policy_version
+        .as_deref()
+        .unwrap_or(crate::backend::models::DEFAULT_BUDGET_POLICY_VERSION);
+
     sqlx::query(
-        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active' AND (source_revision < ?4 OR source_fingerprint <> ?5 OR contract_version <> ?6 OR prompt_version <> ?7)",
+        "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active' AND (source_revision < ?4 OR source_fingerprint <> ?5 OR contract_version <> ?6 OR prompt_version <> ?7 OR (recipe_content_hash IS NOT NULL AND recipe_content_hash <> ?8))",
     )
     .bind(now)
     .bind(tenant_id)
@@ -339,6 +379,7 @@ async fn insert_job_candidate_sqlx(
     .bind(&candidate.source_fingerprint)
     .bind(SESSION_MEMORY_CONTRACT_VERSION)
     .bind(SESSION_MEMORY_PROMPT_VERSION)
+    .bind(recipe_hash)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
@@ -355,13 +396,15 @@ async fn insert_job_candidate_sqlx(
     let id = format!(
         "session-memory-job-{}",
         digest(&format!(
-            "{tenant_id}\0{}\0{}\0{}\0{}\0{}\0{}",
+            "{tenant_id}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
             candidate.session_id,
             candidate.source_id,
             candidate.source_revision,
             candidate.source_fingerprint,
             SESSION_MEMORY_CONTRACT_VERSION,
-            SESSION_MEMORY_PROMPT_VERSION
+            SESSION_MEMORY_PROMPT_VERSION,
+            recipe_hash,
+            budget_version,
         ))
     );
     let result = sqlx::query(
@@ -370,8 +413,10 @@ async fn insert_job_candidate_sqlx(
             tenant_id, id, session_id, source_id, source_revision,
             source_fingerprint, contract_version, prompt_version,
             source_event_id, source_sync_run_id, status, not_before,
-            attempt_count, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11, 0, ?12, ?12)
+            attempt_count, created_at, updated_at,
+            recipe_id, recipe_revision, recipe_content_hash,
+            budget_policy_version, work_order_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11, 0, ?12, ?12, ?13, ?14, ?15, ?16, ?17)
         "#,
     )
     .bind(tenant_id)
@@ -386,6 +431,11 @@ async fn insert_job_candidate_sqlx(
     .bind(sync_run_id)
     .bind(&candidate.not_before)
     .bind(now)
+    .bind(&candidate.recipe_id)
+    .bind(candidate.recipe_revision.unwrap_or(1))
+    .bind(&candidate.recipe_content_hash)
+    .bind(&candidate.budget_policy_version)
+    .bind(&candidate.work_order_json)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
@@ -398,7 +448,7 @@ pub(crate) async fn load_session_memory_job_sqlx(
     job_id: &str,
 ) -> AppResult<Option<SessionMemoryJob>> {
     let row = sqlx::query_as::<_, SessionMemoryJobRow>(
-        "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, source_event_id, source_sync_run_id, status, not_before, attempt_count, last_error, started_at, finished_at, created_at, updated_at, ownership_token, lease_expires_at, heartbeat_at, retry_count, retry_at, watermark FROM session_memory_jobs WHERE tenant_id = ?1 AND id = ?2",
+        "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, source_event_id, source_sync_run_id, status, not_before, attempt_count, last_error, started_at, finished_at, created_at, updated_at, ownership_token, lease_expires_at, heartbeat_at, retry_count, retry_at, watermark, recipe_id, recipe_revision, recipe_content_hash, budget_policy_version, work_order_json FROM session_memory_jobs WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
     .bind(job_id)
@@ -621,6 +671,38 @@ pub(crate) async fn persist_session_memory_sqlx(
     input: &SessionMemoryPersistInput,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await.map_err(AppError::Db)?;
+
+    // E09: 晚到防覆盖校验
+    // 检查是否已有更新的 active session memory 存在（即更高 source_revision，或同 revision 但生成时间更新）
+    let newer_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session_memories WHERE tenant_id = ?1 AND session_id = ?2 AND status = 'active' AND (source_revision > ?3 OR (source_revision = ?3 AND generated_at > ?4))",
+    )
+    .bind(&input.tenant_id)
+    .bind(&input.session_id)
+    .bind(input.source_revision)
+    .bind(&input.generated_at)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(AppError::Db)?;
+
+    if newer_count > 0 {
+        // 当前任务已被更新的目标超越，将当前 job 标为 skipped 并记录 superseding 原因，不覆盖新目标
+        sqlx::query(
+            "UPDATE session_memory_jobs SET status = 'skipped', last_error = 'superseded_by_newer_target', finished_at = ?1, updated_at = ?1, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?2 AND id = (SELECT id FROM session_memory_jobs WHERE tenant_id = ?2 AND session_id = ?3 AND source_revision = ?4 AND status = 'running' AND ownership_token = ?5 LIMIT 1)",
+        )
+        .bind(&input.generated_at)
+        .bind(&input.tenant_id)
+        .bind(&input.session_id)
+        .bind(input.source_revision)
+        .bind(&input.ownership_token)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::Db)?;
+
+        tx.commit().await.map_err(AppError::Db)?;
+        return Ok(());
+    }
+
     let claimed = sqlx::query(
         "UPDATE session_memory_jobs SET status = 'succeeded', finished_at = ?1, updated_at = ?1, last_error = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_at = NULL, watermark = source_revision WHERE tenant_id = ?2 AND id = (SELECT id FROM session_memory_jobs WHERE tenant_id = ?2 AND session_id = ?3 AND source_revision = ?4 AND source_fingerprint = ?5 AND contract_version = ?6 AND prompt_version = ?7 AND status = 'running' AND ownership_token = ?8 LIMIT 1) AND status = 'running' AND ownership_token = ?8",
     )
@@ -647,8 +729,9 @@ pub(crate) async fn persist_session_memory_sqlx(
             source_fingerprint, contract_version, prompt_version, status,
             project_path, summary, goal, result, decisions_json,
             verification_json, blockers_json, follow_up_json, topics_json,
-            raw_output_json, generated_at, created_at, updated_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19, ?19)
+            raw_output_json, generated_at, created_at, updated_at,
+            recipe_id, recipe_content_hash, work_order_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?19, ?19, ?20, ?21, ?22)
         "#,
     )
     .bind(&input.tenant_id)
@@ -670,6 +753,9 @@ pub(crate) async fn persist_session_memory_sqlx(
     .bind(&input.topics_json)
     .bind(&input.raw_output_json)
     .bind(&input.generated_at)
+    .bind(&input.recipe_id)
+    .bind(&input.recipe_content_hash)
+    .bind(&input.work_order_json)
     .execute(&mut *tx)
     .await
     .map_err(AppError::Db)?;
@@ -769,7 +855,7 @@ pub(crate) async fn load_session_memory_sqlx(
     memory_id: &str,
 ) -> AppResult<Option<SessionMemory>> {
     let row = sqlx::query_as::<_, SessionMemoryRow>(
-        "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, status, project_path, summary, goal, result, decisions_json, verification_json, blockers_json, follow_up_json, topics_json, generated_at, created_at, updated_at FROM session_memories WHERE tenant_id = ?1 AND id = ?2",
+        "SELECT tenant_id, id, session_id, source_id, source_revision, source_fingerprint, contract_version, prompt_version, status, project_path, summary, goal, result, decisions_json, verification_json, blockers_json, follow_up_json, topics_json, generated_at, created_at, updated_at, recipe_id, recipe_content_hash, work_order_json FROM session_memories WHERE tenant_id = ?1 AND id = ?2",
     )
     .bind(tenant_id)
     .bind(memory_id)
@@ -785,7 +871,7 @@ pub(crate) async fn list_session_memories_for_project_sqlx(
     project_path: &str,
 ) -> AppResult<Vec<SessionMemory>> {
     let rows = sqlx::query_as::<_, SessionMemoryRow>(
-        "SELECT m.tenant_id, m.id, m.session_id, m.source_id, m.source_revision, m.source_fingerprint, m.contract_version, m.prompt_version, m.status, m.project_path, m.summary, m.goal, m.result, m.decisions_json, m.verification_json, m.blockers_json, m.follow_up_json, m.topics_json, m.generated_at, m.created_at, m.updated_at FROM session_memories m WHERE m.tenant_id = ?1 AND m.project_path = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source WHERE source.tenant_id = c.tenant_id AND source.id = c.source_id AND source.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))) ORDER BY m.id ASC",
+        "SELECT m.tenant_id, m.id, m.session_id, m.source_id, m.source_revision, m.source_fingerprint, m.contract_version, m.prompt_version, m.status, m.project_path, m.summary, m.goal, m.result, m.decisions_json, m.verification_json, m.blockers_json, m.follow_up_json, m.topics_json, m.generated_at, m.created_at, m.updated_at, m.recipe_id, m.recipe_content_hash, m.work_order_json FROM session_memories m WHERE m.tenant_id = ?1 AND m.project_path = ?2 AND m.status = 'active' AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) AND (NOT EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id) OR EXISTS (SELECT 1 FROM conversation_sessions c WHERE c.tenant_id = m.tenant_id AND c.id = m.session_id AND c.source_id = m.source_id AND c.missing = 0 AND EXISTS (SELECT 1 FROM conversation_sources source WHERE source.tenant_id = c.tenant_id AND source.id = c.source_id AND source.enabled = 1) AND (c.source_fingerprint IS NULL OR c.source_fingerprint = m.source_fingerprint))) ORDER BY m.id ASC",
     )
     .bind(tenant_id)
     .bind(project_path)
@@ -959,6 +1045,11 @@ struct SessionMemoryJobRow {
     retry_count: i64,
     retry_at: Option<String>,
     watermark: Option<i64>,
+    recipe_id: Option<String>,
+    recipe_revision: Option<i64>,
+    recipe_content_hash: Option<String>,
+    budget_policy_version: Option<String>,
+    work_order_json: Option<String>,
 }
 
 impl SessionMemoryJobRow {
@@ -988,6 +1079,11 @@ impl SessionMemoryJobRow {
             retry_count: self.retry_count,
             retry_at: self.retry_at,
             watermark: self.watermark,
+            recipe_id: self.recipe_id,
+            recipe_revision: self.recipe_revision,
+            recipe_content_hash: self.recipe_content_hash,
+            budget_policy_version: self.budget_policy_version,
+            work_order_json: self.work_order_json,
         })
     }
 }
@@ -1015,6 +1111,9 @@ struct SessionMemoryRow {
     generated_at: String,
     created_at: String,
     updated_at: String,
+    recipe_id: Option<String>,
+    recipe_content_hash: Option<String>,
+    work_order_json: Option<String>,
 }
 
 impl SessionMemoryRow {
@@ -1041,6 +1140,9 @@ impl SessionMemoryRow {
             generated_at: self.generated_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
+            recipe_id: self.recipe_id,
+            recipe_content_hash: self.recipe_content_hash,
+            work_order_json: self.work_order_json,
         })
     }
 }
@@ -1137,6 +1239,7 @@ mod tests {
             source_revision: 1,
             source_fingerprint: "fingerprint-old".to_string(),
             not_before: "2026-08-31T00:00:00Z".to_string(),
+            ..Default::default()
         };
         let new = SessionMemoryJobCandidate {
             source_revision: 2,
@@ -1244,6 +1347,7 @@ mod tests {
             source_revision: 1,
             source_fingerprint: "old-fingerprint".to_string(),
             not_before: "2026-08-01T00:30:00Z".to_string(),
+            ..Default::default()
         };
         let recent = SessionMemoryJobCandidate {
             session_id: "recent-session".to_string(),

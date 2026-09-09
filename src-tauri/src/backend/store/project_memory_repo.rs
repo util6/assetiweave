@@ -723,6 +723,7 @@ mod tests {
             generated_at: "2026-08-31T00:00:00Z".into(),
             created_at: "2026-08-31T00:00:00Z".into(),
             updated_at: "2026-08-31T00:00:00Z".into(),
+            ..Default::default()
         }
     }
 

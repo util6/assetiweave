@@ -748,6 +748,9 @@ fn validated_persist_input(
         })?,
         references,
         events,
+        recipe_id: job.recipe_id.clone(),
+        recipe_content_hash: job.recipe_content_hash.clone(),
+        work_order_json: job.work_order_json.clone(),
     })
 }
 
