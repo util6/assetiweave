@@ -1448,4 +1448,364 @@ mod tests {
             "Empty session must not manufacture recent events"
         );
     }
+
+    #[tokio::test]
+    async fn test_e11_source_invalidation_cascades_through_session_project_global_and_recent() {
+        let harness = FixtureHarness::new("e11_cascade");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+        let now = "2026-09-09T01:00:00Z";
+
+        // 1. 初始化 source 和 session
+        let session = NormalizedConversationSession {
+            external_id: "sess-e11".to_string(),
+            title: Some("Session for E11".to_string()),
+            updated_at: Some(now.to_string()),
+            source_fingerprint: Some("fp-e11".to_string()),
+            turns: vec![NormalizedConversationTurn {
+                external_id: "turn-1".to_string(),
+                turn_index: 0,
+                user_text: "Do work".to_string(),
+                title: None,
+                started_at: Some(now.to_string()),
+                ended_at: Some(now.to_string()),
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("Work completed".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: Some(r#"{"completed":true}"#.to_string()),
+                }],
+            }],
+            ..Default::default()
+        };
+        let session_id = harness.import_session(&pool, session).await;
+
+        // 2. 插入 active session memory
+        let session_memory_id = "session-memory-e11";
+        sqlx::query(
+            "INSERT INTO session_memories (tenant_id,id,session_id,source_id,source_revision,source_fingerprint,contract_version,prompt_version,status,project_path,summary,goal,result,decisions_json,verification_json,blockers_json,follow_up_json,topics_json,raw_output_json,generated_at,created_at,updated_at) VALUES ('default',?1,?2,?3,1,'fp-e11','session-memory.v1','session-memory-prompt.v1','active','/test-project','summary e11','','','[]','[]','[]','[]','[]','{}',?4,?4,?4)",
+        )
+        .bind(session_memory_id)
+        .bind(&session_id)
+        .bind(&harness.source.id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert session memory");
+
+        // 3. 插入 recent memory event
+        let event_id = "event-e11";
+        sqlx::query(
+            "INSERT INTO recent_memory_events (tenant_id,id,memory_id,session_id,category,title,summary,occurred_at,fingerprint,created_at) VALUES ('default',?1,?2,?3,'decision','Title','Summary',?4,'fp-event',?4)",
+        )
+        .bind(event_id)
+        .bind(session_memory_id)
+        .bind(&session_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert recent event");
+
+        // 4. 插入 project memory 和 project version
+        let project_id = store::project_memory_id("default", "/test-project");
+        let version_id = "project-version-e11";
+        sqlx::query(
+            "INSERT INTO project_memories (tenant_id,id,project_path,last_successful_version_id,last_successful_at,last_successful_watermark,last_successful_input_fingerprint,created_at,updated_at) VALUES ('default',?1,'/test-project',?2,?3,1,'fp-project',?3,?3)",
+        )
+        .bind(&project_id)
+        .bind(version_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert project memory");
+
+        sqlx::query(
+            "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default',?1,?2,1,'succeeded','fp-project',1,'# Project Memory E11',?3,?3)",
+        )
+        .bind(version_id)
+        .bind(&project_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert project memory version");
+
+        sqlx::query(
+            "INSERT INTO project_memory_sources (tenant_id,version_id,session_memory_id,source_revision,sort_order) VALUES ('default',?1,?2,1,0)",
+        )
+        .bind(version_id)
+        .bind(session_memory_id)
+        .execute(&pool)
+        .await
+        .expect("insert project memory source link");
+
+        // 初始断言：全链路有效可读
+        let proj_version =
+            store::load_project_memory_latest_version_sqlx(&pool, "default", &project_id)
+                .await
+                .expect("load project version")
+                .expect("project version exists");
+        assert_eq!(proj_version.id, version_id);
+
+        let global_inputs = store::load_global_memory_inputs_sqlx(&pool, "default")
+            .await
+            .expect("load global inputs");
+        assert_eq!(global_inputs.projects.len(), 1);
+
+        let recent_target = store::load_recent_memory_event_target_sqlx(&pool, "default", event_id)
+            .await
+            .expect("load event target")
+            .expect("recent event target exists");
+        assert_eq!(recent_target.session_id, session_id);
+
+        // 触发失效场景 1：Source 被禁用 (enabled = 0)
+        sqlx::query(
+            "UPDATE conversation_sources SET enabled = 0 WHERE tenant_id = 'default' AND id = ?1",
+        )
+        .bind(&harness.source.id)
+        .execute(&pool)
+        .await
+        .expect("disable source");
+
+        // 验证级联失效
+        let proj_invalid =
+            store::load_project_memory_latest_version_sqlx(&pool, "default", &project_id)
+                .await
+                .expect("load project version");
+        assert!(
+            proj_invalid.is_none(),
+            "Disabled source must invalidate project memory latest version"
+        );
+
+        let global_invalid = store::load_global_memory_inputs_sqlx(&pool, "default")
+            .await
+            .expect("load global inputs");
+        assert_eq!(
+            global_invalid.projects.len(),
+            0,
+            "Disabled source must cascade invalidate global memory candidate inputs"
+        );
+
+        let recent_invalid =
+            store::load_recent_memory_event_target_sqlx(&pool, "default", event_id)
+                .await
+                .expect("load event target");
+        assert!(
+            recent_invalid.is_none(),
+            "Disabled source must invalidate recent memory navigation target"
+        );
+
+        // 恢复 Source，触发失效场景 2：Session 被标记缺失 (missing = 1)
+        sqlx::query(
+            "UPDATE conversation_sources SET enabled = 1 WHERE tenant_id = 'default' AND id = ?1",
+        )
+        .bind(&harness.source.id)
+        .execute(&pool)
+        .await
+        .expect("enable source");
+
+        sqlx::query(
+            "UPDATE conversation_sessions SET missing = 1 WHERE tenant_id = 'default' AND id = ?1",
+        )
+        .bind(&session_id)
+        .execute(&pool)
+        .await
+        .expect("mark session missing");
+
+        // 验证级联失效依然生效
+        let proj_missing =
+            store::load_project_memory_latest_version_sqlx(&pool, "default", &project_id)
+                .await
+                .expect("load project version");
+        assert!(
+            proj_missing.is_none(),
+            "Missing session must invalidate project memory latest version"
+        );
+
+        let global_missing = store::load_global_memory_inputs_sqlx(&pool, "default")
+            .await
+            .expect("load global inputs");
+        assert_eq!(
+            global_missing.projects.len(),
+            0,
+            "Missing session must invalidate global memory candidate inputs"
+        );
+
+        let recent_missing =
+            store::load_recent_memory_event_target_sqlx(&pool, "default", event_id)
+                .await
+                .expect("load event target");
+        assert!(
+            recent_missing.is_none(),
+            "Missing session must invalidate recent memory navigation target"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_e17_rebuild_recovers_corrupted_project_and_global_markdown_without_session_md() {
+        let harness = FixtureHarness::new("e17_rebuild");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+        let now = "2026-09-09T01:00:00Z";
+
+        // 1. 设置 Project Memory 和 Global Memory
+        let project_id = store::project_memory_id("default", "/workspace/my-project");
+        let expected_project_md = "# Rebuilt Project Memory Markdown\n- Key decision documented.";
+        let expected_global_summary_md = "# Global Summary\n- High level update.";
+        let expected_global_memory_md = "# Global Memory\n- Overview of projects.";
+
+        sqlx::query(
+            "INSERT INTO project_memories (tenant_id,id,project_path,created_at,updated_at) VALUES ('default',?1,'/workspace/my-project',?2,?2)",
+        )
+        .bind(&project_id)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+        sqlx::query(
+            "INSERT INTO project_memory_versions (tenant_id,id,project_id,version_number,status,input_fingerprint,source_watermark,content_markdown,created_at,updated_at) VALUES ('default','v-proj-1',?1,1,'succeeded','fp-1',1,?2,?3,?3)",
+        )
+        .bind(&project_id)
+        .bind(expected_project_md)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert project version");
+
+        sqlx::query(
+            "UPDATE project_memories SET last_successful_version_id='v-proj-1',last_successful_at=?1,last_successful_watermark=1,last_successful_input_fingerprint='fp-1' WHERE tenant_id='default' AND id=?2",
+        )
+        .bind(now)
+        .bind(&project_id)
+        .execute(&pool)
+        .await
+        .expect("update project last successful");
+
+        sqlx::query(
+            "INSERT INTO global_memories (tenant_id,id,created_at,updated_at) VALUES ('default','global-memory-default',?1,?1)",
+        )
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert global memory");
+
+        sqlx::query(
+            "INSERT INTO global_memory_versions (tenant_id,id,version_number,status,input_fingerprint,source_watermark,summary_markdown,memory_markdown,created_at,updated_at) VALUES ('default','v-glob-1',1,'succeeded','fp-glob',1,?1,?2,?3,?3)",
+        )
+        .bind(expected_global_summary_md)
+        .bind(expected_global_memory_md)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert global version");
+
+        sqlx::query(
+            "UPDATE global_memories SET last_successful_version_id='v-glob-1',last_successful_at=?1,last_successful_watermark=1,last_successful_input_fingerprint='fp-glob' WHERE tenant_id='default' AND id='global-memory-default'",
+        )
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("update global memory");
+
+        // 2. 初始重建：磁盘上应成功生成 Markdown
+        service
+            .rebuild_project_memory_documents_for_tenant_at(
+                "default",
+                Some("/workspace/my-project"),
+            )
+            .await
+            .expect("rebuild project document");
+        service
+            .rebuild_global_memory_documents_for_tenant_at("default")
+            .await
+            .expect("rebuild global document");
+
+        // 3. 验证无逐 Session Markdown 依赖（整目录下不应有 sessions/*.md）
+        let session_md_count = walkdir::WalkDir::new(&harness.root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            .filter(|e| e.path().to_string_lossy().contains("sessions"))
+            .count();
+        assert_eq!(
+            session_md_count, 0,
+            "There must be zero per-session markdown files generated or required"
+        );
+
+        // 4. 模拟磁盘文件损坏/篡改/删除
+        let project_paths = crate::backend::application::project_memory::project_document_paths(
+            &service.db_path,
+            "default",
+            "/workspace/my-project",
+            1,
+        );
+        let global_paths = crate::backend::application::global_memory::global_document_paths(
+            &service.db_path,
+            "default",
+            1,
+        );
+
+        // 篡改或删除文件
+        std::fs::write(&project_paths.document_path, "CORRUPTED CONTENT")
+            .expect("corrupt project file");
+        if global_paths.memory_document_path.exists() {
+            std::fs::remove_file(&global_paths.memory_document_path).expect("delete global file");
+        }
+
+        // 5. 验证即便磁盘损坏，从 SQLite 依然可无损非阻塞读取 last-success
+        let project_view = service
+            .get_memory_project(crate::backend::application::MemoryProjectGetParams {
+                project_path: "/workspace/my-project".to_string(),
+            })
+            .await
+            .expect("get memory project")
+            .expect("project view exists");
+        assert_eq!(
+            project_view
+                .version
+                .and_then(|v| v.content_markdown)
+                .as_deref(),
+            Some(expected_project_md)
+        );
+
+        // 6. 触发重建恢复
+        service
+            .rebuild_project_memory_documents_for_tenant_at(
+                "default",
+                Some("/workspace/my-project"),
+            )
+            .await
+            .expect("rebuild project document again");
+        service
+            .rebuild_global_memory_documents_for_tenant_at("default")
+            .await
+            .expect("rebuild global document again");
+
+        // 7. 验证磁盘文件已恢复与 SQLite last-success 一致
+        let restored_project_md = std::fs::read_to_string(&project_paths.document_path)
+            .expect("read restored project document");
+        assert_eq!(restored_project_md, expected_project_md);
+
+        let restored_global_md = std::fs::read_to_string(&global_paths.memory_document_path)
+            .expect("read restored global document");
+        assert_eq!(restored_global_md, expected_global_memory_md);
+    }
 }

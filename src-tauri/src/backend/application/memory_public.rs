@@ -86,6 +86,15 @@ impl AppService {
             self.reconcile_global_memory_jobs_for_tenant_at(&tenant_id, now)
                 .await?
         };
+        if scheduled_tasks == 0 {
+            if let Some(path) = project_path.as_deref() {
+                self.rebuild_project_memory_documents_for_tenant_at(&tenant_id, Some(path))
+                    .await?;
+            } else {
+                self.rebuild_global_memory_documents_for_tenant_at(&tenant_id)
+                    .await?;
+            }
+        }
         Ok(MemoryRebuildResult {
             scope: MemoryScope {
                 project_path,

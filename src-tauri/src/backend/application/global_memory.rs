@@ -731,16 +731,16 @@ fn clean_global_markdown(value: &str) -> AppResult<String> {
     Ok(value.to_string())
 }
 
-struct GlobalDocumentPaths {
+pub(crate) struct GlobalDocumentPaths {
     #[cfg_attr(not(test), allow(dead_code))]
-    root: PathBuf,
-    summary_document_path: PathBuf,
-    memory_document_path: PathBuf,
-    version_summary_path: PathBuf,
-    version_memory_path: PathBuf,
+    pub(crate) root: PathBuf,
+    pub(crate) summary_document_path: PathBuf,
+    pub(crate) memory_document_path: PathBuf,
+    pub(crate) version_summary_path: PathBuf,
+    pub(crate) version_memory_path: PathBuf,
 }
 
-fn global_document_paths(
+pub(crate) fn global_document_paths(
     db_path: &Path,
     tenant_id: &str,
     version_number: i64,

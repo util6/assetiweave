@@ -554,6 +554,20 @@ pub(crate) async fn load_project_memory_sqlx(
     row.map(map_project).transpose()
 }
 
+pub(crate) async fn list_project_paths_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT project_path FROM project_memories WHERE tenant_id = ?1 ORDER BY project_path ASC",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::Db)?;
+    Ok(rows.into_iter().map(|(path,)| path).collect())
+}
+
 pub(crate) async fn retry_project_memory_job_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,

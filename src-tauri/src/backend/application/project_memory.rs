@@ -102,6 +102,11 @@ impl AppService {
         let job_ids =
             store::list_project_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text, 32)
                 .await?;
+        if job_ids.is_empty() {
+            self.rebuild_project_memory_documents_for_tenant_at(tenant_id, None)
+                .await?;
+            return Ok(0);
+        }
         let active_count = self
             .runtime
             .task_runtime()
@@ -327,6 +332,50 @@ impl AppService {
         Ok(Some(version))
     }
 
+    pub(crate) async fn rebuild_project_memory_documents_for_tenant_at(
+        &self,
+        tenant_id: &str,
+        specific_project_path: Option<&str>,
+    ) -> AppResult<()> {
+        let pool = self.db.pool();
+        let project_paths: Vec<String> = if let Some(path) = specific_project_path {
+            vec![path.to_string()]
+        } else {
+            store::list_project_paths_sqlx(pool, tenant_id).await?
+        };
+
+        for path in project_paths {
+            let Some(project) = store::load_project_memory_sqlx(pool, tenant_id, &path).await?
+            else {
+                continue;
+            };
+            let Some(version) =
+                store::load_project_memory_latest_version_sqlx(pool, tenant_id, &project.id)
+                    .await?
+            else {
+                continue;
+            };
+            let Some(markdown) = version.content_markdown.as_deref() else {
+                continue;
+            };
+            if markdown.is_empty() {
+                continue;
+            }
+            let paths =
+                project_document_paths(&self.db_path, tenant_id, &path, version.version_number);
+            if paths.document_path.exists()
+                && paths.version_path.exists()
+                && fs::read_to_string(&paths.document_path).ok().as_deref() == Some(markdown)
+                && fs::read_to_string(&paths.version_path).ok().as_deref() == Some(markdown)
+            {
+                continue;
+            }
+            write_project_version_file(&paths.version_path, markdown)?;
+            publish_project_document(&paths.document_path, &paths.version_path, markdown)?;
+        }
+        Ok(())
+    }
+
     async fn execute_project_memory_agent(
         &self,
         job: &ProjectMemoryJob,
@@ -450,12 +499,12 @@ fn clean_project_markdown(value: &str) -> AppResult<String> {
     Ok(value.to_string())
 }
 
-struct ProjectDocumentPaths {
-    document_path: PathBuf,
-    version_path: PathBuf,
+pub(crate) struct ProjectDocumentPaths {
+    pub(crate) document_path: PathBuf,
+    pub(crate) version_path: PathBuf,
 }
 
-fn project_document_paths(
+pub(crate) fn project_document_paths(
     db_path: &Path,
     tenant_id: &str,
     project_path: &str,
