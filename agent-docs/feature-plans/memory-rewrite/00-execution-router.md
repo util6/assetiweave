@@ -6,9 +6,10 @@
 
 处理以下任一内容时进入本执行包：
 
-- GitHub Issue #20 或由它拆出的 Memory 子 Issue；
+- GitHub Issue #20 或由它拆出的 Memory 子 Issue（如 Issue #30 高密度证据与受限归纳）；
 - 新的 Recent Work、Session/Project/Global Memory、Context Resolver；
 - 新的 Recall Agent、Memory 后台 Job、Memory 投影文档；
+- 精简证据首包、短引用、受限补读、脱敏精度优化与 Memory Recipe；
 - 旧 Dream、旧 Recall、candidate、Evidence 或 Library 的切换与删除。
 
 通用多 Agent 对话、Team 编排、成员协作 UI 不属于本执行包。Recall 只扩展它自身所需的持久 Agent Session 能力。
@@ -18,7 +19,7 @@
 发生冲突时按以下顺序处理：
 
 1. 仓库根 `AGENTS.md` 与已接受 ADR：工程和不可逆架构约束。
-2. [GitHub Issue #20](https://github.com/util6/assetiweave/issues/20) 及最新评论：Memory 产品规格。
+2. [GitHub Issue #20](https://github.com/util6/assetiweave/issues/20) 及子 [Issue #30](https://github.com/util6/assetiweave/issues/30)：Memory 产品规格。
 3. 当前子 Issue、blocker 和验收：本轮交付范围。
 4. 代码、追加 migration、测试、生成契约与 CLI `--help`：当前已实现事实。
 5. 本目录文档：执行方法、稳定契约、接缝与验证索引。

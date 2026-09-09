@@ -115,3 +115,30 @@ T03 + T05 + T06 + T10 + T11
 4. 生成物由命令生成，用户已有修改保持原样。
 5. 一条中文 Conventional Commit 可单独回滚。
 6. `06-handoff-template.md` 已记录提交、验证、剩余风险和下一 frontier。
+
+## 6. 增量切片 E0–E8 (Issue #30)
+
+```text
+E0 基线与合同冻结 (Issue #30)
+  └─ E1 内部来源隔离
+       └─ E2 脱敏精度优化
+            └─ E3 执行合同与 Recipe 快照
+                 └─ E4 精简证据读取垂直切片
+                      └─ E5 Session 提取与准入切换
+                           └─ E6 下游、失效与文档收口
+                                └─ E7 AIWC/Skill 与公开适配
+                                     └─ E8 综合验收与全仓门禁
+```
+
+| ID | 演示结果 | Blocked by | 主要证据 | 执行卡 |
+|---|---|---|---|---|
+| E0 | 冻结预算与主接缝，同步父规格显式修订 A/B，发布子 Issue #30，基线评测就绪 | — | Issue #30 | `tickets/E00-baseline-and-contracts.md` |
+| E1 | 内部 Agent 执行具有来源标记，普通读取/搜索/Recent/Recall 统一隔离 | E0 | E12、E13 | `tickets/E01-internal-source-isolation.md` |
+| E2 | 真实凭据被脱敏，Git SHA (40-hex)、文件路径与测试名不误伤 | E1 | E14 | `tickets/E02-redaction-precision.md` |
+| E3 | Job 绑定 Recipe 快照、版本与预算策略，取消与终态收口 | E2 | E09、E10、E15 | `tickets/E03-recipe-and-job-contract.md` |
+| E4 | AppService 生成精简首包与短引用，内部 MCP 支持有界补读 | E3 | E01、E04–E07 | `tickets/E04-bounded-evidence-pack.md` |
+| E5 | Phase 1 使用精简证据链，单份事实投影到摘要与事件，空内容明确终态 | E4 | E02、E03、E06、E08 | `tickets/E05-session-extraction-cutover.md` |
+| E6 | Project/Global 消费成功事实，级联失效贯穿，无逐 Session Markdown 依赖 | E5 | E11、E17 | `tickets/E06-downstream-and-invalidation.md` |
+| E7 | 精简读取接入 Engine/CLI/Skill，CLI 契约同步一致 | E6 | E16、contract | `tickets/E07-aiwc-and-surface-parity.md` |
+| E8 | E01–E18 全矩阵、Rust/Go/Frontend 全仓门禁与对比基线通过 | E7 | E01–E18、G0–G8 | `tickets/E08-final-acceptance.md` |
+

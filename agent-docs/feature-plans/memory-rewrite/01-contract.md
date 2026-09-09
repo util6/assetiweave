@@ -111,8 +111,20 @@ Context Resolver 与用户读路径始终读取最后成功且完整验证的版
 `memory.context.resolve` 按 Global Summary → 当前 Project Memory → 少量相关 Session Memory 的优先级编译上下文，遵守 token budget，并返回 context text、revision、generated time 与内部 source references。
 
 ### C-M06 — 使用反馈
+ 
+ 只有实际被新 Session Context 或 Recall 引用的 Memory 才更新 usage count 与 last used time。usage 影响保留/排序，不篡改 Conversation 事实或 Memory 内容。
 
-只有实际被新 Session Context 或 Recall 引用的 Memory 才更新 usage count 与 last used time。usage 影响保留/排序，不篡改 Conversation 事实或 Memory 内容。
+### C-M07 — 显式修订 A：取消逐 Session Markdown 依赖
+
+Session 详细记忆、语义事实和 source references 保存在 SQLite；取消逐 Session Markdown 投影。Project/Global 长期文档仍为应用自有目录中的原子发布投影，且可由 SQLite 完整重建。
+
+### C-M08 — 显式修订 B：内置 Memory Recipe 与固定执行合同
+
+可编辑 Memory Recipe 纳入内置生成，控制提取重点、忽略主题、项目术语与表达方式。Recipe 不控制租户、工具白名单、预算、输出准入、数据库写入与任务生命周期；不引入第三方 Pipeline 安装或未经验证的远程 Skill。
+
+### C-M09 — 精简证据包与执行内短引用
+
+系统准备精简证据首包（任务边界、意图与修正、结果证据、索引）；模型通过执行内短引用与有界补读工具交互，不重复传输完整数据库 ID 与冗余环境/源码/日志。一次提取事实，程序统一投影至 Session Memory 和 Recent Events。
 
 ## Recall Agent
 
@@ -154,13 +166,17 @@ Recall 的用户消息、Agent 回答和 turn 内容通过既有 Conversation �
 
 “生成 Memory”和“使用 Memory”是独立持久设置；Session/来源排除是生成输入过滤，不删除 Conversation。
 
-### C-S02 — Secrets redaction
+### C-S02 — Secrets redaction 与高精度保留
 
-发给模型前和结果落库前都执行 secrets redaction。日志、Task snapshot 与公开错误不包含 prompt、生成正文、工具原始输入、凭据或环境变量值。
+发给模型前和结果落库前都执行 secrets redaction。以凭据上下文和明确 secret 格式优先，高熵为辅助；正反样本保护 Git SHA (40-hex)、长文件路径、测试名与代码符号不被误伤。日志、Task snapshot 与公开错误不包含 prompt、生成正文、工具原始输入、凭据或环境变量值。
 
 ### C-S03 — 确定性测试
 
 自动测试使用临时 SQLite、可控时钟、Conversation fixtures、Fake AgentExecutor 和 Fake ACP Server。真实 Provider、用户数据库和网络只用于可选 smoke。
+
+### C-S04 — 内部执行统一隔离
+
+内部 Agent 执行记录具有显式执行来源标记；普通 Conversation 列表、FTS 搜索、Recent Work、Memory 调度和 Recall 候选统一隔离内部生成记录，避免递归提取与搜索污染。产品持久 Recall 问答正常保留。
 
 ### C-X01 — Expand-contract 切换
 

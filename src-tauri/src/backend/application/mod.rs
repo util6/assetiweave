@@ -32,6 +32,8 @@ mod tenants;
 mod utils;
 
 #[cfg(test)]
+mod bounded_evidence_baseline_tests;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use agent_market::{

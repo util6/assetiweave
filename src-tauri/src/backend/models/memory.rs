@@ -190,6 +190,40 @@ impl MemoryScope {
     }
 }
 
+/// 高密度精简证据管线冻结预算策略 (E0 冻结参数)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BoundedMemoryBudgetPolicy {
+    /// 首包最大字符数（默认 32,000，约 8,000 tokens）
+    pub initial_pack_max_chars: usize,
+    /// 首包包含的精选节点上限
+    pub initial_pack_node_limit: usize,
+    /// 单项证据正文最大字符截断
+    pub single_item_max_chars: usize,
+    /// 单次工具补读响应最大字符数
+    pub tool_response_max_chars: usize,
+    /// 累计工具响应最大字符数
+    pub tool_cumulative_max_chars: usize,
+    /// 允许的工具补读调用总次数上限
+    pub tool_call_limit: usize,
+    /// 模型输出最大字符数
+    pub agent_output_max_chars: usize,
+}
+
+impl Default for BoundedMemoryBudgetPolicy {
+    fn default() -> Self {
+        Self {
+            initial_pack_max_chars: 32_000,
+            initial_pack_node_limit: 32,
+            single_item_max_chars: 2_000,
+            tool_response_max_chars: 4_000,
+            tool_cumulative_max_chars: 20_000,
+            tool_call_limit: 10,
+            agent_output_max_chars: 8_000,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::MemoryScope;
