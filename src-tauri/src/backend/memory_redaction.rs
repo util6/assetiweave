@@ -35,6 +35,7 @@ pub(crate) fn redact_memory_text(value: &str) -> MemoryRedactionResult {
         "cookie",
         &mut redaction_count,
     );
+    text = replace_all(&text, jwt_pattern(), "jwt_token", &mut redaction_count);
     text = replace_all(&text, api_key_pattern(), "api_key", &mut redaction_count);
     text = replace_high_entropy_tokens(&text, &mut redaction_count);
 
@@ -81,6 +82,26 @@ fn looks_like_high_entropy_secret(value: &str) -> bool {
         return false;
     }
 
+    // 1. 排除文件路径
+    if is_likely_file_path(value) {
+        return false;
+    }
+
+    // 2. 排除 UUID
+    if is_uuid_like(value) {
+        return false;
+    }
+
+    // 3. 排除纯十六进制哈希（Git SHA 40-hex / SHA256 64-hex）
+    if is_hex_hash(value) {
+        return false;
+    }
+
+    // 4. 排除蛇形命名代码标识符（长函数名、测试名）
+    if is_snake_case_identifier(value) {
+        return false;
+    }
+
     let mut has_lower = false;
     let mut has_upper = false;
     let mut has_digit = false;
@@ -100,6 +121,62 @@ fn looks_like_high_entropy_secret(value: &str) -> bool {
     }
 
     shannon_entropy(value) >= 3.5
+}
+
+fn is_hex_hash(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64) && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return false;
+    }
+    value.chars().enumerate().all(|(i, c)| {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            true
+        } else {
+            c.is_ascii_hexdigit()
+        }
+    })
+}
+
+fn is_likely_file_path(value: &str) -> bool {
+    if value.contains('\\') {
+        return true;
+    }
+    if value.starts_with('/') || value.starts_with("./") || value.starts_with("../") {
+        return true;
+    }
+    let common_extensions = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml", ".sql", ".md", ".go", ".py", ".c",
+        ".cpp", ".h", ".yaml", ".yml", ".html", ".css", ".lock", ".sh", ".bash", ".zsh",
+    ];
+    if common_extensions.iter().any(|ext| value.ends_with(ext)) {
+        return true;
+    }
+    let slash_count = value.chars().filter(|&c| c == '/').count();
+    if slash_count >= 2 && !value.contains(':') {
+        return true;
+    }
+    false
+}
+
+fn is_snake_case_identifier(value: &str) -> bool {
+    if !value.contains('_') {
+        return false;
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        return false;
+    }
+    let underscore_count = value.chars().filter(|&c| c == '_').count();
+    underscore_count >= 2
 }
 
 fn shannon_entropy(value: &str) -> f64 {
@@ -155,6 +232,14 @@ fn cookie_header_pattern() -> &'static Regex {
     })
 }
 
+fn jwt_pattern() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
+            .expect("jwt regex")
+    })
+}
+
 fn api_key_pattern() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
@@ -204,6 +289,73 @@ mod tests {
         assert!(!result.text.contains("MIIEvQIB"));
         assert!(!result.text.contains("QWxhZGRp"));
         assert!(result.text.contains("safe=short-value"));
+        assert!(result.redaction_count >= 5);
+    }
+
+    #[test]
+    fn redaction_preserves_non_secret_code_entities_and_hashes() {
+        let git_sha = "bc5c14e1234567890abcdef1234567890abcdef1";
+        let sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let uuid = "5ebbb321-00bb-4a1e-b829-5e9d04a5dca0";
+        let unix_path =
+            "/Users/developer/code-space/assetiweave/src-tauri/src/backend/session_memory.rs";
+        let windows_path = r"C:\Users\admin\workspace\assetiweave\src\index.ts";
+        let long_fn_name =
+            "test_internal_source_isolation_hides_agent_sessions_from_views_and_memory";
+
+        let input = format!(
+            "commit: {git_sha}\nchecksum: {sha256}\nsession: {uuid}\nfile1: {unix_path}\nfile2: {windows_path}\nfn: {long_fn_name}\n"
+        );
+
+        let result = redact_memory_text(&input);
+
+        assert!(
+            result.text.contains(git_sha),
+            "Git 40-hex SHA must be preserved without redaction"
+        );
+        assert!(
+            result.text.contains(sha256),
+            "SHA256 64-hex checksum must be preserved without redaction"
+        );
+        assert!(
+            result.text.contains(uuid),
+            "UUID must be preserved without redaction"
+        );
+        assert!(
+            result.text.contains(unix_path),
+            "UNIX file path must be preserved without redaction"
+        );
+        assert!(
+            result.text.contains(windows_path),
+            "Windows file path must be preserved without redaction"
+        );
+        assert!(
+            result.text.contains(long_fn_name),
+            "Long test/function name must be preserved without redaction"
+        );
+        assert_eq!(
+            result.redaction_count, 0,
+            "Negative samples should not trigger any redaction"
+        );
+    }
+
+    #[test]
+    fn redaction_catches_all_specified_api_credentials() {
+        let sample = concat!(
+            "github: ghp_1234567890abcdefghijklmnopqrstuvwxyz\n",
+            "aws: AKIAIOSFODNN7EXAMPLE\n",
+            "slack: xoxb-1234567890-abcdef123456\n",
+            "google: AIzaSyD-1234567890abcdefghijklmnopqrst\n",
+            "jwt: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozGz_abcdef1234567890\n"
+        );
+
+        let result = redact_memory_text(sample);
+
+        assert!(!result.text.contains("ghp_"));
+        assert!(!result.text.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!result.text.contains("xoxb-"));
+        assert!(!result.text.contains("AIzaSyD"));
+        assert!(!result.text.contains("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"));
         assert!(result.redaction_count >= 5);
     }
 

@@ -238,13 +238,14 @@ mod tests {
         let result = redact_memory_text(git_sha);
 
         println!(
-            "[E0 Baseline Measurement] Current redaction result for Git SHA: {}",
+            "[E2 Precision Result] Redaction result for Git SHA: {}",
             result.text
         );
-        assert!(
-            result.text.contains("[REDACTED:high_entropy]"),
-            "Baseline confirms that current high_entropy regex over-redacts 40-char git commit SHA"
+        assert_eq!(
+            result.text, git_sha,
+            "E2 precision ensures that 40-char git commit SHA is preserved without over-redaction"
         );
+        assert_eq!(result.redaction_count, 0);
     }
 
     #[tokio::test]
