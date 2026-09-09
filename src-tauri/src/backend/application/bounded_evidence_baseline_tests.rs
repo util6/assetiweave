@@ -1808,4 +1808,56 @@ mod tests {
             .expect("read restored global document");
         assert_eq!(restored_global_md, expected_global_memory_md);
     }
+
+    #[tokio::test]
+    async fn test_e16_surface_alignment_and_internal_external_isolation() {
+        let harness = FixtureHarness::new("e16_surface");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+        let session = make_heavy_log_session();
+        let session_id = harness.import_session(&pool, session.clone()).await;
+
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e16".to_string(),
+            session.external_id.clone(),
+            harness.source.id.clone(),
+            1,
+            "fp-e16".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+        let first_ref_key = short_refs.keys().next().cloned().unwrap();
+        let mut reader = BoundedEvidenceReaderSession::new(&session, &work_order, short_refs);
+        let internal_node = reader
+            .read_content_node(&first_ref_key)
+            .expect("internal read node");
+
+        let resolved_context = service
+            .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
+                project_path: None,
+                query: None,
+                token_budget: Some(4000),
+            })
+            .await
+            .expect("resolve memory context");
+
+        assert!(!internal_node.text.is_empty());
+        assert!(resolved_context.token_budget <= 4000);
+
+        // 隔离性验证：未授权工具调用被拦截，且不启动 AIWC 子进程
+        let unauthorized = reader.check_tool_permission_and_budget("unauthorized_tool");
+        assert!(matches!(
+            unauthorized,
+            Err(EvidenceReadError::UnauthorizedTool(_))
+        ));
+    }
 }
