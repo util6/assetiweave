@@ -25,6 +25,29 @@ impl AppService {
             .await?
             .into_iter()
             .find(|item| item.agent_id == agent_id.to_string());
+        if let Some(installation) = existing_installation.as_ref().filter(|installation| {
+            installation.installation_status
+                == crate::backend::agent_market::types::InstallationStatus::Incompatible
+        }) {
+            return Ok(AgentConnectionResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                installed: true,
+                connected: false,
+                version: Some(installation.agent_version.clone()),
+                connection_method: Some(installation.protocol.as_str().to_string()),
+                error_code: Some("agent_reinstall_required".to_string()),
+                error: Some(
+                    "The installed Agent is incompatible with the active catalog definition; reinstall it before checking the connection."
+                        .to_string(),
+                ),
+                installation_status: Some(installation.installation_status.as_str().to_string()),
+                runtime_status: Some(installation.runtime_status.as_str().to_string()),
+                protocol_status: Some(installation.protocol_status.as_str().to_string()),
+                execution_ready: false,
+                health_stale: false,
+            });
+        }
         let mut result = if matches!(mode, AgentConnectionCheckMode::Connection)
             && existing_installation.as_ref().is_some_and(|installation| {
                 installation.protocol
@@ -104,6 +127,22 @@ impl AppService {
             .await?
             .into_iter()
             .find(|installation| installation.agent_id == agent_id.to_string());
+        if existing_installation.as_ref().is_some_and(|installation| {
+            installation.installation_status
+                == crate::backend::agent_market::types::InstallationStatus::Incompatible
+        }) {
+            return Ok(AgentModelsResult {
+                agent_id: agent_id.to_string(),
+                available: false,
+                models: Vec::new(),
+                current_model_id: None,
+                error_code: Some("agent_reinstall_required".to_string()),
+                error: Some(
+                    "The installed Agent is incompatible with the active catalog definition; reinstall it before loading models."
+                        .to_string(),
+                ),
+            });
+        }
         if existing_installation.as_ref().is_some_and(|installation| {
             installation.protocol == crate::backend::agent_market::types::AgentMarketProtocol::Acp
         }) {
@@ -358,6 +397,102 @@ mod tests {
             .find(|installation| installation.agent_id == "native-fixture")
             .expect("native installation view");
         assert!(!installation.health_stale);
+
+        drop(service);
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn incompatible_native_installation_does_not_run_model_discovery() {
+        let (service, repository, root) = native_service_fixture().await;
+        let mut installation = repository
+            .get("native-fixture")
+            .await
+            .expect("load native fixture")
+            .expect("native fixture exists");
+        installation.installation_status = InstallationStatus::Incompatible;
+        installation.runtime_error_code = Some("catalog_distribution_incompatible".to_string());
+        installation.runtime_error_message = Some(
+            "The installed Agent distribution or protocol is incompatible with the active catalog."
+                .to_string(),
+        );
+        repository
+            .upsert_active(&installation)
+            .await
+            .expect("mark native fixture incompatible");
+
+        let result = service
+            .list_agent_models(AgentModelsRequest {
+                agent_id: "native-fixture".to_string(),
+            })
+            .await
+            .expect("incompatible model request should be represented as unavailable");
+
+        assert!(!result.available);
+        assert!(result.models.is_empty());
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("agent_reinstall_required")
+        );
+        let persisted = repository
+            .get("native-fixture")
+            .await
+            .expect("reload native fixture")
+            .expect("native fixture still exists");
+        assert_eq!(
+            persisted.installation_status,
+            InstallationStatus::Incompatible
+        );
+
+        drop(service);
+        drop(repository);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn incompatible_native_installation_does_not_run_connection_probe() {
+        let (service, repository, root) = native_service_fixture().await;
+        let mut installation = repository
+            .get("native-fixture")
+            .await
+            .expect("load native fixture")
+            .expect("native fixture exists");
+        installation.installation_status = InstallationStatus::Incompatible;
+        installation.runtime_error_code = Some("catalog_distribution_incompatible".to_string());
+        installation.runtime_error_message = Some(
+            "The installed Agent distribution or protocol is incompatible with the active catalog."
+                .to_string(),
+        );
+        repository
+            .upsert_active(&installation)
+            .await
+            .expect("mark native fixture incompatible");
+
+        let result = service
+            .check_agent_connection(AgentConnectionCheckRequest {
+                agent_id: "native-fixture".to_string(),
+                mode: AgentConnectionCheckMode::Connection,
+            })
+            .await
+            .expect("incompatible connection check should be represented as unavailable");
+
+        assert!(!result.available);
+        assert!(!result.connected);
+        assert!(!result.execution_ready);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("agent_reinstall_required")
+        );
+        let persisted = repository
+            .get("native-fixture")
+            .await
+            .expect("reload native fixture")
+            .expect("native fixture still exists");
+        assert_eq!(
+            persisted.installation_status,
+            InstallationStatus::Incompatible
+        );
 
         drop(service);
         drop(repository);

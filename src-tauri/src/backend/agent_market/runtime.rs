@@ -463,7 +463,10 @@ impl AgentRuntimeManager {
             .list()
             .await?
             .into_iter()
-            .filter(|installation| installation.enabled)
+            .filter(|installation| {
+                installation.enabled
+                    && installation.installation_status != InstallationStatus::Incompatible
+            })
             .map(|installation| (installation.agent_id, installation.protocol))
             .collect::<Vec<_>>();
         let mut summary = AgentHealthRefreshSummary::default();
@@ -2170,6 +2173,21 @@ mod tests {
 
         let candidates_after = repository.list_registry_candidates().await.unwrap();
         assert!(candidates_after.is_empty());
+
+        let refresh = manager
+            .refresh_installed_agent_health()
+            .await
+            .expect("refresh should skip incompatible installation");
+        assert_eq!(refresh.checked, 0);
+        let after_refresh = repository
+            .get("antigravity")
+            .await
+            .unwrap()
+            .expect("incompatible record preserved after refresh");
+        assert_eq!(
+            after_refresh.installation_status,
+            InstallationStatus::Incompatible
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

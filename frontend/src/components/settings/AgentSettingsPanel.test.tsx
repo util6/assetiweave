@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import type { AppShortcut } from "../../types";
+import type { AgentMarketItem } from "../../services/agentRuntime";
 
 const listAgentMarketMock = vi.hoisted(() => vi.fn());
 const agentRuntime = vi.hoisted(() => ({
@@ -351,6 +352,61 @@ describe("AgentSettingsPanel", () => {
       }),
     ).toBeNull();
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(2);
+  });
+
+  it("makes reinstall the primary action for an incompatible installation", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    const item = createMarketItem("antigravity", true, "native");
+    item.protocol = "acp";
+    item.installed!.installationStatus = "incompatible";
+    item.installed!.executionReady = false;
+    item.installed!.error = {
+      code: "catalog_distribution_incompatible",
+      message: "The installed Agent must be reinstalled.",
+      agentId: null,
+      phase: null,
+      retryable: true,
+      action: null,
+    };
+    listAgentMarketMock.mockResolvedValue([item]);
+
+    renderPanel();
+
+    const row = (
+      await screen.findByRole("heading", { name: "Antigravity" })
+    ).closest("article") as HTMLElement;
+    expect(within(row).queryByRole("button", { name: "停用" })).toBeNull();
+    expect(within(row).getAllByRole("button", { name: "重装" })).toHaveLength(
+      1,
+    );
+    fireEvent.click(within(row).getByRole("button", { name: "重装" }));
+    await waitFor(() =>
+      expect(agentRuntime.previewAgentInstallation).toHaveBeenCalledWith({
+        agentId: "antigravity",
+        action: "reinstall",
+      }),
+    );
+  });
+
+  it("does not probe or offer runtime actions for an incompatible installation", async () => {
+    agentRuntime.listAgentMarket = listAgentMarketMock;
+    const item = createMarketItem("antigravity", true, "native");
+    item.protocol = "acp";
+    item.installed!.installationStatus = "incompatible";
+    item.installed!.executionReady = false;
+    listAgentMarketMock.mockResolvedValue([item]);
+
+    renderPanel({ view: "settings" });
+
+    const row = (
+      await screen.findByRole("heading", { name: "Antigravity" })
+    ).closest("article") as HTMLElement;
+    await waitFor(() => expect(listAgentMarketMock).toHaveBeenCalledTimes(1));
+    expect(agentRuntime.checkAgentConnection).not.toHaveBeenCalled();
+    expect(within(row).queryByRole("button", { name: "测试连接" })).toBeNull();
+    expect(
+      within(row).queryByRole("button", { name: "模型 Antigravity" }),
+    ).toBeNull();
   });
 
   it("rechecks installed ACP agents instead of trusting persisted availability", async () => {
@@ -739,7 +795,7 @@ function createMarketItem(
   installed: boolean,
   protocol: "acp" | "native" = "acp",
   healthStale = false,
-) {
+): AgentMarketItem {
   const displayName =
     id === "opencode"
       ? "OpenCode"
@@ -755,6 +811,7 @@ function createMarketItem(
     description: "Fixture Agent",
     protocol,
     version: "1.0.0",
+    installability: "installable",
     capabilities: {
       purposes: ["text"],
       textPrompt: true,
