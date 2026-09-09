@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::backend::{
-        application::session_memory::{build_evidence_references, build_session_memory_prompt},
-        dto::ConversationSessionDetail,
+        application::{
+            session_memory::{build_evidence_references, build_session_memory_prompt},
+            tests::FakeRuntime,
+            AppService,
+        },
         memory_redaction::redact_memory_text,
         models::{
             BoundedMemoryBudgetPolicy, ConversationAdapter, ConversationAdapterKind,
@@ -12,10 +15,8 @@ mod tests {
         },
         store,
     };
-    use chrono::Utc;
     use std::path::PathBuf;
 
-    /// 构造包含不同场景的测试环境与会话数据
     struct FixtureHarness {
         root: PathBuf,
         adapter: ConversationAdapter,
@@ -75,21 +76,30 @@ mod tests {
             pool: &sqlx::SqlitePool,
             session: NormalizedConversationSession,
         ) -> String {
-            store::upsert_conversation_adapter_sqlx(pool, &self.adapter, Utc::now().to_rfc3339())
+            store::upsert_conversation_adapter_sqlx(pool, "default", &self.adapter)
                 .await
                 .expect("upsert adapter");
-            store::upsert_conversation_source_sqlx(pool, &self.source, Utc::now().to_rfc3339())
+            store::upsert_conversation_source_sqlx(pool, "default", &self.source)
                 .await
                 .expect("upsert source");
-            let imported = store::import_canonical_session_sqlx(
+            let external_id = session.external_id.clone();
+            store::import_conversation_sessions_sqlx(
                 pool,
-                &self.source.id,
-                &session,
-                Utc::now().to_rfc3339(),
+                "default",
+                &self.source,
+                &[session],
+                false,
             )
             .await
             .expect("import session");
-            imported.session_id
+            let session_id: String = sqlx::query_scalar(
+                "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = ?1",
+            )
+            .bind(&external_id)
+            .fetch_one(pool)
+            .await
+            .expect("fetch session id");
+            session_id
         }
     }
 
@@ -140,127 +150,21 @@ mod tests {
         }
     }
 
-    /// Fixture 2: 用户中途纠正与否决（先提议方案 A，后明确拒绝并更正为方案 B）
-    fn make_rejection_and_correction_session() -> NormalizedConversationSession {
-        let timestamp = "2026-09-09T02:00:00Z";
-        let turns = vec![
-            NormalizedConversationTurn {
-                external_id: "turn-corr-1".to_string(),
-                turn_index: 0,
-                user_text: "Can we use an in-memory HashMap to cache Memory records across restarts?".to_string(),
-                title: None,
-                started_at: Some(timestamp.to_string()),
-                ended_at: Some(timestamp.to_string()),
-                parts: vec![NormalizedConversationPart {
-                    role: ConversationPartRole::Assistant,
-                    kind: ConversationPartKind::Text,
-                    text: Some("Yes, we can store all Memory models in a global lazy_static HashMap in memory.".to_string()),
-                    language: None,
-                    command: None,
-                    cwd: None,
-                    status: None,
-                    exit_code: None,
-                    command_label: None,
-                    source_execution_id: None,
-                    content_card: None,
-                    metadata_json: None,
-                }],
-            },
-            NormalizedConversationTurn {
-                external_id: "turn-corr-2".to_string(),
-                turn_index: 1,
-                user_text: "No, absolutely not. Contract C-A02 strictly requires SQLite as the only structured authority. We reject in-memory HashMap and require persisting to SQLite!".to_string(),
-                title: None,
-                started_at: Some(timestamp.to_string()),
-                ended_at: Some(timestamp.to_string()),
-                parts: vec![NormalizedConversationPart {
-                    role: ConversationPartRole::Assistant,
-                    kind: ConversationPartKind::Text,
-                    text: Some("Understood. We explicitly reject the in-memory HashMap proposal and confirm SQLite as the single authority.".to_string()),
-                    language: None,
-                    command: None,
-                    cwd: None,
-                    status: None,
-                    exit_code: None,
-                    command_label: None,
-                    source_execution_id: None,
-                    content_card: None,
-                    metadata_json: None,
-                }],
-            },
-        ];
-        NormalizedConversationSession {
-            external_id: "correction-session".to_string(),
-            title: Some("User Rejection & Architecture Correction Session".to_string()),
-            project_path: Some("/path/to/project".to_string()),
-            started_at: Some(timestamp.to_string()),
-            updated_at: Some(timestamp.to_string()),
-            source_locator: Some("fixture://correction".to_string()),
-            source_fingerprint: Some("rev-corr-1".to_string()),
-            turns,
-        }
-    }
-
-    /// Fixture 3: 包含凭据、Git SHA (40-hex)、长路径混合的样本
-    fn make_credentials_and_sha_session() -> NormalizedConversationSession {
-        let timestamp = "2026-09-09T03:00:00Z";
-        let text = concat!(
-            "Configuration setup:\n",
-            "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.secretpayload.1234567890\n",
-            "OpenAI API key: sk-proj-1234567890abcdefghijklmnopqrstuvwxyz\n",
-            "Git revision commit: bc5c14e1234567890abcdef1234567890abcdef1\n",
-            "Source file path: /Users/util6/code-space/assetiweave/src-tauri/src/backend/session_memory.rs\n",
-            "Test symbol: test_phase1_worker_honors_idle_boundary_persists_redacted_output\n",
-        );
-        NormalizedConversationSession {
-            external_id: "credentials-sha-session".to_string(),
-            title: Some("Credentials, Git SHA, and Long Path Session".to_string()),
-            project_path: Some("/Users/util6/code-space/assetiweave".to_string()),
-            started_at: Some(timestamp.to_string()),
-            updated_at: Some(timestamp.to_string()),
-            source_locator: Some("fixture://creds".to_string()),
-            source_fingerprint: Some("rev-creds-1".to_string()),
-            turns: vec![NormalizedConversationTurn {
-                external_id: "turn-creds-1".to_string(),
-                turn_index: 0,
-                user_text: "Configure the deployment pipeline with credentials and git revision"
-                    .to_string(),
-                title: None,
-                started_at: Some(timestamp.to_string()),
-                ended_at: Some(timestamp.to_string()),
-                parts: vec![NormalizedConversationPart {
-                    role: ConversationPartRole::Assistant,
-                    kind: ConversationPartKind::Text,
-                    text: Some(text.to_string()),
-                    language: None,
-                    command: None,
-                    cwd: None,
-                    status: None,
-                    exit_code: None,
-                    command_label: None,
-                    source_execution_id: None,
-                    content_card: None,
-                    metadata_json: None,
-                }],
-            }],
-        }
-    }
-
     #[tokio::test]
     async fn baseline_unbounded_evidence_violates_budget_and_demonstrates_need_for_bounded_pack() {
         let harness = FixtureHarness::new("heavy");
-        let pool = sqlx::SqlitePool::connect(":memory:")
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake)
             .await
-            .expect("connect sqlite");
-        store::run_database_migrations_sqlx(&pool)
-            .await
-            .expect("migrations");
+            .expect("open app service");
 
+        let pool = service.db.pool().clone();
         let session = make_heavy_log_session();
         let session_id = harness.import_session(&pool, session).await;
-        let detail = store::get_conversation_session_detail_sqlx(&pool, "default", &session_id)
+        let detail = store::load_conversation_session_detail_sqlx(&pool, "default", &session_id)
             .await
-            .expect("get detail")
+            .expect("load detail")
             .expect("session exists");
 
         // 测量旧版 build_evidence_references 与 build_session_memory_prompt
@@ -298,7 +202,6 @@ mod tests {
         let result = redact_memory_text(git_sha);
 
         // 当前现存实现将 40 位十六进制 Git SHA 误判为 high entropy secret
-        // 这证实了 08 规范所指出的：“高熵脱敏还可能误伤路径、符号和 Git SHA。E2 切片将解决该问题。”
         println!(
             "[E0 Baseline Measurement] Current redaction result for Git SHA: {}",
             result.text

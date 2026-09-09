@@ -124,11 +124,11 @@ struct AgentRecentEvent {
 }
 
 #[derive(Debug, Clone)]
-struct EvidenceReference {
-    key: String,
-    locator: ConversationContentNodeLocator,
-    node_id: Option<String>,
-    content: String,
+pub(crate) struct EvidenceReference {
+    pub(crate) key: String,
+    pub(crate) locator: ConversationContentNodeLocator,
+    pub(crate) node_id: Option<String>,
+    pub(crate) content: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -500,7 +500,7 @@ impl AppService {
     }
 }
 
-fn build_session_memory_prompt(
+pub(crate) fn build_session_memory_prompt(
     detail: &ConversationSessionDetail,
     evidence: &[EvidenceReference],
 ) -> AppResult<String> {
@@ -541,7 +541,9 @@ fn build_session_memory_prompt(
     serde_json::to_string(&prompt).map_err(AppError::external)
 }
 
-fn build_evidence_references(detail: &ConversationSessionDetail) -> Vec<EvidenceReference> {
+pub(crate) fn build_evidence_references(
+    detail: &ConversationSessionDetail,
+) -> Vec<EvidenceReference> {
     let mut references = Vec::new();
     for question in &detail.questions {
         for node in &question.projected_content_nodes {
