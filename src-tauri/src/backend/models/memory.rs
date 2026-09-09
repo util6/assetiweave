@@ -295,6 +295,20 @@ impl From<&MemoryRecipe> for MemoryRecipeSnapshot {
     }
 }
 
+impl MemoryRecipeSnapshot {
+    pub fn to_recipe(&self) -> MemoryRecipe {
+        MemoryRecipe {
+            id: self.recipe_id.clone(),
+            revision: self.revision,
+            name: "Bound Recipe".to_string(),
+            focus_areas: self.focus_areas.clone(),
+            ignored_topics: self.ignored_topics.clone(),
+            terminology: self.terminology.clone(),
+            custom_instructions: self.custom_instructions.clone(),
+        }
+    }
+}
+
 /// 执行工单 MemoryExecutionWorkOrder (绑定范围、版本、Recipe、预算策略、watermark、input_fingerprint)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -5,7 +5,16 @@ use crate::backend::{
         AiExecutionPurpose, AiExecutionRequest,
     },
     dto::{ConversationContentNodeLocator, ConversationSessionDetail},
-    models::{RecentMemoryEventCategory, SessionMemory, SessionMemoryJob, SessionMemoryJobStatus},
+    evidence::{
+        build_bounded_evidence_initial_pack, BoundedEvidenceInitialPack, BoundedEvidenceNode,
+        EvidenceNodeKind, EvidenceReadStatus, ShortEvidenceRef,
+    },
+    models::{
+        BoundedMemoryBudgetPolicy, ConversationPartRole, MemoryExecutionWorkOrder, MemoryRecipe,
+        MemoryRecipeSnapshot, NormalizedConversationPart, NormalizedConversationSession,
+        NormalizedConversationTurn, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
+        SessionMemoryJobStatus,
+    },
     runtime::{tasks::TaskContext, AppError, AppResult},
     store::{
         self, RecentMemoryEventInput, SessionMemoryPersistInput, SessionMemoryReferenceInput,
@@ -17,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     time::Duration as StdDuration,
 };
 use tokio_util::sync::CancellationToken;
@@ -254,7 +263,7 @@ impl AppService {
         let result = self
             .execute_session_memory_agent(&job, &detail, context.cancellation())
             .await;
-        let output = match result {
+        let (output, short_refs, _is_empty_content) = match result {
             Ok(output) => output,
             Err(error) => {
                 drop(lease_guard);
@@ -295,7 +304,11 @@ impl AppService {
                 "Session Memory task was canceled".to_string(),
             ));
         }
-        let evidence = build_evidence_references(&detail);
+        let evidence = if !short_refs.is_empty() {
+            build_bounded_evidence_references(&detail, &short_refs)
+        } else {
+            build_evidence_references(&detail)
+        };
         let project_path = session_project_path(&detail, &registered_roots);
         let persist =
             match validated_persist_input(&job, &output, &evidence, project_path, &now_text) {
@@ -447,14 +460,54 @@ impl AppService {
         job: &SessionMemoryJob,
         detail: &ConversationSessionDetail,
         cancellation: CancellationToken,
-    ) -> AppResult<SessionMemoryAgentOutput> {
-        let evidence = build_evidence_references(detail);
-        if evidence.is_empty() {
-            return Err(AppError::Validation(
-                "Session Memory requires canonical Conversation evidence".to_string(),
-            ));
+    ) -> AppResult<(
+        SessionMemoryAgentOutput,
+        HashMap<String, ShortEvidenceRef>,
+        bool,
+    )> {
+        let recipe = if let Some(work_order_json) = &job.work_order_json {
+            if let Ok(wo) = serde_json::from_str::<MemoryExecutionWorkOrder>(work_order_json) {
+                wo.recipe.to_recipe()
+            } else {
+                MemoryRecipe::default_builtin()
+            }
+        } else {
+            MemoryRecipe::default_builtin()
+        };
+
+        let normalized = session_detail_to_normalized(detail);
+        let budget = BoundedMemoryBudgetPolicy::default();
+        let work_order = MemoryExecutionWorkOrder::new(
+            format!("wo-{}", job.id),
+            job.session_id.clone(),
+            job.source_id.clone(),
+            job.source_revision,
+            job.source_fingerprint.clone(),
+            &recipe,
+            budget,
+            Utc::now().to_rfc3339(),
+        );
+
+        let (pack, short_refs) = build_bounded_evidence_initial_pack(&normalized, &work_order);
+
+        // 如果完全没有有效节点（所有节点全为空或不可用）
+        if pack.nodes_count == 0 && pack.coverage.indexed_nodes == 0 {
+            let empty_output = SessionMemoryAgentOutput {
+                summary: "No content available in this session.".to_string(),
+                goal: String::new(),
+                result: String::new(),
+                decisions: Vec::new(),
+                verification: Vec::new(),
+                blockers: Vec::new(),
+                follow_up: Vec::new(),
+                topics: Vec::new(),
+                source_references: Vec::new(),
+                events: Vec::new(),
+            };
+            return Ok((empty_output, short_refs, true));
         }
-        let prompt = build_session_memory_prompt(detail, &evidence)?;
+
+        let prompt = build_bounded_evidence_prompt(&pack, &recipe)?;
         let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new(SESSION_MEMORY_ACTION),
@@ -495,8 +548,30 @@ impl AppService {
             ));
         }
         let json_text = strip_json_fence(&result.text);
-        serde_json::from_str(json_text)
-            .map_err(|_| AppError::Validation("Session Memory Agent output is invalid".to_string()))
+        let mut output: SessionMemoryAgentOutput =
+            serde_json::from_str(json_text).map_err(|_| {
+                AppError::Validation("Session Memory Agent output is invalid".to_string())
+            })?;
+
+        // 准入校验与事实过滤：
+        // 1. 过滤被用户更正/否决的提案 (E02)
+        let corrections: Vec<BoundedEvidenceNode> = pack
+            .intent_and_corrections
+            .iter()
+            .filter(|n| n.kind == EvidenceNodeKind::UserCorrection)
+            .cloned()
+            .collect();
+        output.decisions = sanitize_decisions_with_corrections(output.decisions, &corrections);
+
+        // 2. 检查是否有 VerificationEvidence，无则过滤虚假通过 (E03)
+        let has_verification_evidence = pack
+            .outcomes_and_verifications
+            .iter()
+            .any(|n| n.kind == EvidenceNodeKind::VerificationEvidence);
+        output.verification =
+            sanitize_verifications_with_evidence(output.verification, has_verification_evidence);
+
+        Ok((output, short_refs, false))
     }
 }
 
@@ -581,6 +656,257 @@ pub(crate) fn build_evidence_references(
     references
 }
 
+pub(crate) fn session_detail_to_normalized(
+    detail: &ConversationSessionDetail,
+) -> NormalizedConversationSession {
+    let mut turns = Vec::new();
+    for question in &detail.questions {
+        for turn in &question.turns {
+            let parts = question
+                .parts
+                .iter()
+                .filter(|p| p.turn_id == turn.id)
+                .map(|p| NormalizedConversationPart {
+                    role: p.role,
+                    kind: p.kind,
+                    text: p.text.clone(),
+                    language: p.language.clone(),
+                    command: p.command.clone(),
+                    cwd: p.cwd.clone(),
+                    status: p.status.clone(),
+                    exit_code: p.exit_code,
+                    command_label: p.command_label.clone(),
+                    source_execution_id: p.source_execution_id.clone(),
+                    content_card: None,
+                    metadata_json: p.metadata_json.clone(),
+                })
+                .collect();
+
+            turns.push(NormalizedConversationTurn {
+                external_id: turn.external_id.clone(),
+                turn_index: turn.turn_index,
+                user_text: turn.user_text.clone(),
+                title: turn.title.clone(),
+                started_at: turn.started_at.clone(),
+                ended_at: turn.ended_at.clone(),
+                parts,
+            });
+        }
+    }
+
+    NormalizedConversationSession {
+        external_id: detail.session.external_id.clone(),
+        title: Some(detail.session.title.clone()),
+        project_path: detail.session.project_path.clone(),
+        started_at: detail.session.started_at.clone(),
+        updated_at: detail.session.updated_at.clone(),
+        source_locator: detail.session.source_locator.clone(),
+        source_fingerprint: detail.session.source_fingerprint.clone(),
+        turns,
+        ..Default::default()
+    }
+}
+
+pub(crate) fn build_bounded_evidence_prompt(
+    pack: &BoundedEvidenceInitialPack,
+    recipe: &MemoryRecipe,
+) -> AppResult<String> {
+    let prompt = json!({
+        "contract_version": SESSION_MEMORY_CONTRACT_VERSION,
+        "prompt_version": SESSION_MEMORY_PROMPT_VERSION,
+        "work_order_id": pack.work_order_id,
+        "task_boundary": pack.task_boundary,
+        "recipe": {
+            "name": recipe.name,
+            "focus_areas": recipe.focus_areas,
+            "ignored_topics": recipe.ignored_topics,
+            "terminology": recipe.terminology,
+            "custom_instructions": recipe.custom_instructions,
+        },
+        "initial_evidence_pack": {
+            "intent_and_corrections": pack.intent_and_corrections,
+            "outcomes_and_verifications": pack.outcomes_and_verifications,
+            "index": pack.index,
+            "coverage": pack.coverage,
+        },
+        "instructions": [
+            "Extract concise structured Session Memory from the bounded evidence pack.",
+            "Cite evidence exclusively using the provided ref_key values (e.g. ref-t1-u, ref-t1-p1). Do not invent IDs.",
+            "CRITICAL - User Decisions: Only record decisions that were confirmed by the user. If the user corrected, rejected, or modified an earlier proposal, DO NOT record the rejected/superseded proposal as a confirmed decision.",
+            "CRITICAL - Verification: Distinguish between verified facts backed by test/tool evidence and unverified claims. If an agent claimed a task was completed or passed without verification evidence, do not record it as verified.",
+            "If the session has no meaningful user content or all nodes are unavailable, output empty arrays and empty summary."
+        ],
+        "output_format": {
+            "summary": "string",
+            "goal": "string",
+            "result": "string",
+            "decisions": ["string (confirmed user decisions only)"],
+            "verification": ["string (verified with test/tool outputs)"],
+            "blockers": ["string"],
+            "follow_up": ["string"],
+            "topics": ["string"],
+            "source_references": [{ "reference_key": "ref_key" }],
+            "events": [{
+                "category": "progress|decision|research|verification|blocker|follow_up",
+                "title": "string",
+                "summary": "string",
+                "source_reference": "optional ref_key"
+            }]
+        }
+    });
+
+    serde_json::to_string(&prompt).map_err(AppError::external)
+}
+
+pub(crate) fn build_bounded_evidence_references(
+    detail: &ConversationSessionDetail,
+    short_refs: &HashMap<String, ShortEvidenceRef>,
+) -> Vec<EvidenceReference> {
+    let mut references = Vec::new();
+
+    for (ref_key, sref) in short_refs {
+        if sref.status == EvidenceReadStatus::Unavailable {
+            continue;
+        }
+
+        let mut matched_locator = None;
+        let mut matched_node_id = None;
+        let mut matched_content = String::new();
+
+        for question in &detail.questions {
+            if let Some(turn) = question
+                .turns
+                .iter()
+                .find(|t| t.external_id == sref.turn_id)
+            {
+                if sref.ref_key.ends_with("-u") {
+                    matched_locator = Some(ConversationContentNodeLocator {
+                        question_id: question.question.id.clone(),
+                        turn_id: turn.id.clone(),
+                        part_id: String::new(),
+                        node_order: 0,
+                    });
+                    matched_content = turn.user_text.clone();
+                    if let Some(node) = question
+                        .projected_content_nodes
+                        .iter()
+                        .find(|n| n.turn_id == turn.id && n.role == ConversationPartRole::User)
+                    {
+                        matched_node_id = Some(node.node_id.clone());
+                    }
+                    break;
+                } else {
+                    let part_opt = question
+                        .parts
+                        .iter()
+                        .find(|p| p.turn_id == turn.id && p.part_index == sref.part_index as i64);
+                    if let Some(part) = part_opt {
+                        let node_order = question
+                            .projected_content_nodes
+                            .iter()
+                            .find(|n| n.part_id == part.id)
+                            .map(|n| n.node_order)
+                            .unwrap_or(sref.part_index);
+
+                        matched_locator = Some(ConversationContentNodeLocator {
+                            question_id: question.question.id.clone(),
+                            turn_id: turn.id.clone(),
+                            part_id: part.id.clone(),
+                            node_order,
+                        });
+                        matched_content = part.text.clone().unwrap_or_default();
+                        if let Some(node) = question
+                            .projected_content_nodes
+                            .iter()
+                            .find(|n| n.part_id == part.id)
+                        {
+                            matched_node_id = Some(node.node_id.clone());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(locator) = matched_locator {
+            references.push(EvidenceReference {
+                key: ref_key.clone(),
+                locator,
+                node_id: matched_node_id,
+                content: crate::backend::memory_redaction::redact_memory_text(&matched_content)
+                    .text,
+            });
+        }
+    }
+
+    references.sort_by(|a, b| a.key.cmp(&b.key));
+    references
+}
+
+fn sanitize_decisions_with_corrections(
+    decisions: Vec<String>,
+    corrections: &[BoundedEvidenceNode],
+) -> Vec<String> {
+    if corrections.is_empty() {
+        return decisions;
+    }
+    const NEGATION_PREFIXES: &[&str] = &[
+        "don't use",
+        "do not use",
+        "dont use",
+        "never use",
+        "stop using",
+        "don't",
+        "do not",
+        "不要用",
+        "不要使用",
+        "不用",
+        "不要",
+        "并非",
+    ];
+
+    decisions
+        .into_iter()
+        .filter(|d| {
+            let d_lower = d.to_lowercase();
+            !corrections.iter().any(|c| {
+                let c_lower = c.text.to_lowercase();
+                NEGATION_PREFIXES.iter().any(|prefix| {
+                    if let Some(pos) = c_lower.find(prefix) {
+                        let negated_part = &c_lower[pos + prefix.len()..];
+                        d_lower.split(|ch: char| !ch.is_alphanumeric()).any(|word| {
+                            word.len() >= 3 && negated_part.trim_start().starts_with(word)
+                        })
+                    } else {
+                        false
+                    }
+                })
+            })
+        })
+        .collect()
+}
+
+fn sanitize_verifications_with_evidence(
+    verifications: Vec<String>,
+    has_verification_evidence: bool,
+) -> Vec<String> {
+    if has_verification_evidence {
+        verifications
+    } else {
+        verifications
+            .into_iter()
+            .filter(|v| {
+                let v_lower = v.to_lowercase();
+                let is_pass_claim = v_lower.contains("pass")
+                    || v_lower.contains("通过")
+                    || v_lower.contains("success")
+                    || v_lower.contains("verified");
+                !is_pass_claim
+            })
+            .collect()
+    }
+}
+
 fn validated_persist_input(
     job: &SessionMemoryJob,
     output: &SessionMemoryAgentOutput,
@@ -617,7 +943,12 @@ fn validated_persist_input(
             source_revision: job.source_revision,
         });
     }
-    if references.is_empty() {
+    let is_empty_session = output.source_references.is_empty()
+        && (output.summary.is_empty()
+            || output.summary == "No content available in this session."
+            || evidence.is_empty());
+
+    if !is_empty_session && references.is_empty() {
         return Err(AppError::Validation(
             "Session Memory must cite at least one source reference".to_string(),
         ));

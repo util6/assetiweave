@@ -23,6 +23,7 @@ mod tests {
         },
         store,
     };
+    use serde_json::json;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
@@ -1030,6 +1031,421 @@ mod tests {
         assert!(
             matches!(res, Err(EvidenceReadError::UnauthorizedTool { .. })),
             "Calling tool outside of whitelist must return UnauthorizedTool"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_e02_rejected_proposal_never_admitted_as_confirmed_decision() {
+        let harness = FixtureHarness::new("e02");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+
+        // 构造提议与否决的会话
+        let turns = vec![
+            NormalizedConversationTurn {
+                external_id: "t1".to_string(),
+                turn_index: 0,
+                user_text: "Let's use MySQL for our primary database.".to_string(),
+                title: None,
+                started_at: None,
+                ended_at: None,
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("Sure, MySQL sounds like a reasonable choice.".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: Some("success".to_string()),
+                    exit_code: Some(0),
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+            },
+            NormalizedConversationTurn {
+                external_id: "t2".to_string(),
+                turn_index: 1,
+                user_text: "Wait, don't use MySQL! Switch to PostgreSQL instead, and let's adopt Rust for the backend.".to_string(),
+                title: None,
+                started_at: None,
+                ended_at: None,
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("Understood. We will use PostgreSQL and Rust.".to_string()),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: Some("success".to_string()),
+                    exit_code: Some(0),
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: Some(r#"{"completed":true}"#.to_string()),
+                }],
+            },
+        ];
+
+        let session = NormalizedConversationSession {
+            external_id: "sess-e02".to_string(),
+            title: Some("Database Choice Session".to_string()),
+            turns,
+            ..Default::default()
+        };
+
+        let session_id = harness.import_session(&pool, session).await;
+        let now = chrono::Utc::now();
+        service
+            .enqueue_session_memory_jobs_at(
+                &harness.source.id,
+                "sync-1",
+                1,
+                "evt-1",
+                Some(&[session_id.clone()]),
+                now,
+            )
+            .await
+            .expect("enqueue");
+
+        let job_ids = store::list_session_memory_job_ids_for_scheduler_sqlx(
+            &pool,
+            "default",
+            &now.to_rfc3339(),
+            10,
+        )
+        .await
+        .expect("list jobs");
+        assert_eq!(job_ids.len(), 1);
+        let job_id = &job_ids[0];
+
+        // 模拟 Agent 返回时把被否决的 MySQL 错记为 decision
+        let agent_reply = json!({
+            "summary": "Decided on technologies.",
+            "goal": "Select tech stack",
+            "result": "Tech stack chosen",
+            "decisions": [
+                "Use MySQL database for primary storage",
+                "Adopt Rust for backend"
+            ],
+            "verification": [],
+            "blockers": [],
+            "follow_up": [],
+            "topics": ["database", "backend"],
+            "source_references": [
+                { "reference_key": "ref-t1-u" },
+                { "reference_key": "ref-t2-u" }
+            ],
+            "events": []
+        });
+        *fake.result_text.lock().unwrap() = agent_reply.to_string();
+
+        let memory = service
+            .run_session_memory_phase1_at(job_id, now)
+            .await
+            .expect("run phase 1")
+            .expect("memory produced");
+
+        assert!(
+            !memory.decisions.iter().any(|d| d.contains("MySQL")),
+            "Rejected MySQL proposal must be filtered out by admission, decisions: {:?}",
+            memory.decisions
+        );
+        assert!(
+            memory.decisions.iter().any(|d| d.contains("Rust")),
+            "Confirmed Rust adoption decision must be retained, decisions: {:?}",
+            memory.decisions
+        );
+    }
+
+    #[tokio::test]
+    async fn test_e03_unverified_claim_not_admitted_as_verification() {
+        let harness = FixtureHarness::new("e03");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+
+        // 纯文本对话，没有任何实际测试工具/命令输出
+        let turns = vec![NormalizedConversationTurn {
+            external_id: "t1".to_string(),
+            turn_index: 0,
+            user_text: "Did you run all the tests?".to_string(),
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some(
+                    "Yes, all tests pass with flying colors and everything is verified."
+                        .to_string(),
+                ),
+                language: None,
+                command: None,
+                cwd: None,
+                status: Some("success".to_string()),
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: Some(r#"{"completed":true}"#.to_string()),
+            }],
+        }];
+
+        let session = NormalizedConversationSession {
+            external_id: "sess-e03".to_string(),
+            title: Some("Claim without evidence".to_string()),
+            turns,
+            ..Default::default()
+        };
+
+        let session_id = harness.import_session(&pool, session).await;
+        let now = chrono::Utc::now();
+        service
+            .enqueue_session_memory_jobs_at(
+                &harness.source.id,
+                "sync-1",
+                1,
+                "evt-1",
+                Some(&[session_id.clone()]),
+                now,
+            )
+            .await
+            .expect("enqueue");
+
+        let job_ids = store::list_session_memory_job_ids_for_scheduler_sqlx(
+            &pool,
+            "default",
+            &now.to_rfc3339(),
+            10,
+        )
+        .await
+        .expect("list jobs");
+        let job_id = &job_ids[0];
+
+        // 模拟 Agent 尝试输出无证据支持的 Verification
+        let agent_reply = json!({
+            "summary": "Verified all tests.",
+            "goal": "Run test suite",
+            "result": "Tests completed",
+            "decisions": [],
+            "verification": [
+                "All 100 unit tests passed successfully"
+            ],
+            "blockers": [],
+            "follow_up": [],
+            "topics": ["testing"],
+            "source_references": [
+                { "reference_key": "ref-t1-u" }
+            ],
+            "events": []
+        });
+        *fake.result_text.lock().unwrap() = agent_reply.to_string();
+
+        let memory = service
+            .run_session_memory_phase1_at(job_id, now)
+            .await
+            .expect("run phase 1")
+            .expect("memory produced");
+
+        assert!(
+            !memory.verification.iter().any(|v| v.contains("passed")),
+            "Unverified claim must not be admitted as verified fact: {:?}",
+            memory.verification
+        );
+    }
+
+    #[tokio::test]
+    async fn test_e05_invalid_short_ref_fails_admission_and_rejects_persistence() {
+        let harness = FixtureHarness::new("e05_invalid");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+
+        let turns = vec![NormalizedConversationTurn {
+            external_id: "t1".to_string(),
+            turn_index: 0,
+            user_text: "Valid session text".to_string(),
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("Valid response".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: Some("success".to_string()),
+                exit_code: Some(0),
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: Some(r#"{"completed":true}"#.to_string()),
+            }],
+        }];
+
+        let session = NormalizedConversationSession {
+            external_id: "sess-e05".to_string(),
+            title: Some("Valid session".to_string()),
+            turns,
+            ..Default::default()
+        };
+
+        let session_id = harness.import_session(&pool, session).await;
+        let now = chrono::Utc::now();
+        service
+            .enqueue_session_memory_jobs_at(
+                &harness.source.id,
+                "sync-1",
+                1,
+                "evt-1",
+                Some(&[session_id.clone()]),
+                now,
+            )
+            .await
+            .expect("enqueue");
+
+        let job_ids = store::list_session_memory_job_ids_for_scheduler_sqlx(
+            &pool,
+            "default",
+            &now.to_rfc3339(),
+            10,
+        )
+        .await
+        .expect("list jobs");
+        let job_id = &job_ids[0];
+
+        // 模拟 Agent 输出了跨 Session 或未知的短引用
+        let agent_reply = json!({
+            "summary": "Some summary",
+            "goal": "Some goal",
+            "result": "Some result",
+            "decisions": [],
+            "verification": [],
+            "blockers": [],
+            "follow_up": [],
+            "topics": [],
+            "source_references": [
+                { "reference_key": "ref-t999-u-foreign-session" }
+            ],
+            "events": []
+        });
+        *fake.result_text.lock().unwrap() = agent_reply.to_string();
+
+        let run_result = service.run_session_memory_phase1_at(job_id, now).await;
+        assert!(
+            run_result.is_err(),
+            "Invalid source reference must fail validation and reject persistence"
+        );
+
+        let job_status = store::load_session_memory_job_sqlx(&pool, "default", job_id)
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert_eq!(
+            job_status.status,
+            crate::backend::models::SessionMemoryJobStatus::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn test_e08_empty_session_produces_empty_terminal_without_recent_events() {
+        let harness = FixtureHarness::new("e08_empty");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+
+        // 空白内容会话
+        let turns = vec![NormalizedConversationTurn {
+            external_id: "t1".to_string(),
+            turn_index: 0,
+            user_text: "   ".to_string(), // pure whitespace
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("".to_string()),
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: Some(r#"{"completed":true}"#.to_string()),
+            }],
+        }];
+
+        let now = chrono::Utc::now();
+        let session = NormalizedConversationSession {
+            external_id: "sess-e08".to_string(),
+            title: Some("Empty session".to_string()),
+            updated_at: Some(now.to_rfc3339()),
+            turns,
+            ..Default::default()
+        };
+
+        let session_id = harness.import_session(&pool, session).await;
+        service
+            .enqueue_session_memory_jobs_at(
+                &harness.source.id,
+                "sync-1",
+                1,
+                "evt-1",
+                Some(&[session_id.clone()]),
+                now,
+            )
+            .await
+            .expect("enqueue");
+
+        let job_ids = store::list_session_memory_job_ids_for_scheduler_sqlx(
+            &pool,
+            "default",
+            &now.to_rfc3339(),
+            10,
+        )
+        .await
+        .expect("list jobs");
+        let job_id = &job_ids[0];
+
+        let memory = service
+            .run_session_memory_phase1_at(job_id, now + chrono::Duration::minutes(35))
+            .await
+            .expect("run phase 1")
+            .expect("empty memory produced");
+
+        assert_eq!(memory.summary, "No content available in this session.");
+
+        // 验证没有制造任何 recent memory events
+        let event_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM recent_memory_events")
+            .fetch_one(&pool)
+            .await
+            .expect("count events");
+        assert_eq!(
+            event_count.0, 0,
+            "Empty session must not manufacture recent events"
         );
     }
 }

@@ -157,7 +157,8 @@ pub fn build_bounded_evidence_initial_pack(
             }
 
             let is_env_dump = is_transient_environment_dump(raw_text);
-            let kind = classify_assistant_node_kind(raw_text);
+            let has_command_or_exit = part.command.is_some() || part.exit_code.is_some();
+            let kind = classify_assistant_node_kind(raw_text, has_command_or_exit);
 
             let is_high_priority = match kind {
                 EvidenceNodeKind::VerificationEvidence => true,
@@ -293,23 +294,24 @@ fn classify_user_node_kind(text: &str) -> EvidenceNodeKind {
     }
 }
 
-fn classify_assistant_node_kind(text: &str) -> EvidenceNodeKind {
+fn classify_assistant_node_kind(text: &str, has_command_or_exit: bool) -> EvidenceNodeKind {
     let lower = text.to_lowercase();
-    const VERIFICATION_PATTERNS: &[&str] = &[
-        "cargo test",
-        "test result",
-        "tests passed",
+    const RUNNER_PATTERNS: &[&str] = &[
+        "test result:",
         "failures:",
         "passed;",
         "0 failed",
-        "all tests pass",
-        "verified",
-        "verification",
-        "断言",
-        "测试通过",
-        "测试失败",
+        "failures: 0",
+        "tests passed:",
+        "finished `test` profile",
     ];
-    if VERIFICATION_PATTERNS.iter().any(|p| lower.contains(p)) {
+    if RUNNER_PATTERNS.iter().any(|p| lower.contains(p))
+        || (has_command_or_exit
+            && (lower.contains("cargo test")
+                || lower.contains("pnpm test")
+                || lower.contains("go test")
+                || lower.contains("npm test")))
+    {
         EvidenceNodeKind::VerificationEvidence
     } else {
         EvidenceNodeKind::ExecutionEvidence
