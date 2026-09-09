@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import { Skeleton } from "../foundation/skeleton";
+import { SimpleSelect } from "../ui/select";
 import {
   checkConversationAdapterPackageUpdates,
   getConversationAdapterPackageTask,
@@ -868,30 +869,30 @@ export function ConversationScriptResourcePanel({
                     >
                       {t("conversation.scriptMarket.updatePolicy")}
                     </label>
-                    <select
-                      className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
+                    <SimpleSelect
+                      ariaLabel={t("conversation.scriptMarket.updatePolicy")}
+                      className="w-auto min-w-36"
                       disabled={policySaving}
                       id="conversation-package-update-policy"
-                      onChange={(event) =>
+                      onChange={(nextPolicy) =>
                         void changeUpdatePolicy(
-                          event.target.value as ConversationPackageUpdatePolicy,
+                          nextPolicy as ConversationPackageUpdatePolicy,
                         )
                       }
-                      value={detailEntry.installed_package.update_policy}
-                    >
-                      {(
+                      options={(
                         [
                           "manual",
                           "follow_stable",
                           "follow_beta",
                           "pin_exact",
                         ] as const
-                      ).map((policy) => (
-                        <option key={policy} value={policy}>
-                          {t(`conversation.scriptMarket.policy.${policy}`)}
-                        </option>
-                      ))}
-                    </select>
+                      ).map((policy) => ({
+                        label: t(`conversation.scriptMarket.policy.${policy}`),
+                        value: policy,
+                      }))}
+                      size="sm"
+                      value={detailEntry.installed_package.update_policy}
+                    />
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <h4 className="text-body-sm font-semibold text-on-surface">
@@ -1022,20 +1023,17 @@ export function ConversationScriptResourcePanel({
                     {t("conversation.scriptMarket.versionHistory")}
                   </h4>
                   {detailReleases.length > 0 ? (
-                    <select
-                      aria-label={t("conversation.scriptMarket.selectVersion")}
-                      className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-2 text-body-sm text-theme-control-fg transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60"
-                      onChange={(event) =>
-                        setSelectedVersion(event.target.value)
-                      }
+                    <SimpleSelect
+                      ariaLabel={t("conversation.scriptMarket.selectVersion")}
+                      className="w-auto min-w-44"
+                      onChange={(version) => setSelectedVersion(version)}
+                      options={detailReleases.map((release) => ({
+                        label: `${release.version} · ${release.channel}`,
+                        value: release.version,
+                      }))}
+                      size="sm"
                       value={selectedVersion}
-                    >
-                      {detailReleases.map((release) => (
-                        <option key={release.version} value={release.version}>
-                          {release.version} · {release.channel}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   ) : null}
                 </div>
                 {detailReleases.length === 0 ? (

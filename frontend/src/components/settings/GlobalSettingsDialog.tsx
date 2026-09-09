@@ -62,6 +62,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SimpleSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { FullscreenDialogFrame } from "@/components/foundation/FullscreenDialogFrame";
 import { DialogFrame } from "@/components/foundation/DialogFrame";
@@ -2806,24 +2807,24 @@ function FontFamilyControl({
 
   return (
     <div className="grid w-[min(34rem,100%)] grid-cols-[minmax(9rem,0.42fr)_minmax(0,1fr)] gap-2 max-[760px]:grid-cols-1">
-      <select
-        aria-label={t("settings.font.preset")}
-        className="h-10 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm font-semibold text-on-surface outline-none transition-colors focus:border-primary-strong/60"
-        onChange={(event) => {
+      <SimpleSelect
+        ariaLabel={t("settings.font.preset")}
+        id={`font-preset-${fallback}-${encodeURIComponent(label)}`}
+        onChange={(nextPreset) => {
           onChange({
             ...value,
-            preset: event.target.value as FontFamilyPresetId,
+            preset: nextPreset as FontFamilyPresetId,
           });
         }}
+        options={[
+          ...fontFamilyOptions.map((option) => ({
+            label: t(option.labelKey as TranslationKey),
+            value: option.id,
+          })),
+          { label: t("settings.font.custom"), value: "custom" },
+        ]}
         value={value.preset}
-      >
-        {fontFamilyOptions.map((option) => (
-          <option key={option.id} value={option.id}>
-            {t(option.labelKey as TranslationKey)}
-          </option>
-        ))}
-        <option value="custom">{t("settings.font.custom")}</option>
-      </select>
+      />
       <input
         aria-label={label}
         className={clsx(

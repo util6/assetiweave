@@ -10,7 +10,7 @@ import {
 } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { Tenant } from "../../types";
 import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
@@ -18,6 +18,13 @@ import { TenantSwitcher, TenantSwitcherDialog } from "./TenantSwitcher";
 afterEach(cleanup);
 
 describe("TenantSwitcher", () => {
+  beforeAll(() => {
+    window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+    window.HTMLElement.prototype.setPointerCapture = vi.fn();
+    window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+  });
+
   const defaultTenant = tenant("default", "Default Workspace");
   const clientTenant = tenant("client-a", "Client A");
 
@@ -27,9 +34,9 @@ describe("TenantSwitcher", () => {
     renderTenantManager({ onSwitchTenant });
 
     fireEvent.click(screen.getByRole("button", { name: "Tenants" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Switch tenant" }), {
-      target: { value: "client-a" },
-    });
+    const select = screen.getByRole("combobox", { name: "Switch tenant" });
+    fireEvent.keyDown(select, { key: "ArrowDown" });
+    fireEvent.click(screen.getByRole("option", { name: "Client A" }));
 
     expect(onSwitchTenant).toHaveBeenCalledWith("client-a");
   });

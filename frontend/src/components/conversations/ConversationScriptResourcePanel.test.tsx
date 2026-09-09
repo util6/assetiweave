@@ -8,10 +8,17 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { ConversationAdapterPackageCatalogEntry } from "../../services/conversations";
 import { ConversationScriptResourcePanel } from "./ConversationScriptResourcePanel";
+
+beforeAll(() => {
+  window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+  window.HTMLElement.prototype.setPointerCapture = vi.fn();
+  window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 
 const serviceMocks = vi.hoisted(() => ({
   checkUpdates: vi.fn(),
@@ -228,12 +235,10 @@ describe("ConversationScriptResourcePanel", () => {
       screen.getByText(/Improve Codex session parsing compatibility/),
     ).toBeTruthy();
     expect(
-      (
-        screen.getByRole("combobox", {
-          name: "Select install version",
-        }) as HTMLSelectElement
-      ).value,
-    ).toBe("1.0.1");
+      screen.getByRole("combobox", {
+        name: "Select install version",
+      }).textContent,
+    ).toContain("1.0.1");
   });
 
   it("refreshes the open detail version after the market catalog reloads", async () => {

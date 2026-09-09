@@ -3,6 +3,13 @@ import { Building2, Loader2 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DialogFrame } from "../../components/foundation/DialogFrame";
 import { Button } from "../../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { Tenant, TenantCreateParams } from "../../types";
 
@@ -85,7 +92,7 @@ export function TenantSwitcherDialog({
   const formId = useId();
   const selectId = useId();
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const selectRef = useRef<HTMLSelectElement>(null);
+  const selectRef = useRef<HTMLButtonElement>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -153,25 +160,36 @@ export function TenantSwitcherDialog({
           >
             {t("tenant.switchAria")}
           </label>
-          <div className="flex items-center gap-2 rounded-lg border border-theme-control-border bg-theme-control px-3">
-            <select
-              aria-label={t("tenant.switchAria")}
-              className="h-10 min-w-0 flex-1 truncate bg-transparent font-semibold text-on-surface outline-none disabled:cursor-not-allowed disabled:text-on-surface-variant"
-              disabled={disabled || displayedTenants.length === 0}
-              id={selectId}
-              onChange={(event) => void handleSwitch(event.target.value)}
-              ref={selectRef}
-              value={activeTenantId}
-            >
-              {loading && displayedTenants.length === 0 ? (
-                <option value="">{t("tenant.loading")}</option>
-              ) : null}
-              {displayedTenants.map((tenant) => (
-                <option key={tenant.id} value={tenant.id}>
-                  {tenant.name}
-                </option>
-              ))}
-            </select>
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <Select
+                disabled={disabled || displayedTenants.length === 0}
+                onValueChange={(val) => void handleSwitch(val)}
+                value={activeTenantId}
+              >
+                <SelectTrigger
+                  aria-label={t("tenant.switchAria")}
+                  className="h-10 font-semibold"
+                  id={selectId}
+                  ref={selectRef}
+                >
+                  <SelectValue
+                    placeholder={
+                      loading && displayedTenants.length === 0
+                        ? t("tenant.loading")
+                        : undefined
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {displayedTenants.map((tenant) => (
+                    <SelectItem key={tenant.id} value={tenant.id}>
+                      {tenant.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {busy ? (
               <Loader2
                 size={15}

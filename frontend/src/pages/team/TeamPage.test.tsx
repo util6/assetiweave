@@ -8,10 +8,17 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
+
+beforeAll(() => {
+  window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+  window.HTMLElement.prototype.setPointerCapture = vi.fn();
+  window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+  window.HTMLElement.prototype.scrollIntoView = vi.fn();
+});
 import type {
   TeamMemberStreamSnapshot,
   TeamMemberTaskSnapshot,
@@ -262,6 +269,9 @@ describe("TeamPage", () => {
       expect(screen.getAllByText("Refactor crew").length).toBeGreaterThan(0),
     );
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+
+    const agentCombobox = screen.getByRole("combobox", { name: /Agent 1/i });
+    fireEvent.keyDown(agentCombobox, { key: "ArrowDown" });
 
     expect(
       screen.getAllByRole("option", { name: /Agent A/ }).length,

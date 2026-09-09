@@ -113,8 +113,28 @@
   }
 
   .aurora-menu {
-    transform-origin: top left;
-    animation: aurora-menu-in 160ms ease-out both;
+    transform-origin: var(--radix-popper-transform-origin, var(--radix-select-content-transform-origin, top center));
+    will-change: transform, opacity;
+  }
+
+  .aurora-menu[data-state="open"] {
+    animation: aurora-menu-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .aurora-menu[data-state="closed"] {
+    animation: aurora-menu-out 120ms cubic-bezier(0.4, 0, 1, 1) both;
+  }
+
+  .aurora-menu[data-state="open"][data-side="top"] {
+    animation-name: aurora-menu-in-top;
+  }
+
+  .aurora-menu[data-state="closed"][data-side="top"] {
+    animation-name: aurora-menu-out-top;
+  }
+
+  .aurora-menu:not([data-state]) {
+    animation: aurora-menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .aurora-skeleton {
@@ -699,11 +719,44 @@
   @keyframes aurora-menu-in {
     from {
       opacity: 0;
-      transform: translateY(-4px) scale(0.98);
+      transform: translateY(-5px) scale(0.97);
     }
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes aurora-menu-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-3px) scale(0.98);
+    }
+  }
+
+  @keyframes aurora-menu-in-top {
+    from {
+      opacity: 0;
+      transform: translateY(5px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes aurora-menu-out-top {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(3px) scale(0.98);
     }
   }
 

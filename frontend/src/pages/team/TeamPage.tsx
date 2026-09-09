@@ -17,6 +17,7 @@ import { Panel } from "../../components/foundation/Panel";
 import { TeamWorkspaceShell } from "../../components/team/TeamWorkspaceShell";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { SimpleSelect } from "../../components/ui/select";
 import { useI18n } from "../../i18n/I18nProvider";
 import { TeamSessionProvider } from "../../app/backgroundTasks/TeamSessionProvider";
 import { isTauriRuntime } from "../../services/appUpdater";
@@ -54,9 +55,6 @@ interface MemberDraft extends TeamMemberInput {
   agent_id: string;
   model?: string | null;
 }
-
-const selectClassName =
-  "h-9 w-full rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/35 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function TeamPage() {
   const { t } = useI18n();
@@ -853,18 +851,27 @@ export function TeamPage() {
                         key={member.id ?? `new-${index}`}
                       >
                         <div className="grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2">
-                          <label className="grid gap-1 text-caption text-on-surface-variant">
-                            {t("team.dialog.agent")}
-                            <select
-                              aria-label={`${t("team.dialog.agent")} ${index + 1}`}
-                              className={selectClassName}
+                          <div className="grid gap-1 text-caption text-on-surface-variant">
+                            <span>{t("team.dialog.agent")}</span>
+                            <SimpleSelect
+                              ariaLabel={`${t("team.dialog.agent")} ${index + 1}`}
                               disabled={busy || roleAgents.length === 0}
-                              onChange={(event) =>
+                              onChange={(agentId) =>
                                 updateMember(index, {
-                                  agent_id: event.target.value,
+                                  agent_id: agentId,
                                   model: null,
                                 })
                               }
+                              options={roleAgents.map((agent) => ({
+                                label: `${agent.display_name} (${agent.id})`,
+                                value: agent.id,
+                              }))}
+                              placeholder={
+                                roleAgents.length
+                                  ? t("team.dialog.selectAgent")
+                                  : t("team.dialog.noAgents")
+                              }
+                              size="sm"
                               value={
                                 roleAgents.some(
                                   (agent) => agent.id === member.agent_id,
@@ -872,67 +879,57 @@ export function TeamPage() {
                                   ? member.agent_id
                                   : ""
                               }
-                            >
-                              <option value="">
-                                {roleAgents.length
-                                  ? t("team.dialog.selectAgent")
-                                  : t("team.dialog.noAgents")}
-                              </option>
-                              {roleAgents.map((agent) => (
-                                <option key={agent.id} value={agent.id}>
-                                  {agent.display_name} ({agent.id})
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="grid gap-1 text-caption text-on-surface-variant">
-                            {t("team.dialog.model")}
-                            <select
-                              aria-label={`${t("team.dialog.model")} ${index + 1}`}
-                              className={selectClassName}
+                            />
+                          </div>
+                          <div className="grid gap-1 text-caption text-on-surface-variant">
+                            <span>{t("team.dialog.model")}</span>
+                            <SimpleSelect
+                              ariaLabel={`${t("team.dialog.model")} ${index + 1}`}
                               disabled={busy || !member.agent_id}
-                              onChange={(event) =>
+                              onChange={(modelId) =>
                                 updateMember(index, {
-                                  model: event.target.value || null,
+                                  model: modelId || null,
                                 })
                               }
-                              value={member.model ?? ""}
-                            >
-                              <option value="">
-                                {memberModels.length
+                              options={memberModels.map((model) => ({
+                                label: model.label,
+                                value: model.id,
+                              }))}
+                              placeholder={
+                                memberModels.length
                                   ? t("team.dialog.selectModel")
-                                  : t("team.dialog.noModels")}
-                              </option>
-                              {memberModels.map((model) => (
-                                <option key={model.id} value={model.id}>
-                                  {model.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className="grid gap-1 text-caption text-on-surface-variant">
-                            {t("team.dialog.members")}
-                            <select
-                              aria-label={`Role ${index + 1}`}
-                              className={selectClassName}
+                                  : t("team.dialog.noModels")
+                              }
+                              size="sm"
+                              value={member.model ?? ""}
+                            />
+                          </div>
+                          <div className="grid gap-1 text-caption text-on-surface-variant">
+                            <span>{t("team.dialog.members")}</span>
+                            <SimpleSelect
+                              ariaLabel={`Role ${index + 1}`}
                               disabled={busy}
-                              onChange={(event) =>
+                              onChange={(role) =>
                                 updateMember(index, {
-                                  role: event.target.value as TeamRole,
+                                  role: role as TeamRole,
                                   agent_id: selectableAgents()[0]?.id ?? "",
                                   model: null,
                                 })
                               }
+                              options={[
+                                {
+                                  label: t("team.detail.leader"),
+                                  value: "leader",
+                                },
+                                {
+                                  label: t("team.detail.teammate"),
+                                  value: "teammate",
+                                },
+                              ]}
+                              size="sm"
                               value={member.role}
-                            >
-                              <option value="leader">
-                                {t("team.detail.leader")}
-                              </option>
-                              <option value="teammate">
-                                {t("team.detail.teammate")}
-                              </option>
-                            </select>
-                          </label>
+                            />
+                          </div>
                           <div className="flex gap-1">
                             <Button
                               aria-label={t("team.action.moveUp")}

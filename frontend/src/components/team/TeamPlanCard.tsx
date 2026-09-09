@@ -9,6 +9,7 @@ import {
 import { useI18n } from "../../i18n/I18nProvider";
 import type { TeamDetail, TeamRunSnapshot } from "../../types/team";
 import { Button } from "../ui/button";
+import { SimpleSelect } from "../ui/select";
 
 export interface TeamPlanCardProps {
   team: TeamDetail;
@@ -161,31 +162,26 @@ export function TeamPlanCard({
                       />
                     </label>
                     <div className="flex flex-wrap items-end gap-2">
-                      <label className="grid min-w-56 flex-1 gap-1 text-caption text-on-surface-variant">
-                        {t("team.workflow.owner")}
-                        <select
-                          aria-label={`${t("team.workflow.owner")} ${index + 1}`}
-                          className="h-9 rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 text-body-sm text-on-surface outline-none focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-60"
+                      <div className="grid min-w-56 flex-1 gap-1 text-caption text-on-surface-variant">
+                        <span>{t("team.workflow.owner")}</span>
+                        <SimpleSelect
+                          ariaLabel={`${t("team.workflow.owner")} ${index + 1}`}
                           disabled={busy || !awaitingReview}
-                          onChange={(event) =>
+                          onChange={(ownerId) =>
                             onTaskChange(task.id, {
-                              owner_member_id: event.target.value,
+                              owner_member_id: ownerId,
                             })
                           }
+                          options={teammates.map((member) => ({
+                            label: `${member.member_id} · ${member.agent_id}`,
+                            value: member.member_id,
+                          }))}
+                          size="sm"
                           value={
-                            task.owner_member_id ?? task.recommended_member_id
+                            task.owner_member_id ?? task.recommended_member_id ?? ""
                           }
-                        >
-                          {teammates.map((member) => (
-                            <option
-                              key={member.member_id}
-                              value={member.member_id}
-                            >
-                              {member.member_id} · {member.agent_id}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                        />
+                      </div>
                       <span className="max-w-full text-caption text-on-surface-variant">
                         {t("team.workflow.recommended", {
                           owner:

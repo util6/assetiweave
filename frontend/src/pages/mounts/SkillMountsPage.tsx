@@ -63,6 +63,7 @@ import { Panel as FoundationPanel } from "../../components/foundation/Panel";
 import { ResizableColumns } from "../../components/layout/ResizableColumns";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { SimpleSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { assetKindLabel, sourceOriginLabel } from "../../i18n/domain";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -1590,20 +1591,16 @@ function AppProfileDialog({
               />
             </Field>
             <Field label={t("appMount.field.appKind")}>
-              <select
-                className="h-9 rounded-xl border border-theme-control-border bg-theme-control px-3 text-body-sm text-on-surface outline-none transition-[background-color,border-color,box-shadow] duration-200 focus:border-primary-strong/60 disabled:opacity-50"
+              <SimpleSelect
                 disabled={busy}
-                onChange={(event) =>
-                  updateValue("appKind", event.target.value as AppKind)
-                }
+                onChange={(val) => updateValue("appKind", val as AppKind)}
+                options={appKinds.map((appKind) => ({
+                  label: appKind,
+                  value: appKind,
+                }))}
+                size="sm"
                 value={values.appKind}
-              >
-                {appKinds.map((appKind) => (
-                  <option key={appKind} value={appKind}>
-                    {appKind}
-                  </option>
-                ))}
-              </select>
+              />
             </Field>
           </div>
 

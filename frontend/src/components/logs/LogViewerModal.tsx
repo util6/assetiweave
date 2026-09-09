@@ -25,6 +25,7 @@ import {
 import { abbreviateHomePath } from "../../utils/path";
 import { DialogFrame } from "../foundation/DialogFrame";
 import { Button } from "../ui/button";
+import { SimpleSelect } from "../ui/select";
 import "./LogViewerModal.css";
 
 interface LogViewerModalProps {
@@ -331,28 +332,28 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
     >
       <div className="log-viewer-meta">
         <div className="log-viewer-meta-item log-viewer-file-item">
-          <FileText size={14} />
           {snapshot?.available_files?.length ? (
-            <div className="log-viewer-select-wrap">
-              <select
-                className="log-viewer-select"
-                value={activeFileName}
-                onChange={(event) => {
-                  setSelectedFileName(event.target.value);
-                  setError("");
-                }}
-                aria-label={t("logViewer.fileLabel")}
-              >
-                {snapshot.available_files.map((file) => (
-                  <option key={file.log_file_name} value={file.log_file_name}>
-                    {file.log_file_name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
-            </div>
+            <SimpleSelect
+              ariaLabel={t("logViewer.fileLabel")}
+              className="max-w-[260px]"
+              icon={<FileText size={14} />}
+              onChange={(file) => {
+                setSelectedFileName(file);
+                setError("");
+              }}
+              options={snapshot.available_files.map((file) => ({
+                label: file.log_file_name,
+                value: file.log_file_name,
+              }))}
+              size="sm"
+              triggerClassName="h-7 border-0 bg-transparent px-0 shadow-none hover:bg-transparent"
+              value={activeFileName}
+            />
           ) : (
-            <span className="log-viewer-path-text">-</span>
+            <>
+              <FileText size={14} />
+              <span className="log-viewer-path-text">-</span>
+            </>
           )}
         </div>
         <div className="log-viewer-meta-item">
@@ -372,22 +373,16 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
             <span className="log-viewer-line-limit-label">
               {t("logViewer.levelLabel")}
             </span>
-            <div className="log-viewer-select-wrap log-viewer-level-select-wrap">
-              <select
-                className="log-viewer-select"
-                value={levelFilter}
-                onChange={(event) =>
-                  setLevelFilter(event.target.value as LogLevelFilter)
+            <div className="w-28">
+              <SimpleSelect
+                ariaLabel={t("logViewer.levelLabel")}
+                onChange={(level) =>
+                  setLevelFilter(level as LogLevelFilter)
                 }
-                aria-label={t("logViewer.levelLabel")}
-              >
-                {levelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
+                options={levelOptions}
+                size="sm"
+                value={levelFilter}
+              />
             </div>
           </div>
           <div className="log-viewer-line-limit-wrap">
