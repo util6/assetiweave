@@ -12,6 +12,7 @@ pub(crate) mod data_backup;
 pub(crate) mod defaults;
 pub(crate) mod dto;
 pub(crate) mod events;
+pub(crate) mod evidence;
 pub(crate) mod executor;
 pub(crate) mod extension_kernel;
 pub(crate) mod host_filesystem;

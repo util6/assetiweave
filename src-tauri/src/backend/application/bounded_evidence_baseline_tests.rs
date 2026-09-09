@@ -9,12 +9,17 @@ mod tests {
             session_memory::{build_evidence_references, build_session_memory_prompt},
             AppService,
         },
+        evidence::{
+            build_bounded_evidence_initial_pack, BoundedEvidenceNode, BoundedEvidenceReaderSession,
+            EvidenceNodeKind, EvidenceReadError,
+        },
         memory_redaction::redact_memory_text,
         models::{
             BoundedMemoryBudgetPolicy, ConversationAdapter, ConversationAdapterKind,
             ConversationAdapterTrustState, ConversationPartKind, ConversationPartRole,
-            ConversationSource, ConversationSourceKind, MemoryScope, NormalizedConversationPart,
-            NormalizedConversationSession, NormalizedConversationTurn,
+            ConversationSource, ConversationSourceKind, MemoryExecutionWorkOrder, MemoryRecipe,
+            MemoryScope, NormalizedConversationPart, NormalizedConversationSession,
+            NormalizedConversationTurn,
         },
         store,
     };
@@ -720,5 +725,311 @@ mod tests {
 
         assert_eq!(work_order.budget_policy.initial_pack_max_chars, 32_000);
         assert_eq!(work_order.budget_policy.tool_call_limit, 10);
+    }
+
+    #[test]
+    fn test_e01_initial_pack_strictly_satisfies_budget() {
+        let session = make_heavy_log_session();
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e01".to_string(),
+            session.external_id.clone(),
+            "source-heavy".to_string(),
+            1,
+            "fp-heavy".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (pack, _short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+
+        assert!(
+            pack.total_chars <= work_order.budget_policy.initial_pack_max_chars,
+            "Total chars in initial pack ({} chars) must not exceed 32,000",
+            pack.total_chars
+        );
+        assert!(
+            pack.nodes_count <= 32,
+            "Total nodes in initial pack ({}) must not exceed 32",
+            pack.nodes_count
+        );
+        assert_eq!(pack.coverage.total_turns, 40);
+        assert!(
+            pack.coverage.read_nodes > 0,
+            "Should have extracted initial priority nodes"
+        );
+        assert!(
+            pack.coverage.indexed_nodes > 0,
+            "Should have indexed omitted nodes for second-round tool reading"
+        );
+        assert!(
+            !pack.index.is_empty(),
+            "Index entries should be populated for unread content"
+        );
+    }
+
+    #[test]
+    fn test_e04_long_turn_middle_correction_extracted_in_pack_or_index() {
+        let mut turns = Vec::new();
+        for i in 0..10 {
+            let user_text = if i == 5 {
+                "Wait, don't do that, that is completely wrong! Switch to PostgreSQL instead of MySQL.".to_string()
+            } else {
+                format!("Step {}", i)
+            };
+            turns.push(NormalizedConversationTurn {
+                external_id: format!("turn-{}", i),
+                turn_index: i as i64,
+                user_text,
+                title: None,
+                started_at: None,
+                ended_at: None,
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some(format!("Executed step {}", i)),
+                    language: None,
+                    command: None,
+                    cwd: None,
+                    status: Some("success".to_string()),
+                    exit_code: Some(0),
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+            });
+        }
+
+        let session = NormalizedConversationSession {
+            external_id: "correction-session".to_string(),
+            title: Some("Correction session".to_string()),
+            turns,
+            ..Default::default()
+        };
+
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e04".to_string(),
+            session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (pack, _short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+        let correction_node = pack
+            .all_nodes()
+            .find(|n| n.kind == EvidenceNodeKind::UserCorrection);
+        assert!(
+            correction_node.is_some(),
+            "Middle turn correction must be recognized as UserCorrection and included in initial pack"
+        );
+        let node = correction_node.unwrap();
+        assert!(node.text.contains("PostgreSQL"));
+    }
+
+    #[test]
+    fn test_e05_cross_session_or_missing_ref_returns_out_of_scope() {
+        let session = make_heavy_log_session();
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e05".to_string(),
+            session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+        let mut reader = BoundedEvidenceReaderSession::new(&session, &work_order, short_refs);
+
+        let err = reader.read_content_node("non-existent-ref");
+        assert!(matches!(err, Err(EvidenceReadError::OutOfScope { .. })));
+
+        let err_turn = reader.read_question_content("other-session-turn-xyz", 0, 100);
+        assert!(matches!(
+            err_turn,
+            Err(EvidenceReadError::OutOfScope { .. })
+        ));
+    }
+
+    #[test]
+    fn test_e06_tool_calls_budget_exhausted_enforces_circuit_break() {
+        let small_session = NormalizedConversationSession {
+            external_id: "small-session".to_string(),
+            turns: vec![
+                NormalizedConversationTurn {
+                    external_id: "t1".to_string(),
+                    turn_index: 0,
+                    user_text: "Task start".to_string(),
+                    title: None,
+                    started_at: None,
+                    ended_at: None,
+                    parts: vec![],
+                },
+                NormalizedConversationTurn {
+                    external_id: "t2".to_string(),
+                    turn_index: 1,
+                    user_text: "Task done".to_string(),
+                    title: None,
+                    started_at: None,
+                    ended_at: None,
+                    parts: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e06-count".to_string(),
+            small_session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(), // tool_call_limit is 10
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, short_refs) = build_bounded_evidence_initial_pack(&small_session, &work_order);
+        let mut reader = BoundedEvidenceReaderSession::new(&small_session, &work_order, short_refs);
+
+        // 验证调用次数上限：前 10 次调用成功
+        for _ in 0..10 {
+            let outline = reader.get_session_outline();
+            assert!(outline.is_ok());
+        }
+
+        // 第 11 次必须返回 BudgetExhausted
+        let exhausted = reader.get_session_outline();
+        assert!(
+            matches!(exhausted, Err(EvidenceReadError::BudgetExhausted { .. })),
+            "Must return BudgetExhausted after 10 calls"
+        );
+
+        // 验证累计字符上限：单次大量读取导致超过 20,000 字符时熔断
+        let heavy_session = make_heavy_log_session();
+        let work_order_chars = MemoryExecutionWorkOrder::new(
+            "wo-e06-chars".to_string(),
+            heavy_session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, heavy_short_refs) =
+            build_bounded_evidence_initial_pack(&heavy_session, &work_order_chars);
+        let mut heavy_reader =
+            BoundedEvidenceReaderSession::new(&heavy_session, &work_order_chars, heavy_short_refs);
+
+        let mut got_budget_exhausted = false;
+        for _ in 0..10 {
+            if let Err(EvidenceReadError::BudgetExhausted { .. }) =
+                heavy_reader.read_question_content("turn-heavy-0", 0, 4000)
+            {
+                got_budget_exhausted = true;
+                break;
+            }
+        }
+        assert!(
+            got_budget_exhausted,
+            "Cumulative character budget (20,000 chars) must enforce circuit break"
+        );
+    }
+
+    #[test]
+    fn test_e07_empty_or_unavailable_content_returns_content_unavailable() {
+        let turns = vec![NormalizedConversationTurn {
+            external_id: "turn-empty".to_string(),
+            turn_index: 0,
+            user_text: "   ".to_string(), // whitespace only
+            title: None,
+            started_at: None,
+            ended_at: None,
+            parts: vec![NormalizedConversationPart {
+                role: ConversationPartRole::Assistant,
+                kind: ConversationPartKind::Text,
+                text: Some("".to_string()), // empty part
+                language: None,
+                command: None,
+                cwd: None,
+                status: None,
+                exit_code: None,
+                command_label: None,
+                source_execution_id: None,
+                content_card: None,
+                metadata_json: None,
+            }],
+        }];
+
+        let session = NormalizedConversationSession {
+            external_id: "empty-session".to_string(),
+            turns,
+            ..Default::default()
+        };
+
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e07".to_string(),
+            session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+        let mut reader = BoundedEvidenceReaderSession::new(&session, &work_order, short_refs);
+
+        let res_user = reader.read_content_node("ref-t1-u");
+        assert!(
+            matches!(res_user, Err(EvidenceReadError::ContentUnavailable { .. })),
+            "Empty user text must return ContentUnavailable"
+        );
+
+        let res_part = reader.read_content_node("ref-t1-p1");
+        assert!(
+            matches!(res_part, Err(EvidenceReadError::ContentUnavailable { .. })),
+            "Empty part text must return ContentUnavailable"
+        );
+    }
+
+    #[test]
+    fn test_e15_unauthorized_tool_call_rejected_by_reader() {
+        let session = make_heavy_log_session();
+        let recipe = MemoryRecipe::default_builtin();
+        let work_order = MemoryExecutionWorkOrder::new(
+            "wo-e15-tool".to_string(),
+            session.external_id.clone(),
+            "src".to_string(),
+            1,
+            "fp".to_string(),
+            &recipe,
+            BoundedMemoryBudgetPolicy::default(),
+            "2026-09-09T00:00:00Z".to_string(),
+        );
+
+        let (_pack, short_refs) = build_bounded_evidence_initial_pack(&session, &work_order);
+        let mut reader = BoundedEvidenceReaderSession::new(&session, &work_order, short_refs);
+
+        let res = reader.check_tool_permission_and_budget("execute_bash_command");
+        assert!(
+            matches!(res, Err(EvidenceReadError::UnauthorizedTool { .. })),
+            "Calling tool outside of whitelist must return UnauthorizedTool"
+        );
     }
 }
