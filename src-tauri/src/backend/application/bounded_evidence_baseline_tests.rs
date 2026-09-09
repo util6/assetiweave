@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::backend::{
+        ai_execution::{
+            AgentExecutionRuntime, AgentProtocol, AiExecutionRequest, AiExecutionResult,
+            BackendFuture,
+        },
         application::{
             session_memory::{build_evidence_references, build_session_memory_prompt},
-            tests::FakeRuntime,
             AppService,
         },
         memory_redaction::redact_memory_text,
@@ -16,6 +19,42 @@ mod tests {
         store,
     };
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    struct FakeRuntime {
+        result_text: Mutex<String>,
+        requests: Mutex<Vec<AiExecutionRequest>>,
+    }
+
+    impl FakeRuntime {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                result_text: Mutex::new("{}".to_string()),
+                requests: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    impl AgentExecutionRuntime for FakeRuntime {
+        fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
+            let result_text = self.result_text.lock().expect("fake result lock").clone();
+            self.requests
+                .lock()
+                .expect("fake request lock")
+                .push(request.clone());
+            Box::pin(async move {
+                Ok(AiExecutionResult {
+                    text: result_text,
+                    agent_id: request.agent_id,
+                    protocol: AgentProtocol::Acp,
+                    requested_model: request.model,
+                    elapsed_ms: 1,
+                    persistent_binding: None,
+                    team_events: Vec::new(),
+                })
+            })
+        }
+    }
 
     struct FixtureHarness {
         root: PathBuf,
@@ -107,7 +146,6 @@ mod tests {
     fn make_heavy_log_session() -> NormalizedConversationSession {
         let timestamp = "2026-09-09T01:00:00Z";
         let mut turns = Vec::new();
-        // 创建 40 个包含大量冗余 log 输出的 turn/part
         for index in 0..40 {
             let user_text = format!("Execute benchmark build step {}", index);
             let log_chunk = format!(
@@ -164,22 +202,18 @@ mod tests {
         let session_id = harness.import_session(&pool, session).await;
         let detail = store::load_conversation_session_detail_sqlx(&pool, "default", &session_id)
             .await
-            .expect("load detail")
-            .expect("session exists");
+            .expect("load detail");
 
-        // 测量旧版 build_evidence_references 与 build_session_memory_prompt
         let evidence = build_evidence_references(&detail);
         let prompt = build_session_memory_prompt(&detail, &evidence).expect("build prompt");
 
         let budget = BoundedMemoryBudgetPolicy::default();
 
-        // 1. 证据数量：旧版全量选择所有 nodes (40 个)
         assert!(
             evidence.len() >= 40,
             "Old version collects all nodes without selective packing"
         );
 
-        // 2. Prompt 体积测量：包含所有 log 重复行，总字符数极大
         let prompt_chars = prompt.chars().count();
         println!(
             "[E0 Baseline Measurement] Heavy log session prompt length: {} chars, evidence count: {}",
@@ -187,7 +221,6 @@ mod tests {
             evidence.len()
         );
 
-        // 关键断言（Red 证据）：旧版未裁剪 Prompt 远超首包预算 32,000 字符！
         assert!(
             prompt_chars > budget.initial_pack_max_chars,
             "Baseline proves that unpruned prompt ({} chars) exceeds initial pack budget ({} chars)",
@@ -201,7 +234,6 @@ mod tests {
         let git_sha = "bc5c14e1234567890abcdef1234567890abcdef1";
         let result = redact_memory_text(git_sha);
 
-        // 当前现存实现将 40 位十六进制 Git SHA 误判为 high entropy secret
         println!(
             "[E0 Baseline Measurement] Current redaction result for Git SHA: {}",
             result.text
