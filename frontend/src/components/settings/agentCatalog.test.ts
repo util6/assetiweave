@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import {
-  agentCatalog,
-  marketItemToCatalogItem,
-} from "./agentCatalog";
+import { agentCatalog, marketItemToCatalogItem } from "./agentCatalog";
 import type { AgentMarketItem } from "../../services/agentRuntime";
 
 describe("agentCatalog presentation and projection", () => {
   it("legacy presentation presents antigravity as ACP Agent", () => {
-    const antigravity = agentCatalog.find((agent) => agent.id === "antigravity");
+    const antigravity = agentCatalog.find(
+      (agent) => agent.id === "antigravity",
+    );
     expect(antigravity).toBeDefined();
     expect(antigravity?.protocol).toBe("ACP Agent");
     expect(antigravity?.connectionMode).toBe("registry");
@@ -33,7 +32,8 @@ describe("agentCatalog presentation and projection", () => {
       verification: {
         status: "experimental",
         testedAt: "2026-09-07T00:00:00Z",
-        evidenceId: "acp-registry-81bf71b5-antigravity-1.1.1-binary-darwin-aarch64",
+        evidenceId:
+          "acp-registry-81bf71b5-antigravity-1.1.1-binary-darwin-aarch64",
       },
       catalogVersion: "2026.08.29.1",
       recommendedDistributionId: "binary-darwin-aarch64",

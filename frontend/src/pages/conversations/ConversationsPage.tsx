@@ -701,7 +701,8 @@ export function ConversationsPage({
       return;
     }
     if (
-      (syncTask.status === "completed" || syncTask.status === "partial_success") &&
+      (syncTask.status === "completed" ||
+        syncTask.status === "partial_success") &&
       dismissedConversationSyncProgressTaskKeys.has(
         conversationSyncProgressTaskKey(currentRecordKind, syncTask.id),
       )
@@ -3576,7 +3577,11 @@ function formatConversationSyncFailureItems(
             const errorCode = stringRecordValue(failure.error_code) ?? "error";
             const rawMsg = stringRecordValue(failure.error_message);
             const retryable = Boolean(failure.retryable);
-            const src = [sourceName ?? sourceId, adapterId, `会话 ${externalId}`]
+            const src = [
+              sourceName ?? sourceId,
+              adapterId,
+              `会话 ${externalId}`,
+            ]
               .filter(Boolean)
               .join(" · ");
             const compactMsg = compactConversationSyncFailureMessage(rawMsg, t);

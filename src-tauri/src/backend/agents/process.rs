@@ -166,14 +166,6 @@ impl ManagedAgentProcess {
                                 }
                             }
                         }
-                        #[cfg(windows)]
-                        {
-                            if let Err(e) = child.start_kill() {
-                                if !is_ignorable_signal_error(&e) {
-                                    signal_errors.push(e.to_string());
-                                }
-                            }
-                        }
 
                         if !child_exited && !grace.is_zero() {
                             tokio::select! {
@@ -198,9 +190,11 @@ impl ManagedAgentProcess {
                             }
                         }
 
-                        if let Err(e) = child.start_kill() {
-                            if !is_ignorable_signal_error(&e) {
-                                signal_errors.push(e.to_string());
+                        if !child_exited {
+                            if let Err(e) = child.start_kill() {
+                                if !is_ignorable_signal_error(&e) {
+                                    signal_errors.push(e.to_string());
+                                }
                             }
                         }
 

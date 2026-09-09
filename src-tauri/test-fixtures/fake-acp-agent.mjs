@@ -43,6 +43,10 @@ if (counterPath) {
   fs.appendFileSync(counterPath, `${process.pid}\n`);
 }
 
+if (mode === "reject_version" && args.includes("--version")) {
+  process.exit(64);
+}
+
 if (mode === "exit_nonzero") {
   process.exit(1);
 }
@@ -501,7 +505,10 @@ input.on("line", async (line) => {
   }
 });
 
-input.on("close", () => record("stdin_closed"));
+input.on("close", () => {
+  if (keepAlive) clearInterval(keepAlive);
+  record("stdin_closed");
+});
 process.on("SIGTERM", () => {
   if (keepAlive) clearInterval(keepAlive);
   record("sigterm");

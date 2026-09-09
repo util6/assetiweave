@@ -122,7 +122,8 @@ export function useAppSettings(): AppSettingsContextValue {
         : null;
 
   const settingsLoaded = !query.isLoading;
-  const settingsConfirmed = !isEnabled || (query.isFetched && query.dataUpdatedAt > 0);
+  const settingsConfirmed =
+    !isEnabled || (query.isFetched && query.dataUpdatedAt > 0);
 
   const storageInfo: AppSettingsStorageInfo = {
     ...defaultStorageInfo,
