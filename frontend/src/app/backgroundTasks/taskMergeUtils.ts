@@ -72,10 +72,7 @@ export function checkEventTenantMatch(
  * 2. 时间戳优先：若两者都有更新时间戳，晚者胜出。
  * 3. 数组按最新项提取。
  */
-export function mergeTaskSnapshot<T>(
-  current: T,
-  incoming: T | T[],
-): T {
+export function mergeTaskSnapshot<T>(current: T, incoming: T | T[]): T {
   const actualIncoming = (
     Array.isArray(incoming) ? incoming[0] : incoming
   ) as T;

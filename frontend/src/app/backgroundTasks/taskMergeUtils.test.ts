@@ -118,7 +118,10 @@ describe("taskMergeUtils", () => {
       error: null,
     };
 
-    const merged = mergeConversationTaskSnapshot(staleRunningSync, completedSync);
+    const merged = mergeConversationTaskSnapshot(
+      staleRunningSync,
+      completedSync,
+    );
     expect(merged.status).toBe("completed");
     expect(merged.finished_at).toBe("2026-09-04T00:01:00Z");
     expect(merged.result).toEqual({ count: 10 });
@@ -151,7 +154,10 @@ describe("taskMergeUtils", () => {
       detail: null,
     };
 
-    const merged = mergeTeamRunTasks([completedTeamTask], [staleRunningTeamTask]);
+    const merged = mergeTeamRunTasks(
+      [completedTeamTask],
+      [staleRunningTeamTask],
+    );
     expect(merged).toHaveLength(1);
     expect(merged[0].state).toBe("Succeeded");
     expect(merged[0].finished_at).toBe("2026-09-04T00:01:00Z");

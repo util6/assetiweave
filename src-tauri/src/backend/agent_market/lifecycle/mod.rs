@@ -453,6 +453,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(workspace_root);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn managed_acp_install_uses_protocol_handshake_instead_of_version_probe() {
+        let database_path = std::env::temp_dir().join(format!(
+            "assetiweave-agent-market-no-version-{}.db",
+            uuid::Uuid::new_v4()
+        ));
+        let runtime_root = std::env::temp_dir().join(format!(
+            "assetiweave-agent-market-no-version-runtime-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let workspace_root = std::env::temp_dir().join(format!(
+            "assetiweave-agent-market-no-version-workspace-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let pool = Database::open_initialized_async(&database_path)
+            .await
+            .expect("database")
+            .pool()
+            .clone();
+        let fixture_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("test-fixtures/fake-acp-agent.mjs");
+        let artifact = fixture_agent_script(&fixture_path, "reject_version");
+        let url = format!(
+            "https://fixture.invalid/{}/no-version",
+            uuid::Uuid::new_v4()
+        );
+        register_test_artifact(&url, artifact.clone());
+
+        let manager = Arc::new(AgentRuntimeManager::new(
+            pool.clone(),
+            workspace_root.clone(),
+        ));
+        let service = AgentLifecycleService::new_with_catalog(
+            pool.clone(),
+            manager,
+            runtime_root.clone(),
+            CatalogService::from_catalog(fixture_catalog("1.0.0", &url, &artifact)),
+        );
+
+        let installed = service
+            .install(request_for(&service, "install", "1.0.0"))
+            .await
+            .expect("an ACP server need not implement a one-shot --version command");
+
+        assert_eq!(installed.installation.protocol, AgentMarketProtocol::Acp);
+        assert_eq!(
+            installed.installation.protocol_status,
+            ProtocolStatus::Ready
+        );
+        assert!(installed
+            .installation
+            .install_dir
+            .as_ref()
+            .is_some_and(|path| path.is_dir()));
+
+        drop(pool);
+        let _ = std::fs::remove_file(database_path);
+        let _ = std::fs::remove_dir_all(runtime_root);
+        let _ = std::fs::remove_dir_all(workspace_root);
+    }
+
     fn request_for(
         service: &AgentLifecycleService,
         action: &str,
@@ -557,7 +618,7 @@ mod tests {
     #[cfg(not(windows))]
     fn fixture_agent_script(path: &Path, mode: &str) -> Vec<u8> {
         format!(
-            "#!/bin/sh\nexec env ASSETIWEAVE_FAKE_ACP_MODE={mode} node '{}'\n",
+            "#!/bin/sh\nexec env ASSETIWEAVE_FAKE_ACP_MODE={mode} node '{}' \"$@\"\n",
             path.display()
         )
         .into_bytes()

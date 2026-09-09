@@ -1124,7 +1124,10 @@ describe("ConversationContentCards", () => {
   });
 
   it("hides multi-line successful antigravity tool results to prevent contentless cards with only status and line count", () => {
-    const antigravityOutput = Array.from({ length: 26 }, (_, i) => `Downloaded line ${i + 1}`).join("\n");
+    const antigravityOutput = Array.from(
+      { length: 26 },
+      (_, i) => `Downloaded line ${i + 1}`,
+    ).join("\n");
     const html = renderToStaticMarkup(
       <ConversationContentCards
         blocks={buildConversationContentBlocks(

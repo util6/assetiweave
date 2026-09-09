@@ -709,10 +709,16 @@ export function AgentSettingsPanel({
                 }
                 onEdit={settingsOnly ? () => setInfoAgent(agent) : undefined}
                 onSelectModel={
-                  settingsOnly ? () => openModelDialog(agent) : undefined
+                  settingsOnly &&
+                  agent.installed?.installationStatus !== "incompatible"
+                    ? () => openModelDialog(agent)
+                    : undefined
                 }
                 onTest={
-                  settingsOnly ? () => void testConnection(agent) : undefined
+                  settingsOnly &&
+                  agent.installed?.installationStatus !== "incompatible"
+                    ? () => void testConnection(agent)
+                    : undefined
                 }
                 selectedModel={selectedModels[agent.id]}
                 t={t}
@@ -903,7 +909,11 @@ async function checkInstalledMarketAgents(
   setConnectionMessages: Dispatch<SetStateAction<Record<string, string>>>,
   isDisposed: () => boolean = () => false,
 ) {
-  const installedAgents = items.filter((item) => item.installed?.enabled);
+  const installedAgents = items.filter(
+    (item) =>
+      item.installed?.enabled &&
+      item.installed.installationStatus !== "incompatible",
+  );
   if (installedAgents.length === 0 || isDisposed()) return;
   setConnectionStates((current) => ({
     ...current,

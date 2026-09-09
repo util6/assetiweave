@@ -9,7 +9,12 @@ use crate::backend::{
         registry::AgentRegistry,
         types::{AgentCommandDefinition, AgentDefinition, AgentId, AgentProtocol},
     },
-    ai_execution::{check_agent_connection, executor::AgentExecutor},
+    ai_execution::{
+        backends::acp::{AcpExecutionBackend, AcpProtocolConnectionOutcome},
+        check_agent_connection,
+        executor::AgentExecutor,
+        AiExecutionCancellation,
+    },
 };
 
 use super::{
@@ -561,6 +566,32 @@ async fn conformance(
     definition: &AgentDefinition,
     workspace_root: &Path,
 ) -> (ProtocolStatus, Option<AgentMarketError>, Vec<String>) {
+    if definition.protocol == AgentProtocol::Acp {
+        let report = AcpExecutionBackend::new(workspace_root.join("conformance"))
+            .probe_connection_and_models(definition, AiExecutionCancellation::default())
+            .await;
+        return match report.protocol_connection {
+            AcpProtocolConnectionOutcome::Connected => (ProtocolStatus::Ready, None, Vec::new()),
+            AcpProtocolConnectionOutcome::Failed { error_message, .. } => {
+                let warning = format!("protocol conformance did not complete: {error_message}");
+                (
+                    ProtocolStatus::Failed,
+                    Some(market_error("acp_connection_failed", error_message, true)),
+                    vec![warning],
+                )
+            }
+            AcpProtocolConnectionOutcome::Cancelled => (
+                ProtocolStatus::Failed,
+                Some(market_error(
+                    "cancelled",
+                    "Agent protocol conformance was cancelled.",
+                    true,
+                )),
+                Vec::new(),
+            ),
+        };
+    }
+
     let registry = match AgentRegistry::from_definitions([definition.clone()]) {
         Ok(registry) => Arc::new(registry),
         Err(error) => {

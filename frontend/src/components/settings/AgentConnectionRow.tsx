@@ -59,6 +59,8 @@ export function AgentConnectionRow({
   const status = statusMeta(connectionState, t);
   const accentColor = resolveAgentIconAccentColor(agent, appShortcuts);
   const lifecycleBlocked = agent.hasSelectableDistribution === false;
+  const reinstallRequired =
+    agent.installed?.installationStatus === "incompatible";
   const lifecycleBlockReason = lifecycleBlocked
     ? t("settings.agents.distributionUnavailable")
     : undefined;
@@ -109,18 +111,24 @@ export function AgentConnectionRow({
       <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
         {view === "market" && onInstall ? (
           <Button
-            disabled={isManaging || lifecycleBlocked}
-            onClick={onInstall}
+            disabled={
+              isManaging ||
+              lifecycleBlocked ||
+              (reinstallRequired && !onReinstall)
+            }
+            onClick={reinstallRequired ? onReinstall : onInstall}
             title={lifecycleBlockReason}
             type="button"
           >
             {isManaging
               ? t("settings.agents.installing")
-              : agent.installed
-                ? agent.installed.enabled
-                  ? t("settings.agents.disable")
-                  : t("settings.agents.enable")
-                : t("settings.agents.install")}
+              : reinstallRequired
+                ? t("settings.agents.reinstall")
+                : agent.installed
+                  ? agent.installed.enabled
+                    ? t("settings.agents.disable")
+                    : t("settings.agents.enable")
+                  : t("settings.agents.install")}
           </Button>
         ) : null}
         {view === "market" && onUpdate && agent.updateAvailable ? (
@@ -136,7 +144,10 @@ export function AgentConnectionRow({
               : t("settings.agents.update")}
           </Button>
         ) : null}
-        {view === "market" && onReinstall && agent.installed ? (
+        {view === "market" &&
+        onReinstall &&
+        agent.installed &&
+        !reinstallRequired ? (
           <Button
             disabled={isManaging || lifecycleBlocked}
             onClick={onReinstall}
