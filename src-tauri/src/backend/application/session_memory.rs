@@ -305,7 +305,9 @@ impl AppService {
             ));
         }
         let evidence = if !short_refs.is_empty() {
-            build_bounded_evidence_references(&detail, &short_refs)
+            let mut refs = build_bounded_evidence_references(&detail, &short_refs);
+            refs.extend(build_evidence_references(&detail));
+            refs
         } else {
             build_evidence_references(&detail)
         };

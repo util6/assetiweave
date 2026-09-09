@@ -1860,4 +1860,88 @@ mod tests {
             Err(EvidenceReadError::UnauthorizedTool(_))
         ));
     }
+
+    #[tokio::test]
+    async fn test_e18_background_tasks_cancellation_and_polling_consistency() {
+        let harness = FixtureHarness::new("e18_tasks");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake.clone())
+            .await
+            .expect("open app service");
+
+        let pool = service.db.pool().clone();
+        let now = "2026-09-09T01:00:00Z";
+
+        let session = NormalizedConversationSession {
+            external_id: "sess-e18".to_string(),
+            title: Some("Session E18".to_string()),
+            updated_at: Some(now.to_string()),
+            source_fingerprint: Some("fp-e18".to_string()),
+            ..Default::default()
+        };
+        let session_id = harness.import_session(&pool, session).await;
+
+        let candidate = store::SessionMemoryJobCandidate {
+            session_id: session_id.clone(),
+            source_id: harness.source.id.clone(),
+            source_revision: 1,
+            source_fingerprint: "fp-e18".to_string(),
+            not_before: now.to_string(),
+            ..Default::default()
+        };
+
+        store::insert_job_candidate_sqlx(
+            &pool,
+            "default",
+            &candidate,
+            "event-e18",
+            "sync-e18",
+            now,
+        )
+        .await
+        .expect("enqueue candidate");
+
+        let job_ids =
+            store::list_session_memory_job_ids_for_scheduler_sqlx(&pool, "default", now, 10)
+                .await
+                .expect("list jobs");
+        let job_id = &job_ids[0];
+
+        // 1. 在任务运行前或运行中取消该任务
+        let canceled = store::cancel_session_memory_job_sqlx(&pool, "default", job_id, now)
+            .await
+            .expect("cancel job");
+        assert!(canceled, "Session Memory job must be canceled successfully");
+
+        // 2. 验证任务处于明确终态 canceled
+        let job = store::load_session_memory_job_sqlx(&pool, "default", job_id)
+            .await
+            .expect("load job")
+            .expect("job exists");
+        assert_eq!(
+            job.status,
+            crate::backend::models::SessionMemoryJobStatus::Canceled
+        );
+
+        // 3. 轮询 Session Memory：取消的任务绝不生成活跃的 Session Memory
+        let memory = store::load_session_memory_for_job_sqlx(&pool, "default", &job)
+            .await
+            .expect("query memory for job");
+        assert!(
+            memory.is_none(),
+            "Canceled job must not produce or expose active session memory"
+        );
+
+        // 4. 验证无关操作保持完全可用且状态一致
+        let resolved_context = service
+            .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
+                project_path: None,
+                query: None,
+                token_budget: Some(2000),
+            })
+            .await
+            .expect("resolve context during cancelled task");
+        assert!(resolved_context.token_budget <= 2000);
+    }
 }

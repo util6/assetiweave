@@ -506,7 +506,7 @@ input.on("line", async (line) => {
 });
 
 input.on("close", () => {
-  if (keepAlive) clearInterval(keepAlive);
+  if (process.platform === "win32" && keepAlive) clearInterval(keepAlive);
   record("stdin_closed");
 });
 process.on("SIGTERM", () => {
