@@ -340,6 +340,7 @@ mod tests {
             source_locator: None,
             source_fingerprint: Some("version-after-read".to_string()),
             turns: Vec::new(),
+            ..Default::default()
         };
 
         assert!(!session_matches_descriptor(&session, &descriptor));

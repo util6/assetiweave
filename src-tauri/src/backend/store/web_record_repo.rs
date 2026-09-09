@@ -291,6 +291,9 @@ pub(crate) async fn list_web_record_sessions_sqlx(
                     missing: row.missing == 1,
                     created_at: row.created_at,
                     imported_at: row.imported_at,
+                    execution_origin: "user".to_string(),
+                    execution_purpose: None,
+                    user_visible: true,
                 },
                 question_count,
                 turn_count,
@@ -638,6 +641,9 @@ fn web_record_session_from_normalized(
         missing: false,
         created_at: now.to_string(),
         imported_at: now.to_string(),
+        execution_origin: "user".to_string(),
+        execution_purpose: None,
+        user_visible: true,
     }
 }
 
@@ -2333,6 +2339,7 @@ mod tests {
                     metadata_json: content_card_metadata("answer"),
                 }],
             }],
+            ..Default::default()
         }
     }
 

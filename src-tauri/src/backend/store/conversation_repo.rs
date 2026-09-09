@@ -1910,6 +1910,12 @@ struct ConversationSessionListItemRow {
     imported_at: String,
     question_count: i64,
     turn_count: i64,
+    #[sqlx(default)]
+    execution_origin: Option<String>,
+    #[sqlx(default)]
+    execution_purpose: Option<String>,
+    #[sqlx(default)]
+    user_visible: Option<i64>,
 }
 
 impl ConversationSessionListItemRow {
@@ -1932,6 +1938,9 @@ impl ConversationSessionListItemRow {
             missing: self.missing == 1,
             created_at: self.created_at,
             imported_at: self.imported_at,
+            execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
+            execution_purpose: self.execution_purpose,
+            user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
         };
         Ok(ConversationSessionListItem {
             session,
@@ -1961,6 +1970,12 @@ struct RecentConversationSessionRecordRow {
     last_activity_at: String,
     cwd: Option<String>,
     source_agent: String,
+    #[sqlx(default)]
+    execution_origin: Option<String>,
+    #[sqlx(default)]
+    execution_purpose: Option<String>,
+    #[sqlx(default)]
+    user_visible: Option<i64>,
 }
 
 impl RecentConversationSessionRecordRow {
@@ -1983,6 +1998,9 @@ impl RecentConversationSessionRecordRow {
             missing: self.missing == 1,
             created_at: self.created_at,
             imported_at: self.imported_at,
+            execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
+            execution_purpose: self.execution_purpose,
+            user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
         };
         Ok(RecentConversationSessionRecord {
             session: ConversationSessionListItem {
@@ -2014,6 +2032,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
+               s.execution_origin, s.execution_purpose, s.user_visible,
                (
                    SELECT COUNT(*)
                    FROM conversation_questions q
@@ -2026,6 +2045,7 @@ pub(crate) async fn list_conversation_sessions_sqlx(
                ) AS turn_count
         FROM conversation_sessions s
         WHERE s.tenant_id = ?1
+          AND s.user_visible = 1
           AND (?2 IS NULL OR s.adapter_id = ?2)
           AND (?3 IS NULL OR s.source_id = ?3)
           AND s.missing = 0
@@ -2076,6 +2096,7 @@ const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
         SELECT s.id, s.source_id, s.adapter_id, s.external_id, s.title, s.project_path,
                s.started_at, s.updated_at, s.source_locator, s.source_fingerprint,
                s.missing, s.created_at, s.imported_at,
+               s.execution_origin, s.execution_purpose, s.user_visible,
                (
                    SELECT COUNT(*)
                    FROM conversation_questions q
@@ -2112,6 +2133,7 @@ const LIST_RECENT_CONVERSATION_SESSIONS_SQL: &str = r#"
         LEFT JOIN conversation_adapters a
           ON a.tenant_id = s.tenant_id AND a.id = s.adapter_id
         WHERE s.tenant_id = ?1
+          AND s.user_visible = 1
           AND s.missing = 0
           AND (
                 ?4 = ''
@@ -4014,6 +4036,12 @@ struct ConversationSessionRow {
     missing: i64,
     created_at: String,
     imported_at: String,
+    #[sqlx(default)]
+    execution_origin: Option<String>,
+    #[sqlx(default)]
+    execution_purpose: Option<String>,
+    #[sqlx(default)]
+    user_visible: Option<i64>,
 }
 
 impl ConversationSessionRow {
@@ -4032,6 +4060,9 @@ impl ConversationSessionRow {
             missing: self.missing == 1,
             created_at: self.created_at,
             imported_at: self.imported_at,
+            execution_origin: self.execution_origin.unwrap_or_else(|| "user".to_string()),
+            execution_purpose: self.execution_purpose,
+            user_visible: self.user_visible.map(|v| v != 0).unwrap_or(true),
         }
     }
 }
@@ -4193,6 +4224,23 @@ fn conversation_session_from_normalized(
     normalized: &NormalizedConversationSession,
     now: &str,
 ) -> ConversationSession {
+    let is_agent_workspace = normalized
+        .project_path
+        .as_deref()
+        .map(|p| p.contains("agent-executions"))
+        .unwrap_or(false);
+    let execution_origin = normalized.execution_origin.clone().unwrap_or_else(|| {
+        if is_agent_workspace {
+            "internal_agent".to_string()
+        } else {
+            "user".to_string()
+        }
+    });
+    let execution_purpose = normalized.execution_purpose.clone();
+    let user_visible = normalized
+        .user_visible
+        .unwrap_or_else(|| execution_origin == "user" || execution_origin == "recall");
+
     ConversationSession {
         id: stable_id(
             "conversation-session",
@@ -4216,6 +4264,9 @@ fn conversation_session_from_normalized(
         missing: false,
         created_at: now.to_string(),
         imported_at: now.to_string(),
+        execution_origin,
+        execution_purpose,
+        user_visible,
     }
 }
 
@@ -4353,9 +4404,10 @@ async fn upsert_conversation_session_sqlx_tx(
         r#"
         INSERT INTO conversation_sessions (
             tenant_id, id, source_id, adapter_id, external_id, title, project_path, started_at,
-            updated_at, source_locator, source_fingerprint, missing, created_at, imported_at
+            updated_at, source_locator, source_fingerprint, missing, created_at, imported_at,
+            execution_origin, execution_purpose, user_visible
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         ON CONFLICT(tenant_id, source_id, external_id) DO UPDATE SET
             adapter_id = excluded.adapter_id,
             title = excluded.title,
@@ -4365,7 +4417,10 @@ async fn upsert_conversation_session_sqlx_tx(
             source_locator = excluded.source_locator,
             source_fingerprint = excluded.source_fingerprint,
             missing = 0,
-            imported_at = excluded.imported_at
+            imported_at = excluded.imported_at,
+            execution_origin = excluded.execution_origin,
+            execution_purpose = excluded.execution_purpose,
+            user_visible = excluded.user_visible
         "#,
     )
     .bind(tenant_id)
@@ -4382,6 +4437,9 @@ async fn upsert_conversation_session_sqlx_tx(
     .bind(if session.missing { 1_i64 } else { 0_i64 })
     .bind(&session.created_at)
     .bind(&session.imported_at)
+    .bind(&session.execution_origin)
+    .bind(&session.execution_purpose)
+    .bind(if session.user_visible { 1_i64 } else { 0_i64 })
     .execute(&mut **tx)
     .await
     .map_err(AppError::external)?;
@@ -8434,6 +8492,7 @@ mod tests {
             source_locator: None,
             source_fingerprint: None,
             turns: vec![undeclared_turn, declared_turn],
+            ..Default::default()
         };
 
         let (detail, undeclared_list, undeclared_page, declared_page) = async {
@@ -8957,6 +9016,7 @@ mod tests {
             source_locator: None,
             source_fingerprint: None,
             turns,
+            ..Default::default()
         }
     }
 

@@ -358,6 +358,20 @@ pub struct ConversationSession {
     pub missing: bool,
     pub created_at: String,
     pub imported_at: String,
+    #[serde(default = "default_execution_origin")]
+    pub execution_origin: String,
+    #[serde(default)]
+    pub execution_purpose: Option<String>,
+    #[serde(default = "default_user_visible")]
+    pub user_visible: bool,
+}
+
+fn default_execution_origin() -> String {
+    "user".to_string()
+}
+
+fn default_user_visible() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -428,7 +442,7 @@ pub struct ConversationSyncRun {
     pub error_message: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct NormalizedConversationSession {
     pub external_id: String,
     pub title: Option<String>,
@@ -438,6 +452,12 @@ pub struct NormalizedConversationSession {
     pub source_locator: Option<String>,
     pub source_fingerprint: Option<String>,
     pub turns: Vec<NormalizedConversationTurn>,
+    #[serde(default)]
+    pub execution_origin: Option<String>,
+    #[serde(default)]
+    pub execution_purpose: Option<String>,
+    #[serde(default)]
+    pub user_visible: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

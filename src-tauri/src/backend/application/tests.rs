@@ -351,6 +351,7 @@ async fn recent_conversation_sessions_use_last_activity_and_resolve_project_dire
                     metadata_json: None,
                 }],
             }],
+            ..Default::default()
         }
     };
     let mut internal_agent_session = fixture_session(
@@ -1548,6 +1549,7 @@ async fn upsert_conversation_export_fixture(
                 ),
             }],
         }],
+        ..Default::default()
     };
     let pool = service.db.pool();
     let tenant_id = service.tenant_id();
@@ -5350,6 +5352,7 @@ async fn recent_incremental_search_prefers_a_changed_old_session_over_unchanged_
                     ),
                 }],
             }],
+            ..Default::default()
         };
     let old_changed = session(
         "old-changed",

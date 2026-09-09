@@ -35,6 +35,7 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
+          AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
           AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
           AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
@@ -76,6 +77,7 @@ pub(crate) async fn list_memory_recall_question_refs_sqlx(
         JOIN conversation_sessions s ON s.tenant_id=q.tenant_id AND s.id=q.session_id
         JOIN conversation_sources source ON source.tenant_id=s.tenant_id AND source.id=s.source_id
         WHERE q.tenant_id=?1 AND source.adapter_id <> 'assetiweave-memory-recall'
+          AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'
           AND (?2 IS NULL OR s.adapter_id=?2)
           AND (?3 IS NULL OR s.source_id=?3) AND (?4 IS NULL OR s.project_path=?4)
           AND (?5 IS NULL OR s.id=?5) AND (?6=1 OR (s.missing=0 AND source.enabled=1))
@@ -191,6 +193,7 @@ fn push_session_recall_scope(
         query.push(" AND s.missing=0 AND source.enabled=1");
     }
     query.push(" AND source.adapter_id <> 'assetiweave-memory-recall'");
+    query.push(" AND s.user_visible = 1 AND s.execution_origin != 'internal_memory'");
     if let Some(since) = since {
         query.push(" AND q.created_at>=").push_bind(since);
     }

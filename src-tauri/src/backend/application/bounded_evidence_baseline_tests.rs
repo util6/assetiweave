@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::backend::{
+        agents::types::AgentProtocol,
         ai_execution::{
-            AgentExecutionRuntime, AgentProtocol, AiExecutionRequest, AiExecutionResult,
-            BackendFuture,
+            executor::BackendFuture, AgentExecutionRuntime, AiExecutionRequest, AiExecutionResult,
         },
         application::{
             session_memory::{build_evidence_references, build_session_memory_prompt},
@@ -13,7 +13,7 @@ mod tests {
         models::{
             BoundedMemoryBudgetPolicy, ConversationAdapter, ConversationAdapterKind,
             ConversationAdapterTrustState, ConversationPartKind, ConversationPartRole,
-            ConversationSource, ConversationSourceKind, NormalizedConversationPart,
+            ConversationSource, ConversationSourceKind, MemoryScope, NormalizedConversationPart,
             NormalizedConversationSession, NormalizedConversationTurn,
         },
         store,
@@ -50,7 +50,7 @@ mod tests {
                     requested_model: request.model,
                     elapsed_ms: 1,
                     persistent_binding: None,
-                    team_events: Vec::new(),
+                    replay_text: None,
                 })
             })
         }
@@ -172,7 +172,9 @@ mod tests {
                     command_label: None,
                     source_execution_id: None,
                     content_card: None,
-                    metadata_json: None,
+                    metadata_json: Some(
+                        r#"{"content_card":{"type":"answer","format":"markdown"}}"#.to_string(),
+                    ),
                 }],
             });
         }
@@ -185,6 +187,7 @@ mod tests {
             source_locator: Some("fixture://heavy-log".to_string()),
             source_fingerprint: Some("rev-heavy-1".to_string()),
             turns,
+            ..Default::default()
         }
     }
 
@@ -242,5 +245,165 @@ mod tests {
             result.text.contains("[REDACTED:high_entropy]"),
             "Baseline confirms that current high_entropy regex over-redacts 40-char git commit SHA"
         );
+    }
+
+    #[tokio::test]
+    async fn test_internal_source_isolation_hides_agent_sessions_from_views_and_memory() {
+        let harness = FixtureHarness::new("isolation");
+        let db_path = harness.root.join("app.db");
+        let fake = FakeRuntime::new();
+        let service = AppService::open_with_db_path_and_runtime(db_path, fake)
+            .await
+            .expect("open app service");
+        let pool = service.db.pool().clone();
+
+        // 1. 构造一个普通用户会话
+        let user_session = NormalizedConversationSession {
+            external_id: "user-session-1".to_string(),
+            title: Some("User Conversation".to_string()),
+            project_path: Some("/Users/test/project".to_string()),
+            started_at: Some("2026-09-09T10:00:00Z".to_string()),
+            updated_at: Some("2026-09-09T10:05:00Z".to_string()),
+            source_locator: Some("file:///test/user.json".to_string()),
+            source_fingerprint: Some("fp-user-1".to_string()),
+            execution_origin: Some("user".to_string()),
+            execution_purpose: None,
+            user_visible: Some(true),
+            turns: vec![NormalizedConversationTurn {
+                external_id: "turn-user-1".to_string(),
+                turn_index: 0,
+                user_text: "How to configure auth?".to_string(),
+                title: None,
+                started_at: Some("2026-09-09T10:00:00Z".to_string()),
+                ended_at: Some("2026-09-09T10:01:00Z".to_string()),
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("Here is how to configure auth...".to_string()),
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    language: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+            }],
+        };
+
+        // 2. 构造一个内部 Agent 会话（如 Recall 或 internal memory 执行）
+        let internal_session = NormalizedConversationSession {
+            external_id: "internal-session-1".to_string(),
+            title: Some("Internal Agent Memory Recall".to_string()),
+            project_path: Some("/Users/test/project".to_string()),
+            started_at: Some("2026-09-09T10:10:00Z".to_string()),
+            updated_at: Some("2026-09-09T10:12:00Z".to_string()),
+            source_locator: Some("memory-recall://test-1".to_string()),
+            source_fingerprint: Some("fp-internal-1".to_string()),
+            execution_origin: Some("internal_memory".to_string()),
+            execution_purpose: Some("recall".to_string()),
+            user_visible: Some(false),
+            turns: vec![NormalizedConversationTurn {
+                external_id: "turn-internal-1".to_string(),
+                turn_index: 0,
+                user_text: "What did user work on recently?".to_string(),
+                title: None,
+                started_at: Some("2026-09-09T10:10:00Z".to_string()),
+                ended_at: Some("2026-09-09T10:11:00Z".to_string()),
+                parts: vec![NormalizedConversationPart {
+                    role: ConversationPartRole::Assistant,
+                    kind: ConversationPartKind::Text,
+                    text: Some("User was configuring auth...".to_string()),
+                    command: None,
+                    cwd: None,
+                    status: None,
+                    exit_code: None,
+                    language: None,
+                    command_label: None,
+                    source_execution_id: None,
+                    content_card: None,
+                    metadata_json: None,
+                }],
+            }],
+        };
+
+        store::upsert_conversation_adapter_sqlx(&pool, "default", &harness.adapter)
+            .await
+            .expect("upsert adapter");
+        store::upsert_conversation_source_sqlx(&pool, "default", &harness.source)
+            .await
+            .expect("upsert source");
+        store::import_conversation_sessions_sqlx(
+            &pool,
+            "default",
+            &harness.source,
+            &[user_session, internal_session],
+            false,
+        )
+        .await
+        .expect("import sessions");
+
+        let user_id: String = sqlx::query_scalar(
+            "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = 'user-session-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("fetch user session id");
+
+        let _internal_id: String = sqlx::query_scalar(
+            "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = 'internal-session-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("fetch internal session id");
+
+        // 验证 1: 会话列表只能查到用户会话，不能查到内部会话
+        let sessions =
+            store::list_conversation_sessions_sqlx(&pool, "default", None, None, None, 10, 0)
+                .await
+                .expect("list conversation sessions");
+
+        assert_eq!(sessions.len(), 1, "Only user sessions should be returned");
+        assert_eq!(sessions[0].session.id, user_id);
+
+        // 验证 2: 待提取候选列表 (Session candidates) 只能查到用户会话
+        let candidates = store::load_session_candidates_sqlx(
+            &pool,
+            "default",
+            &harness.source.id,
+            &[user_id.clone(), _internal_id.clone()],
+            "",
+        )
+        .await
+        .expect("load candidates");
+
+        assert_eq!(
+            candidates.len(),
+            1,
+            "Only user sessions can be memory candidates"
+        );
+        assert_eq!(candidates[0].id, user_id);
+
+        // 验证 3: Recall 候选列表只能查到用户会话的问题，内部 Agent 会话被完全隔离
+        let scope = MemoryScope {
+            app_id: None,
+            source_id: None,
+            project_path: None,
+            session_id: None,
+        };
+        let (recall_count, recall_refs) = store::list_memory_recall_question_refs_sqlx(
+            &pool, "default", &scope, None, None, true, 10, 0,
+        )
+        .await
+        .expect("list recall refs");
+
+        assert_eq!(
+            recall_count, 1,
+            "Only user session questions should be in recall scope"
+        );
+        assert_eq!(recall_refs.len(), 1);
+        assert_eq!(recall_refs[0].session_id, user_id);
     }
 }

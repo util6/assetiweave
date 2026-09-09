@@ -153,7 +153,7 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     .flatten()
     .unwrap_or(0);
     let sources = sqlx::query_as::<_, SessionMemorySourceCandidateRow>(
-        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1)) ORDER BY id ASC",
+        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 AND execution_origin = 'user' AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1)) ORDER BY id ASC",
     )
     .bind(tenant_id)
     .bind(excluded_project_root)
@@ -222,7 +222,7 @@ async fn load_memory_generation_policy_sqlx(
     })
 }
 
-async fn load_session_candidates_sqlx(
+pub(crate) async fn load_session_candidates_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
     source_id: &str,
@@ -238,7 +238,7 @@ async fn load_session_candidates_sqlx(
     query.push_bind(tenant_id);
     query.push(" AND source_id = ");
     query.push_bind(source_id);
-    query.push(" AND missing = 0 AND (");
+    query.push(" AND missing = 0 AND execution_origin = 'user' AND (");
     query.push_bind(excluded_project_root);
     query.push(" = '' OR project_path IS NULL OR (project_path <> ");
     query.push_bind(excluded_project_root);

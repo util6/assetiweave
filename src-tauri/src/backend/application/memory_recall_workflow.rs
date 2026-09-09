@@ -569,6 +569,9 @@ impl AppService {
             updated_at: Some(now.clone()),
             source_locator: Some(format!("memory-recall://{}", session.id)),
             source_fingerprint: Some(fingerprint),
+            execution_origin: Some("internal_memory".to_string()),
+            execution_purpose: Some("recall".to_string()),
+            user_visible: Some(false),
             turns: normalized_turns,
         };
         crate::backend::store::upsert_conversation_source_sqlx(self.db.pool(), tenant_id, &source)

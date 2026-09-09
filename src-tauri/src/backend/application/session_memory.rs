@@ -957,6 +957,9 @@ mod tests {
                     missing: false,
                     created_at: now.to_rfc3339(),
                     imported_at: now.to_rfc3339(),
+                    execution_origin: "user".to_string(),
+                    execution_purpose: None,
+                    user_visible: true,
                 },
                 questions: Vec::new(),
             };
@@ -1045,6 +1048,7 @@ mod tests {
                     metadata_json: None,
                 }],
             }],
+            ..Default::default()
         };
         let pool = service.db.pool().clone();
         let source_for_import = source.clone();
@@ -1400,6 +1404,7 @@ mod tests {
                         metadata_json: None,
                     }],
                 }],
+                ..Default::default()
             };
             crate::backend::store::upsert_conversation_adapter_sqlx(pool, "default", &adapter)
                 .await

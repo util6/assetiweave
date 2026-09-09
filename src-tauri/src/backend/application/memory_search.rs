@@ -615,6 +615,7 @@ mod tests {
                     metadata_json: None,
                 }],
             }],
+            ..Default::default()
         };
         crate::backend::store::upsert_conversation_adapter_sqlx(
             service.db.pool(),
