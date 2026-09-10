@@ -253,6 +253,10 @@ export interface SessionItemSnapshot {
   text: string | null;
   status: SessionTaskStatus | null;
   code: string | null;
+  tool_call_id?: string | null;
+  tool_name?: string | null;
+  tool_input?: unknown;
+  tool_output?: unknown;
 }
 
 export interface SessionSnapshot {

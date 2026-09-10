@@ -1464,6 +1464,8 @@ impl<'a> AcpSessionEventBridge<'a> {
                 tool_call_id,
                 title,
                 status,
+                raw_input,
+                raw_output,
                 ..
             } => {
                 let item_id = tool_item_id(tool_call_id);
@@ -1471,26 +1473,34 @@ impl<'a> AcpSessionEventBridge<'a> {
                     &item_id,
                     SessionEventKind::ToolStart {
                         name: (!title.trim().is_empty()).then(|| title.clone()),
+                        raw_input: raw_input.clone(),
                     },
                 );
-                self.emit_tool_status(&item_id, *status);
+                self.emit_tool_status(&item_id, *status, raw_output.clone());
             }
             AcpRuntimeEvent::ToolCallUpdate {
                 tool_call_id,
                 title,
                 status,
+                raw_input,
+                raw_output,
                 ..
             } => {
                 let item_id = tool_item_id(tool_call_id);
-                if let Some(title) = title.as_ref() {
+                if title.is_some() || raw_input.is_some() {
                     self.emit_kind(
                         &item_id,
                         SessionEventKind::ToolStart {
-                            name: (!title.trim().is_empty()).then(|| title.clone()),
+                            name: title.as_ref().filter(|t| !t.trim().is_empty()).cloned(),
+                            raw_input: raw_input.clone(),
                         },
                     );
                 }
-                self.emit_tool_status(&item_id, status.unwrap_or(AcpToolStatus::InProgress));
+                self.emit_tool_status(
+                    &item_id,
+                    status.unwrap_or(AcpToolStatus::InProgress),
+                    raw_output.clone(),
+                );
             }
             AcpRuntimeEvent::PermissionRequested { .. } => {
                 self.emit_kind(
@@ -1549,14 +1559,31 @@ impl<'a> AcpSessionEventBridge<'a> {
         );
     }
 
-    fn emit_tool_status(&mut self, item_id: &str, status: AcpToolStatus) {
+    fn emit_tool_status(
+        &mut self,
+        item_id: &str,
+        status: AcpToolStatus,
+        raw_output: Option<serde_json::Value>,
+    ) {
         match status {
-            AcpToolStatus::Pending => {}
+            AcpToolStatus::Pending => {
+                if raw_output.is_some() {
+                    self.emit_kind(
+                        item_id,
+                        SessionEventKind::ToolUpdate {
+                            state: SessionToolState::Running,
+                            detail: None,
+                            raw_output,
+                        },
+                    );
+                }
+            }
             AcpToolStatus::InProgress => self.emit_kind(
                 item_id,
                 SessionEventKind::ToolUpdate {
                     state: SessionToolState::Running,
                     detail: None,
+                    raw_output,
                 },
             ),
             AcpToolStatus::Completed => self.emit_kind(
@@ -1564,6 +1591,7 @@ impl<'a> AcpSessionEventBridge<'a> {
                 SessionEventKind::ToolResult {
                     success: true,
                     detail: None,
+                    raw_output,
                 },
             ),
             AcpToolStatus::Failed => self.emit_kind(
@@ -1571,6 +1599,7 @@ impl<'a> AcpSessionEventBridge<'a> {
                 SessionEventKind::ToolResult {
                     success: false,
                     detail: None,
+                    raw_output,
                 },
             ),
         }
@@ -2098,7 +2127,8 @@ mod tests {
         agents::types::{AgentEnvEntry, AgentId, DeclaredAgentCapabilities},
         ai_execution::{
             AgentSessionMode, AiExecutionCancellation, AiExecutionLimits, AiExecutionProgressSink,
-            AiExecutionPurpose, SessionEvent,
+            AiExecutionPurpose, SessionEvent, SessionEventProjection, SessionItemKind,
+            SessionItemState,
         },
     };
     use std::{
@@ -2277,7 +2307,7 @@ mod tests {
         )));
         assert!(events.iter().any(|event| matches!(
             event.kind,
-            crate::backend::ai_execution::SessionEventKind::ToolStart { ref name }
+            crate::backend::ai_execution::SessionEventKind::ToolStart { ref name, .. }
                 if name.as_deref() == Some("read fixture")
         )));
         assert!(events.iter().any(|event| matches!(
@@ -2438,6 +2468,78 @@ mod tests {
         assert_eq!(record_contents.matches("\"event\":\"prompt\"").count(), 1);
         assert_eq!(record_contents.matches("\"event\":\"load\"").count(), 1);
         let _ = fs::remove_dir_all(root);
+    }
+
+    struct ProjectionSink(SessionEventProjection);
+    impl AiExecutionProgressSink for ProjectionSink {
+        fn set_phase(&self, _phase: crate::backend::ai_execution::AiExecutionPhase) {}
+        fn emit_session_event(&self, event: SessionEvent) {
+            self.0.apply(event);
+        }
+    }
+
+    #[test]
+    fn t02_acp_bridge_maps_tool_call_lifecycle_with_input_and_output() {
+        let projection = SessionEventProjection::default();
+        let provider_session_id = SessionId::new("session-1");
+        let execution_request = AiExecutionRequest {
+            prompt: "run tool".to_string(),
+            execution_id: "exec-tool".to_string(),
+            execution_context_key: Some("member-1".to_string()),
+            progress: Some(Arc::new(ProjectionSink(projection.clone()))),
+            ..request(None)
+        };
+        let mut bridge = AcpSessionEventBridge::new(&execution_request, &provider_session_id);
+
+        let secret = "SECRET_CREDENTIAL";
+        // 1. ToolCall start with raw_input
+        bridge.emit(&AcpRuntimeEvent::ToolCall {
+            session_id: provider_session_id.clone(),
+            tool_call_id: "call-1".to_string(),
+            title: "fetch_api".to_string(),
+            status: AcpToolStatus::Pending,
+            raw_input: Some(serde_json::json!({"endpoint": "/api", "token": secret})),
+            raw_output: None,
+        });
+
+        // 2. ToolCallUpdate in progress
+        bridge.emit(&AcpRuntimeEvent::ToolCallUpdate {
+            session_id: provider_session_id.clone(),
+            tool_call_id: "call-1".to_string(),
+            title: None,
+            status: Some(AcpToolStatus::InProgress),
+            raw_input: None,
+            raw_output: None,
+        });
+
+        // 3. ToolCallUpdate completed with raw_output
+        bridge.emit(&AcpRuntimeEvent::ToolCallUpdate {
+            session_id: provider_session_id,
+            tool_call_id: "call-1".to_string(),
+            title: None,
+            status: Some(AcpToolStatus::Completed),
+            raw_input: None,
+            raw_output: Some(serde_json::json!({"status": 200, "token": secret})),
+        });
+
+        let snapshot = projection.snapshot();
+        assert_eq!(snapshot.items.len(), 1);
+        let item = &snapshot.items[0];
+        assert_eq!(item.kind, SessionItemKind::Tool);
+        assert_eq!(item.state, SessionItemState::Succeeded);
+        assert_eq!(item.tool_name.as_deref(), Some("fetch_api"));
+        assert_eq!(item.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(
+            item.tool_input,
+            Some(serde_json::json!({"endpoint": "/api", "token": secret}))
+        );
+        assert_eq!(
+            item.tool_output,
+            Some(serde_json::json!({"status": 200, "token": secret}))
+        );
+
+        let debug_str = format!("{snapshot:?}");
+        assert!(!debug_str.contains(secret));
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -74,6 +74,10 @@ export interface AgentSessionItemView {
   text?: string | null;
   status?: string | null;
   code?: string | null;
+  toolCallId?: string | null;
+  toolName?: string | null;
+  toolInput?: unknown;
+  toolOutput?: unknown;
 }
 
 export interface AgentSessionStatus {

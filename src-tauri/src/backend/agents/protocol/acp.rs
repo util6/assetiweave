@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -371,7 +372,7 @@ pub(crate) struct AcpProtocolChannels {
     pub(crate) disconnects: watch::Receiver<Option<AcpDisconnect>>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) enum AcpRuntimeEvent {
     AgentText {
         session_id: SessionId,
@@ -386,12 +387,16 @@ pub(crate) enum AcpRuntimeEvent {
         tool_call_id: String,
         title: String,
         status: AcpToolStatus,
+        raw_input: Option<serde_json::Value>,
+        raw_output: Option<serde_json::Value>,
     },
     ToolCallUpdate {
         session_id: SessionId,
         tool_call_id: String,
         title: Option<String>,
         status: Option<AcpToolStatus>,
+        raw_input: Option<serde_json::Value>,
+        raw_output: Option<serde_json::Value>,
     },
     PermissionRequested {
         session_id: SessionId,
@@ -403,6 +408,71 @@ pub(crate) enum AcpRuntimeEvent {
         session_id: SessionId,
         stop_reason: StopReason,
     },
+}
+
+impl fmt::Debug for AcpRuntimeEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AgentText { session_id, .. } => formatter
+                .debug_struct("AgentText")
+                .field("session_id", session_id)
+                .field("text", &"<redacted>")
+                .finish(),
+            Self::AgentThought { session_id, text } => formatter
+                .debug_struct("AgentThought")
+                .field("session_id", session_id)
+                .field("text", &text.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::ToolCall {
+                session_id,
+                tool_call_id,
+                title,
+                status,
+                raw_input,
+                raw_output,
+            } => formatter
+                .debug_struct("ToolCall")
+                .field("session_id", session_id)
+                .field("tool_call_id", tool_call_id)
+                .field("title", title)
+                .field("status", status)
+                .field("raw_input", &raw_input.as_ref().map(|_| "<redacted>"))
+                .field("raw_output", &raw_output.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::ToolCallUpdate {
+                session_id,
+                tool_call_id,
+                title,
+                status,
+                raw_input,
+                raw_output,
+            } => formatter
+                .debug_struct("ToolCallUpdate")
+                .field("session_id", session_id)
+                .field("tool_call_id", tool_call_id)
+                .field("title", title)
+                .field("status", status)
+                .field("raw_input", &raw_input.as_ref().map(|_| "<redacted>"))
+                .field("raw_output", &raw_output.as_ref().map(|_| "<redacted>"))
+                .finish(),
+            Self::PermissionRequested { session_id } => formatter
+                .debug_struct("PermissionRequested")
+                .field("session_id", session_id)
+                .finish(),
+            Self::Other { session_id } => formatter
+                .debug_struct("Other")
+                .field("session_id", session_id)
+                .finish(),
+            Self::TurnCompleted {
+                session_id,
+                stop_reason,
+            } => formatter
+                .debug_struct("TurnCompleted")
+                .field("session_id", session_id)
+                .field("stop_reason", stop_reason)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -609,12 +679,16 @@ fn normalize_session_notification(notification: SessionNotification) -> AcpRunti
             tool_call_id,
             title,
             status,
+            raw_input,
+            raw_output,
             ..
         }) => AcpRuntimeEvent::ToolCall {
             session_id,
             tool_call_id: tool_call_id.to_string(),
             title,
             status: status.into(),
+            raw_input,
+            raw_output,
         },
         SessionUpdate::ToolCallUpdate(ToolCallUpdate {
             tool_call_id,
@@ -625,6 +699,8 @@ fn normalize_session_notification(notification: SessionNotification) -> AcpRunti
             tool_call_id: tool_call_id.to_string(),
             title: fields.title,
             status: fields.status.map(Into::into),
+            raw_input: fields.raw_input,
+            raw_output: fields.raw_output,
         },
         _ => AcpRuntimeEvent::Other { session_id },
     }
@@ -1116,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_event_mapping_drops_raw_input_and_other_content() {
+    fn tool_event_mapping_retains_raw_input_and_output_with_redaction() {
         let secret = "RAW_TOOL_SECRET";
         let update = SessionUpdate::ToolCall(
             ToolCall::new("tool", "read")
@@ -1132,6 +1208,8 @@ mod tests {
                 tool_call_id: "tool".to_string(),
                 title: "read".to_string(),
                 status: AcpToolStatus::Pending,
+                raw_input: Some(serde_json::json!({"secret": secret})),
+                raw_output: Some(serde_json::json!({"secret": secret})),
             }
         );
         assert!(!format!("{event:?}").contains(secret));

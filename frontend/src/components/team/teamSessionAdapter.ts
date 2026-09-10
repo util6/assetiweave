@@ -47,6 +47,10 @@ export function mapSessionItemSnapshotToView(
     text: item.text,
     status: item.status,
     code: item.code,
+    toolCallId: item.tool_call_id,
+    toolName: item.tool_name,
+    toolInput: item.tool_input,
+    toolOutput: item.tool_output,
   };
 }
 

@@ -510,16 +510,10 @@ impl AppService {
     }
 }
 
-/// Strip provider/tool detail before a member projection crosses a public
-/// transport boundary. Assistant and thinking text remain available to the
-/// chat workspace; tool items retain lifecycle state but never carry raw
-/// provider payloads.
-fn public_session_snapshot(mut snapshot: SessionSnapshot) -> SessionSnapshot {
-    for item in &mut snapshot.items {
-        if item.kind == SessionItemKind::Tool {
-            item.text = None;
-        }
-    }
+/// Pass through public session snapshot. Tool details and typed payload
+/// remain available to the shared chat workspace for user inspection,
+/// while sensitive contents remain redacted in debug/tracing/task views.
+fn public_session_snapshot(snapshot: SessionSnapshot) -> SessionSnapshot {
     snapshot
 }
 
@@ -1034,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    fn member_stream_transport_redacts_tool_payload_and_keeps_sequence() {
+    fn member_stream_transport_retains_tool_payload_and_keeps_sequence() {
         let public =
             super::public_session_snapshot(crate::backend::ai_execution::SessionSnapshot {
                 revision: 7,
@@ -1054,12 +1048,18 @@ mod tests {
                     text: Some("RAW_TOOL_PAYLOAD".to_string()),
                     status: None,
                     code: None,
+                    tool_call_id: Some("call-1".to_string()),
+                    tool_name: Some("read_tool".to_string()),
+                    tool_input: None,
+                    tool_output: None,
                 }],
             });
 
         assert_eq!(public.revision, 7);
-        assert_eq!(public.items[0].text, None);
-        assert!(!serde_json::to_string(&public)
+        assert_eq!(public.items[0].text.as_deref(), Some("RAW_TOOL_PAYLOAD"));
+        assert_eq!(public.items[0].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(public.items[0].tool_name.as_deref(), Some("read_tool"));
+        assert!(serde_json::to_string(&public)
             .expect("serialize public stream")
             .contains("RAW_TOOL_PAYLOAD"));
     }

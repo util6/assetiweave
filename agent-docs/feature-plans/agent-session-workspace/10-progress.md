@@ -14,9 +14,9 @@
 
 | ID | GitHub | Status | Commit | Gates | Note |
 |---|---|---|---|---|---|
-| T01 | — | verified | f5490ca | G-00, G-04, G-11 | 抽取共享 Agent Session 兼容工作区 |
-| T02 | — | ready | — | — | blocked by T01 (已解阻) |
-| T03 | — | blocked | — | — | blocked by T02 |
+| T01 | — | verified | 72c856e3 | G-00, G-04, G-11 | 抽取共享 Agent Session 兼容工作区 |
+| T02 | — | verified | 12f8cd3 | G-01, G-04, G-05, G-11 | 打通一条完整 Tool Step |
+| T03 | — | ready | — | — | blocked by T02 (已解阻) |
 | T04 | — | blocked | — | — | blocked by T03 |
 | T05 | — | blocked | — | — | blocked by T03 |
 | T06 | — | blocked | — | — | blocked by T03 |

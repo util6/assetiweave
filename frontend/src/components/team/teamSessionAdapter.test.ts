@@ -88,9 +88,62 @@ describe("teamSessionAdapter", () => {
       text: "Analysis completed.",
       status: null,
       code: null,
+      toolCallId: undefined,
+      toolName: undefined,
+      toolInput: undefined,
+      toolOutput: undefined,
     });
 
     props.onSend?.("Next step");
     expect(onSend).toHaveBeenCalledWith("Next step");
+  });
+
+  it("maps tool step snapshot to view retaining typed payload", () => {
+    const toolSnapshot: SessionItemSnapshot = {
+      identity: {
+        session_id: "s-1",
+        member_id: "member-1",
+        execution_id: "e-1",
+        turn_id: "t-1",
+        item_id: "tool:call-42",
+      },
+      kind: "tool",
+      sequence: 2,
+      delivery: "live",
+      state: "succeeded",
+      text: "fetch_record",
+      status: null,
+      code: null,
+      tool_call_id: "call-42",
+      tool_name: "fetch_record",
+      tool_input: { id: 101 },
+      tool_output: { record: "found" },
+    };
+
+    const props = adaptTeamSessionToWorkspaceProps({
+      activeMember: member,
+      activeSession: projection,
+      activeTimelineItems: [toolSnapshot],
+      roleLabelText: "Worker",
+      status: { label: "Idle", className: "text-muted" },
+      draft: "",
+      onDraftChange: vi.fn(),
+      onSend: vi.fn(),
+    });
+
+    expect(props.items[0]).toEqual({
+      id: "tool:call-42",
+      kind: "tool",
+      sequence: 2,
+      delivery: "live",
+      state: "succeeded",
+      text: "fetch_record",
+      status: null,
+      code: null,
+      toolCallId: "call-42",
+      toolName: "fetch_record",
+      toolInput: { id: 101 },
+      toolOutput: { record: "found" },
+    });
   });
 });

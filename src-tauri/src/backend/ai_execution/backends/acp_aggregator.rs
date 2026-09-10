@@ -289,6 +289,8 @@ mod tests {
                 tool_call_id: "tool".to_string(),
                 title: "tool".to_string(),
                 status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
+                raw_input: None,
+                raw_output: None,
             }),
             AggregatorAction::CancelAndFail(AiExecutionError::ToolUseDenied)
         ));
@@ -377,6 +379,8 @@ mod tests {
                 tool_call_id: "tool".to_string(),
                 title: "tool".to_string(),
                 status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
+                raw_input: None,
+                raw_output: None,
             }),
             AggregatorAction::Continue
         ));

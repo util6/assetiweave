@@ -358,9 +358,7 @@ function mergeSessionItems(
 }
 
 function sanitizeSessionItem(item: SessionItemSnapshot): SessionItemSnapshot {
-  return item.kind === "tool" && item.text !== null
-    ? { ...item, text: null }
-    : item;
+  return item;
 }
 
 function boundedSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {

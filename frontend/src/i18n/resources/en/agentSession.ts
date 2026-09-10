@@ -25,4 +25,6 @@ export const agentSessionEn = {
   "agentSession.item.toolActivity": "Tool activity recorded",
   "agentSession.item.taskActivity": "Task activity recorded",
   "agentSession.item.noText": "This activity has no body to display.",
+  "agentSession.tool.input": "Input",
+  "agentSession.tool.output": "Output",
 };

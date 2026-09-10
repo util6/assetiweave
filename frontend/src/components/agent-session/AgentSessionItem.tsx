@@ -36,6 +36,12 @@ export function AgentSessionItem({
 
   const label = getItemLabel(item.kind, t);
   const icon = getItemIcon(item.kind);
+  const isTool = item.kind === "tool";
+  const hasToolInput =
+    isTool && item.toolInput !== undefined && item.toolInput !== null;
+  const hasToolOutput =
+    isTool && item.toolOutput !== undefined && item.toolOutput !== null;
+  const toolTitle = item.toolName || item.text || getItemStatusText(item, t);
   const detail = item.text || item.status || getItemStatusText(item, t);
 
   const tone =
@@ -85,12 +91,44 @@ export function AgentSessionItem({
                   <span className="text-label-caps uppercase text-on-surface-variant">
                     {label}
                   </span>
-                  <span className="truncate">{detail}</span>
+                  <span className="truncate">{isTool ? toolTitle : detail}</span>
                 </span>
               </summary>
-              <p className="mt-2 whitespace-pre-wrap break-words text-body-sm text-on-surface">
-                {detail}
-              </p>
+
+              {isTool && hasToolInput ? (
+                <div
+                  className="mt-2"
+                  data-testid={`${testIdPrefix}-tool-input-${item.id}`}
+                >
+                  <span className="text-label-caps uppercase font-medium text-on-surface-variant">
+                    {t("agentSession.tool.input") || "Input"}
+                  </span>
+                  <pre className="mt-1 max-h-60 overflow-auto rounded bg-theme-control/40 p-2 text-caption font-mono text-on-surface">
+                    {formatPayload(item.toolInput)}
+                  </pre>
+                </div>
+              ) : null}
+
+              {isTool && hasToolOutput ? (
+                <div
+                  className="mt-2"
+                  data-testid={`${testIdPrefix}-tool-output-${item.id}`}
+                >
+                  <span className="text-label-caps uppercase font-medium text-on-surface-variant">
+                    {t("agentSession.tool.output") || "Output"}
+                  </span>
+                  <pre className="mt-1 max-h-60 overflow-auto rounded bg-theme-control/40 p-2 text-caption font-mono text-on-surface">
+                    {formatPayload(item.toolOutput)}
+                  </pre>
+                </div>
+              ) : null}
+
+              {!hasToolInput && !hasToolOutput && detail && detail !== item.toolName ? (
+                <p className="mt-2 whitespace-pre-wrap break-words text-body-sm text-on-surface">
+                  {detail}
+                </p>
+              ) : null}
+
               {item.code ? (
                 <p className="mt-1 break-words text-caption text-status-remove">
                   {item.code}
@@ -112,6 +150,15 @@ export function AgentSessionItem({
       </div>
     </li>
   );
+}
+
+function formatPayload(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function getItemLabel(

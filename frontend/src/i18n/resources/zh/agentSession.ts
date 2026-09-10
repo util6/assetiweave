@@ -25,4 +25,6 @@ export const agentSessionZh = {
   "agentSession.item.toolActivity": "工具活动已记录",
   "agentSession.item.taskActivity": "任务活动已记录",
   "agentSession.item.noText": "该活动没有可显示正文。",
+  "agentSession.tool.input": "输入",
+  "agentSession.tool.output": "输出",
 };

@@ -112,14 +112,20 @@ pub(crate) enum SessionEventKind {
     },
     ToolStart {
         name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_input: Option<serde_json::Value>,
     },
     ToolUpdate {
         state: SessionToolState,
         detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_output: Option<serde_json::Value>,
     },
     ToolResult {
         success: bool,
         detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        raw_output: Option<serde_json::Value>,
     },
     TaskProjection {
         task_id: String,
@@ -227,6 +233,14 @@ pub(crate) struct SessionItemSnapshot {
     pub(crate) text: Option<String>,
     pub(crate) status: Option<SessionTaskStatus>,
     pub(crate) code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_input: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_output: Option<serde_json::Value>,
 }
 
 impl fmt::Debug for SessionItemSnapshot {
@@ -241,6 +255,16 @@ impl fmt::Debug for SessionItemSnapshot {
             .field("text", &self.text.as_ref().map(|_| "<redacted>"))
             .field("status", &self.status)
             .field("code", &self.code)
+            .field("tool_call_id", &self.tool_call_id)
+            .field("tool_name", &self.tool_name)
+            .field(
+                "tool_input",
+                &self.tool_input.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "tool_output",
+                &self.tool_output.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -542,6 +566,10 @@ impl SessionItemSnapshot {
             text: None,
             status: None,
             code: None,
+            tool_call_id: None,
+            tool_name: None,
+            tool_input: None,
+            tool_output: None,
         }
     }
 
@@ -590,22 +618,83 @@ impl SessionItemSnapshot {
                     SessionProcessingState::Completed => SessionItemState::Completed,
                 };
             }
-            SessionEventKind::ToolStart { name } => {
+            SessionEventKind::ToolStart { name, raw_input } => {
                 self.kind = SessionItemKind::Tool;
-                self.text = name.clone();
-                self.state = SessionItemState::Pending;
+                if self.tool_call_id.is_none() {
+                    self.tool_call_id = Some(
+                        self.identity
+                            .item_id
+                            .strip_prefix("tool:")
+                            .unwrap_or(&self.identity.item_id)
+                            .to_string(),
+                    );
+                }
+                if name.is_some() {
+                    self.tool_name = name.clone();
+                    self.text = name.clone();
+                }
+                if raw_input.is_some() {
+                    self.tool_input = raw_input.clone();
+                }
+                if !matches!(
+                    self.state,
+                    SessionItemState::Succeeded
+                        | SessionItemState::Failed
+                        | SessionItemState::Cancelled
+                ) {
+                    self.state = SessionItemState::Pending;
+                }
             }
-            SessionEventKind::ToolUpdate { state, detail } => {
+            SessionEventKind::ToolUpdate {
+                state,
+                detail,
+                raw_output,
+            } => {
                 self.kind = SessionItemKind::Tool;
+                if self.tool_call_id.is_none() {
+                    self.tool_call_id = Some(
+                        self.identity
+                            .item_id
+                            .strip_prefix("tool:")
+                            .unwrap_or(&self.identity.item_id)
+                            .to_string(),
+                    );
+                }
                 if detail.is_some() {
                     self.text = detail.clone();
                 }
-                self.state = tool_state(*state);
+                if raw_output.is_some() {
+                    self.tool_output = raw_output.clone();
+                }
+                if !matches!(
+                    self.state,
+                    SessionItemState::Succeeded
+                        | SessionItemState::Failed
+                        | SessionItemState::Cancelled
+                ) {
+                    self.state = tool_state(*state);
+                }
             }
-            SessionEventKind::ToolResult { success, detail } => {
+            SessionEventKind::ToolResult {
+                success,
+                detail,
+                raw_output,
+            } => {
                 self.kind = SessionItemKind::Tool;
+                if self.tool_call_id.is_none() {
+                    self.tool_call_id = Some(
+                        self.identity
+                            .item_id
+                            .strip_prefix("tool:")
+                            .unwrap_or(&self.identity.item_id)
+                            .to_string(),
+                    );
+                }
                 if detail.is_some() {
                     self.text = detail.clone();
+                }
+                if raw_output.is_some() {
+                    self.tool_output = raw_output.clone();
                 }
                 self.state = if *success {
                     SessionItemState::Succeeded
@@ -742,12 +831,26 @@ impl SessionEvent {
             | SessionEventKind::AssistantTextSnapshot { text }
             | SessionEventKind::ThinkingDelta { text }
             | SessionEventKind::ThinkingSnapshot { text } => identity_bytes + text.len(),
-            SessionEventKind::ToolStart { name } => {
-                identity_bytes + name.as_deref().map_or(0, str::len)
+            SessionEventKind::ToolStart { name, raw_input } => {
+                identity_bytes
+                    + name.as_deref().map_or(0, str::len)
+                    + raw_input
+                        .as_ref()
+                        .map_or(0, |v| serde_json::to_string(v).map_or(32, |s| s.len()))
             }
-            SessionEventKind::ToolUpdate { detail, .. }
-            | SessionEventKind::ToolResult { detail, .. }
-            | SessionEventKind::TaskResult { detail, .. }
+            SessionEventKind::ToolUpdate {
+                detail, raw_output, ..
+            }
+            | SessionEventKind::ToolResult {
+                detail, raw_output, ..
+            } => {
+                identity_bytes
+                    + detail.as_deref().map_or(0, str::len)
+                    + raw_output
+                        .as_ref()
+                        .map_or(0, |v| serde_json::to_string(v).map_or(32, |s| s.len()))
+            }
+            SessionEventKind::TaskResult { detail, .. }
             | SessionEventKind::Notice { detail, .. } => {
                 identity_bytes + detail.as_deref().map_or(0, str::len)
             }
@@ -815,6 +918,7 @@ mod tests {
             "tool",
             SessionEventKind::ToolStart {
                 name: Some("search".to_string()),
+                raw_input: None,
             },
             SessionEventDelivery::Live,
         ));
@@ -824,6 +928,7 @@ mod tests {
             SessionEventKind::ToolResult {
                 success: true,
                 detail: Some("done".to_string()),
+                raw_output: None,
             },
             SessionEventDelivery::Live,
         ));
@@ -1015,6 +1120,93 @@ mod tests {
         let snapshot = projection.snapshot();
         assert_eq!(snapshot.event_count, 8);
         assert_eq!(snapshot.items[0].text.as_deref(), Some("01234567"));
+    }
+
+    #[test]
+    fn t02_one_complete_tool_step_aggregates_start_update_result_with_typed_payload_and_redaction()
+    {
+        let projection = SessionEventProjection::default();
+        let secret_input = "SECRET_INPUT_KEYWORD";
+        let secret_output = "SECRET_OUTPUT_PAYLOAD";
+
+        // 1. ToolStart with name and raw input
+        projection.apply(event(
+            1,
+            "tool:read_1",
+            SessionEventKind::ToolStart {
+                name: Some("read_file".to_string()),
+                raw_input: Some(serde_json::json!({"path": "src/main.rs", "secret": secret_input})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 2. ToolUpdate with Running and detail
+        projection.apply(event(
+            2,
+            "tool:read_1",
+            SessionEventKind::ToolUpdate {
+                state: SessionToolState::Running,
+                detail: Some("reading 1024 bytes".to_string()),
+                raw_output: None,
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 3. ToolResult with Succeeded and raw output
+        let result_event = event(
+            3,
+            "tool:read_1",
+            SessionEventKind::ToolResult {
+                success: true,
+                detail: Some("completed reading".to_string()),
+                raw_output: Some(serde_json::json!({"bytes": 1024, "token": secret_output})),
+            },
+            SessionEventDelivery::Live,
+        );
+        projection.apply(result_event.clone());
+
+        let snapshot = projection.snapshot();
+        // 1 logical tool item
+        assert_eq!(snapshot.items.len(), 1);
+        let item = &snapshot.items[0];
+        assert_eq!(item.kind, SessionItemKind::Tool);
+        assert_eq!(item.state, SessionItemState::Succeeded);
+        assert_eq!(item.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(item.tool_call_id.as_deref(), Some("read_1"));
+        assert_eq!(
+            item.tool_input,
+            Some(serde_json::json!({"path": "src/main.rs", "secret": secret_input}))
+        );
+        assert_eq!(
+            item.tool_output,
+            Some(serde_json::json!({"bytes": 1024, "token": secret_output}))
+        );
+
+        // State monotonicity: subsequent InProgress update does not retreat state from Succeeded
+        projection.apply(event(
+            4,
+            "tool:read_1",
+            SessionEventKind::ToolUpdate {
+                state: SessionToolState::Running,
+                detail: Some("late running event".to_string()),
+                raw_output: None,
+            },
+            SessionEventDelivery::Live,
+        ));
+        let snapshot_after = projection.snapshot();
+        assert_eq!(snapshot_after.items[0].state, SessionItemState::Succeeded);
+
+        // Redaction assertions: Debug format must NEVER contain secret payload
+        let event_debug = format!("{result_event:?}");
+        let snapshot_debug = format!("{snapshot:?}");
+        let item_debug = format!("{item:?}");
+
+        assert!(!event_debug.contains(secret_input));
+        assert!(!event_debug.contains(secret_output));
+        assert!(!snapshot_debug.contains(secret_input));
+        assert!(!snapshot_debug.contains(secret_output));
+        assert!(!item_debug.contains(secret_input));
+        assert!(!item_debug.contains(secret_output));
     }
 
     fn event(
