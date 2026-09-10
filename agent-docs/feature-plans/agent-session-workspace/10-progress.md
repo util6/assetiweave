@@ -7,7 +7,7 @@
 - Parent Issue：#31
 - Related：#20、#33
 - Phase：Specification ready
-- Initial frontier: T12
+- Initial frontier: None (All completed)
 - 外部前置条件：Issue #33 Task View/Memory Stage 基线已由 `dcb0fcbf` 满足
 
 ## Ticket Progress
@@ -25,7 +25,7 @@
 | T09 | — | verified | 90e46823 | G-02, G-03, G-04, G-05, G-09, G-11 | 接入 Session Memory 只读执行现场与 Task Center 观察者 |
 | T10 | — | verified | 0fbd8e93 | G-02, G-03, G-04, G-05, G-09, G-11 | 接入 Project/Global/Recall 只读执行现场与 unavailable |
 | T11 | — | verified | beebf2c6 | G-01–G-11 | 收缩旧 Team Session 呈现合同与清理 tool 清洗行为 |
-| T12 | — | ready | — | — | frontier；解阻，可执行 |
+| T12 | — | verified | b10d0cd4 | G-00–G-12 | AionUi 20 场景视觉、响应式、无障碍与全仓验收完成 |
 
 ## Checkpoints
 
@@ -34,7 +34,7 @@
 | CP-1 Shared Contract | verified | T01–T03 Canonical Fixture、全量 155 前端测试与 949 Rust 测试全部通过 |
 | CP-2 Chat + Team | verified | T04, T07, T08 验证完成，前台构建与 161 前端测试、949 Rust 测试全绿 |
 | CP-3 Memory Observer | verified | T09, T10 完成，全量 162 前端测试与 953 Rust 测试全绿 |
-| CP-4 Final | pending | — |
+| CP-4 Final | verified | T11, T12 完成，20 个视觉场景矩阵全绿，164 前端测试、953 Rust 测试与全仓构建全绿 |
 
 ## 更新规则
 
