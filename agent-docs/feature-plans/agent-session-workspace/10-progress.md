@@ -18,7 +18,7 @@
 | T02 | — | verified | 12f8cd3 | G-01, G-04, G-05, G-11 | 打通一条完整 Tool Step |
 | T03 | — | verified | 9a3eb4cd | G-01, G-02, G-04, G-05, G-11 | 完整 Turn/Thinking/View Steps 还原与冲突单调性 |
 | T04 | — | verified | c8a8604d | G-04, G-06, G-10, G-11 | AionUi 风格单聊 Header/Composer/自动滚动与状态机 |
-| T05 | — | verified | 51f83a6e | G-01, G-05, G-07, G-11 | 补齐终端与命令结果展示、ANSI过滤、退出码与截断 |
+| T05 | — | verified | d182f26c | G-01, G-05, G-07, G-11 | 补齐终端与命令结果展示、ANSI过滤、退出码与截断 |
 | T06 | — | ready | — | — | frontier；可并行 |
 | T07 | — | ready | — | — | frontier；等待执行（已解阻） |
 | T08 | — | blocked | — | — | blocked by T07 |
