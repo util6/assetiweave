@@ -1,5 +1,5 @@
 import { ArrowDown, MessageSquare } from "lucide-react";
-import type { ReactNode, RefObject } from "react";
+import { useMemo, type ReactNode, type RefObject } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
 import type {
   AgentSessionItemView,
@@ -7,7 +7,9 @@ import type {
 } from "../../types/agentSession";
 import { EmptyState } from "../foundation/EmptyState";
 import { Button } from "../ui/button";
-import { AgentSessionItem } from "./AgentSessionItem";
+import { buildAgentSessionTurns } from "./agentSessionReducer";
+import { AgentSessionTurn } from "./AgentSessionTurn";
+import { useAgentSessionExpansion } from "./useAgentSessionExpansion";
 
 export interface AgentSessionTimelineProps {
   items: AgentSessionItemView[];
@@ -39,6 +41,8 @@ export function AgentSessionTimeline({
   timelineRef,
 }: AgentSessionTimelineProps) {
   const { t } = useI18n();
+  const turns = useMemo(() => buildAgentSessionTurns(items), [items]);
+  const expansion = useAgentSessionExpansion();
 
   const hasContent = items.length > 0 || Boolean(timelineExtra);
 
@@ -88,11 +92,12 @@ export function AgentSessionTimeline({
 
       {hasContent ? (
         <ol className="mx-auto grid w-full max-w-3xl gap-3">
-          {items.map((item) => (
-            <AgentSessionItem
-              item={item}
-              key={item.id}
+          {turns.map((turn) => (
+            <AgentSessionTurn
+              expansion={expansion}
+              key={turn.turnId}
               testIdPrefix={testIdPrefix}
+              turn={turn}
             />
           ))}
           {timelineExtra}

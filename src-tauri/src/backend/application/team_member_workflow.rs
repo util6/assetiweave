@@ -101,7 +101,10 @@ impl AppService {
         if !input.replay {
             workflow.emit_control(
                 "user",
-                SessionEventKind::UserMessageAcknowledged { accepted: true },
+                SessionEventKind::UserMessageAcknowledged {
+                    accepted: true,
+                    text: Some(input.message.trim().to_string()),
+                },
             );
         }
 
@@ -566,6 +569,7 @@ impl MemberTurnProgressSink {
                 SessionEventDelivery::Live
             },
             kind,
+            truncation: None,
         });
     }
 
@@ -1045,6 +1049,8 @@ mod tests {
                     sequence: 7,
                     delivery: SessionEventDelivery::Live,
                     state: crate::backend::ai_execution::SessionItemState::Completed,
+                    partial: false,
+                    truncation: None,
                     text: Some("RAW_TOOL_PAYLOAD".to_string()),
                     status: None,
                     code: None,
@@ -1281,6 +1287,7 @@ mod tests {
             sequence: 1,
             delivery: SessionEventDelivery::Live,
             kind,
+            truncation: None,
         }
     }
 

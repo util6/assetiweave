@@ -56,7 +56,7 @@ export function AgentSessionItem({
             : "border-theme-card-border/65 bg-theme-card/55";
 
   return (
-    <li
+    <div
       className={`rounded-xl border px-3.5 py-3 ${tone}`}
       data-testid={`${testIdPrefix}-session-item-${item.id}`}
     >
@@ -148,7 +148,7 @@ export function AgentSessionItem({
           ) : null}
         </div>
       </div>
-    </li>
+    </div>
   );
 }
 

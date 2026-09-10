@@ -94,6 +94,8 @@ pub(crate) enum SessionTaskStatus {
 pub(crate) enum SessionEventKind {
     UserMessageAcknowledged {
         accepted: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     AssistantTextDelta {
         text: String,
@@ -175,6 +177,14 @@ impl fmt::Debug for SessionEventKind {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) struct TruncationInfo {
+    pub(crate) original_bytes: usize,
+    pub(crate) retained_bytes: usize,
+    pub(crate) strategy: String,
+}
+
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct SessionEvent {
@@ -182,6 +192,8 @@ pub(crate) struct SessionEvent {
     pub(crate) sequence: u64,
     pub(crate) delivery: SessionEventDelivery,
     pub(crate) kind: SessionEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) truncation: Option<TruncationInfo>,
 }
 
 impl fmt::Debug for SessionEvent {
@@ -192,6 +204,7 @@ impl fmt::Debug for SessionEvent {
             .field("sequence", &self.sequence)
             .field("delivery", &self.delivery)
             .field("kind", &self.kind)
+            .field("truncation", &self.truncation)
             .finish()
     }
 }
@@ -233,6 +246,10 @@ pub(crate) struct SessionItemSnapshot {
     pub(crate) text: Option<String>,
     pub(crate) status: Option<SessionTaskStatus>,
     pub(crate) code: Option<String>,
+    #[serde(default)]
+    pub(crate) partial: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) truncation: Option<TruncationInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -252,6 +269,8 @@ impl fmt::Debug for SessionItemSnapshot {
             .field("sequence", &self.sequence)
             .field("delivery", &self.delivery)
             .field("state", &self.state)
+            .field("partial", &self.partial)
+            .field("truncation", &self.truncation)
             .field("text", &self.text.as_ref().map(|_| "<redacted>"))
             .field("status", &self.status)
             .field("code", &self.code)
@@ -343,7 +362,8 @@ impl SessionEventProjection {
     }
 
     pub(crate) fn apply(&self, event: SessionEvent) -> SessionEventApplyResult {
-        let memory_bytes = event.memory_bytes();
+        let mut event = event;
+        let mut memory_bytes = event.memory_bytes();
         let mut state = self.lock_state();
         if state
             .seen_events
@@ -352,7 +372,12 @@ impl SessionEventProjection {
             return SessionEventApplyResult::Duplicate;
         }
         if memory_bytes > state.limits.max_bytes {
-            return SessionEventApplyResult::RejectedOversized;
+            if let Some(truncated_event) = event.truncate_to_fit(state.limits.max_bytes) {
+                event = truncated_event;
+                memory_bytes = event.memory_bytes();
+            } else {
+                return SessionEventApplyResult::RejectedOversized;
+            }
         }
 
         let item_identity = event.identity.item_identity();
@@ -469,6 +494,22 @@ impl ProjectionState {
                 .cmp(&right_key)
                 .then_with(|| left.identity.cmp(&right.identity))
         });
+        let mut last_assistant_text: Option<String> = None;
+        for item in &mut items {
+            if item.kind == SessionItemKind::AssistantText {
+                if let Some(t) = &item.text {
+                    last_assistant_text = Some(t.clone());
+                }
+            } else if item.kind == SessionItemKind::FinalResult {
+                if let (Some(terminal_text), Some(assistant_text)) =
+                    (&item.text, &last_assistant_text)
+                {
+                    if terminal_text == assistant_text {
+                        item.text = None;
+                    }
+                }
+            }
+        }
         SessionSnapshot {
             revision: self.revision,
             event_count: self.event_count,
@@ -563,6 +604,8 @@ impl SessionItemSnapshot {
             sequence: 0,
             delivery: SessionEventDelivery::Replay,
             state: SessionItemState::Pending,
+            partial: false,
+            truncation: None,
             text: None,
             status: None,
             code: None,
@@ -578,10 +621,16 @@ impl SessionItemSnapshot {
         if matches!(event.delivery, SessionEventDelivery::Live) {
             self.delivery = SessionEventDelivery::Live;
         }
+        if let Some(t) = &event.truncation {
+            self.truncation = Some(t.clone());
+        }
 
         match &event.kind {
-            SessionEventKind::UserMessageAcknowledged { accepted } => {
+            SessionEventKind::UserMessageAcknowledged { accepted, text } => {
                 self.kind = SessionItemKind::UserMessage;
+                if text.is_some() {
+                    self.text = text.clone();
+                }
                 self.state = if *accepted {
                     SessionItemState::Completed
                 } else {
@@ -696,11 +745,23 @@ impl SessionItemSnapshot {
                 if raw_output.is_some() {
                     self.tool_output = raw_output.clone();
                 }
-                self.state = if *success {
+                let target_state = if *success {
                     SessionItemState::Succeeded
                 } else {
                     SessionItemState::Failed
                 };
+                if matches!(
+                    self.state,
+                    SessionItemState::Succeeded
+                        | SessionItemState::Failed
+                        | SessionItemState::Cancelled
+                ) {
+                    if self.state != target_state {
+                        self.code = Some("conflicting_terminal_event".to_string());
+                    }
+                } else {
+                    self.state = target_state;
+                }
             }
             SessionEventKind::TaskProjection { task_id } => {
                 self.kind = SessionItemKind::Task;
@@ -739,8 +800,19 @@ impl SessionItemSnapshot {
                 self.state = SessionItemState::Completed;
             }
             SessionEventKind::Cancel => {
-                self.kind = SessionItemKind::Cancelled;
-                self.state = SessionItemState::Cancelled;
+                if matches!(
+                    self.state,
+                    SessionItemState::Succeeded
+                        | SessionItemState::Failed
+                        | SessionItemState::Cancelled
+                ) {
+                    if self.state != SessionItemState::Cancelled {
+                        self.code = Some("conflicting_terminal_event".to_string());
+                    }
+                } else {
+                    self.kind = SessionItemKind::Cancelled;
+                    self.state = SessionItemState::Cancelled;
+                }
             }
             SessionEventKind::Error { code, .. } => {
                 self.kind = SessionItemKind::Error;
@@ -862,6 +934,131 @@ impl SessionEvent {
             SessionEventKind::Error { code, .. } => identity_bytes + code.len(),
         }
     }
+
+    fn truncate_to_fit(mut self, max_bytes: usize) -> Option<Self> {
+        let identity_bytes = [
+            self.identity.session_id.len(),
+            self.identity.member_id.len(),
+            self.identity.execution_id.len(),
+            self.identity.turn_id.len(),
+            self.identity.item_id.len(),
+            self.identity.event_id.len(),
+        ]
+        .into_iter()
+        .sum::<usize>();
+
+        if identity_bytes >= max_bytes {
+            return None;
+        }
+        let budget = max_bytes - identity_bytes;
+
+        match &mut self.kind {
+            SessionEventKind::AssistantTextDelta { text }
+            | SessionEventKind::AssistantTextSnapshot { text }
+            | SessionEventKind::ThinkingDelta { text }
+            | SessionEventKind::ThinkingSnapshot { text } => {
+                let (new_text, info) = truncate_head_tail(text, budget);
+                *text = new_text;
+                self.truncation = Some(info);
+                Some(self)
+            }
+            SessionEventKind::ToolStart { name, raw_input } => {
+                let name_bytes = name.as_deref().map_or(0, str::len);
+                let available = budget.saturating_sub(name_bytes);
+                if available == 0 {
+                    return None;
+                }
+                let raw_str = raw_input
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default())
+                    .unwrap_or_default();
+                let (new_str, info) = truncate_head_tail(&raw_str, available);
+                *raw_input = Some(serde_json::Value::String(new_str));
+                self.truncation = Some(info);
+                Some(self)
+            }
+            SessionEventKind::ToolUpdate {
+                detail, raw_output, ..
+            }
+            | SessionEventKind::ToolResult {
+                detail, raw_output, ..
+            } => {
+                let detail_bytes = detail.as_deref().map_or(0, str::len);
+                let available = budget.saturating_sub(detail_bytes);
+                if available == 0 {
+                    return None;
+                }
+                let raw_str = raw_output
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default())
+                    .unwrap_or_default();
+                let (new_str, info) = truncate_head_tail(&raw_str, available);
+                *raw_output = Some(serde_json::Value::String(new_str));
+                self.truncation = Some(info);
+                Some(self)
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn truncate_head_tail(input: &str, max_bytes: usize) -> (String, TruncationInfo) {
+    let original_bytes = input.len();
+    if original_bytes <= max_bytes {
+        return (
+            input.to_string(),
+            TruncationInfo {
+                original_bytes,
+                retained_bytes: original_bytes,
+                strategy: "headTail".to_string(),
+            },
+        );
+    }
+
+    const MARKER: &str = "\n... [truncated] ...\n";
+    if max_bytes <= MARKER.len() {
+        let mut cutoff = max_bytes;
+        while !input.is_char_boundary(cutoff) && cutoff > 0 {
+            cutoff -= 1;
+        }
+        let truncated = input[..cutoff].to_string();
+        let retained_bytes = truncated.len();
+        return (
+            truncated,
+            TruncationInfo {
+                original_bytes,
+                retained_bytes,
+                strategy: "headTail".to_string(),
+            },
+        );
+    }
+
+    let available = max_bytes - MARKER.len();
+    let head_budget = (available * 3) / 4;
+    let tail_budget = available - head_budget;
+
+    let mut head_idx = head_budget.min(input.len());
+    while !input.is_char_boundary(head_idx) && head_idx > 0 {
+        head_idx -= 1;
+    }
+    let head = &input[..head_idx];
+
+    let mut tail_start = input.len().saturating_sub(tail_budget);
+    while !input.is_char_boundary(tail_start) && tail_start < input.len() {
+        tail_start += 1;
+    }
+    let tail = &input[tail_start..];
+
+    let combined = format!("{head}{MARKER}{tail}");
+    let retained_bytes = combined.len();
+    (
+        combined,
+        TruncationInfo {
+            original_bytes,
+            retained_bytes,
+            strategy: "headTail".to_string(),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -1209,6 +1406,229 @@ mod tests {
         assert!(!item_debug.contains(secret_output));
     }
 
+    #[test]
+    fn t03_complete_agent_session_canonical_fixture_and_edge_cases() {
+        let projection = SessionEventProjection::new(SessionEventProjectionLimits {
+            max_items: 32,
+            max_events: 128,
+            max_bytes: 64 * 1024,
+        });
+
+        // 1. User request
+        projection.apply(event(
+            1,
+            "user",
+            SessionEventKind::UserMessageAcknowledged {
+                accepted: true,
+                text: Some("Inspect the workspace and update the target.".to_string()),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 2. Assistant text 1
+        projection.apply(event(
+            2,
+            "assistant_1",
+            SessionEventKind::AssistantTextDelta {
+                text: "I will inspect".to_string(),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 3. Thinking
+        projection.apply(event(
+            3,
+            "thinking",
+            SessionEventKind::ThinkingDelta {
+                text: "Analyzing the codebase and tools...".to_string(),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 4. Tool A start
+        projection.apply(event(
+            4,
+            "tool:run_cmd",
+            SessionEventKind::ToolStart {
+                name: Some("run_command".to_string()),
+                raw_input: Some(serde_json::json!({"cmd": "ls"})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 5. Tool A update
+        projection.apply(event(
+            5,
+            "tool:run_cmd",
+            SessionEventKind::ToolUpdate {
+                state: SessionToolState::Running,
+                detail: Some("running command".to_string()),
+                raw_output: Some(serde_json::json!({"stdout": "Cargo.toml\n"})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 6. Tool A result (success)
+        projection.apply(event(
+            6,
+            "tool:run_cmd",
+            SessionEventKind::ToolResult {
+                success: true,
+                detail: Some("done".to_string()),
+                raw_output: Some(serde_json::json!({"exit": 0})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 7. Assistant text 2
+        projection.apply(event(
+            7,
+            "assistant_2",
+            SessionEventKind::AssistantTextDelta {
+                text: "I found the file.".to_string(),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 8. Tool B start
+        projection.apply(event(
+            8,
+            "tool:edit",
+            SessionEventKind::ToolStart {
+                name: Some("file_edit".to_string()),
+                raw_input: Some(serde_json::json!({"file": "Cargo.toml"})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 9. Tool B result
+        projection.apply(event(
+            9,
+            "tool:edit",
+            SessionEventKind::ToolResult {
+                success: true,
+                detail: Some("edited".to_string()),
+                raw_output: Some(serde_json::json!({"diff": "+[dependencies]"})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 10. Tool C result (failure)
+        projection.apply(event(
+            10,
+            "tool:test",
+            SessionEventKind::ToolResult {
+                success: false,
+                detail: Some("test failed".to_string()),
+                raw_output: Some(serde_json::json!({"stderr": "failed"})),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 11. Assistant final text
+        projection.apply(event(
+            11,
+            "assistant_3",
+            SessionEventKind::AssistantTextDelta {
+                text: "All done.".to_string(),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        // 12. Terminal result with same text as assistant_3
+        projection.apply(event(
+            12,
+            "terminal",
+            SessionEventKind::TerminalResult {
+                text: Some("All done.".to_string()),
+            },
+            SessionEventDelivery::Live,
+        ));
+
+        let snapshot = projection.snapshot();
+        assert_eq!(snapshot.items.len(), 9);
+
+        // Sequence verification
+        assert_eq!(snapshot.items[0].kind, SessionItemKind::UserMessage);
+        assert_eq!(
+            snapshot.items[0].text.as_deref(),
+            Some("Inspect the workspace and update the target.")
+        );
+
+        assert_eq!(snapshot.items[1].kind, SessionItemKind::AssistantText);
+        assert_eq!(snapshot.items[1].text.as_deref(), Some("I will inspect"));
+
+        assert_eq!(snapshot.items[2].kind, SessionItemKind::Thinking);
+
+        assert_eq!(snapshot.items[3].kind, SessionItemKind::Tool);
+        assert_eq!(snapshot.items[3].tool_name.as_deref(), Some("run_command"));
+        assert_eq!(snapshot.items[3].state, SessionItemState::Succeeded);
+
+        assert_eq!(snapshot.items[4].kind, SessionItemKind::AssistantText);
+        assert_eq!(snapshot.items[4].text.as_deref(), Some("I found the file."));
+
+        assert_eq!(snapshot.items[5].kind, SessionItemKind::Tool);
+        assert_eq!(snapshot.items[5].tool_name.as_deref(), Some("file_edit"));
+        assert_eq!(snapshot.items[5].state, SessionItemState::Succeeded);
+
+        assert_eq!(snapshot.items[6].kind, SessionItemKind::Tool);
+        assert_eq!(snapshot.items[6].state, SessionItemState::Failed);
+
+        assert_eq!(snapshot.items[7].kind, SessionItemKind::AssistantText);
+        assert_eq!(snapshot.items[7].text.as_deref(), Some("All done."));
+
+        // C-072: terminal text identical to last assistant text is suppressed from duplicating text
+        assert_eq!(snapshot.items[8].kind, SessionItemKind::FinalResult);
+        assert_eq!(snapshot.items[8].text, None);
+        assert_eq!(snapshot.items[8].state, SessionItemState::Completed);
+
+        // Edge case: Conflicting terminal events keep monotonic terminal and record notice code
+        projection.apply(event(
+            13,
+            "tool:run_cmd",
+            SessionEventKind::ToolResult {
+                success: false,
+                detail: Some("conflicting result".to_string()),
+                raw_output: None,
+            },
+            SessionEventDelivery::Live,
+        ));
+        let snapshot_conflict = projection.snapshot();
+        let tool_run_cmd = snapshot_conflict
+            .items
+            .iter()
+            .find(|i| i.tool_name.as_deref() == Some("run_command"))
+            .unwrap();
+        assert_eq!(tool_run_cmd.state, SessionItemState::Succeeded);
+        assert_eq!(
+            tool_run_cmd.code.as_deref(),
+            Some("conflicting_terminal_event")
+        );
+
+        // Edge case: Head/Tail truncation on oversized content
+        let small_projection = SessionEventProjection::new(SessionEventProjectionLimits {
+            max_items: 8,
+            max_events: 16,
+            max_bytes: 400,
+        });
+        let huge_text = "A".repeat(1000);
+        let apply_result = small_projection.apply(event(
+            1,
+            "assistant_huge",
+            SessionEventKind::AssistantTextDelta { text: huge_text },
+            SessionEventDelivery::Live,
+        ));
+        assert_eq!(apply_result, SessionEventApplyResult::Applied);
+        let small_snapshot = small_projection.snapshot();
+        assert_eq!(small_snapshot.items.len(), 1);
+        let huge_item = &small_snapshot.items[0];
+        assert!(huge_item.truncation.is_some());
+        let trunc = huge_item.truncation.as_ref().unwrap();
+        assert_eq!(trunc.original_bytes, 1000);
+        assert_eq!(trunc.strategy, "headTail");
+        assert!(huge_item.text.as_ref().unwrap().contains("[truncated]"));
+    }
+
     fn event(
         sequence: u64,
         item_id: &str,
@@ -1237,6 +1657,7 @@ mod tests {
             sequence,
             delivery,
             kind,
+            truncation: None,
         }
     }
 }

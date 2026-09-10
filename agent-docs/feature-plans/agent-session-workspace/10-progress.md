@@ -16,13 +16,13 @@
 |---|---|---|---|---|---|
 | T01 | — | verified | 72c856e3 | G-00, G-04, G-11 | 抽取共享 Agent Session 兼容工作区 |
 | T02 | — | verified | 12f8cd3 | G-01, G-04, G-05, G-11 | 打通一条完整 Tool Step |
-| T03 | — | ready | — | — | blocked by T02 (已解阻) |
-| T04 | — | blocked | — | — | blocked by T03 |
-| T05 | — | blocked | — | — | blocked by T03 |
-| T06 | — | blocked | — | — | blocked by T03 |
+| T03 | — | verified | 9a3eb4cd | G-01, G-02, G-04, G-05, G-11 | 完整 Turn/Thinking/View Steps 还原与冲突单调性 |
+| T04 | — | ready | — | — | frontier；等待执行 |
+| T05 | — | ready | — | — | frontier；可并行 |
+| T06 | — | ready | — | — | frontier；可并行 |
 | T07 | — | blocked | — | — | blocked by T04 |
 | T08 | — | blocked | — | — | blocked by T07 |
-| T09 | — | blocked | — | — | blocked by T03；#33 基线已满足 |
+| T09 | — | ready | — | — | frontier；可并行（#33 基线已满足） |
 | T10 | — | blocked | — | — | blocked by T09 |
 | T11 | — | blocked | — | — | blocked by T08 + T10 |
 | T12 | — | blocked | — | — | blocked by T05/T06/T08/T10/T11 |
@@ -31,7 +31,7 @@
 
 | Checkpoint | Status | Evidence |
 |---|---|---|
-| CP-1 Shared Contract | pending | — |
+| CP-1 Shared Contract | verified | T01–T03 Canonical Fixture、全量 155 前端测试与 949 Rust 测试全部通过 |
 | CP-2 Chat + Team | pending | — |
 | CP-3 Memory Observer | pending | — |
 | CP-4 Final | pending | — |

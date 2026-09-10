@@ -27,4 +27,9 @@ export const agentSessionZh = {
   "agentSession.item.noText": "该活动没有可显示正文。",
   "agentSession.tool.input": "输入",
   "agentSession.tool.output": "输出",
+  "agentSession.viewSteps": "查看步骤",
+  "agentSession.truncated": "已截断",
+  "agentSession.truncatedDetail": "保留 {{retained}} / 原始 {{original}} 字节",
+  "agentSession.source.memory": "Memory Agent 输入",
+  "agentSession.thinking.title": "思考过程",
 };

@@ -1620,6 +1620,7 @@ impl<'a> AcpSessionEventBridge<'a> {
             sequence: self.sequence,
             delivery: self.delivery,
             kind,
+            truncation: None,
         });
     }
 }

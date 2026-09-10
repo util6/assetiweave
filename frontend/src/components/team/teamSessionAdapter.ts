@@ -47,6 +47,15 @@ export function mapSessionItemSnapshotToView(
     text: item.text,
     status: item.status,
     code: item.code,
+    partial: item.partial,
+    truncation: item.truncation
+      ? {
+          originalBytes: item.truncation.original_bytes,
+          retainedBytes: item.truncation.retained_bytes,
+          strategy: item.truncation.strategy,
+        }
+      : null,
+    turnId: item.identity.turn_id,
     toolCallId: item.tool_call_id,
     toolName: item.tool_name,
     toolInput: item.tool_input,

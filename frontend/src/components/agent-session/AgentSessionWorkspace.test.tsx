@@ -131,7 +131,7 @@ describe("AgentSessionWorkspace", () => {
 
     // Verify row rendered
     expect(screen.getByText("search_code")).toBeTruthy();
-    expect(screen.getByText("succeeded")).toBeTruthy();
+    expect(screen.getAllByText("succeeded").length).toBeGreaterThanOrEqual(1);
 
     // Verify details element
     const details = screen.getByTestId("agent-session-session-item-details-tool-call-1");
@@ -236,7 +236,7 @@ describe("AgentSessionWorkspace", () => {
     );
 
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
-    expect(screen.getByText("succeeded")).toBeTruthy();
+    expect(screen.getAllByText("succeeded").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/"status":\s*200/)).toBeTruthy();
   });
 });

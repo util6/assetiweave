@@ -401,6 +401,7 @@ mod tests {
             kind: crate::backend::ai_execution::SessionEventKind::Processing {
                 state: crate::backend::ai_execution::SessionProcessingState::Active,
             },
+            truncation: None,
         });
 
         let events = sink.events.lock().unwrap();

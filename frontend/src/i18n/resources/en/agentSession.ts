@@ -27,4 +27,9 @@ export const agentSessionEn = {
   "agentSession.item.noText": "This activity has no body to display.",
   "agentSession.tool.input": "Input",
   "agentSession.tool.output": "Output",
+  "agentSession.viewSteps": "View Steps",
+  "agentSession.truncated": "Truncated",
+  "agentSession.truncatedDetail": "Retained {{retained}} of {{original}} bytes",
+  "agentSession.source.memory": "Memory Agent Input",
+  "agentSession.thinking.title": "Thinking Process",
 };

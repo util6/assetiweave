@@ -65,6 +65,12 @@ export type AgentSessionItemState =
   | "failed"
   | "cancelled";
 
+export interface TruncationInfoView {
+  originalBytes: number;
+  retainedBytes: number;
+  strategy: string;
+}
+
 export interface AgentSessionItemView {
   id: string;
   kind: AgentSessionItemKind;
@@ -74,10 +80,42 @@ export interface AgentSessionItemView {
   text?: string | null;
   status?: string | null;
   code?: string | null;
+  partial?: boolean;
+  truncation?: TruncationInfoView | null;
+  turnId?: string | null;
   toolCallId?: string | null;
   toolName?: string | null;
   toolInput?: unknown;
   toolOutput?: unknown;
+}
+
+export type AgentSessionStepGroupStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export type AgentSessionContentBlock =
+  | { type: "user_request"; item: AgentSessionItemView }
+  | { type: "assistant_text"; item: AgentSessionItemView }
+  | { type: "thinking"; item: AgentSessionItemView }
+  | { type: "processing"; item: AgentSessionItemView }
+  | {
+      type: "step_group";
+      groupId: string;
+      items: AgentSessionItemView[];
+      logicalCount: number;
+      status: AgentSessionStepGroupStatus;
+    }
+  | { type: "task"; item: AgentSessionItemView }
+  | { type: "notice"; item: AgentSessionItemView }
+  | { type: "terminal"; item: AgentSessionItemView }
+  | { type: "error"; item: AgentSessionItemView };
+
+export interface AgentSessionTurnView {
+  turnId: string;
+  blocks: AgentSessionContentBlock[];
 }
 
 export interface AgentSessionStatus {
