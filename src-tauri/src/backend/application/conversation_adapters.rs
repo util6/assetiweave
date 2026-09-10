@@ -611,6 +611,7 @@ impl AppService {
                     metrics: Vec::new(),
                     failures: Vec::new(),
                     skipped: Vec::new(),
+                    agent_session_ref: None,
                 })
                 .collect::<Vec<_>>();
             let _ = task_runtime.set_stages(task_id, stages);

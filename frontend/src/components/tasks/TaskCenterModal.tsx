@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertCircle,
   AlertTriangle,
   Archive,
+  ArrowLeft,
   Ban,
   Brain,
   Check,
@@ -29,6 +30,17 @@ import { ErrorBoundary } from "../foundation/ErrorBoundary";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTaskCenter } from "../../app/backgroundTasks/TaskCenterProvider";
+import { AgentSessionWorkspace } from "../agent-session";
+import { mapSessionItemSnapshotToView } from "../team/teamSessionAdapter";
+import {
+  getAgentSession,
+  subscribeAgentSessionUpdated,
+} from "../../services/agentSessionService";
+import {
+  isAgentSessionAvailable,
+  type AgentSessionGetResult,
+  type AgentSessionRef,
+} from "../../types/agentSession";
 import type {
   TaskActivityView,
   TaskStageView,
@@ -69,7 +81,12 @@ export function TaskCenterModal({ open, onClose }: TaskCenterModalProps) {
                 <RotateCcw className="mr-1.5 size-3.5" />
                 重试
               </Button>
-              <Button onClick={onClose} size="sm" type="button" variant="default">
+              <Button
+                onClick={onClose}
+                size="sm"
+                type="button"
+                variant="default"
+              >
                 关闭
               </Button>
             </div>
@@ -102,6 +119,12 @@ function TaskCenterModalContent({
   const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
+  const [viewingSessionRef, setViewingSessionRef] =
+    useState<AgentSessionRef | null>(null);
+
+  useEffect(() => {
+    setViewingSessionRef(null);
+  }, [selectedTaskId]);
 
   // 过滤任务列表
   const filteredTasks = useMemo(() => {
@@ -208,7 +231,11 @@ function TaskCenterModalContent({
           </div>
           <div className="flex items-center gap-2">
             <Button
-              disabled={actionBusy || tasks.length === 0 || tasks.every((t) => t.state === "running")}
+              disabled={
+                actionBusy ||
+                tasks.length === 0 ||
+                tasks.every((t) => t.state === "running")
+              }
               onClick={() => void handleClearTerminal()}
               size="sm"
               type="button"
@@ -275,7 +302,9 @@ function TaskCenterModalContent({
             {filteredTasks.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center p-6 text-center text-on-surface-variant">
                 <ListTodo className="mb-2 size-8 stroke-1 text-outline" />
-                <p className="text-body-sm font-medium">{t("tasks.empty.title")}</p>
+                <p className="text-body-sm font-medium">
+                  {t("tasks.empty.title")}
+                </p>
                 <p className="mt-1 text-caption text-outline">
                   {searchQuery || filterStatus !== "all"
                     ? t("tasks.empty.noMatch")
@@ -291,7 +320,9 @@ function TaskCenterModalContent({
                 {filteredTasks.map((task) => {
                   const isSelected = selectedTask?.id === task.id;
                   const percent = task.progress?.total
-                    ? Math.round((task.progress.current / task.progress.total) * 100)
+                    ? Math.round(
+                        (task.progress.current / task.progress.total) * 100,
+                      )
                     : null;
                   const startedAt = task.startedAt ?? task.started_at;
                   return (
@@ -335,14 +366,20 @@ function TaskCenterModalContent({
                         {task.progress && task.state === "running" ? (
                           <div className="mt-1.5 flex flex-col gap-1">
                             <div className="flex justify-between text-[11px] text-on-surface-variant">
-                              <span className="line-clamp-1">{task.progress.note || ""}</span>
-                              {percent !== null ? <span>{percent}%</span> : null}
+                              <span className="line-clamp-1">
+                                {task.progress.note || ""}
+                              </span>
+                              {percent !== null ? (
+                                <span>{percent}%</span>
+                              ) : null}
                             </div>
                             {percent !== null ? (
                               <div className="h-1.5 w-full overflow-hidden rounded-full bg-theme-control">
                                 <div
                                   className="h-full rounded-full bg-primary transition-all duration-300"
-                                  style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+                                  style={{
+                                    width: `${Math.min(100, Math.max(0, percent))}%`,
+                                  }}
                                 />
                               </div>
                             ) : null}
@@ -352,7 +389,10 @@ function TaskCenterModalContent({
 
                       {/* 右侧：状态徽章与箭头指示符 */}
                       <div className="flex shrink-0 items-center gap-2">
-                        <TaskStateBadge outcome={task.outcome} state={task.state} />
+                        <TaskStateBadge
+                          outcome={task.outcome}
+                          state={task.state}
+                        />
                         <ChevronRight
                           className={clsx(
                             "size-4 transition-transform duration-200 group-hover:translate-x-0.5",
@@ -377,178 +417,231 @@ function TaskCenterModalContent({
           ) : null}
 
           {selectedTask ? (
-            <div
-              className="aurora-view-transition flex flex-col gap-6"
-              key={selectedTask.id}
-            >
-              {/* 头部摘要与操作 */}
-              {(() => {
-                const tenantId = selectedTask.tenantId ?? selectedTask.tenant_id;
-                const startedAt = selectedTask.startedAt ?? selectedTask.started_at;
-                const finishedAt = selectedTask.finishedAt ?? selectedTask.finished_at;
-                const errorSummary = selectedTask.errorSummary ?? selectedTask.error_summary;
-                const resultSummary = selectedTask.resultSummary ?? selectedTask.result_summary;
-                const metrics = selectedTask.metrics ?? [];
-                const stages = selectedTask.stages ?? [];
-                const failures = selectedTask.failures ?? [];
-                const capabilities = selectedTask.capabilities ?? { cancellable: false, retryable: false };
+            viewingSessionRef ? (
+              <TaskAgentSessionObserver
+                onBack={() => setViewingSessionRef(null)}
+                sessionRef={viewingSessionRef}
+                taskTitle={selectedTask.title}
+              />
+            ) : (
+              <div
+                className="aurora-view-transition flex flex-col gap-6"
+                key={selectedTask.id}
+              >
+                {/* 头部摘要与操作 */}
+                {(() => {
+                  const tenantId =
+                    selectedTask.tenantId ?? selectedTask.tenant_id;
+                  const startedAt =
+                    selectedTask.startedAt ?? selectedTask.started_at;
+                  const finishedAt =
+                    selectedTask.finishedAt ?? selectedTask.finished_at;
+                  const errorSummary =
+                    selectedTask.errorSummary ?? selectedTask.error_summary;
+                  const resultSummary =
+                    selectedTask.resultSummary ?? selectedTask.result_summary;
+                  const metrics = selectedTask.metrics ?? [];
+                  const stages = selectedTask.stages ?? [];
+                  const failures = selectedTask.failures ?? [];
+                  const capabilities = selectedTask.capabilities ?? {
+                    cancellable: false,
+                    retryable: false,
+                  };
 
-                return (
-                  <>
-                    <div className="flex flex-col gap-3 rounded-2xl border border-theme-control-border bg-surface-elevated/60 p-5 backdrop-blur">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2">
-                            <TaskKindIcon className="size-5 text-primary" kind={selectedTask.kind} />
-                            <h2 className="text-title-lg font-semibold text-on-surface">
-                              {selectedTask.title}
-                            </h2>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-3 text-caption text-on-surface-variant">
-                            <span>ID: <code className="font-mono">{selectedTask.id}</code></span>
-                            {tenantId ? (
-                              <span>租户: <strong className="text-on-surface">{tenantId}</strong></span>
-                            ) : null}
-                            {startedAt ? (
-                              <span>开始于: {new Date(startedAt).toLocaleString()}</span>
-                            ) : null}
-                            {finishedAt ? (
-                              <span>结束于: {new Date(finishedAt).toLocaleString()}</span>
-                            ) : null}
-                          </div>
-                        </div>
-
-                        {/* 任务控制操作 */}
-                        <div className="flex items-center gap-2">
-                          {capabilities.cancellable && selectedTask.state === "running" ? (
-                            <Button
-                              disabled={actionBusy}
-                              onClick={() => void handleCancel(selectedTask)}
-                              size="sm"
-                              type="button"
-                              variant="destructive"
-                            >
-                              <Ban className="mr-1.5 size-3.5" />
-                              {t("tasks.action.cancel")}
-                            </Button>
-                          ) : null}
-
-                          {capabilities.retryable &&
-                          (selectedTask.state === "failed" || selectedTask.outcome === "failure") ? (
-                            <Button
-                              disabled={actionBusy}
-                              onClick={() => void handleRetry(selectedTask)}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              <RotateCcw className="mr-1.5 size-3.5" />
-                              {t("tasks.action.retry")}
-                            </Button>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      {/* 终态结果/错误摘要 */}
-                      {errorSummary ? (
-                        <div className="rounded-xl border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-status-conflict">
-                          <div className="flex items-center gap-2 font-medium">
-                            <AlertCircle className="size-4" />
-                            <span>异常信息</span>
-                          </div>
-                          <p className="mt-1 text-caption text-on-surface-variant">{errorSummary}</p>
-                        </div>
-                      ) : null}
-
-                      {resultSummary ? (
-                        <div className="rounded-xl border border-status-create/30 bg-status-create/10 p-3 text-body-sm text-status-create">
-                          <div className="flex items-center gap-2 font-medium">
-                            <Check className="size-4" />
-                            <span>执行结果</span>
-                          </div>
-                          <p className="mt-1 text-caption text-on-surface-variant">{resultSummary}</p>
-                        </div>
-                      ) : null}
-
-                      {/* 总体指标展示 */}
-                      {metrics.length > 0 ? (
-                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-6">
-                          {metrics.map((metric) => (
-                            <div
-                              className="flex flex-col rounded-xl border border-theme-control-border/60 bg-theme-control/20 p-2.5"
-                              key={metric.code}
-                            >
-                              <span className="text-caption text-on-surface-variant">{metric.code}</span>
-                              <span className="text-title-sm font-semibold text-on-surface">
-                                {metric.value}
-                              </span>
+                  return (
+                    <>
+                      <div className="flex flex-col gap-3 rounded-2xl border border-theme-control-border bg-surface-elevated/60 p-5 backdrop-blur">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <TaskKindIcon
+                                className="size-5 text-primary"
+                                kind={selectedTask.kind}
+                              />
+                              <h2 className="text-title-lg font-semibold text-on-surface">
+                                {selectedTask.title}
+                              </h2>
                             </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {/* 阶段流水线 (Stages) */}
-                    <div className="flex flex-col gap-3">
-                      <div className="flex items-center gap-2 text-title-sm font-semibold text-on-surface">
-                        <Layers className="size-4 text-primary" />
-                        <span>{t("tasks.section.stages")}</span>
-                        <span className="text-caption text-on-surface-variant">
-                          ({stages.length})
-                        </span>
-                      </div>
-
-                      {stages.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-theme-control-border p-6 text-center text-caption text-on-surface-variant">
-                          该任务尚未上报阶段划分
-                        </div>
-                      ) : (
-                        <div className="flex flex-col gap-3">
-                          {stages.map((stage, idx) => (
-                            <StageCard index={idx + 1} key={stage.id || `stage-${idx}`} stage={stage} />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 失败与审计留痕 */}
-                    {failures.length > 0 ? (
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-2 text-title-sm font-semibold text-status-conflict">
-                          <AlertTriangle className="size-4" />
-                          <span>{t("tasks.section.failures")}</span>
-                          <span className="text-caption">({failures.length})</span>
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          {failures.map((failure, idx) => (
-                            <div
-                              className="flex flex-col gap-1.5 rounded-xl border border-status-conflict/30 bg-surface-elevated p-3"
-                              key={idx}
-                            >
-                              <div className="flex items-center justify-between">
-                                <span className="font-mono text-caption font-semibold text-status-conflict">
-                                  [{failure.code}]
+                            <div className="flex flex-wrap items-center gap-3 text-caption text-on-surface-variant">
+                              <span>
+                                ID:{" "}
+                                <code className="font-mono">
+                                  {selectedTask.id}
+                                </code>
+                              </span>
+                              {tenantId ? (
+                                <span>
+                                  租户:{" "}
+                                  <strong className="text-on-surface">
+                                    {tenantId}
+                                  </strong>
                                 </span>
-                                <span className="text-caption text-on-surface-variant">
-                                  阶段: {failure.stage}
+                              ) : null}
+                              {startedAt ? (
+                                <span>
+                                  开始于: {new Date(startedAt).toLocaleString()}
                                 </span>
-                              </div>
-                              <p className="text-body-sm text-on-surface">{failure.message}</p>
-                              {failure.path ? (
-                                <span className="font-mono text-caption text-on-surface-variant">
-                                  路径: {failure.path}
+                              ) : null}
+                              {finishedAt ? (
+                                <span>
+                                  结束于:{" "}
+                                  {new Date(finishedAt).toLocaleString()}
                                 </span>
                               ) : null}
                             </div>
-                          ))}
+                          </div>
+
+                          {/* 任务控制操作 */}
+                          <div className="flex items-center gap-2">
+                            {capabilities.cancellable &&
+                            selectedTask.state === "running" ? (
+                              <Button
+                                disabled={actionBusy}
+                                onClick={() => void handleCancel(selectedTask)}
+                                size="sm"
+                                type="button"
+                                variant="destructive"
+                              >
+                                <Ban className="mr-1.5 size-3.5" />
+                                {t("tasks.action.cancel")}
+                              </Button>
+                            ) : null}
+
+                            {capabilities.retryable &&
+                            (selectedTask.state === "failed" ||
+                              selectedTask.outcome === "failure") ? (
+                              <Button
+                                disabled={actionBusy}
+                                onClick={() => void handleRetry(selectedTask)}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                <RotateCcw className="mr-1.5 size-3.5" />
+                                {t("tasks.action.retry")}
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
+
+                        {/* 终态结果/错误摘要 */}
+                        {errorSummary ? (
+                          <div className="rounded-xl border border-status-conflict/30 bg-status-conflict/10 p-3 text-body-sm text-status-conflict">
+                            <div className="flex items-center gap-2 font-medium">
+                              <AlertCircle className="size-4" />
+                              <span>异常信息</span>
+                            </div>
+                            <p className="mt-1 text-caption text-on-surface-variant">
+                              {errorSummary}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {resultSummary ? (
+                          <div className="rounded-xl border border-status-create/30 bg-status-create/10 p-3 text-body-sm text-status-create">
+                            <div className="flex items-center gap-2 font-medium">
+                              <Check className="size-4" />
+                              <span>执行结果</span>
+                            </div>
+                            <p className="mt-1 text-caption text-on-surface-variant">
+                              {resultSummary}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {/* 总体指标展示 */}
+                        {metrics.length > 0 ? (
+                          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-6">
+                            {metrics.map((metric) => (
+                              <div
+                                className="flex flex-col rounded-xl border border-theme-control-border/60 bg-theme-control/20 p-2.5"
+                                key={metric.code}
+                              >
+                                <span className="text-caption text-on-surface-variant">
+                                  {metric.code}
+                                </span>
+                                <span className="text-title-sm font-semibold text-on-surface">
+                                  {metric.value}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </>
-                );
-              })()}
-            </div>
+
+                      {/* 阶段流水线 (Stages) */}
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2 text-title-sm font-semibold text-on-surface">
+                          <Layers className="size-4 text-primary" />
+                          <span>{t("tasks.section.stages")}</span>
+                          <span className="text-caption text-on-surface-variant">
+                            ({stages.length})
+                          </span>
+                        </div>
+
+                        {stages.length === 0 ? (
+                          <div className="rounded-2xl border border-dashed border-theme-control-border p-6 text-center text-caption text-on-surface-variant">
+                            该任务尚未上报阶段划分
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-3">
+                            {stages.map((stage, idx) => (
+                              <StageCard
+                                index={idx + 1}
+                                key={stage.id || `stage-${idx}`}
+                                onViewSession={(ref) =>
+                                  setViewingSessionRef(ref)
+                                }
+                                stage={stage}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 失败与审计留痕 */}
+                      {failures.length > 0 ? (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-2 text-title-sm font-semibold text-status-conflict">
+                            <AlertTriangle className="size-4" />
+                            <span>{t("tasks.section.failures")}</span>
+                            <span className="text-caption">
+                              ({failures.length})
+                            </span>
+                          </div>
+
+                          <div className="flex flex-col gap-2">
+                            {failures.map((failure, idx) => (
+                              <div
+                                className="flex flex-col gap-1.5 rounded-xl border border-status-conflict/30 bg-surface-elevated p-3"
+                                key={idx}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-mono text-caption font-semibold text-status-conflict">
+                                    [{failure.code}]
+                                  </span>
+                                  <span className="text-caption text-on-surface-variant">
+                                    阶段: {failure.stage}
+                                  </span>
+                                </div>
+                                <p className="text-body-sm text-on-surface">
+                                  {failure.message}
+                                </p>
+                                {failure.path ? (
+                                  <span className="font-mono text-caption text-on-surface-variant">
+                                    路径: {failure.path}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  );
+                })()}
+              </div>
+            )
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center text-center text-on-surface-variant">
               <EmptyState
@@ -564,7 +657,15 @@ function TaskCenterModalContent({
   );
 }
 
-function StageCard({ stage, index }: { stage: TaskStageView; index: number }) {
+function StageCard({
+  stage,
+  index,
+  onViewSession,
+}: {
+  stage: TaskStageView;
+  index: number;
+  onViewSession?: (sessionRef: AgentSessionRef) => void;
+}) {
   const [copied, setCopied] = useState<string | null>(null);
 
   const copyPath = (path: string) => {
@@ -578,8 +679,10 @@ function StageCard({ stage, index }: { stage: TaskStageView; index: number }) {
     : null;
 
   const durationMs = stage.durationMs ?? stage.duration_ms;
-  const currentActivities = stage.currentActivities ?? stage.current_activities ?? [];
+  const currentActivities =
+    stage.currentActivities ?? stage.current_activities ?? [];
   const metrics = stage.metrics ?? [];
+  const sessionRef = stage.agentSessionRef ?? stage.agent_session_ref;
 
   return (
     <div className="flex flex-col gap-2.5 rounded-2xl border border-theme-control-border bg-surface-elevated/50 p-4 transition-all hover:border-theme-control-border">
@@ -589,18 +692,34 @@ function StageCard({ stage, index }: { stage: TaskStageView; index: number }) {
           <span className="flex size-6 items-center justify-center rounded-full bg-theme-control text-caption font-semibold text-on-surface">
             {index}
           </span>
-          <span className="text-body-sm font-semibold text-on-surface">{stage.name}</span>
+          <span className="text-body-sm font-semibold text-on-surface">
+            {stage.name}
+          </span>
           <StageStatusBadge status={stage.status} />
         </div>
 
         <div className="flex items-center gap-3 text-caption text-on-surface-variant">
           {durationMs ? <span>耗时: {formatDuration(durationMs)}</span> : null}
           {percent !== null ? <span>{percent}%</span> : null}
+          {sessionRef ? (
+            <Button
+              className="h-7 gap-1 px-2.5 text-caption font-medium"
+              data-testid={`task-stage-view-session-${stage.id}`}
+              onClick={() => onViewSession?.(sessionRef)}
+              size="sm"
+              variant="secondary"
+            >
+              <Sparkles className="size-3 text-primary" />
+              <span>查看执行现场</span>
+            </Button>
+          ) : null}
         </div>
       </div>
 
       {stage.progress?.note ? (
-        <p className="text-body-sm text-on-surface-variant">{stage.progress.note}</p>
+        <p className="text-body-sm text-on-surface-variant">
+          {stage.progress.note}
+        </p>
       ) : null}
 
       {/* 活跃 Worker 活动 - 防御式读取 currentActivities */}
@@ -613,15 +732,20 @@ function StageCard({ stage, index }: { stage: TaskStageView; index: number }) {
 
           <div className="flex flex-col gap-1">
             {currentActivities.map((act: TaskActivityView, actIdx: number) => {
-              const workerId = act.workerId ?? act.worker_id ?? `worker-${actIdx}`;
+              const workerId =
+                act.workerId ?? act.worker_id ?? `worker-${actIdx}`;
               return (
                 <div
                   className="flex items-center justify-between gap-2 rounded-lg bg-surface-base/60 px-2.5 py-1 text-caption"
                   key={workerId}
                 >
                   <div className="flex items-center gap-2 overflow-hidden">
-                    <span className="font-mono font-medium text-on-surface">[{workerId}]</span>
-                    <span className="text-on-surface-variant">{act.operation}</span>
+                    <span className="font-mono font-medium text-on-surface">
+                      [{workerId}]
+                    </span>
+                    <span className="text-on-surface-variant">
+                      {act.operation}
+                    </span>
                     {act.path ? (
                       <button
                         className="group flex items-center gap-1 font-mono text-outline hover:text-on-surface"
@@ -629,7 +753,9 @@ function StageCard({ stage, index }: { stage: TaskStageView; index: number }) {
                         title="点击复制路径"
                         type="button"
                       >
-                        <span className="max-w-[280px] truncate">{act.path}</span>
+                        <span className="max-w-[280px] truncate">
+                          {act.path}
+                        </span>
                         {copied === act.path ? (
                           <Check className="size-3 text-status-create" />
                         ) : (
@@ -716,7 +842,13 @@ function StageStatusBadge({ status }: { status: string }) {
   }
 }
 
-function TaskStateBadge({ state, outcome }: { state: TaskState; outcome?: string | null }) {
+function TaskStateBadge({
+  state,
+  outcome,
+}: {
+  state: TaskState;
+  outcome?: string | null;
+}) {
   if (state === "running" || state === "pending" || state === "cancelling") {
     return (
       <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
@@ -761,7 +893,13 @@ function TaskStateBadge({ state, outcome }: { state: TaskState; outcome?: string
   );
 }
 
-function TaskKindIcon({ kind, className = "size-3.5" }: { kind: string; className?: string }) {
+function TaskKindIcon({
+  kind,
+  className = "size-3.5",
+}: {
+  kind: string;
+  className?: string;
+}) {
   switch (kind) {
     case "ConversationSync":
       return <MessageSquare className={className} />;
@@ -792,4 +930,189 @@ function formatTimeShort(dateStr?: string | null) {
   } catch {
     return dateStr;
   }
+}
+
+interface TaskAgentSessionObserverProps {
+  sessionRef: AgentSessionRef;
+  taskTitle?: string;
+  onBack: () => void;
+}
+
+function TaskAgentSessionObserver({
+  sessionRef,
+  taskTitle,
+  onBack,
+}: TaskAgentSessionObserverProps) {
+  const [result, setResult] = useState<AgentSessionGetResult | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+
+    const fetchSession = async () => {
+      try {
+        const data = await getAgentSession({ sessionRef });
+        if (!cancelled) {
+          setResult(data);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchSession();
+
+    void subscribeAgentSessionUpdated(sessionRef, () => {
+      void fetchSession();
+    }).then((dispose) => {
+      if (cancelled) {
+        dispose();
+      } else {
+        unlisten = dispose;
+      }
+    });
+
+    const timer = setInterval(() => {
+      if (
+        result &&
+        (!isAgentSessionAvailable(result) || result.state === "terminal")
+      ) {
+        return;
+      }
+      void fetchSession();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+      clearInterval(timer);
+    };
+  }, [sessionRef]);
+
+  const timelineItems = useMemo(() => {
+    if (!result || !isAgentSessionAvailable(result)) return [];
+    return result.items.map(mapSessionItemSnapshotToView);
+  }, [result]);
+
+  const recipientTitle = useMemo(() => {
+    if (result && isAgentSessionAvailable(result)) {
+      return (
+        result.agent.displayName || result.agent.id || "Session Memory Agent"
+      );
+    }
+    return "Session Memory Agent";
+  }, [result]);
+
+  const isAvailable = isAgentSessionAvailable(result);
+
+  return (
+    <div
+      className="flex min-h-[500px] flex-1 flex-col overflow-hidden rounded-2xl border border-theme-control-border bg-surface-elevated/40"
+      data-testid="task-agent-session-observer"
+    >
+      {/* 顶部观察者导航栏 */}
+      <div className="flex items-center justify-between border-b border-theme-control-border/60 bg-surface-base/80 px-4 py-3 backdrop-blur-sm">
+        <div className="flex items-center gap-2.5">
+          <Button
+            className="h-8 gap-1.5 px-2 text-caption font-medium text-on-surface hover:text-primary"
+            data-testid="task-observer-back-btn"
+            onClick={onBack}
+            size="sm"
+            variant="ghost"
+          >
+            <ArrowLeft className="size-4" />
+            <span>返回任务</span>
+          </Button>
+          <div className="h-4 w-px bg-theme-control-border" />
+          <span className="text-body-sm font-semibold text-on-surface">
+            {taskTitle ? `${taskTitle} · ` : ""}执行现场
+          </span>
+          <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+            只读观察模式
+          </span>
+        </div>
+
+        {result &&
+        isAgentSessionAvailable(result) &&
+        result.state === "terminal" ? (
+          <span className="text-caption text-on-surface-variant">
+            任务阶段已归档
+          </span>
+        ) : null}
+      </div>
+
+      {/* 现场内容主体 */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {loading && !result ? (
+          <div
+            className="flex flex-1 items-center justify-center gap-2 p-8 text-caption text-on-surface-variant"
+            data-testid="task-observer-loading"
+          >
+            <Loader2 className="size-4 animate-spin text-primary" />
+            <span>加载执行现场...</span>
+          </div>
+        ) : error ? (
+          <div
+            className="flex flex-1 flex-col items-center justify-center p-8 text-center"
+            data-testid="task-observer-error"
+          >
+            <AlertCircle className="size-8 text-status-conflict" />
+            <p className="mt-2 text-body-sm text-status-conflict">{error}</p>
+          </div>
+        ) : (
+          <AgentSessionWorkspace
+            capabilities={{
+              send: false,
+              stop: false,
+              retry: false,
+              queue: false,
+              interrupt: false,
+              attach: false,
+              mention: false,
+              slashCommand: false,
+              modelSelect: false,
+              permissionResponse: false,
+              copy: true,
+              openArtifact: true,
+            }}
+            disabled={true}
+            emptyDescription="该阶段尚未产生交互事件或正在初始化"
+            emptyTitle="暂无执行记录"
+            isReadOnly={true}
+            items={timelineItems}
+            recipientTitle={recipientTitle}
+            status={
+              isAvailable
+                ? {
+                    className:
+                      result.state === "active"
+                        ? "text-primary"
+                        : "text-on-surface-variant",
+                    label: result.state === "active" ? "执行中" : "已结束",
+                  }
+                : undefined
+            }
+            testIdPrefix="task-agent-observer"
+            unavailable={!isAvailable}
+            unavailableDescription={
+              !isAvailable && result
+                ? result.reason === "notFoundOrExpired"
+                  ? "该阶段执行现场已过期（执行流为内存临时态，只在任务存续期间及归档前保留）"
+                  : result.reason
+                : undefined
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
 }

@@ -1,4 +1,111 @@
 import type { ReactNode } from "react";
+import type { SessionItemSnapshot } from "./team";
+
+// ==========================================
+// DTO & Backend Execution Scene Projections
+// ==========================================
+
+export interface AgentSessionRef {
+  schemaVersion: number;
+  value: string;
+}
+
+export interface AgentInfoView {
+  id: string;
+  displayName?: string | null;
+  model?: string | null;
+  protocol: string;
+}
+
+export interface AgentSessionContextView {
+  teamId?: string | null;
+  memberId?: string | null;
+  memoryScope?: string | null;
+  memoryJobId?: string | null;
+  taskId?: string | null;
+}
+
+export interface AgentSessionTerminalView {
+  state: string;
+  code?: string | null;
+  message?: string | null;
+  retryable: boolean;
+}
+
+export interface AgentSessionCapabilitiesView {
+  read: boolean;
+  send: boolean;
+  stop: boolean;
+  retry: boolean;
+  queue: boolean;
+  interrupt: boolean;
+  attach: boolean;
+  mention: boolean;
+  slashCommand: boolean;
+  modelSelect?: boolean;
+  permissionResponse?: boolean;
+  copy?: boolean;
+  openArtifact?: boolean;
+}
+
+export interface SessionRetentionView {
+  maxItems: number;
+  maxEvents: number;
+  maxBytes: number;
+  truncated: boolean;
+  evictedItemCount: number;
+  rejectedEventCount: number;
+}
+
+export interface AgentSessionUnavailableView {
+  schemaVersion: number;
+  sessionRef: AgentSessionRef;
+  state: "unavailable";
+  reason: string;
+}
+
+export interface AgentSessionView {
+  schemaVersion: number;
+  sessionRef: AgentSessionRef;
+  executionId: string;
+  purpose: string;
+  mode: string;
+  tenantId?: string | null;
+  agent: AgentInfoView;
+  context: AgentSessionContextView;
+  state: "active" | "terminal" | string;
+  terminal?: AgentSessionTerminalView | null;
+  capabilities: AgentSessionCapabilitiesView;
+  revision: number;
+  eventCount: number;
+  items: SessionItemSnapshot[];
+  retention: SessionRetentionView;
+  startedAt?: string | null;
+  updatedAt: string;
+  finishedAt?: string | null;
+}
+
+export type AgentSessionGetResult =
+  AgentSessionUnavailableView | AgentSessionView;
+
+export function isAgentSessionAvailable(
+  result: AgentSessionGetResult | null | undefined,
+): result is AgentSessionView {
+  return Boolean(result && result.state !== "unavailable");
+}
+
+export interface AgentSessionGetParams {
+  sessionRef: AgentSessionRef;
+}
+
+export interface AgentSessionUpdatedEvent {
+  sessionRef: AgentSessionRef;
+  revision: number;
+}
+
+// ==========================================
+// UI Component & Workspace Projections
+// ==========================================
 
 export interface AgentSessionCapabilities {
   send: boolean;

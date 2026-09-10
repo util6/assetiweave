@@ -3748,6 +3748,15 @@ pub(crate) fn clear_terminal_tasks(
 }
 
 #[tauri::command]
+pub(crate) fn agent_session_get(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::AgentSessionGetParams,
+) -> RuntimeAppResult<crate::backend::dto::AgentSessionGetResult> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.get_agent_session(params)
+}
+
+#[tauri::command]
 pub(crate) fn list_team_run_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<crate::backend::runtime::tasks::TaskSnapshot>> {
@@ -4083,7 +4092,8 @@ pub(crate) fn command_handler(
         get_public_task,
         cancel_public_task,
         retry_public_task,
-        clear_terminal_tasks
+        clear_terminal_tasks,
+        agent_session_get
     ]
 }
 

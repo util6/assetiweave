@@ -1682,6 +1682,7 @@ mod tests {
 
     fn desktop_only_tauri_methods() -> BTreeSet<&'static str> {
         BTreeSet::from([
+            "agent_session_get",
             "cancel_ai_execution_task",
             "cancel_agent_lifecycle_task",
             "cancel_conversation_sync",

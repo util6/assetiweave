@@ -22,4 +22,37 @@ impl AppService {
             &self.runtime.app_settings_value(),
         )
     }
+
+    pub(crate) fn get_agent_session(
+        &self,
+        params: crate::backend::dto::AgentSessionGetParams,
+    ) -> AppResult<crate::backend::dto::AgentSessionGetResult> {
+        let session_ref = params.session_ref;
+        if let Some(snapshot) = self
+            .runtime
+            .session_streams()
+            .get_by_ref(&session_ref.value)
+        {
+            let requested_tenant = self.tenant_id();
+            if let Some(meta_tenant) = &snapshot.metadata.tenant_id {
+                if meta_tenant != requested_tenant {
+                    return Ok(crate::backend::dto::AgentSessionGetResult::Unavailable(
+                        crate::backend::dto::AgentSessionUnavailableView {
+                            schema_version: 1,
+                            session_ref,
+                            state: "unavailable".to_string(),
+                            reason: "notFoundOrExpired".to_string(),
+                        },
+                    ));
+                }
+            }
+            Ok(crate::backend::dto::AgentSessionGetResult::Available(
+                snapshot.to_view(),
+            ))
+        } else {
+            Ok(crate::backend::dto::AgentSessionGetResult::Unavailable(
+                crate::backend::dto::AgentSessionUnavailableView::new(session_ref),
+            ))
+        }
+    }
 }

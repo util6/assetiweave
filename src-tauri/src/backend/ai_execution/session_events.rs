@@ -235,7 +235,7 @@ pub(crate) enum SessionItemState {
     Cancelled,
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct SessionItemSnapshot {
     pub(crate) identity: SessionItemIdentity,

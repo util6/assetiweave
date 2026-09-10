@@ -143,6 +143,8 @@ pub(crate) struct TaskStage {
     pub(crate) metrics: Vec<TaskMetric>,
     pub(crate) failures: Vec<TaskFailure>,
     pub(crate) skipped: Vec<TaskSkippedGroup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_session_ref: Option<crate::backend::dto::AgentSessionRef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -266,6 +268,8 @@ pub(crate) struct TaskSnapshot {
     pub(crate) revision: u64,
     pub(crate) detail: Value,
     pub(crate) result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_session_ref: Option<crate::backend::dto::AgentSessionRef>,
 }
 
 pub(crate) struct TaskContext {
@@ -293,6 +297,9 @@ impl TaskContext {
     pub(crate) fn progress(&self) -> ProgressHandle {
         self.progress.clone()
     }
+    pub(crate) fn task_id(&self) -> &str {
+        &self.progress.task_id
+    }
 }
 
 #[derive(Clone)]
@@ -302,6 +309,10 @@ pub(crate) struct ProgressHandle {
 }
 
 impl ProgressHandle {
+    pub(crate) fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
     pub(crate) fn progress(&self, current: u64, total: Option<u64>, note: Option<&str>) {
         let snapshot = if let Ok(mut tasks) = self.runtime.tasks.lock() {
             if let Some(entry) = tasks.get_mut(&self.task_id) {
@@ -366,6 +377,16 @@ impl ProgressHandle {
         let _ = self
             .runtime
             .set_outcome(&self.task_id, outcome, result_summary, error_summary);
+    }
+
+    pub(crate) fn set_stage_agent_session_ref(
+        &self,
+        stage_id: &str,
+        session_ref: Option<crate::backend::dto::AgentSessionRef>,
+    ) {
+        let _ = self
+            .runtime
+            .set_stage_agent_session_ref(&self.task_id, stage_id, session_ref);
     }
 }
 
@@ -525,6 +546,7 @@ impl TaskRuntime {
             revision: 1,
             detail: sanitize_task_detail(spec.detail),
             result: None,
+            agent_session_ref: None,
         };
         tasks.insert(
             task_id.clone(),
@@ -653,6 +675,7 @@ impl TaskRuntime {
             revision: 1,
             detail: sanitize_task_detail(spec.detail),
             result: None,
+            agent_session_ref: None,
         };
         tasks.insert(
             task_id,
@@ -1336,6 +1359,34 @@ impl TaskRuntime {
                 .get_mut(task_id)
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             entry.snapshot.stages = stages;
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn set_stage_agent_session_ref(
+        &self,
+        task_id: &str,
+        stage_id: &str,
+        session_ref: Option<crate::backend::dto::AgentSessionRef>,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+                stage.agent_session_ref = session_ref.clone();
+            }
+            if entry.snapshot.agent_session_ref.is_none() {
+                entry.snapshot.agent_session_ref = session_ref;
+            }
             entry.snapshot.revision += 1;
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()

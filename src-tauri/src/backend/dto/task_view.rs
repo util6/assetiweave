@@ -1,6 +1,6 @@
+use crate::backend::dto::AgentSessionRef;
 use crate::backend::runtime::tasks::{
-    StageStatus, TaskActivity, TaskCapabilities, TaskFailure, TaskMetric, TaskOutcome,
-    TaskProgress, TaskSkippedGroup, TaskSnapshot, TaskStage, TaskState,
+    StageStatus, TaskOutcome, TaskProgress, TaskSnapshot, TaskStage, TaskState,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,8 @@ pub(crate) struct TaskView {
     pub(crate) result_summary: Option<String>,
     pub(crate) capabilities: TaskCapabilitiesView,
     pub(crate) revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_session_ref: Option<AgentSessionRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -41,6 +43,8 @@ pub(crate) struct TaskStageView {
     pub(crate) metrics: Vec<TaskMetricView>,
     pub(crate) failures: Vec<TaskFailureView>,
     pub(crate) skipped: Vec<TaskSkippedReasonView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) agent_session_ref: Option<AgentSessionRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -177,7 +181,7 @@ impl TaskView {
             TaskOutcome::Canceled => "canceled",
         });
 
-        let stages = snapshot
+        let stages: Vec<TaskStageView> = snapshot
             .stages
             .iter()
             .map(TaskStageView::from_model)
@@ -206,6 +210,12 @@ impl TaskView {
             })
             .collect();
 
+        let agent_session_ref = snapshot.agent_session_ref.clone().or_else(|| {
+            stages
+                .iter()
+                .find_map(|stage| stage.agent_session_ref.clone())
+        });
+
         Self {
             id: snapshot.task_id.clone(),
             kind: format!("{:?}", snapshot.kind).to_ascii_lowercase(),
@@ -228,6 +238,7 @@ impl TaskView {
                 clearable: snapshot.capabilities.clearable && snapshot.state.is_terminal(),
             },
             revision: snapshot.revision,
+            agent_session_ref,
         }
     }
 }
@@ -308,6 +319,7 @@ impl TaskStageView {
             metrics,
             failures,
             skipped,
+            agent_session_ref: stage.agent_session_ref.clone(),
         }
     }
 }

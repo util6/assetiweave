@@ -2,9 +2,13 @@ use super::service::AppService;
 use crate::backend::{
     ai_execution::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
-        AiExecutionPurpose, AiExecutionRequest,
+        AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
+        SessionEvent, SessionEventDelivery, SessionEventIdentity, SessionEventKind,
     },
-    dto::{ConversationContentNodeLocator, ConversationSessionDetail},
+    dto::{
+        AgentInfoView, AgentSessionContextView, AgentSessionRef, AgentSessionTerminalView,
+        ConversationContentNodeLocator, ConversationSessionDetail,
+    },
     evidence::{
         build_bounded_evidence_initial_pack, BoundedEvidenceInitialPack, BoundedEvidenceNode,
         EvidenceNodeKind, EvidenceReadStatus, ShortEvidenceRef,
@@ -16,6 +20,7 @@ use crate::backend::{
         SessionMemoryJobStatus,
     },
     runtime::{
+        session_streams::{AgentSessionMetadata, SessionStreamKey},
         tasks::{
             StageStatus, TaskActivity, TaskCapabilities, TaskContext, TaskFailure, TaskMetric,
             TaskOutcome, TaskStage,
@@ -31,6 +36,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     time::Duration as StdDuration,
@@ -71,6 +78,100 @@ fn sanitize_memory_failure(code: &str, raw_message: &str, stage: &str) -> TaskFa
         retryable: true,
         path: None,
         timestamp: Utc::now().to_rfc3339(),
+    }
+}
+
+struct MemoryTurnProgressSink {
+    projection: Arc<crate::backend::ai_execution::SessionEventProjection>,
+    execution_id: String,
+    sequence: Arc<AtomicU64>,
+    terminal_emitted: Arc<AtomicBool>,
+}
+
+impl MemoryTurnProgressSink {
+    fn new(
+        projection: Arc<crate::backend::ai_execution::SessionEventProjection>,
+        execution_id: String,
+    ) -> Self {
+        Self {
+            projection,
+            execution_id,
+            sequence: Arc::new(AtomicU64::new(0)),
+            terminal_emitted: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn finish_succeeded(&self) {
+        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
+            self.emit_control("terminal", SessionEventKind::TerminalResult { text: None });
+        }
+    }
+
+    fn finish_cancelled(&self) {
+        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
+            self.emit_control("cancel", SessionEventKind::Cancel);
+        }
+    }
+
+    fn finish_failed(&self, code: &str, retryable: bool) {
+        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
+            self.emit_control(
+                "error",
+                SessionEventKind::Error {
+                    code: code.to_string(),
+                    retryable,
+                },
+            );
+        }
+    }
+
+    fn emit_control(&self, suffix: &str, kind: SessionEventKind) {
+        self.emit_session_event(SessionEvent {
+            identity: SessionEventIdentity {
+                session_id: self.execution_id.clone(),
+                member_id: self.execution_id.clone(),
+                execution_id: self.execution_id.clone(),
+                turn_id: self.execution_id.clone(),
+                item_id: format!("memory:{suffix}"),
+                event_id: format!("memory:{}:{suffix}", self.execution_id),
+            },
+            sequence: 0,
+            delivery: SessionEventDelivery::Live,
+            kind,
+            truncation: None,
+        });
+    }
+}
+
+impl AiExecutionProgressSink for MemoryTurnProgressSink {
+    fn set_phase(&self, _phase: AiExecutionPhase) {}
+
+    fn emit_session_event(&self, mut event: SessionEvent) {
+        let observed_sequence = event.sequence;
+        let mut current = self.sequence.load(Ordering::Acquire);
+        let sequence = loop {
+            let next = current.saturating_add(1).max(observed_sequence);
+            match self
+                .sequence
+                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => break next,
+                Err(actual) => current = actual,
+            }
+        };
+        event.sequence = sequence;
+        event.identity.session_id = self.execution_id.clone();
+        event.identity.member_id = self.execution_id.clone();
+        event.identity.execution_id = self.execution_id.clone();
+        event.identity.turn_id = self.execution_id.clone();
+        if event.identity.item_id.trim().is_empty() {
+            event.identity.item_id = format!("memory:item:{sequence}");
+        }
+        if event.identity.event_id.trim().is_empty() {
+            event.identity.event_id = format!("memory:{}:{sequence}", self.execution_id);
+        }
+        event.delivery = SessionEventDelivery::Live;
+        self.projection.apply(event);
     }
 }
 
@@ -271,6 +372,7 @@ impl AppService {
                 metrics: Vec::new(),
                 failures: Vec::new(),
                 skipped: Vec::new(),
+                agent_session_ref: None,
             },
             TaskStage {
                 id: "load_facts".to_string(),
@@ -284,6 +386,7 @@ impl AppService {
                 metrics: Vec::new(),
                 failures: Vec::new(),
                 skipped: Vec::new(),
+                agent_session_ref: None,
             },
             TaskStage {
                 id: "agent_execution".to_string(),
@@ -297,6 +400,7 @@ impl AppService {
                 metrics: Vec::new(),
                 failures: Vec::new(),
                 skipped: Vec::new(),
+                agent_session_ref: None,
             },
             TaskStage {
                 id: "validation".to_string(),
@@ -310,6 +414,7 @@ impl AppService {
                 metrics: Vec::new(),
                 failures: Vec::new(),
                 skipped: Vec::new(),
+                agent_session_ref: None,
             },
             TaskStage {
                 id: "publish".to_string(),
@@ -323,6 +428,7 @@ impl AppService {
                 metrics: Vec::new(),
                 failures: Vec::new(),
                 skipped: Vec::new(),
+                agent_session_ref: None,
             },
         ];
         progress.set_stages(stages);
@@ -424,6 +530,8 @@ impl AppService {
         );
 
         // Stage 3: agent_execution
+        let session_ref = AgentSessionRef::new(format!("sm-{}", job.id));
+        progress.set_stage_agent_session_ref("agent_execution", Some(session_ref.clone()));
         progress.update_stage_status("agent_execution", StageStatus::Running);
         progress.record_activity(TaskActivity {
             stage_id: "agent_execution".to_string(),
@@ -436,11 +544,72 @@ impl AppService {
             total: None,
         });
 
+        let key = SessionStreamKey {
+            tenant_id: tenant_id.to_string(),
+            team_id: "memory".to_string(),
+            member_id: format!("memory-{}", job.id),
+            execution_id: format!("session-memory-execution-{}", job.id),
+        };
+        let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+            &crate::backend::ai_execution::composition::ActionId::new(SESSION_MEMORY_ACTION),
+            &self.app_settings_value(),
+        )
+        .map(|(id, m)| (id.to_string(), m))
+        .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
+
+        let metadata = AgentSessionMetadata {
+            session_ref: session_ref.clone(),
+            execution_id: key.execution_id.clone(),
+            purpose: "session_memory".to_string(),
+            mode: "oneshot".to_string(),
+            tenant_id: Some(tenant_id.to_string()),
+            agent: AgentInfoView {
+                id: agent_id,
+                display_name: Some("Session Memory Agent".to_string()),
+                model,
+                protocol: "builtin".to_string(),
+            },
+            context: AgentSessionContextView {
+                team_id: None,
+                member_id: None,
+                memory_scope: Some("session".to_string()),
+                memory_job_id: Some(job.id.clone()),
+                task_id: Some(context.task_id().to_string()),
+            },
+            allow_stop: true,
+        };
+
+        let projection = self
+            .runtime
+            .session_streams()
+            .register_with_metadata(key.clone(), metadata);
+        let sink = Arc::new(MemoryTurnProgressSink::new(
+            projection,
+            key.execution_id.clone(),
+        ));
+        sink.emit_control(
+            "request",
+            SessionEventKind::UserMessageAcknowledged {
+                accepted: true,
+                text: Some("提取会话记忆与事实上下文".to_string()),
+            },
+        );
+
         let result = self
-            .execute_session_memory_agent(&job, &detail, context.cancellation())
+            .execute_session_memory_agent(&job, &detail, context.cancellation(), Some(sink.clone()))
             .await;
         let (output, short_refs, _is_empty_content) = match result {
             Ok(output) => {
+                sink.finish_succeeded();
+                self.runtime.session_streams().mark_terminal_by_ref(
+                    &session_ref.value,
+                    Some(AgentSessionTerminalView {
+                        state: "succeeded".to_string(),
+                        code: None,
+                        message: None,
+                        retryable: false,
+                    }),
+                );
                 progress.finish_stage(
                     "agent_execution",
                     StageStatus::Succeeded,
@@ -455,6 +624,16 @@ impl AppService {
                 drop(lease_guard);
                 progress.remove_activity("agent_execution", &worker_id);
                 if context.is_cancelled() {
+                    sink.finish_cancelled();
+                    self.runtime.session_streams().mark_terminal_by_ref(
+                        &session_ref.value,
+                        Some(AgentSessionTerminalView {
+                            state: "canceled".to_string(),
+                            code: Some("canceled".to_string()),
+                            message: Some("任务已被取消".to_string()),
+                            retryable: false,
+                        }),
+                    );
                     progress.finish_stage(
                         "agent_execution",
                         StageStatus::Canceled,
@@ -486,6 +665,16 @@ impl AppService {
                 };
                 let safe_failure =
                     sanitize_memory_failure(&failure_code, &error.to_string(), "agent_execution");
+                sink.finish_failed(&failure_code, false);
+                self.runtime.session_streams().mark_terminal_by_ref(
+                    &session_ref.value,
+                    Some(AgentSessionTerminalView {
+                        state: "failed".to_string(),
+                        code: Some(failure_code.clone()),
+                        message: Some(safe_failure.message.clone()),
+                        retryable: false,
+                    }),
+                );
                 progress.finish_stage(
                     "agent_execution",
                     StageStatus::Failed,
@@ -762,6 +951,7 @@ impl AppService {
         job: &SessionMemoryJob,
         detail: &ConversationSessionDetail,
         cancellation: CancellationToken,
+        progress: Option<Arc<dyn AiExecutionProgressSink>>,
     ) -> AppResult<(
         SessionMemoryAgentOutput,
         HashMap<String, ShortEvidenceRef>,
@@ -824,7 +1014,7 @@ impl AppService {
             model,
             limits: AiExecutionLimits::default(),
             cancellation: AiExecutionCancellation::from_token(cancellation),
-            progress: None,
+            progress,
             tenant_id: Some(job.tenant_id.clone()),
             execution_context_key: None,
             binding: None,

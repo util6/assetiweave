@@ -7,7 +7,7 @@
 - Parent Issue：#31
 - Related：#20、#33
 - Phase：Specification ready
-- Initial frontier：T01
+- Initial frontier: T10
 - 外部前置条件：Issue #33 Task View/Memory Stage 基线已由 `dcb0fcbf` 满足
 
 ## Ticket Progress
@@ -22,8 +22,8 @@
 | T06 | — | verified | b06cdea1 | G-05, G-07, G-10, G-11 | 补齐文件、Diff、图片与 Artifact 展示 |
 | T07 | — | verified | 865f4942 | G-06, G-08, G-10, G-11 | 实现 Team 多成员 Parallel / Single 工作区 |
 | T08 | — | verified | eb12d537 | G-06, G-08, G-11 | 迁移 Team Plan、Task 与成员运行操作 |
-| T09 | — | ready | — | — | frontier；可执行（#33 基线已满足） |
-| T10 | — | blocked | — | — | blocked by T09 |
+| T09 | — | verified | pending | G-02, G-03, G-04, G-05, G-09, G-11 | 接入 Session Memory 只读执行现场与 Task Center 观察者 |
+| T10 | — | ready | — | — | frontier；解阻，可执行 |
 | T11 | — | blocked | — | — | blocked by T08 + T10 (等待 T10) |
 | T12 | — | blocked | — | — | blocked by T05/T06/T08/T10/T11 |
 
