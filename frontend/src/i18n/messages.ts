@@ -4,6 +4,7 @@ import { conversationsZh } from "./resources/zh/conversations";
 import { memoryZh } from "./resources/zh/memory";
 import { settingsZh } from "./resources/zh/settings";
 import { teamZh } from "./resources/zh/team";
+import { agentSessionZh } from "./resources/zh/agentSession";
 
 import { catalogEn } from "./resources/en/catalog";
 import { commonEn } from "./resources/en/common";
@@ -11,6 +12,7 @@ import { conversationsEn } from "./resources/en/conversations";
 import { memoryEn } from "./resources/en/memory";
 import { settingsEn } from "./resources/en/settings";
 import { teamEn } from "./resources/en/team";
+import { agentSessionEn } from "./resources/en/agentSession";
 
 import type { AppLocale, TranslationParams, Translator } from "./types";
 
@@ -21,6 +23,7 @@ const zh = {
   ...memoryZh,
   ...teamZh,
   ...settingsZh,
+  ...agentSessionZh,
 } as const;
 
 export type TranslationKey = keyof typeof zh;
@@ -34,6 +37,7 @@ const en: Record<TranslationKey, string> = {
   ...memoryEn,
   ...teamEn,
   ...settingsEn,
+  ...agentSessionEn,
 };
 
 export const messages: Record<Locale, Record<TranslationKey, string>> = {

@@ -14,8 +14,8 @@
 
 | ID | GitHub | Status | Commit | Gates | Note |
 |---|---|---|---|---|---|
-| T01 | — | ready | — | — | 初始 frontier |
-| T02 | — | blocked | — | — | blocked by T01 |
+| T01 | — | verified | f5490ca | G-00, G-04, G-11 | 抽取共享 Agent Session 兼容工作区 |
+| T02 | — | ready | — | — | blocked by T01 (已解阻) |
 | T03 | — | blocked | — | — | blocked by T02 |
 | T04 | — | blocked | — | — | blocked by T03 |
 | T05 | — | blocked | — | — | blocked by T03 |

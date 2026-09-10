@@ -1,25 +1,18 @@
 import {
   Activity,
-  ArrowDown,
   Bot,
   CheckCircle2,
   CircleAlert,
   Clock3,
-  FileText,
   LoaderCircle,
   MessageSquare,
-  MoreHorizontal,
-  Send,
   Settings2,
   Shield,
   Sparkles,
-  Wrench,
   XCircle,
 } from "lucide-react";
 import {
-  useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,8 +24,9 @@ import { TeamTaskCard, teamTaskAnchor } from "./TeamTaskCard";
 import { Button } from "../ui/button";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTeamSession } from "../../app/backgroundTasks/TeamSessionProvider";
+import { AgentSessionWorkspace } from "../agent-session";
+import { adaptTeamSessionToWorkspaceProps } from "./teamSessionAdapter";
 import type {
-  SessionItemKind,
   SessionItemSnapshot,
   TeamDetail,
   TeamMember,
@@ -109,10 +103,6 @@ export function TeamWorkspaceShell({
   const [pendingTaskNavigation, setPendingTaskNavigation] = useState<
     string | null
   >(null);
-  const [showNewActivity, setShowNewActivity] = useState(false);
-  const timelineRef = useRef<HTMLDivElement>(null);
-  const timelineFollowingRef = useRef(true);
-  const previousTimelineKeyRef = useRef<string | null>(null);
   const memberButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const activeMember =
@@ -188,48 +178,7 @@ export function TeamWorkspaceShell({
     ],
   );
 
-  const scrollTimelineToLatest = useCallback(
-    (behavior: ScrollBehavior = "smooth") => {
-      const timeline = timelineRef.current;
-      if (!timeline) return;
-      const top = Math.max(0, timeline.scrollHeight - timeline.clientHeight);
-      if (typeof timeline.scrollTo === "function") {
-        timeline.scrollTo({ behavior, top });
-      } else {
-        timeline.scrollTop = top;
-      }
-      timelineFollowingRef.current = true;
-      setShowNewActivity(false);
-    },
-    [],
-  );
 
-  const onTimelineScroll = () => {
-    const timeline = timelineRef.current;
-    if (!timeline) return;
-    const following = isNearTimelineBottom(timeline);
-    timelineFollowingRef.current = following;
-    if (following) setShowNewActivity(false);
-  };
-
-  useLayoutEffect(() => {
-    previousTimelineKeyRef.current = null;
-    timelineFollowingRef.current = true;
-    setShowNewActivity(false);
-    scrollTimelineToLatest("auto");
-  }, [activeMember?.id, scrollTimelineToLatest]);
-
-  useLayoutEffect(() => {
-    if (previousTimelineKeyRef.current === timelineKey) return;
-    previousTimelineKeyRef.current = timelineKey;
-    const timeline = timelineRef.current;
-    if (!timeline) return;
-    if (timelineFollowingRef.current || isNearTimelineBottom(timeline)) {
-      scrollTimelineToLatest("auto");
-    } else {
-      setShowNewActivity(true);
-    }
-  }, [scrollTimelineToLatest, timelineKey]);
 
   useEffect(() => {
     if (!isLeader && composerMode === "task") setComposerMode("normal");
@@ -471,241 +420,122 @@ export function TeamWorkspaceShell({
           </div>
         </section>
 
-        <section
-          className="flex min-h-0 flex-1 flex-col bg-theme-panel/25"
-          aria-label={t("team.chat.sessionArea")}
-        >
-          <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-3 border-b border-theme-card-border/45 bg-theme-card-header/85 px-4 py-2.5 backdrop-blur sm:px-5">
-            <div className="min-w-0">
-              <p className="text-label-caps uppercase text-on-surface-variant">
-                {t("team.chat.activeSession")}
-              </p>
-              <h3
-                className="truncate text-title-sm font-bold text-on-surface"
-                data-testid="team-active-recipient"
-              >
-                {activeMember
-                  ? roleLabel(activeMember, t)
-                  : t("team.chat.noRecipient")}
-              </h3>
-            </div>
-            <div
-              className={`flex shrink-0 items-center gap-1.5 text-caption ${activeStatus.className}`}
-            >
-              {activeStatus.icon}
-              <span>{activeStatus.label}</span>
-            </div>
-          </div>
-
-          <div
-            aria-label={
-              activeMember
-                ? t("team.chat.timelineLabel", {
-                    name: roleLabel(activeMember, t),
-                  })
-                : t("team.chat.sessionArea")
-            }
-            className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
-            data-testid="team-timeline"
-            id="team-session-timeline"
-            onScroll={onTimelineScroll}
-            ref={timelineRef}
-            role="log"
-            tabIndex={0}
-          >
-            {showNewActivity ? (
-              <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center">
-                <Button
-                  className="pointer-events-auto shadow-[var(--theme-shadow-panel)]"
-                  data-testid="team-new-activity"
-                  onClick={() => scrollTimelineToLatest()}
-                  size="sm"
-                  type="button"
-                  variant="secondary"
+        {activeMember ? (
+          <AgentSessionWorkspace
+            {...adaptTeamSessionToWorkspaceProps({
+              activeMember,
+              activeSession,
+              activeTimelineItems,
+              activityDependencyKey: timelineKey,
+              canSend,
+              composerExtra: isLeader ? (
+                <div
+                  aria-label={t("team.chat.composerMode")}
+                  className="mb-2 flex items-center gap-1 rounded-lg border border-theme-control-border/60 bg-theme-control/30 p-1"
+                  role="group"
                 >
-                  <ArrowDown size={14} />
-                  {t("team.chat.newActivity")}
-                </Button>
-              </div>
-            ) : null}
-            {activeSession?.restore_state &&
-            activeSession.restore_state !== "ready" &&
-            activeSession.restore_state !== "not-started" ? (
-              <div
-                aria-live="polite"
-                className={`mb-3 flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-caption ${activeStatus.className === "text-status-remove" ? "border-status-remove/35 bg-status-remove/10 text-status-remove" : "border-theme-nav-active-border/40 bg-theme-nav-active/10 text-on-surface-variant"}`}
-                data-state={activeSession.restore_state}
-                data-testid="team-restore-status"
-                role="status"
-              >
-                {activeStatus.icon}
-                <span className="font-semibold">{activeStatus.label}</span>
-                {activeSession.restore_error_code ? (
-                  <code>{activeSession.restore_error_code}</code>
-                ) : null}
-              </div>
-            ) : null}
-            {activeTimelineItems.length ||
-            activeProjectedTasks.length ||
-            activeRun ? (
-              <ol className="mx-auto grid w-full max-w-3xl gap-3">
-                {activeTimelineItems.map((item) => (
-                  <SessionItem
-                    item={item}
-                    key={`${item.identity.execution_id}:${item.identity.item_id}`}
-                  />
-                ))}
-                {activeProjectedTasks.map((task) => (
-                  <TeamTaskCard
-                    key={task.id}
-                    owner={members.find(
-                      (member) => member.id === task.owner_member_id,
-                    )}
-                    task={task}
-                  />
-                ))}
-                {activeRun ? (
-                  <TeamPlanCard
-                    busy={workflowBusy}
-                    error={workflowError}
-                    onCancel={onCancel}
-                    onConfirm={onConfirm}
-                    onMoveTask={onMoveTask}
-                    onTaskNavigate={navigateToTask}
-                    onReview={onReview}
-                    onTaskChange={onTaskChange}
-                    snapshot={activeRun}
-                    team={team}
-                  />
-                ) : null}
-              </ol>
-            ) : (
-              <EmptyState
-                className="min-h-56 border-0 bg-transparent shadow-none"
-                description={t("team.chat.emptyDescription", {
-                  name: activeMember ? roleLabel(activeMember, t) : "",
-                })}
-                icon={<MessageSquare size={21} />}
-                title={t("team.chat.emptyTitle")}
-              />
-            )}
-          </div>
-
-          <section
-            aria-label={t("team.chat.composerLabel")}
-            className="sticky bottom-0 shrink-0 border-t border-theme-card-border/65 bg-theme-card-header/90 px-4 py-3 shadow-[0_-10px_24px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur sm:px-5"
-            data-testid="team-composer"
-          >
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-caption">
-              <span className="text-on-surface-variant">
-                {t("team.chat.recipient")}
-              </span>
-              <span className="font-semibold text-primary">
-                {activeMember
-                  ? roleLabel(activeMember, t)
-                  : t("team.chat.noRecipient")}
-              </span>
-              <span className="ml-auto text-on-surface-variant">
-                {activeMemberSending || activeMemberBusy
-                  ? t("team.chat.status.working")
-                  : t("team.chat.composerPending")}
-              </span>
-            </div>
-            {isLeader ? (
-              <div
-                aria-label={t("team.chat.composerMode")}
-                className="mb-2 flex items-center gap-1 rounded-lg border border-theme-control-border/60 bg-theme-control/30 p-1"
-                role="group"
-              >
-                <Button
-                  aria-pressed={composerMode === "normal"}
-                  onClick={() => setComposerMode("normal")}
-                  size="sm"
-                  type="button"
-                  variant={composerMode === "normal" ? "secondary" : "ghost"}
-                >
-                  <MessageSquare size={14} />
-                  {t("team.chat.mode.normal")}
-                </Button>
-                <Button
-                  aria-pressed={composerMode === "task"}
-                  disabled={taskModeBusy}
-                  onClick={() => setComposerMode("task")}
-                  size="sm"
-                  type="button"
-                  variant={composerMode === "task" ? "secondary" : "ghost"}
-                >
-                  <Sparkles size={14} />
-                  {t("team.chat.mode.task")}
-                </Button>
-              </div>
-            ) : null}
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitComposer();
-              }}
-            >
-              <textarea
-                aria-label={t("team.chat.composerInput")}
-                className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
-                disabled={
-                  !activeMember ||
-                  activeMemberBusy ||
-                  activeMemberSending ||
-                  (composerMode === "task" && taskModeBusy)
-                }
-                onKeyDown={(event) => {
-                  if (
-                    (event.metaKey || event.ctrlKey) &&
-                    event.key === "Enter"
-                  ) {
-                    event.preventDefault();
-                    void submitComposer();
-                  }
-                }}
-                placeholder={
-                  composerMode === "task"
-                    ? t("team.chat.taskPlaceholder")
-                    : activeMember
-                      ? t("team.chat.composerPlaceholder", {
-                          name: roleLabel(activeMember, t),
-                        })
-                      : t("team.chat.composerPlaceholderFallback")
-                }
-                rows={2}
-                value={activeDraft}
-                onChange={(event) => {
-                  if (!activeMember) return;
-                  setDrafts((current) => ({
-                    ...current,
-                    [activeMember.id]: event.target.value,
-                  }));
-                }}
-              />
-              <Button
-                aria-label={
-                  composerMode === "task"
-                    ? t("team.workflow.draft")
-                    : t("team.chat.send")
-                }
-                disabled={
-                  composerMode === "task"
-                    ? !isLeader || taskModeBusy || !activeDraft.trim()
-                    : !canSend
-                }
-                size="sm"
-                type="submit"
-              >
-                <Send size={14} />
-                {composerMode === "task"
+                  <Button
+                    aria-pressed={composerMode === "normal"}
+                    onClick={() => setComposerMode("normal")}
+                    size="sm"
+                    type="button"
+                    variant={composerMode === "normal" ? "secondary" : "ghost"}
+                  >
+                    <MessageSquare size={14} />
+                    {t("team.chat.mode.normal")}
+                  </Button>
+                  <Button
+                    aria-pressed={composerMode === "task"}
+                    disabled={taskModeBusy}
+                    onClick={() => setComposerMode("task")}
+                    size="sm"
+                    type="button"
+                    variant={composerMode === "task" ? "secondary" : "ghost"}
+                  >
+                    <Sparkles size={14} />
+                    {t("team.chat.mode.task")}
+                  </Button>
+                </div>
+              ) : null,
+              disabled:
+                !activeMember ||
+                activeMemberBusy ||
+                activeMemberSending ||
+                (composerMode === "task" && taskModeBusy),
+              draft: activeDraft,
+              isLeader,
+              onDraftChange: (value) => {
+                if (!activeMember) return;
+                setDrafts((current) => ({
+                  ...current,
+                  [activeMember.id]: value,
+                }));
+              },
+              onSend: submitComposer,
+              placeholder:
+                composerMode === "task"
+                  ? t("team.chat.taskPlaceholder")
+                  : activeMember
+                    ? t("team.chat.composerPlaceholder", {
+                        name: roleLabel(activeMember, t),
+                      })
+                    : t("team.chat.composerPlaceholderFallback"),
+              submitLabel:
+                composerMode === "task"
                   ? t("team.workflow.draft")
-                  : t("team.chat.send")}
-              </Button>
-            </form>
-          </section>
-        </section>
+                  : t("team.chat.send"),
+              restoreStatus:
+                activeSession?.restore_state &&
+                activeSession.restore_state !== "ready" &&
+                activeSession.restore_state !== "not-started"
+                  ? {
+                      errorCode: activeSession.restore_error_code,
+                      icon: activeStatus.icon,
+                      label: activeStatus.label,
+                      state: activeSession.restore_state,
+                      className:
+                        activeStatus.className === "text-status-remove"
+                          ? "border-status-remove/35 bg-status-remove/10 text-status-remove"
+                          : "border-theme-nav-active-border/40 bg-theme-nav-active/10 text-on-surface-variant",
+                    }
+                  : null,
+              roleLabelText: activeMember
+                ? roleLabel(activeMember, t)
+                : t("team.chat.noRecipient"),
+              sessionResetKey: activeMember?.id,
+              status: activeStatus,
+              testIdPrefix: "team",
+              timelineExtra:
+                activeProjectedTasks.length || activeRun ? (
+                  <>
+                    {activeProjectedTasks.map((task) => (
+                      <TeamTaskCard
+                        key={task.id}
+                        owner={members.find(
+                          (member) => member.id === task.owner_member_id,
+                        )}
+                        task={task}
+                      />
+                    ))}
+                    {activeRun ? (
+                      <TeamPlanCard
+                        busy={workflowBusy}
+                        error={workflowError}
+                        onCancel={onCancel}
+                        onConfirm={onConfirm}
+                        onMoveTask={onMoveTask}
+                        onReview={onReview}
+                        onTaskChange={onTaskChange}
+                        onTaskNavigate={navigateToTask}
+                        snapshot={activeRun}
+                        team={team}
+                      />
+                    ) : null}
+                  </>
+                ) : undefined,
+            })}
+          />
+        ) : null}
       </div>
     </Panel>
   );
@@ -882,89 +712,6 @@ function errorCode(error: unknown): string {
   return "member_turn_failed";
 }
 
-function SessionItem({ item }: { item: SessionItemSnapshot }) {
-  const { t } = useI18n();
-  const isUser = item.kind === "user_message";
-  const isCollapsible = item.kind === "tool" || item.kind === "thinking";
-  const [detailsOpen, setDetailsOpen] = useState(
-    item.kind === "tool" && ["streaming", "failed"].includes(item.state),
-  );
-  const label = itemLabel(item.kind, t);
-  const icon = itemIcon(item.kind);
-  const detail = item.text || itemStatus(item, t);
-  const tone =
-    item.kind === "error" || item.state === "failed"
-      ? "border-status-remove/35 bg-status-remove/10"
-      : isUser
-        ? "border-theme-nav-active-border/35 bg-theme-nav-active/10"
-        : item.kind === "final_result"
-          ? "border-status-create/35 bg-status-create/10"
-          : item.kind === "cancelled"
-            ? "border-status-conflict/35 bg-status-conflict/10"
-            : "border-theme-card-border/65 bg-theme-card/55";
-  return (
-    <li
-      className={`rounded-xl border px-3.5 py-3 ${tone}`}
-      data-testid={`team-session-item-${item.identity.item_id}`}
-    >
-      <div className="flex items-start gap-3">
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-theme-control-border/70 bg-theme-control/70 text-primary">
-          {icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-label-caps uppercase text-on-surface-variant">
-              {label}
-            </span>
-            <span className="text-caption text-outline">
-              {item.delivery === "replay"
-                ? t("team.chat.replay")
-                : t("team.chat.live")}
-            </span>
-            <span className="ml-auto text-caption text-outline">
-              {item.state}
-            </span>
-          </div>
-          {isCollapsible ? (
-            <details
-              className="group mt-1 rounded-lg border border-theme-control-border/45 bg-theme-control/25 px-2.5 py-1.5"
-              data-testid={`team-session-item-details-${item.identity.item_id}`}
-              onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
-              open={detailsOpen}
-            >
-              <summary className="cursor-pointer list-none rounded-md text-body-sm text-on-surface outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/45 [&::-webkit-details-marker]:hidden">
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-label-caps uppercase text-on-surface-variant">
-                    {label}
-                  </span>
-                  <span className="truncate">{detail}</span>
-                </span>
-              </summary>
-              <p className="mt-2 whitespace-pre-wrap break-words text-body-sm text-on-surface">
-                {detail}
-              </p>
-              {item.code ? (
-                <p className="mt-1 break-words text-caption text-status-remove">
-                  {item.code}
-                </p>
-              ) : null}
-            </details>
-          ) : (
-            <p className="mt-1 whitespace-pre-wrap break-words text-body-sm text-on-surface">
-              {detail}
-            </p>
-          )}
-          {!isCollapsible && item.code && item.text ? (
-            <p className="mt-1 break-words text-caption text-status-remove">
-              {item.code}
-            </p>
-          ) : null}
-        </div>
-      </div>
-    </li>
-  );
-}
-
 function getMemberStatus(
   projection: TeamMemberSessionProjection | null,
   t: ReturnType<typeof useI18n>["t"],
@@ -1026,67 +773,4 @@ function roleLabel(member: TeamMember, t: ReturnType<typeof useI18n>["t"]) {
 function memberInitials(member: TeamMember) {
   const source = member.agent_id.trim() || member.role;
   return source.slice(0, 2).toUpperCase();
-}
-
-function itemLabel(kind: SessionItemKind, t: ReturnType<typeof useI18n>["t"]) {
-  switch (kind) {
-    case "user_message":
-      return t("team.chat.item.user");
-    case "assistant_text":
-      return t("team.chat.item.assistant");
-    case "processing":
-      return t("team.chat.item.processing");
-    case "thinking":
-      return t("team.chat.item.thinking");
-    case "tool":
-      return t("team.chat.item.tool");
-    case "task":
-      return t("team.chat.item.task");
-    case "notice":
-      return t("team.chat.item.notice");
-    case "final_result":
-      return t("team.chat.item.result");
-    case "cancelled":
-      return t("team.chat.item.cancelled");
-    case "error":
-      return t("team.chat.item.error");
-  }
-}
-
-function itemStatus(
-  item: SessionItemSnapshot,
-  t: ReturnType<typeof useI18n>["t"],
-) {
-  if (item.kind === "processing") return t("team.chat.item.processingActive");
-  if (item.kind === "tool") return t("team.chat.item.toolActivity");
-  if (item.kind === "task") return t("team.chat.item.taskActivity");
-  if (item.kind === "error") return item.code || t("team.chat.item.error");
-  return t("team.chat.item.noText");
-}
-
-function itemIcon(kind: SessionItemKind) {
-  switch (kind) {
-    case "user_message":
-      return <MessageSquare size={15} />;
-    case "assistant_text":
-      return <Sparkles size={15} />;
-    case "processing":
-      return <LoaderCircle size={15} />;
-    case "thinking":
-      return <MoreHorizontal size={15} />;
-    case "tool":
-      return <Wrench size={15} />;
-    case "task":
-      return <FileText size={15} />;
-    case "notice":
-      return <Activity size={15} />;
-    case "final_result":
-      return <CheckCircle2 size={15} />;
-    case "cancelled":
-      return <XCircle size={15} />;
-    case "error":
-      return <CircleAlert size={15} />;
-    default:
-      return <Bot size={15} />;
-  }
 }
