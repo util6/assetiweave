@@ -42,7 +42,7 @@ describe("AgentSessionToolDetail (T05)", () => {
 
     // Command rendered
     expect(screen.getByText("$ cargo test --workspace")).toBeTruthy();
-    expect(screen.getByText("cwd: /Users/test/repo")).toBeTruthy();
+    expect(screen.getByText("cwd: ~/repo")).toBeTruthy();
 
     // Copy command
     const copyBtn = screen.getByRole("button", { name: "Copy command" });

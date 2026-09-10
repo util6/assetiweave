@@ -58,12 +58,7 @@ export type AgentSessionItemKind =
   | "error";
 
 export type AgentSessionItemState =
-  | "pending"
-  | "streaming"
-  | "completed"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
+  "pending" | "streaming" | "completed" | "succeeded" | "failed" | "cancelled";
 
 export interface TruncationInfoView {
   originalBytes: number;
@@ -89,12 +84,36 @@ export interface AgentSessionItemView {
   toolOutput?: unknown;
 }
 
+export type ToolContentBlock =
+  | { type: "text"; text: string; language: string | null }
+  | { type: "json"; value: unknown; formatted: string }
+  | { type: "command"; command: string; cwd: string | null }
+  | { type: "terminal"; stdout: string; stderr: string; ansiStripped: true }
+  | {
+      type: "diff";
+      path: string;
+      oldText: string | null;
+      newText: string | null;
+      unifiedDiff: string | null;
+      isTruncated?: boolean;
+    }
+  | {
+      type: "location";
+      path: string;
+      line: number | null;
+      column: number | null;
+    }
+  | { type: "image"; path: string; mimeType: string | null; alt: string | null }
+  | {
+      type: "artifact";
+      artifactId: string;
+      renderer: string;
+      title: string | null;
+    }
+  | { type: "unknown"; providerType: string; display: string };
+
 export type AgentSessionStepGroupStatus =
-  | "pending"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
+  "pending" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type AgentSessionContentBlock =
   | { type: "user_request"; item: AgentSessionItemView }
