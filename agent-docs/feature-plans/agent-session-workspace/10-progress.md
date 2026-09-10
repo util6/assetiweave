@@ -21,10 +21,10 @@
 | T05 | — | verified | d182f26c | G-01, G-05, G-07, G-11 | 补齐终端与命令结果展示、ANSI过滤、退出码与截断 |
 | T06 | — | verified | b06cdea1 | G-05, G-07, G-10, G-11 | 补齐文件、Diff、图片与 Artifact 展示 |
 | T07 | — | verified | 865f4942 | G-06, G-08, G-10, G-11 | 实现 Team 多成员 Parallel / Single 工作区 |
-| T08 | — | ready | — | — | frontier；等待执行（已解阻） |
-| T09 | — | ready | — | — | frontier；可并行（#33 基线已满足） |
+| T08 | — | verified | eb12d537 | G-06, G-08, G-11 | 迁移 Team Plan、Task 与成员运行操作 |
+| T09 | — | ready | — | — | frontier；可执行（#33 基线已满足） |
 | T10 | — | blocked | — | — | blocked by T09 |
-| T11 | — | blocked | — | — | blocked by T08 + T10 |
+| T11 | — | blocked | — | — | blocked by T08 + T10 (等待 T10) |
 | T12 | — | blocked | — | — | blocked by T05/T06/T08/T10/T11 |
 
 ## Checkpoints
@@ -32,7 +32,7 @@
 | Checkpoint | Status | Evidence |
 |---|---|---|
 | CP-1 Shared Contract | verified | T01–T03 Canonical Fixture、全量 155 前端测试与 949 Rust 测试全部通过 |
-| CP-2 Chat + Team | pending | — |
+| CP-2 Chat + Team | verified | T04, T07, T08 验证完成，前台构建与 161 前端测试、949 Rust 测试全绿 |
 | CP-3 Memory Observer | pending | — |
 | CP-4 Final | pending | — |
 
