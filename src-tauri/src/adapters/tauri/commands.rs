@@ -439,7 +439,7 @@ pub(crate) async fn update_skill_backup_settings(
     root_path: String,
     migrate: Option<bool>,
 ) -> RuntimeAppResult<SkillBackupSettings> {
-    let root_path_input = root_path.clone();
+    let _root_path_input = root_path.clone();
     let migrate_input = migrate.unwrap_or(true);
     let result = AppService::from_runtime(&state.runtime)
         .update_skill_backup_settings(UpdateSkillBackupSettingsParams {

@@ -2,10 +2,13 @@ use super::prelude::*;
 use crate::backend::{
     ai_execution::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
-        AiExecutionPurpose, AiExecutionRequest,
+        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
     },
+    application::memory_agent_session::{ActiveMemoryAgentSession, MemoryAgentSessionParams},
     models::{GlobalMemoryJob, GlobalMemoryJobStatus, GlobalMemorySource, GlobalMemoryVersion},
-    runtime::tasks::{TaskContext, TaskFilter, TaskKind, TaskSpec},
+    runtime::tasks::{
+        StageStatus, TaskContext, TaskFilter, TaskKind, TaskOutcome, TaskSpec, TaskStage,
+    },
     store::{self, GlobalMemoryInputSet, GlobalMemoryPersistInput},
 };
 use chrono::{DateTime, Utc};
@@ -16,6 +19,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -181,7 +185,88 @@ impl AppService {
             return Ok(None);
         };
         let progress = context.progress();
-        progress.progress(0, Some(3), Some("claimed"));
+        let stages = vec![
+            TaskStage {
+                id: "claim".to_string(),
+                name: "认领任务".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "load_inputs".to_string(),
+                name: "加载全局记忆输入".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "agent_execution".to_string(),
+                name: "执行 Global Memory Agent".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "validation".to_string(),
+                name: "校验并保存全局记忆".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "publish".to_string(),
+                name: "发布全局记忆文档".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+        ];
+        progress.set_stages(stages);
+        progress.update_stage_status("claim", StageStatus::Running);
+        progress.finish_stage(
+            "claim",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
         let lease_guard = GlobalMemoryLeaseGuard::start(
             self.db.clone(),
             tenant_id.to_string(),
@@ -189,39 +274,141 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
+
+        progress.update_stage_status("load_inputs", StageStatus::Running);
         let inputs = store::load_global_memory_inputs_sqlx(&pool, tenant_id).await?;
         if inputs.projects.is_empty() {
             drop(lease_guard);
+            progress.finish_stage(
+                "load_inputs",
+                StageStatus::Skipped,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
             store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
+        progress.finish_stage(
+            "load_inputs",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+            &crate::backend::ai_execution::composition::ActionId::new(GLOBAL_MEMORY_ACTION),
+            &self.app_settings_value(),
+        )
+        .map(|(id, m)| (id.to_string(), m))
+        .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
+
+        let memory_session = ActiveMemoryAgentSession::start(
+            &self.runtime,
+            MemoryAgentSessionParams {
+                tenant_id,
+                scope: "global",
+                job_id,
+                task_id: Some(context.task_id()),
+                agent_id: &agent_id,
+                display_name: Some("Global Memory Agent".to_string()),
+                model: model.clone(),
+                prompt_summary: "总结全局核心经验与项目索引",
+                custom_session_ref: None,
+                persistent: false,
+            },
+        );
+        progress.set_stage_agent_session_ref(
+            "agent_execution",
+            Some(memory_session.session_ref.clone()),
+        );
+        progress.update_stage_status("agent_execution", StageStatus::Running);
+
         let output = match self
-            .execute_global_memory_agent(&job, &inputs, context.cancellation())
+            .execute_global_memory_agent(
+                &job,
+                &inputs,
+                context.cancellation(),
+                Some(memory_session.sink.clone()),
+            )
             .await
         {
-            Ok(output) => output,
+            Ok(output) => {
+                memory_session.finish_succeeded(&self.runtime);
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                output
+            }
             Err(error) => {
                 drop(lease_guard);
                 if context.is_cancelled() {
+                    memory_session.finish_cancelled(&self.runtime);
+                    progress.finish_stage(
+                        "agent_execution",
+                        StageStatus::Canceled,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Canceled,
+                        None,
+                        Some("任务已被取消".to_string()),
+                    );
                     store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
                     return Err(AppError::Cancelled(
                         "Global Memory task was canceled".to_string(),
                     ));
                 }
+                let code = error
+                    .view()
+                    .code
+                    .chars()
+                    .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+                    .collect::<String>();
+                let failure_code = if code.is_empty() {
+                    "global_memory_failed".to_string()
+                } else {
+                    code
+                };
+                memory_session.finish_failed(
+                    &self.runtime,
+                    &failure_code,
+                    &error.to_string(),
+                    false,
+                );
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Failed,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                progress.set_outcome(
+                    TaskOutcome::Failure,
+                    Some(failure_code.clone()),
+                    Some(error.to_string()),
+                );
                 let _ = store::mark_global_memory_job_failed_with_lease_sqlx(
                     &pool,
                     tenant_id,
                     job_id,
                     &ownership_token,
-                    "global_memory_agent_failed",
+                    &failure_code,
                     &now_text,
                 )
                 .await?;
                 return Err(error);
             }
         };
-        progress.progress(1, Some(3), Some("agent_completed"));
+
         if context.is_cancelled() {
             drop(lease_guard);
             store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
@@ -229,15 +416,33 @@ impl AppService {
                 "Global Memory task was canceled".to_string(),
             ));
         }
+
+        progress.update_stage_status("validation", StageStatus::Running);
         let version_number =
             store::next_global_memory_version_number_sqlx(&pool, tenant_id).await?;
         let paths = global_document_paths(&self.db_path, tenant_id, version_number);
-        write_global_version_files(
+        if let Err(error) = write_global_version_files(
             &paths.version_summary_path,
             &paths.version_memory_path,
             &output.summary_markdown,
             &output.memory_markdown,
-        )?;
+        ) {
+            drop(lease_guard);
+            progress.finish_stage(
+                "validation",
+                StageStatus::Failed,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Failure,
+                Some("global_memory_write_failed".to_string()),
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+
         let persist = GlobalMemoryPersistInput {
             tenant_id: tenant_id.to_string(),
             input_fingerprint: inputs.fingerprint,
@@ -263,9 +468,30 @@ impl AppService {
         };
         let version =
             match store::persist_global_memory_success_sqlx(&pool, &persist, &now_text).await {
-                Ok(version) => version,
+                Ok(version) => {
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Succeeded,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    version
+                }
                 Err(error) => {
                     drop(lease_guard);
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Failed,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Failure,
+                        Some("global_memory_persist_failed".to_string()),
+                        Some(error.to_string()),
+                    );
                     if context.is_cancelled() {
                         store::cancel_global_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                             .await?;
@@ -273,7 +499,7 @@ impl AppService {
                             "Global Memory task was canceled".to_string(),
                         ));
                     }
-                    store::mark_global_memory_job_failed_with_lease_sqlx(
+                    let _ = store::mark_global_memory_job_failed_with_lease_sqlx(
                         &pool,
                         tenant_id,
                         job_id,
@@ -286,15 +512,38 @@ impl AppService {
                 }
             };
         drop(lease_guard);
-        publish_global_documents(
+
+        progress.update_stage_status("publish", StageStatus::Running);
+        if let Err(error) = publish_global_documents(
             &paths.summary_document_path,
             &paths.memory_document_path,
             &paths.version_summary_path,
             &paths.version_memory_path,
             &persist.summary_markdown,
             &persist.memory_markdown,
-        )?;
-        progress.progress(3, Some(3), Some("persisted"));
+        ) {
+            progress.finish_stage(
+                "publish",
+                StageStatus::Failed,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Failure,
+                Some("global_memory_publish_failed".to_string()),
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        progress.finish_stage(
+            "publish",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        progress.set_outcome(TaskOutcome::Success, None, None);
         Ok(Some(version))
     }
 
@@ -347,6 +596,7 @@ impl AppService {
         job: &GlobalMemoryJob,
         inputs: &GlobalMemoryInputSet,
         cancellation: CancellationToken,
+        progress: Option<Arc<dyn AiExecutionProgressSink>>,
     ) -> AppResult<GlobalMemoryAgentOutputWithRaw> {
         let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
@@ -390,7 +640,7 @@ impl AppService {
                 model,
                 limits: AiExecutionLimits::default(),
                 cancellation: AiExecutionCancellation::from_token(cancellation),
-                progress: None,
+                progress,
                 tenant_id: Some(job.tenant_id.clone()),
                 execution_context_key: None,
                 binding: None,

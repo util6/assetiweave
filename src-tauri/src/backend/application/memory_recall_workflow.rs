@@ -5,8 +5,13 @@ use crate::backend::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
         AiExecutionPurpose, AiExecutionRequest,
     },
+    application::memory_agent_session::{ActiveMemoryAgentSession, MemoryAgentSessionParams},
+    dto::AgentSessionRef,
     models::{ConversationPartKind, ConversationPartRole, ConversationSourceKind},
-    runtime::{AppError, AppResult},
+    runtime::{
+        tasks::{StageStatus, TaskContext, TaskOutcome, TaskStage},
+        AppError, AppResult,
+    },
 };
 use sha2::{Digest, Sha256};
 
@@ -272,11 +277,7 @@ impl AppService {
                 return Err(AppError::Cancelled("Recall task cancelled".to_string()));
             }
             service
-                .run_memory_recall_turn_for_tenant(
-                    &tenant_id_for_task,
-                    &turn_id_for_task,
-                    AiExecutionCancellation::from_token(context.cancellation()),
-                )
+                .run_memory_recall_turn_for_tenant(&tenant_id_for_task, &turn_id_for_task, context)
                 .await
         });
         match spawn {
@@ -300,8 +301,9 @@ impl AppService {
         &self,
         tenant_id: &str,
         turn_id: &str,
-        cancellation: AiExecutionCancellation,
+        context: TaskContext,
     ) -> AppResult<Value> {
+        let cancellation = AiExecutionCancellation::from_token(context.cancellation());
         let turn =
             crate::backend::store::load_memory_recall_turn_sqlx(self.db.pool(), tenant_id, turn_id)
                 .await?
@@ -332,6 +334,46 @@ impl AppService {
         .ok_or_else(|| {
             AppError::NotFound(format!("Recall session not found: {}", turn.session_id))
         })?;
+
+        let progress = context.progress();
+        let stages = vec![TaskStage {
+            id: "agent_execution".to_string(),
+            name: "执行记忆召回 Agent".to_string(),
+            status: StageStatus::Pending,
+            started_at: None,
+            finished_at: None,
+            duration_ms: None,
+            progress: None,
+            current_activities: Vec::new(),
+            metrics: Vec::new(),
+            failures: Vec::new(),
+            skipped: Vec::new(),
+            agent_session_ref: None,
+        }];
+        progress.set_stages(stages);
+
+        let session_ref = AgentSessionRef {
+            schema_version: 1,
+            value: format!("agent-session://recall/{}", session.id),
+        };
+        let memory_session = ActiveMemoryAgentSession::start(
+            &self.runtime,
+            MemoryAgentSessionParams {
+                tenant_id,
+                scope: "recall",
+                job_id: &session.id,
+                task_id: Some(context.task_id()),
+                agent_id: &session.agent_id,
+                display_name: Some("Memory Recall Agent".to_string()),
+                model: session.model.clone(),
+                prompt_summary: &turn.user_text,
+                custom_session_ref: Some(session_ref.clone()),
+                persistent: true,
+            },
+        );
+        progress.set_stage_agent_session_ref("agent_execution", Some(session_ref.clone()));
+        progress.update_stage_status("agent_execution", StageStatus::Running);
+
         let prompt = build_recall_prompt(&session, &turn);
         let request = AiExecutionRequest {
             execution_id: format!("memory-recall-{turn_id}"),
@@ -343,7 +385,7 @@ impl AppService {
             model: session.model.clone(),
             limits: AiExecutionLimits::default(),
             cancellation: cancellation.clone(),
-            progress: None,
+            progress: Some(memory_session.sink.clone()),
             tenant_id: Some(tenant_id.to_string()),
             execution_context_key: Some(session.execution_context_key.clone()),
             binding: None,
@@ -359,7 +401,17 @@ impl AppService {
         let agent_runtime = self.agent_runtime.clone();
         let execution_result = execute_agent(agent_runtime, request).await;
         let result = match execution_result {
-            Ok(result) => result,
+            Ok(result) => {
+                memory_session.finish_succeeded(&self.runtime);
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                result
+            }
             Err(error) => {
                 let view = error.to_view();
                 let status = if view.code == "resume_unavailable" {
@@ -377,6 +429,35 @@ impl AppService {
                     &view.message,
                 )
                 .await;
+                if status == MemoryRecallTurnStatus::Cancelled {
+                    memory_session.finish_cancelled(&self.runtime);
+                    progress.finish_stage(
+                        "agent_execution",
+                        StageStatus::Canceled,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Canceled,
+                        None,
+                        Some("任务已被取消".to_string()),
+                    );
+                } else {
+                    memory_session.finish_failed(&self.runtime, &view.code, &view.message, false);
+                    progress.finish_stage(
+                        "agent_execution",
+                        StageStatus::Failed,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Failure,
+                        Some(view.code.clone()),
+                        Some(view.message.clone()),
+                    );
+                }
                 return Err(AppError::Domain {
                     code: view.code,
                     message: view.message,
@@ -386,6 +467,19 @@ impl AppService {
             }
         };
         if cancellation.is_cancelled() {
+            memory_session.finish_cancelled(&self.runtime);
+            progress.finish_stage(
+                "agent_execution",
+                StageStatus::Canceled,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Canceled,
+                None,
+                Some("任务已被取消".to_string()),
+            );
             let _ = crate::backend::store::fail_memory_recall_turn_sqlx(
                 self.db.pool(),
                 tenant_id,
@@ -447,6 +541,7 @@ impl AppService {
             &output,
         )
         .await?;
+        progress.set_outcome(TaskOutcome::Success, None, None);
         Ok(serde_json::json!({
             "turnId": turn_id,
             "status": "completed"

@@ -279,4 +279,119 @@ describe("TaskCenterModal - Agent Session Observer (T09)", () => {
       expect(screen.getByText(/该阶段执行现场已过期/)).toBeTruthy();
     });
   });
+
+  it("handles project and recall memory task observer navigation", async () => {
+    const projectSessionRef: AgentSessionRef = {
+      schemaVersion: 1,
+      value: "agent-session://project-memory/proj-job-1",
+    };
+    const projectSessionView: AgentSessionView = {
+      ...sampleSessionView,
+      sessionRef: projectSessionRef,
+      context: {
+        memoryScope: "project",
+        memoryJobId: "proj-job-1",
+        taskId: "task-project-1",
+      },
+      agent: {
+        id: "builtin:assistant",
+        displayName: "Project Memory Agent",
+        model: "gpt-4o",
+        protocol: "builtin",
+      },
+      items: [
+        {
+          identity: {
+            session_id: "s-proj",
+            turn_id: "t-proj",
+            item_id: "item-proj-1",
+            member_id: "project_memory",
+            execution_id: "project-memory-job:proj-job-1",
+          },
+          kind: "assistant_text",
+          sequence: 1,
+          delivery: "live",
+          state: "completed",
+          text: "正在提取项目架构决策与模块边界...",
+          status: null,
+          code: null,
+        },
+      ],
+    };
+
+    mockTasks = [
+      {
+        id: "task-project-1",
+        kind: "ProjectMemory",
+        title: "Project 记忆沉淀",
+        tenantId: "default",
+        state: "running",
+        startedAt: "2026-09-10T14:59:00Z",
+        updatedAt: "2026-09-10T15:00:00Z",
+        stages: [
+          {
+            id: "agent_execution",
+            name: "执行 Project Memory Agent",
+            status: "running",
+            metrics: [],
+            failures: [],
+            agentSessionRef: projectSessionRef,
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: {
+          cancellable: true,
+          retryable: false,
+          clearable: false,
+        },
+        revision: 1,
+        agentSessionRef: projectSessionRef,
+      },
+    ];
+    mockSelectedTaskId = "task-project-1";
+    mockGetAgentSession.mockResolvedValueOnce(projectSessionView);
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={vi.fn()} open={true} />
+      </I18nProvider>,
+    );
+
+    const btn = screen.getByTestId("task-stage-view-session-agent_execution");
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Project Memory Agent")).toBeTruthy();
+      expect(screen.getByText("正在提取项目架构决策与模块边界...")).toBeTruthy();
+    });
+  });
+
+  it("renders custom reason text when session unavailable has another reason", async () => {
+    const customUnavailableResult: AgentSessionGetResult = {
+      schemaVersion: 1,
+      sessionRef: sampleSessionRef,
+      state: "unavailable",
+      reason: "租户隔离校验失败：无权查看其他租户执行现场",
+    };
+    mockGetAgentSession.mockResolvedValueOnce(customUnavailableResult);
+
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={vi.fn()} open={true} />
+      </I18nProvider>,
+    );
+
+    const btn = screen.getByTestId("task-stage-view-session-stage-agent");
+    fireEvent.click(btn);
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("task-agent-observer-unavailable"),
+      ).toBeTruthy();
+      expect(
+        screen.getByText("租户隔离校验失败：无权查看其他租户执行现场"),
+      ).toBeTruthy();
+    });
+  });
 });

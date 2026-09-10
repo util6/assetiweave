@@ -81,99 +81,9 @@ fn sanitize_memory_failure(code: &str, raw_message: &str, stage: &str) -> TaskFa
     }
 }
 
-struct MemoryTurnProgressSink {
-    projection: Arc<crate::backend::ai_execution::SessionEventProjection>,
-    execution_id: String,
-    sequence: Arc<AtomicU64>,
-    terminal_emitted: Arc<AtomicBool>,
-}
-
-impl MemoryTurnProgressSink {
-    fn new(
-        projection: Arc<crate::backend::ai_execution::SessionEventProjection>,
-        execution_id: String,
-    ) -> Self {
-        Self {
-            projection,
-            execution_id,
-            sequence: Arc::new(AtomicU64::new(0)),
-            terminal_emitted: Arc::new(AtomicBool::new(false)),
-        }
-    }
-
-    fn finish_succeeded(&self) {
-        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
-            self.emit_control("terminal", SessionEventKind::TerminalResult { text: None });
-        }
-    }
-
-    fn finish_cancelled(&self) {
-        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
-            self.emit_control("cancel", SessionEventKind::Cancel);
-        }
-    }
-
-    fn finish_failed(&self, code: &str, retryable: bool) {
-        if !self.terminal_emitted.swap(true, Ordering::AcqRel) {
-            self.emit_control(
-                "error",
-                SessionEventKind::Error {
-                    code: code.to_string(),
-                    retryable,
-                },
-            );
-        }
-    }
-
-    fn emit_control(&self, suffix: &str, kind: SessionEventKind) {
-        self.emit_session_event(SessionEvent {
-            identity: SessionEventIdentity {
-                session_id: self.execution_id.clone(),
-                member_id: self.execution_id.clone(),
-                execution_id: self.execution_id.clone(),
-                turn_id: self.execution_id.clone(),
-                item_id: format!("memory:{suffix}"),
-                event_id: format!("memory:{}:{suffix}", self.execution_id),
-            },
-            sequence: 0,
-            delivery: SessionEventDelivery::Live,
-            kind,
-            truncation: None,
-        });
-    }
-}
-
-impl AiExecutionProgressSink for MemoryTurnProgressSink {
-    fn set_phase(&self, _phase: AiExecutionPhase) {}
-
-    fn emit_session_event(&self, mut event: SessionEvent) {
-        let observed_sequence = event.sequence;
-        let mut current = self.sequence.load(Ordering::Acquire);
-        let sequence = loop {
-            let next = current.saturating_add(1).max(observed_sequence);
-            match self
-                .sequence
-                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
-            {
-                Ok(_) => break next,
-                Err(actual) => current = actual,
-            }
-        };
-        event.sequence = sequence;
-        event.identity.session_id = self.execution_id.clone();
-        event.identity.member_id = self.execution_id.clone();
-        event.identity.execution_id = self.execution_id.clone();
-        event.identity.turn_id = self.execution_id.clone();
-        if event.identity.item_id.trim().is_empty() {
-            event.identity.item_id = format!("memory:item:{sequence}");
-        }
-        if event.identity.event_id.trim().is_empty() {
-            event.identity.event_id = format!("memory:{}:{sequence}", self.execution_id);
-        }
-        event.delivery = SessionEventDelivery::Live;
-        self.projection.apply(event);
-    }
-}
+use crate::backend::application::memory_agent_session::{
+    ActiveMemoryAgentSession, MemoryAgentSessionParams,
+};
 
 struct SessionMemoryLeaseGuard {
     task: tokio::task::JoinHandle<()>,
@@ -544,12 +454,6 @@ impl AppService {
             total: None,
         });
 
-        let key = SessionStreamKey {
-            tenant_id: tenant_id.to_string(),
-            team_id: "memory".to_string(),
-            member_id: format!("memory-{}", job.id),
-            execution_id: format!("session-memory-execution-{}", job.id),
-        };
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
             &crate::backend::ai_execution::composition::ActionId::new(SESSION_MEMORY_ACTION),
             &self.app_settings_value(),
@@ -557,59 +461,33 @@ impl AppService {
         .map(|(id, m)| (id.to_string(), m))
         .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
 
-        let metadata = AgentSessionMetadata {
-            session_ref: session_ref.clone(),
-            execution_id: key.execution_id.clone(),
-            purpose: "session_memory".to_string(),
-            mode: "oneshot".to_string(),
-            tenant_id: Some(tenant_id.to_string()),
-            agent: AgentInfoView {
-                id: agent_id,
+        let memory_session = ActiveMemoryAgentSession::start(
+            &self.runtime,
+            MemoryAgentSessionParams {
+                tenant_id,
+                scope: "session",
+                job_id: &job.id,
+                task_id: Some(context.task_id()),
+                agent_id: &agent_id,
                 display_name: Some("Session Memory Agent".to_string()),
                 model,
-                protocol: "builtin".to_string(),
-            },
-            context: AgentSessionContextView {
-                team_id: None,
-                member_id: None,
-                memory_scope: Some("session".to_string()),
-                memory_job_id: Some(job.id.clone()),
-                task_id: Some(context.task_id().to_string()),
-            },
-            allow_stop: true,
-        };
-
-        let projection = self
-            .runtime
-            .session_streams()
-            .register_with_metadata(key.clone(), metadata);
-        let sink = Arc::new(MemoryTurnProgressSink::new(
-            projection,
-            key.execution_id.clone(),
-        ));
-        sink.emit_control(
-            "request",
-            SessionEventKind::UserMessageAcknowledged {
-                accepted: true,
-                text: Some("提取会话记忆与事实上下文".to_string()),
+                prompt_summary: "提取会话记忆与事实上下文",
+                custom_session_ref: Some(session_ref.clone()),
+                persistent: false,
             },
         );
 
         let result = self
-            .execute_session_memory_agent(&job, &detail, context.cancellation(), Some(sink.clone()))
+            .execute_session_memory_agent(
+                &job,
+                &detail,
+                context.cancellation(),
+                Some(memory_session.sink.clone()),
+            )
             .await;
         let (output, short_refs, _is_empty_content) = match result {
             Ok(output) => {
-                sink.finish_succeeded();
-                self.runtime.session_streams().mark_terminal_by_ref(
-                    &session_ref.value,
-                    Some(AgentSessionTerminalView {
-                        state: "succeeded".to_string(),
-                        code: None,
-                        message: None,
-                        retryable: false,
-                    }),
-                );
+                memory_session.finish_succeeded(&self.runtime);
                 progress.finish_stage(
                     "agent_execution",
                     StageStatus::Succeeded,
@@ -624,16 +502,7 @@ impl AppService {
                 drop(lease_guard);
                 progress.remove_activity("agent_execution", &worker_id);
                 if context.is_cancelled() {
-                    sink.finish_cancelled();
-                    self.runtime.session_streams().mark_terminal_by_ref(
-                        &session_ref.value,
-                        Some(AgentSessionTerminalView {
-                            state: "canceled".to_string(),
-                            code: Some("canceled".to_string()),
-                            message: Some("任务已被取消".to_string()),
-                            retryable: false,
-                        }),
-                    );
+                    memory_session.finish_cancelled(&self.runtime);
                     progress.finish_stage(
                         "agent_execution",
                         StageStatus::Canceled,
@@ -665,15 +534,11 @@ impl AppService {
                 };
                 let safe_failure =
                     sanitize_memory_failure(&failure_code, &error.to_string(), "agent_execution");
-                sink.finish_failed(&failure_code, false);
-                self.runtime.session_streams().mark_terminal_by_ref(
-                    &session_ref.value,
-                    Some(AgentSessionTerminalView {
-                        state: "failed".to_string(),
-                        code: Some(failure_code.clone()),
-                        message: Some(safe_failure.message.clone()),
-                        retryable: false,
-                    }),
+                memory_session.finish_failed(
+                    &self.runtime,
+                    &failure_code,
+                    &safe_failure.message,
+                    false,
                 );
                 progress.finish_stage(
                     "agent_execution",

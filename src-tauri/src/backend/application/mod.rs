@@ -11,6 +11,7 @@ mod conversation_records;
 mod conversation_script_catalog;
 mod conversation_search;
 mod global_memory;
+pub(crate) mod memory_agent_session;
 mod memory_public;
 mod memory_recall_workflow;
 mod memory_search;

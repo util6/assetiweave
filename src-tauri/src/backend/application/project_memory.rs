@@ -2,10 +2,13 @@ use super::prelude::*;
 use crate::backend::{
     ai_execution::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
-        AiExecutionPurpose, AiExecutionRequest,
+        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
     },
+    application::memory_agent_session::{ActiveMemoryAgentSession, MemoryAgentSessionParams},
     models::{ProjectMemoryJob, ProjectMemoryJobStatus, ProjectMemorySource},
-    runtime::tasks::{TaskContext, TaskFilter, TaskKind, TaskSpec},
+    runtime::tasks::{
+        StageStatus, TaskContext, TaskFilter, TaskKind, TaskOutcome, TaskSpec, TaskStage,
+    },
     store::{
         self, ProjectMemoryInputSet, ProjectMemoryPersistInput, PROJECT_MEMORY_CONTRACT_VERSION,
         PROJECT_MEMORY_PROMPT_VERSION,
@@ -19,6 +22,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio_util::sync::CancellationToken;
@@ -213,7 +217,88 @@ impl AppService {
             return Ok(None);
         };
         let progress = context.progress();
-        progress.progress(0, Some(3), Some("claimed"));
+        let stages = vec![
+            TaskStage {
+                id: "claim".to_string(),
+                name: "认领任务".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "load_inputs".to_string(),
+                name: "加载项目记忆输入".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "agent_execution".to_string(),
+                name: "执行 Project Memory Agent".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "validation".to_string(),
+                name: "校验并保存项目记忆".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+            TaskStage {
+                id: "publish".to_string(),
+                name: "发布项目记忆文档".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
+        ];
+        progress.set_stages(stages);
+        progress.update_stage_status("claim", StageStatus::Running);
+        progress.finish_stage(
+            "claim",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
         let lease_guard = ProjectMemoryLeaseGuard::start(
             self.db.clone(),
             tenant_id.to_string(),
@@ -221,21 +306,94 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
+
+        progress.update_stage_status("load_inputs", StageStatus::Running);
         let inputs =
             store::load_project_memory_inputs_sqlx(&pool, tenant_id, &job.project_path).await?;
         if inputs.memories.is_empty() {
             drop(lease_guard);
+            progress.finish_stage(
+                "load_inputs",
+                StageStatus::Skipped,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
             store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Ok(None);
         }
+        progress.finish_stage(
+            "load_inputs",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+            &crate::backend::ai_execution::composition::ActionId::new(PROJECT_MEMORY_ACTION),
+            &self.app_settings_value(),
+        )
+        .map(|(id, m)| (id.to_string(), m))
+        .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
+
+        let memory_session = ActiveMemoryAgentSession::start(
+            &self.runtime,
+            MemoryAgentSessionParams {
+                tenant_id,
+                scope: "project",
+                job_id,
+                task_id: Some(context.task_id()),
+                agent_id: &agent_id,
+                display_name: Some("Project Memory Agent".to_string()),
+                model: model.clone(),
+                prompt_summary: "提炼项目级 MEMORY.md 知识",
+                custom_session_ref: None,
+                persistent: false,
+            },
+        );
+        progress.set_stage_agent_session_ref(
+            "agent_execution",
+            Some(memory_session.session_ref.clone()),
+        );
+        progress.update_stage_status("agent_execution", StageStatus::Running);
+
         let output = match self
-            .execute_project_memory_agent(&job, &inputs, context.cancellation())
+            .execute_project_memory_agent(
+                &job,
+                &inputs,
+                context.cancellation(),
+                Some(memory_session.sink.clone()),
+            )
             .await
         {
-            Ok(output) => output,
+            Ok(output) => {
+                memory_session.finish_succeeded(&self.runtime);
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                output
+            }
             Err(error) => {
                 drop(lease_guard);
                 if context.is_cancelled() {
+                    memory_session.finish_cancelled(&self.runtime);
+                    progress.finish_stage(
+                        "agent_execution",
+                        StageStatus::Canceled,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Canceled,
+                        None,
+                        Some("任务已被取消".to_string()),
+                    );
                     store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
                     return Err(AppError::Cancelled(
@@ -248,23 +406,42 @@ impl AppService {
                     .chars()
                     .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
                     .collect::<String>();
+                let failure_code = if code.is_empty() {
+                    "project_memory_failed".to_string()
+                } else {
+                    code
+                };
+                memory_session.finish_failed(
+                    &self.runtime,
+                    &failure_code,
+                    &error.to_string(),
+                    false,
+                );
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Failed,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                progress.set_outcome(
+                    TaskOutcome::Failure,
+                    Some(failure_code.clone()),
+                    Some(error.to_string()),
+                );
                 store::mark_project_memory_job_failed_with_lease_sqlx(
                     &pool,
                     tenant_id,
                     job_id,
                     &ownership_token,
-                    if code.is_empty() {
-                        "project_memory_failed"
-                    } else {
-                        &code
-                    },
+                    &failure_code,
                     &now_text,
                 )
                 .await?;
                 return Err(error);
             }
         };
-        progress.progress(1, Some(3), Some("agent_completed"));
+
         if context.is_cancelled() {
             drop(lease_guard);
             store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
@@ -272,12 +449,31 @@ impl AppService {
                 "Project Memory task was canceled".to_string(),
             ));
         }
+
+        progress.update_stage_status("validation", StageStatus::Running);
         let version_number =
             store::next_project_memory_version_number_sqlx(&pool, tenant_id, &job.project_id)
                 .await?;
         let document_paths =
             project_document_paths(&self.db_path, tenant_id, &job.project_path, version_number);
-        write_project_version_file(&document_paths.version_path, &output.content_markdown)?;
+        if let Err(error) =
+            write_project_version_file(&document_paths.version_path, &output.content_markdown)
+        {
+            drop(lease_guard);
+            progress.finish_stage(
+                "validation",
+                StageStatus::Failed,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Failure,
+                Some("project_memory_write_failed".to_string()),
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
         let persist = ProjectMemoryPersistInput {
             tenant_id: tenant_id.to_string(),
             project_id: job.project_id.clone(),
@@ -301,9 +497,30 @@ impl AppService {
         };
         let version =
             match store::persist_project_memory_success_sqlx(&pool, &persist, &now_text).await {
-                Ok(version) => version,
+                Ok(version) => {
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Succeeded,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    version
+                }
                 Err(error) => {
                     drop(lease_guard);
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Failed,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Failure,
+                        Some("project_memory_persist_failed".to_string()),
+                        Some(error.to_string()),
+                    );
                     if context.is_cancelled() {
                         store::cancel_project_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                             .await?;
@@ -324,12 +541,35 @@ impl AppService {
                 }
             };
         drop(lease_guard);
-        publish_project_document(
+
+        progress.update_stage_status("publish", StageStatus::Running);
+        if let Err(error) = publish_project_document(
             &document_paths.document_path,
             &document_paths.version_path,
             &persist.content_markdown,
-        )?;
-        progress.progress(3, Some(3), Some("persisted"));
+        ) {
+            progress.finish_stage(
+                "publish",
+                StageStatus::Failed,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Failure,
+                Some("project_memory_publish_failed".to_string()),
+                Some(error.to_string()),
+            );
+            return Err(error);
+        }
+        progress.finish_stage(
+            "publish",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        progress.set_outcome(TaskOutcome::Success, None, None);
         Ok(Some(version))
     }
 
@@ -356,23 +596,28 @@ impl AppService {
             else {
                 continue;
             };
-            let Some(markdown) = version.content_markdown.as_deref() else {
+            let Some(content_markdown) = version.content_markdown.as_deref() else {
                 continue;
             };
-            if markdown.is_empty() {
+            if content_markdown.trim().is_empty() {
                 continue;
             }
-            let paths =
-                project_document_paths(&self.db_path, tenant_id, &path, version.version_number);
+            let paths = project_document_paths(
+                &self.db_path,
+                tenant_id,
+                &project.project_path,
+                version.version_number,
+            );
             if paths.document_path.exists()
                 && paths.version_path.exists()
-                && fs::read_to_string(&paths.document_path).ok().as_deref() == Some(markdown)
-                && fs::read_to_string(&paths.version_path).ok().as_deref() == Some(markdown)
+                && fs::read_to_string(&paths.document_path).ok().as_deref()
+                    == Some(content_markdown)
+                && fs::read_to_string(&paths.version_path).ok().as_deref() == Some(content_markdown)
             {
                 continue;
             }
-            write_project_version_file(&paths.version_path, markdown)?;
-            publish_project_document(&paths.document_path, &paths.version_path, markdown)?;
+            write_project_version_file(&paths.version_path, content_markdown)?;
+            publish_project_document(&paths.document_path, &paths.version_path, content_markdown)?;
         }
         Ok(())
     }
@@ -382,6 +627,7 @@ impl AppService {
         job: &ProjectMemoryJob,
         inputs: &ProjectMemoryInputSet,
         cancellation: CancellationToken,
+        progress: Option<Arc<dyn AiExecutionProgressSink>>,
     ) -> AppResult<ProjectMemoryAgentOutputWithRaw> {
         let settings = self.app_settings_value();
         let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
@@ -400,7 +646,7 @@ impl AppService {
                 model,
                 limits: AiExecutionLimits::default(),
                 cancellation: AiExecutionCancellation::from_token(cancellation),
-                progress: None,
+                progress,
                 tenant_id: Some(job.tenant_id.clone()),
                 execution_context_key: None,
                 binding: None,
