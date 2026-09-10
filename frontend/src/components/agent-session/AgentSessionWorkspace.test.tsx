@@ -134,13 +134,21 @@ describe("AgentSessionWorkspace", () => {
     expect(screen.getAllByText("succeeded").length).toBeGreaterThanOrEqual(1);
 
     // Verify details element
-    const details = screen.getByTestId("agent-session-session-item-details-tool-call-1");
+    const details = screen.getByTestId(
+      "agent-session-session-item-details-tool-call-1",
+    ) as HTMLDetailsElement;
     expect(details).toBeTruthy();
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
 
     // Verify Input and Output sections exist and contain formatted content
-    expect(screen.getByTestId("agent-session-tool-input-tool-call-1")).toBeTruthy();
+    expect(
+      screen.getByTestId("agent-session-tool-input-tool-call-1"),
+    ).toBeTruthy();
     expect(screen.getByText(/"query":\s*"my_function"/)).toBeTruthy();
-    expect(screen.getByTestId("agent-session-tool-output-tool-call-1")).toBeTruthy();
+    expect(
+      screen.getByTestId("agent-session-tool-output-tool-call-1"),
+    ).toBeTruthy();
     expect(screen.getByText(/"matches":\s*3/)).toBeTruthy();
   });
 
@@ -164,8 +172,12 @@ describe("AgentSessionWorkspace", () => {
       </I18nProvider>,
     );
 
-    expect(screen.queryByTestId("agent-session-tool-input-tool-call-empty")).toBeNull();
-    expect(screen.queryByTestId("agent-session-tool-output-tool-call-empty")).toBeNull();
+    expect(
+      screen.queryByTestId("agent-session-tool-input-tool-call-empty"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("agent-session-tool-output-tool-call-empty"),
+    ).toBeNull();
   });
 
   it("merges tool start, update, and result into a single item row across updates", () => {
@@ -237,6 +249,11 @@ describe("AgentSessionWorkspace", () => {
 
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getAllByText("succeeded").length).toBeGreaterThanOrEqual(1);
+    const details = screen.getByTestId(
+      "agent-session-session-item-details-tool:tool-123",
+    ) as HTMLDetailsElement;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
     expect(screen.getByText(/"status":\s*200/)).toBeTruthy();
   });
 
@@ -260,11 +277,19 @@ describe("AgentSessionWorkspace", () => {
     expect(onSend).not.toHaveBeenCalled();
 
     // 2. IME composing Enter should NOT send
-    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false, isComposing: true });
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      shiftKey: false,
+      isComposing: true,
+    });
     expect(onSend).not.toHaveBeenCalled();
 
     // 3. Plain Enter should send
-    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false, isComposing: false });
+    fireEvent.keyDown(textarea, {
+      key: "Enter",
+      shiftKey: false,
+      isComposing: false,
+    });
     expect(onSend).toHaveBeenCalledWith("Line one");
   });
 
@@ -384,9 +409,9 @@ describe("AgentSessionWorkspace", () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByTestId("agent-session-active-recipient").textContent).toBe(
-      "Worker Agent",
-    );
+    expect(
+      screen.getByTestId("agent-session-active-recipient").textContent,
+    ).toBe("Worker Agent");
     expect(screen.getByTestId("agent-session-header-model").textContent).toBe(
       "gpt-4o",
     );

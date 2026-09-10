@@ -17,6 +17,7 @@ import type {
   AgentSessionItemKind,
   AgentSessionItemView,
 } from "../../types/agentSession";
+import { AgentSessionToolDetail } from "./AgentSessionToolDetail";
 
 export interface AgentSessionItemProps {
   item: AgentSessionItemView;
@@ -71,8 +72,8 @@ export function AgentSessionItem({
             </span>
             <span className="text-caption text-outline">
               {item.delivery === "replay"
-                ? (t("agentSession.replay") || t("team.chat.replay"))
-                : (t("agentSession.live") || t("team.chat.live"))}
+                ? t("agentSession.replay") || t("team.chat.replay")
+                : t("agentSession.live") || t("team.chat.live")}
             </span>
             <span className="ml-auto text-caption text-outline">
               {item.state}
@@ -91,39 +92,20 @@ export function AgentSessionItem({
                   <span className="text-label-caps uppercase text-on-surface-variant">
                     {label}
                   </span>
-                  <span className="truncate">{isTool ? toolTitle : detail}</span>
+                  <span className="truncate">
+                    {isTool ? toolTitle : detail}
+                  </span>
                 </span>
               </summary>
 
-              {isTool && hasToolInput ? (
-                <div
-                  className="mt-2"
-                  data-testid={`${testIdPrefix}-tool-input-${item.id}`}
-                >
-                  <span className="text-label-caps uppercase font-medium text-on-surface-variant">
-                    {t("agentSession.tool.input") || "Input"}
-                  </span>
-                  <pre className="mt-1 max-h-60 overflow-auto rounded bg-theme-control/40 p-2 text-caption font-mono text-on-surface">
-                    {formatPayload(item.toolInput)}
-                  </pre>
-                </div>
+              {isTool && detailsOpen ? (
+                <AgentSessionToolDetail
+                  item={item}
+                  testIdPrefix={testIdPrefix}
+                />
               ) : null}
 
-              {isTool && hasToolOutput ? (
-                <div
-                  className="mt-2"
-                  data-testid={`${testIdPrefix}-tool-output-${item.id}`}
-                >
-                  <span className="text-label-caps uppercase font-medium text-on-surface-variant">
-                    {t("agentSession.tool.output") || "Output"}
-                  </span>
-                  <pre className="mt-1 max-h-60 overflow-auto rounded bg-theme-control/40 p-2 text-caption font-mono text-on-surface">
-                    {formatPayload(item.toolOutput)}
-                  </pre>
-                </div>
-              ) : null}
-
-              {!hasToolInput && !hasToolOutput && detail && detail !== item.toolName ? (
+              {!isTool && detail ? (
                 <p className="mt-2 whitespace-pre-wrap break-words text-body-sm text-on-surface">
                   {detail}
                 </p>
@@ -171,7 +153,9 @@ function getItemLabel(
     case "assistant_text":
       return t("agentSession.item.assistant") || t("team.chat.item.assistant");
     case "processing":
-      return t("agentSession.item.processing") || t("team.chat.item.processing");
+      return (
+        t("agentSession.item.processing") || t("team.chat.item.processing")
+      );
     case "thinking":
       return t("agentSession.item.thinking") || t("team.chat.item.thinking");
     case "tool":
@@ -201,18 +185,18 @@ function getItemStatusText(
   }
   if (item.kind === "tool") {
     return (
-      t("agentSession.item.toolActivity") ||
-      t("team.chat.item.toolActivity")
+      t("agentSession.item.toolActivity") || t("team.chat.item.toolActivity")
     );
   }
   if (item.kind === "task") {
     return (
-      t("agentSession.item.taskActivity") ||
-      t("team.chat.item.taskActivity")
+      t("agentSession.item.taskActivity") || t("team.chat.item.taskActivity")
     );
   }
   if (item.kind === "error") {
-    return item.code || t("agentSession.item.error") || t("team.chat.item.error");
+    return (
+      item.code || t("agentSession.item.error") || t("team.chat.item.error")
+    );
   }
   return t("agentSession.item.noText") || t("team.chat.item.noText");
 }
