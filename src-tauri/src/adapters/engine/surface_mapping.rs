@@ -771,6 +771,31 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "task.cancel",
+        tauri_command: Some("cancel_public_task"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "task.clear",
+        tauri_command: Some("clear_terminal_tasks"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "task.get",
+        tauri_command: Some("get_public_task"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "task.list",
+        tauri_command: Some("list_public_tasks"),
+        note: None,
+    },
+    SurfaceMapping {
+        canonical_method: "task.retry",
+        tauri_command: Some("retry_public_task"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "team.create",
         tauri_command: Some("create_team"),
         note: None,

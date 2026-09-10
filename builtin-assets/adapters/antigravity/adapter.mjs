@@ -33,6 +33,19 @@ function fail(message) {
   emit("complete", { item: {} });
 }
 
+function emitProgress(progress = {}) {
+  emit("progress", {
+    progress: {
+      stage: progress.stage ?? "reading",
+      operation: progress.operation ?? "scanning",
+      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+      path: progress.path,
+      current: progress.current,
+      total: progress.total,
+    },
+  });
+}
+
 function expandPath(value) {
   if (!value) return value;
   if (value === "~") return homedir();
@@ -1451,10 +1464,22 @@ try {
     for (const projection of projections) emit("item", { item: { kind: "command_projection", ...projection } });
     emit("complete", { item: { projection_count: projections.length, projector_version: SHELL_PROJECTOR_VERSION } });
   } else if (input.method === "probe" || input.method === "list_sessions") {
+    emitProgress({ stage: "reading", operation: "list_sessions" });
     emit("complete", { item: { session_count: 0 } });
   } else if (input.method === "read_session") {
+    emitProgress({ stage: "reading", operation: "read_session" });
     const sessions = readSession();
-    for (const session of sessions) emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
+    for (let i = 0; i < sessions.length; i += 1) {
+      const session = sessions[i];
+      emitProgress({
+        stage: "reading",
+        operation: "read_session",
+        current: i + 1,
+        total: sessions.length,
+        path: session.external_id,
+      });
+      emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
+    }
     emit("complete", { item: { session_count: sessions.length } });
   } else {
     fail(`unsupported method: ${input.method}`);

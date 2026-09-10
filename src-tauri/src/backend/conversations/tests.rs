@@ -550,6 +550,95 @@ fn adapter_output_removes_persisted_shell_display_projection_metadata() {
 }
 
 #[test]
+fn adapter_protocol_progress_parsing_and_sanitization() {
+    use super::external::sanitize_adapter_progress;
+    use super::types::ExternalAdapterLine;
+
+    // 1. Progress mixed with item, warning, and complete lines
+    let mixed_output = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        json!({ "type": "progress", "stage": "scan", "operation": "scanning dir", "path": "/test/a", "current": 1, "total": 10, "worker": "worker-1" }),
+        json!({ "type": "warning", "message": "sample warning" }),
+        json!({ "type": "progress", "stage": "read", "operation": "reading file", "path": "/test/b.json", "current": 2, "total": 10 }),
+        json!({ "type": "item", "item": { "kind": "session_descriptor", "external_id": "sess-1", "version_token": "v1", "updated_at": "2026-01-01T00:00:00Z" } }),
+        json!({ "type": "complete", "item": { "session_count": 1, "snapshot_complete": true } })
+    );
+    let result =
+        parse_external_adapter_output("list_sessions", mixed_output.into_bytes(), Vec::new())
+            .expect("progress lines must be accepted without error");
+    assert_eq!(result.session_descriptors.len(), 1);
+    assert_eq!(result.warnings.len(), 1);
+    assert!(result.snapshot_complete);
+
+    // 2. Unknown progress fields are ignored / tolerated by serde
+    let unknown_fields = json!({
+        "type": "progress",
+        "stage": "scan",
+        "unknown_extra": 12345,
+        "unexpected_object": { "foo": "bar" }
+    });
+    let line: ExternalAdapterLine =
+        serde_json::from_value(unknown_fields).expect("deserialize with unknown fields");
+    let sanitized = sanitize_adapter_progress(&line);
+    assert_eq!(sanitized.stage.as_deref(), Some("scan"));
+    assert!(sanitized.operation.is_none());
+    assert!(sanitized.path.is_none());
+
+    // 3. Ultra-long path is truncated to 512 chars and backslashes normalized
+    let long_path = format!(
+        "C:\\Users\\test\\{}\\{}.json",
+        "a".repeat(300),
+        "b".repeat(300)
+    );
+    let long_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "path": long_path,
+    }))
+    .unwrap();
+    let sanitized_long = sanitize_adapter_progress(&long_line);
+    let path = sanitized_long.path.expect("path exists");
+    assert!(path.len() <= 512);
+    assert!(!path.contains('\\'));
+    assert!(path.contains('/'));
+
+    // 4. HTML / script tags and control characters stripped
+    let injection_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "operation": "reading <script>alert(1)</script>\x00\x07file",
+        "worker": "worker<img src=x onerror=alert(1)>"
+    }))
+    .unwrap();
+    let sanitized_injection = sanitize_adapter_progress(&injection_line);
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('<'));
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('>'));
+    assert!(!sanitized_injection
+        .operation
+        .as_ref()
+        .unwrap()
+        .contains('\0'));
+    assert!(!sanitized_injection.worker.as_ref().unwrap().contains('<'));
+
+    // 5. Legacy adapter with NO progress lines works 100% identically
+    let legacy_output = format!(
+        "{}\n{}",
+        json!({ "type": "item", "item": { "kind": "session_descriptor", "external_id": "sess-legacy", "version_token": "v0", "updated_at": "2026-01-01T00:00:00Z" } }),
+        json!({ "type": "complete", "item": { "session_count": 1 } })
+    );
+    let legacy_result =
+        parse_external_adapter_output("list_sessions", legacy_output.into_bytes(), Vec::new())
+            .expect("legacy output parses cleanly");
+    assert_eq!(legacy_result.session_descriptors.len(), 1);
+}
+
+#[test]
 fn adapter_output_rejects_empty_markdown_export_content() {
     let output = br#"{"type":"item","item":{"kind":"markdown_export","content":"","relative_path":"codex/project/session.md"}}
 {"type":"complete","item":{"export_count":1}}"#;

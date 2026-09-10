@@ -46,6 +46,7 @@ impl AppService {
             crate::backend::runtime::tasks::TaskFilter {
                 kind: Some(crate::backend::runtime::tasks::TaskKind::TeamRun),
                 active_only: false,
+                ..Default::default()
             },
         ))
     }
@@ -62,6 +63,7 @@ impl AppService {
                 crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(crate::backend::runtime::tasks::TaskKind::TeamRun),
                     active_only: true,
+                    ..Default::default()
                 },
             )
             .into_iter()

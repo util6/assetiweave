@@ -113,6 +113,7 @@ impl AppService {
             .list(TaskFilter {
                 kind: Some(TaskKind::Memory),
                 active_only: true,
+                ..Default::default()
             })
             .len();
         let mut scheduled = 0usize;

@@ -217,16 +217,26 @@ pub(crate) fn host_executable_search_candidates(
     candidates
 }
 
+pub(crate) type HostStdoutLineListener = std::sync::Arc<dyn Fn(&str) + Send + Sync + 'static>;
+
 pub(crate) async fn run_host_command(
     spec: HostCommandSpec,
     cancellation: CancellationToken,
 ) -> Result<HostCommandOutput, HostProcessError> {
-    run_host_command_async(spec, Some(&cancellation)).await
+    run_host_command_async_streaming(spec, Some(&cancellation), None).await
 }
 
 pub(crate) async fn run_host_command_async(
     spec: HostCommandSpec,
     cancellation: Option<&CancellationToken>,
+) -> Result<HostCommandOutput, HostProcessError> {
+    run_host_command_async_streaming(spec, cancellation, None).await
+}
+
+pub(crate) async fn run_host_command_async_streaming(
+    spec: HostCommandSpec,
+    cancellation: Option<&CancellationToken>,
+    stdout_listener: Option<HostStdoutLineListener>,
 ) -> Result<HostCommandOutput, HostProcessError> {
     if let Some(token) = cancellation {
         if token.is_cancelled() {
@@ -265,7 +275,9 @@ pub(crate) async fn run_host_command_async(
 
     let mut stdout_task = tokio::spawn(async move {
         match stdout_pipe {
-            Some(r) => read_stream_capped_and_drain(r, stdout_limit).await,
+            Some(r) => {
+                read_stream_capped_and_drain_streaming(r, stdout_limit, stdout_listener).await
+            }
             None => (Vec::new(), false),
         }
     });
@@ -398,11 +410,20 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 async fn read_stream_capped_and_drain<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
+    cap: usize,
+) -> (Vec<u8>, bool) {
+    read_stream_capped_and_drain_streaming(reader, cap, None).await
+}
+
+async fn read_stream_capped_and_drain_streaming<R: tokio::io::AsyncRead + Unpin>(
     mut reader: R,
     cap: usize,
+    listener: Option<HostStdoutLineListener>,
 ) -> (Vec<u8>, bool) {
     let mut output = Vec::with_capacity(cap.min(8192));
     let mut buffer = [0_u8; 8192];
+    let mut line_buffer = Vec::new();
     let mut truncated = false;
     loop {
         let read = match reader.read(&mut buffer).await {
@@ -414,6 +435,30 @@ async fn read_stream_capped_and_drain<R: tokio::io::AsyncRead + Unpin>(
         let retained = remaining.min(read);
         output.extend_from_slice(&buffer[..retained]);
         truncated |= retained < read;
+
+        if let Some(ref cb) = listener {
+            let mut start = 0;
+            for (i, &b) in buffer[..read].iter().enumerate() {
+                if b == b'\n' {
+                    line_buffer.extend_from_slice(&buffer[start..i]);
+                    let line_str = String::from_utf8_lossy(&line_buffer);
+                    cb(line_str.trim_end_matches('\r'));
+                    line_buffer.clear();
+                    start = i + 1;
+                }
+            }
+            if start < read {
+                if line_buffer.len() + (read - start) <= 64 * 1024 {
+                    line_buffer.extend_from_slice(&buffer[start..read]);
+                }
+            }
+        }
+    }
+    if let Some(ref cb) = listener {
+        if !line_buffer.is_empty() {
+            let line_str = String::from_utf8_lossy(&line_buffer);
+            cb(line_str.trim_end_matches('\r'));
+        }
     }
     (output, truncated)
 }
@@ -454,6 +499,9 @@ mod tests {
             Ok("normal-exit") => {
                 let _ = io::stdout().write_all(b"fixture-stdout-content");
                 let _ = io::stderr().write_all(b"fixture-stderr-content");
+            }
+            Ok("lines-output") => {
+                let _ = io::stdout().write_all(b"line-1\nline-2\nline-3\n");
             }
             Ok("nonzero-exit") => {
                 let _ = io::stderr().write_all(b"exiting with error 42");
@@ -847,6 +895,33 @@ mod tests {
         assert_eq!(resolved_direct, Some(exe_path));
 
         let _ = fs::remove_dir_all(&root_temp);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn streaming_stdout_line_listener_receives_lines_live() {
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let received_cb = received.clone();
+        let listener = std::sync::Arc::new(move |line: &str| {
+            received_cb.lock().unwrap().push(line.to_string());
+        });
+
+        let output = run_host_command_async_streaming(
+            fixture_spec("lines-output", Duration::from_secs(5), 32 * 1024, 32 * 1024),
+            None,
+            Some(listener),
+        )
+        .await
+        .expect("lines-output command should succeed");
+
+        assert!(output.status.success());
+        let lines: Vec<String> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("line-"))
+            .cloned()
+            .collect();
+        assert_eq!(lines, vec!["line-1", "line-2", "line-3"]);
     }
 
     fn make_tokio_fixture_command(mode: &str) -> tokio::process::Command {

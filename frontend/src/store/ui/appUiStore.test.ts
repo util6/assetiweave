@@ -29,6 +29,13 @@ describe("appUiStore", () => {
     expect(useAppUiStore.getState().logViewerOpen).toBe(false);
   });
 
+  it("切换任务中心弹窗状态", () => {
+    useAppUiStore.getState().setTaskCenterOpen(true);
+    expect(useAppUiStore.getState().taskCenterOpen).toBe(true);
+    useAppUiStore.getState().setTaskCenterOpen(false);
+    expect(useAppUiStore.getState().taskCenterOpen).toBe(false);
+  });
+
   it("AppRouter 不再自持 settingsOpen / settingsPanel / logViewerOpen useState", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(

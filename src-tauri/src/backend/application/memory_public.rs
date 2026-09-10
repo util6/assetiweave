@@ -114,6 +114,7 @@ impl AppService {
             TaskFilter {
                 kind: Some(TaskKind::Memory),
                 active_only: params.active_only,
+                ..Default::default()
             },
         );
         snapshots.into_iter().map(memory_task_view).collect()
@@ -236,6 +237,7 @@ impl AppService {
                 TaskFilter {
                     kind: Some(TaskKind::Memory),
                     active_only: false,
+                    ..Default::default()
                 },
             )
             .into_iter()

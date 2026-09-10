@@ -2648,9 +2648,10 @@ pub(crate) fn start_conversation_sync_background(
                 }
                 tauri::async_runtime::block_on(async {
                     AppService::from_runtime(&runtime)
-                        .sync_conversations_with_progress_and_cancellation(
+                        .sync_conversations_with_control(
                             params,
                             Some(&cancellation),
+                            Some(&task_id_for_runtime),
                             &mut on_progress,
                         )
                         .await
@@ -3702,6 +3703,51 @@ pub(crate) fn team_run_task(
 }
 
 #[tauri::command]
+pub(crate) fn list_public_tasks(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::TaskListParams,
+) -> RuntimeAppResult<Vec<crate::backend::dto::TaskView>> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.list_public_tasks(params)
+}
+
+#[tauri::command]
+pub(crate) fn get_public_task(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::TaskGetParams,
+) -> RuntimeAppResult<Option<crate::backend::dto::TaskView>> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.get_public_task(params)
+}
+
+#[tauri::command]
+pub(crate) fn cancel_public_task(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::TaskCancelParams,
+) -> RuntimeAppResult<crate::backend::dto::TaskView> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.cancel_public_task(params)
+}
+
+#[tauri::command]
+pub(crate) async fn retry_public_task(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::TaskRetryParams,
+) -> RuntimeAppResult<crate::backend::dto::TaskView> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.retry_public_task(params).await
+}
+
+#[tauri::command]
+pub(crate) fn clear_terminal_tasks(
+    state: State<'_, AppState>,
+    params: crate::backend::dto::TaskClearParams,
+) -> RuntimeAppResult<usize> {
+    let service = AppService::from_runtime(&state.runtime);
+    service.clear_terminal_tasks(params)
+}
+
+#[tauri::command]
 pub(crate) fn list_team_run_tasks(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<Vec<crate::backend::runtime::tasks::TaskSnapshot>> {
@@ -3711,6 +3757,7 @@ pub(crate) fn list_team_run_tasks(
         TaskFilter {
             kind: Some(TaskKind::TeamRun),
             active_only: false,
+            ..Default::default()
         },
     ))
 }
@@ -4031,7 +4078,12 @@ pub(crate) fn command_handler(
         team_tool_tasks,
         team_tool_task_update,
         team_tool_mailbox_send,
-        team_tool_mailbox_read
+        team_tool_mailbox_read,
+        list_public_tasks,
+        get_public_task,
+        cancel_public_task,
+        retry_public_task,
+        clear_terminal_tasks
     ]
 }
 

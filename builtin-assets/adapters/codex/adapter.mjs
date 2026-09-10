@@ -77,6 +77,23 @@ function fail(message) {
 }
 
 /**
+ * 向标准输出写出可选的结构化 progress 进度事件
+ * @param {object} [progress={}]
+ */
+function emitProgress(progress = {}) {
+  emit("progress", {
+    progress: {
+      stage: progress.stage ?? "reading",
+      operation: progress.operation ?? "scanning",
+      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+      path: progress.path,
+      current: progress.current,
+      total: progress.total,
+    },
+  });
+}
+
+/**
  * 将用户路径中的 `~` 符号展开为当前操作系统的真实 Home 绝对路径
  * @param {string} value - 待转换的路径字符串
  * @returns {string} 展开后的绝对路径
@@ -1883,29 +1900,39 @@ try {
   // 2. 【方法分支: list_sessions】会话列表元数据列举
   //    当用户在前端操作“同步/刷会话列表”时触发，仅读取 SQLite (`state_5.sqlite`) 表中的摘要信息，速度极快。
   } else if (input.method === "list_sessions") {
-    // 调用 sessionRows() 查询数据库并构造成标准描述符数组 [{ external_id, updated_at, source_locator, version_token }]
+    emitProgress({ stage: "reading", operation: "list_sessions" });
     const descriptors = listSessions();
-
-    // 逐条将描述符作为 "item" 事件输出到 stdout 流中，供 Rust 增量对比 version_token
-    for (const descriptor of descriptors) {
+    for (let i = 0; i < descriptors.length; i += 1) {
+      const descriptor = descriptors[i];
+      if (i === 0 || i === descriptors.length - 1 || (i + 1) % 10 === 0) {
+        emitProgress({
+          stage: "reading",
+          operation: "list_sessions",
+          current: i + 1,
+          total: descriptors.length,
+          path: descriptor.external_id,
+        });
+      }
       emit("item", { item: { kind: "session_descriptor", ...descriptor } });
     }
-
-    // 所有描述符发送完毕后，发送 complete 标识并告知本次 Snapshot 提取完成及总条数
     emit("complete", { item: { session_count: descriptors.length, snapshot_complete: true } });
 
   // 3. 【方法分支: read_session】会话详情读取与深度归一化解析
   //    当需要同步特定会话 (或全量同步) 的具体 Turn/Part 卡片内容时触发。
   } else if (input.method === "read_session") {
-    // 读取指定/全部 JSONL 日志、归一化 Turn、切分代码块、提取 Skill 依赖、应用日志压缩与文本配额
+    emitProgress({ stage: "reading", operation: "read_session" });
     const sessions = readSession();
-
-    // 逐条将完整格式化后的 Session 对象作为 "item" 事件流式写给 Rust
-    for (const session of sessions) {
+    for (let i = 0; i < sessions.length; i += 1) {
+      const session = sessions[i];
+      emitProgress({
+        stage: "reading",
+        operation: "read_session",
+        current: i + 1,
+        total: sessions.length,
+        path: session.external_id,
+      });
       emit("item", { item: { kind: "session", session } });
     }
-
-    // 发送 complete 信号标识读取完成
     emit("complete", { item: { session_count: sessions.length } });
 
   // 4. 【异常分支: 未知方法名】

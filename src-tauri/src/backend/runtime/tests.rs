@@ -88,6 +88,7 @@ fn external_task_runtime_owns_id_deduplication_and_terminal_state() {
         .list(tasks::TaskFilter {
             kind: None,
             active_only: true,
+            ..Default::default()
         })
         .iter()
         .any(|snapshot| snapshot.task_id == "same-task"));
@@ -142,7 +143,7 @@ fn task_runtime_prunes_terminal_tasks_globally_and_preserves_active_tasks() {
             .iter()
             .filter(|snapshot| snapshot.state.is_terminal())
             .count(),
-        100
+        50
     );
     assert!(snapshots
         .iter()
@@ -156,7 +157,8 @@ fn task_runtime_get_prunes_expired_terminal_tasks_before_dedup_and_projection_re
     tasks
         .register_external(
             tasks::TaskSpec::new(tasks::TaskKind::SearchIndexRebuild, Some("rebuild".into()))
-                .with_task_id("expired-rebuild"),
+                .with_task_id("expired-rebuild")
+                .with_user_visible(false),
         )
         .expect("register task");
     tasks.start_external("expired-rebuild").expect("start task");
@@ -181,6 +183,35 @@ fn task_runtime_get_prunes_expired_terminal_tasks_before_dedup_and_projection_re
         replacement,
         tasks::ExternalRegistrationOutcome::Started(_)
     ));
+}
+
+#[test]
+fn task_runtime_user_visible_terminal_tasks_preserved_and_cleared() {
+    let tasks = tasks::TaskRuntime::new();
+    tasks
+        .register_external(
+            tasks::TaskSpec::new(tasks::TaskKind::Scan, None)
+                .with_task_id("vis-1")
+                .with_user_visible(true),
+        )
+        .expect("register task");
+    tasks.start_external("vis-1").expect("start");
+    tasks
+        .complete_external("vis-1", Ok(serde_json::json!({})))
+        .expect("complete");
+    // Aged 1 hour, but user_visible=true, so it shouldn't be pruned
+    tasks
+        .set_finished_at_for_test(
+            "vis-1",
+            (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+        )
+        .expect("age");
+    assert!(tasks.get("vis-1").is_some());
+
+    // Clear terminal
+    let cleared = tasks.clear_terminal(None);
+    assert_eq!(cleared, 1);
+    assert!(tasks.get("vis-1").is_none());
 }
 
 #[test]
@@ -431,6 +462,7 @@ async fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_reside
     let oneshot_tasks = oneshot_runtime.task_runtime().list(tasks::TaskFilter {
         kind: None,
         active_only: false,
+        ..Default::default()
     });
     assert!(!oneshot_tasks
         .iter()
@@ -456,6 +488,7 @@ async fn bootstrap_oneshot_and_resident_host_share_database_and_differ_in_reside
     let resident_tasks = resident_runtime.task_runtime().list(tasks::TaskFilter {
         kind: None,
         active_only: false,
+        ..Default::default()
     });
     assert!(resident_tasks
         .iter()

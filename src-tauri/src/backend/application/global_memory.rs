@@ -108,6 +108,7 @@ impl AppService {
             .list(TaskFilter {
                 kind: Some(TaskKind::Memory),
                 active_only: true,
+                ..Default::default()
             })
             .iter()
             .any(|snapshot| snapshot.dedup_key.as_deref() == Some("global-memory"))

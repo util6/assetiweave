@@ -17,6 +17,7 @@ import { ConversationCardKindRegistryProvider } from "../components/conversation
 import { CatalogTaskProvider } from "./backgroundTasks/CatalogTaskProvider";
 import { ConversationDataMaintenanceProvider } from "./backgroundTasks/ConversationDataMaintenanceProvider";
 import { TeamTaskProvider } from "./backgroundTasks/TeamTaskProvider";
+import { TaskCenterProvider } from "./backgroundTasks/TaskCenterProvider";
 
 const appQueryClient = createAppQueryClient();
 
@@ -41,10 +42,12 @@ export function AppProviders({ children, i18n }: AppProvidersProps) {
                       <SkillBackupProvider>
                         <CatalogTaskProvider>
                           <TeamTaskProvider>
-                            <AppUpdateProvider>
-                              <SearchIndexProvider />
-                              {children}
-                            </AppUpdateProvider>
+                            <TaskCenterProvider>
+                              <AppUpdateProvider>
+                                <SearchIndexProvider />
+                                {children}
+                              </AppUpdateProvider>
+                            </TaskCenterProvider>
                           </TeamTaskProvider>
                         </CatalogTaskProvider>
                       </SkillBackupProvider>

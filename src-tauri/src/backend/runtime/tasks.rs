@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::{task_tracker::TaskTrackerToken, TaskTracker};
 
 pub(crate) const TASK_TERMINAL_RETENTION: Duration = Duration::from_secs(10 * 60);
-pub(crate) const TASK_TERMINAL_LIMIT: usize = 100;
+pub(crate) const TASK_TERMINAL_LIMIT: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -60,7 +60,109 @@ impl TaskState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TaskOutcome {
+    Success,
+    PartialSuccess,
+    Failure,
+    Canceled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum StageStatus {
+    Pending,
+    Running,
+    Succeeded,
+    PartialSuccess,
+    Failed,
+    Canceled,
+    Skipped,
+}
+
+impl StageStatus {
+    pub(crate) fn is_active(self) -> bool {
+        matches!(self, Self::Pending | Self::Running)
+    }
+
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::PartialSuccess | Self::Failed | Self::Canceled | Self::Skipped
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskActivity {
+    pub(crate) stage_id: String,
+    pub(crate) worker_id: String,
+    pub(crate) operation: String,
+    pub(crate) path: Option<String>,
+    pub(crate) display_path: Option<String>,
+    pub(crate) started_at: String,
+    pub(crate) current: Option<u64>,
+    pub(crate) total: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskFailure {
+    pub(crate) code: String,
+    pub(crate) message: String,
+    pub(crate) stage: String,
+    pub(crate) identity: Option<String>,
+    pub(crate) retryable: bool,
+    pub(crate) path: Option<String>,
+    pub(crate) timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskSkippedGroup {
+    pub(crate) reason_code: String,
+    pub(crate) count: u64,
+    pub(crate) samples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskMetric {
+    pub(crate) code: String,
+    pub(crate) value: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct TaskStage {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) status: StageStatus,
+    pub(crate) started_at: Option<String>,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) duration_ms: Option<u64>,
+    pub(crate) progress: Option<TaskProgress>,
+    pub(crate) current_activities: Vec<TaskActivity>,
+    pub(crate) metrics: Vec<TaskMetric>,
+    pub(crate) failures: Vec<TaskFailure>,
+    pub(crate) skipped: Vec<TaskSkippedGroup>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct TaskCapabilities {
+    pub(crate) cancellable: bool,
+    pub(crate) retryable: bool,
+    pub(crate) clearable: bool,
+}
+
+impl Default for TaskCapabilities {
+    fn default() -> Self {
+        Self {
+            cancellable: true,
+            retryable: false,
+            clearable: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub(crate) struct TaskProgress {
     pub(crate) current: u64,
     pub(crate) total: Option<u64>,
@@ -72,8 +174,11 @@ pub(crate) struct TaskSpec {
     pub(crate) kind: TaskKind,
     pub(crate) task_id: Option<String>,
     pub(crate) tenant_id: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) user_visible: Option<bool>,
     pub(crate) dedup_key: Option<String>,
     pub(crate) conflict_keys: Vec<String>,
+    pub(crate) capabilities: Option<TaskCapabilities>,
     pub(crate) detail: Value,
 }
 
@@ -83,8 +188,11 @@ impl TaskSpec {
             kind,
             task_id: None,
             tenant_id: None,
+            title: None,
+            user_visible: None,
             dedup_key,
             conflict_keys: Vec::new(),
+            capabilities: None,
             detail: Value::Null,
         }
     }
@@ -100,6 +208,21 @@ impl TaskSpec {
 
     pub(crate) fn with_tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
         self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    pub(crate) fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub(crate) fn with_user_visible(mut self, user_visible: bool) -> Self {
+        self.user_visible = Some(user_visible);
+        self
+    }
+
+    pub(crate) fn with_capabilities(mut self, capabilities: TaskCapabilities) -> Self {
+        self.capabilities = Some(capabilities);
         self
     }
 
@@ -124,12 +247,23 @@ pub(crate) struct TaskSnapshot {
     pub(crate) kind: TaskKind,
     #[serde(skip)]
     pub(crate) tenant_id: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) user_visible: bool,
     pub(crate) dedup_key: Option<String>,
     pub(crate) state: TaskState,
+    pub(crate) outcome: Option<TaskOutcome>,
     pub(crate) progress: Option<TaskProgress>,
     pub(crate) error: Option<AppErrorView>,
     pub(crate) started_at: String,
+    pub(crate) updated_at: String,
     pub(crate) finished_at: Option<String>,
+    pub(crate) stages: Vec<TaskStage>,
+    pub(crate) metrics: Vec<TaskMetric>,
+    pub(crate) failures: Vec<TaskFailure>,
+    pub(crate) error_summary: Option<String>,
+    pub(crate) result_summary: Option<String>,
+    pub(crate) capabilities: TaskCapabilities,
+    pub(crate) revision: u64,
     pub(crate) detail: Value,
     pub(crate) result: Option<Value>,
 }
@@ -176,6 +310,8 @@ impl ProgressHandle {
                     total,
                     note: note.map(str::to_string),
                 });
+                entry.snapshot.revision += 1;
+                entry.snapshot.updated_at = Utc::now().to_rfc3339();
                 Some(entry.snapshot.clone())
             } else {
                 None
@@ -186,6 +322,50 @@ impl ProgressHandle {
         if let Some(snapshot) = snapshot {
             self.runtime.publish(&snapshot);
         }
+    }
+
+    pub(crate) fn set_stages(&self, stages: Vec<TaskStage>) {
+        let _ = self.runtime.set_stages(&self.task_id, stages);
+    }
+
+    pub(crate) fn update_stage_status(&self, stage_id: &str, status: StageStatus) {
+        let _ = self
+            .runtime
+            .update_stage_status(&self.task_id, stage_id, status);
+    }
+
+    pub(crate) fn record_activity(&self, activity: TaskActivity) {
+        let _ = self.runtime.record_activity(&self.task_id, activity);
+    }
+
+    pub(crate) fn remove_activity(&self, stage_id: &str, worker_id: &str) {
+        let _ = self
+            .runtime
+            .remove_activity(&self.task_id, stage_id, worker_id);
+    }
+
+    pub(crate) fn finish_stage(
+        &self,
+        stage_id: &str,
+        status: StageStatus,
+        metrics: Vec<TaskMetric>,
+        failures: Vec<TaskFailure>,
+        skipped: Vec<TaskSkippedGroup>,
+    ) {
+        let _ =
+            self.runtime
+                .finish_stage(&self.task_id, stage_id, status, metrics, failures, skipped);
+    }
+
+    pub(crate) fn set_outcome(
+        &self,
+        outcome: TaskOutcome,
+        result_summary: Option<String>,
+        error_summary: Option<String>,
+    ) {
+        let _ = self
+            .runtime
+            .set_outcome(&self.task_id, outcome, result_summary, error_summary);
     }
 }
 
@@ -233,10 +413,11 @@ pub(crate) enum CancelOutcome {
     NotFound,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct TaskFilter {
     pub(crate) kind: Option<TaskKind>,
     pub(crate) active_only: bool,
+    pub(crate) user_visible_only: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -317,16 +498,31 @@ impl TaskRuntime {
             return Ok(None);
         }
         let tracking = self.tracker.token();
+        let user_visible = spec
+            .user_visible
+            .unwrap_or_else(|| !matches!(spec.kind, TaskKind::Other));
+        let capabilities = spec.capabilities.unwrap_or_default();
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
             tenant_id: spec.tenant_id,
+            title: spec.title,
+            user_visible,
             dedup_key: spec.dedup_key,
             state: TaskState::Running,
+            outcome: None,
             progress: None,
             error: None,
-            started_at,
+            started_at: started_at.clone(),
+            updated_at: started_at,
             finished_at: None,
+            stages: Vec::new(),
+            metrics: Vec::new(),
+            failures: Vec::new(),
+            error_summary: None,
+            result_summary: None,
+            capabilities,
+            revision: 1,
             detail: sanitize_task_detail(spec.detail),
             result: None,
         };
@@ -430,16 +626,31 @@ impl TaskRuntime {
             ));
         }
         let tracking = self.tracker.token();
+        let user_visible = spec
+            .user_visible
+            .unwrap_or_else(|| !matches!(spec.kind, TaskKind::Other));
+        let capabilities = spec.capabilities.unwrap_or_default();
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
             tenant_id: spec.tenant_id,
+            title: spec.title,
+            user_visible,
             state: TaskState::Pending,
+            outcome: None,
             dedup_key: spec.dedup_key,
             progress: None,
             error: None,
-            started_at,
+            started_at: started_at.clone(),
+            updated_at: started_at,
             finished_at: None,
+            stages: Vec::new(),
+            metrics: Vec::new(),
+            failures: Vec::new(),
+            error_summary: None,
+            result_summary: None,
+            capabilities,
+            revision: 1,
             detail: sanitize_task_detail(spec.detail),
             result: None,
         };
@@ -473,6 +684,8 @@ impl TaskRuntime {
                 entry.snapshot.state = TaskState::Running;
                 entry.started = true;
             }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -498,8 +711,10 @@ impl TaskRuntime {
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
-                entry.snapshot.detail = detail;
             }
+            entry.snapshot.detail = detail;
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -561,6 +776,8 @@ impl TaskRuntime {
                     total,
                     note: note.map(str::to_string),
                 });
+                entry.snapshot.revision += 1;
+                entry.snapshot.updated_at = Utc::now().to_rfc3339();
                 Some(entry.snapshot.clone())
             } else {
                 None
@@ -586,6 +803,8 @@ impl TaskRuntime {
                 .get_mut(task_id)
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             entry.snapshot.detail = sanitize_task_detail(detail);
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
@@ -612,8 +831,10 @@ impl TaskRuntime {
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
-                entry.snapshot.detail = sanitize_task_detail(detail);
             }
+            entry.snapshot.detail = sanitize_task_detail(detail);
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             let tracking = if should_launch {
                 entry.started = true;
@@ -664,8 +885,10 @@ impl TaskRuntime {
                 .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
             if entry.snapshot.state == TaskState::Pending {
                 entry.snapshot.state = TaskState::Running;
-                entry.snapshot.detail = sanitize_task_detail(detail);
             }
+            entry.snapshot.detail = sanitize_task_detail(detail);
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             let should_launch = entry.snapshot.state == TaskState::Running && !entry.started;
             let tracking = if should_launch {
                 entry.started = true;
@@ -711,30 +934,42 @@ impl TaskRuntime {
         if entry.snapshot.state.is_terminal() {
             return Ok(entry.snapshot.clone());
         }
-        entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+        let now = Utc::now().to_rfc3339();
+        entry.snapshot.finished_at = Some(now.clone());
+        entry.snapshot.updated_at = now;
+        entry.snapshot.revision += 1;
         let _tracking = entry.tracking.take();
         match result {
             Ok(detail) => {
                 if entry.cancellation.is_cancelled() {
                     entry.snapshot.state = TaskState::Canceled;
+                    entry.snapshot.outcome = Some(TaskOutcome::Canceled);
                     entry.snapshot.error =
                         Some(AppError::Cancelled("后台任务已取消".to_string()).view());
                 } else {
                     entry.snapshot.state = TaskState::Succeeded;
+                    if entry.snapshot.outcome.is_none() {
+                        entry.snapshot.outcome = Some(TaskOutcome::Success);
+                    }
                     entry.snapshot.result = Some(detail);
                 }
             }
             Err(_error) if entry.cancellation.is_cancelled() => {
                 entry.snapshot.state = TaskState::Canceled;
+                entry.snapshot.outcome = Some(TaskOutcome::Canceled);
                 entry.snapshot.error =
                     Some(AppError::Cancelled("后台任务已取消".to_string()).view());
             }
             Err(error) if matches!(error, AppError::Cancelled(_)) => {
                 entry.snapshot.state = TaskState::Canceled;
+                entry.snapshot.outcome = Some(TaskOutcome::Canceled);
                 entry.snapshot.error = Some(error.view());
             }
             Err(error) => {
                 entry.snapshot.state = TaskState::Failed;
+                if entry.snapshot.outcome.is_none() {
+                    entry.snapshot.outcome = Some(TaskOutcome::Failure);
+                }
                 entry.snapshot.error = Some(error.view());
             }
         }
@@ -782,6 +1017,23 @@ impl TaskRuntime {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_user_visible_for_test(
+        &self,
+        task_id: &str,
+        user_visible: bool,
+    ) -> AppResult<()> {
+        let mut tasks = self
+            .tasks
+            .lock()
+            .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+        let entry = tasks
+            .get_mut(task_id)
+            .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+        entry.snapshot.user_visible = user_visible;
+        Ok(())
+    }
+
     pub(crate) fn has_active_tasks(&self) -> bool {
         self.tasks
             .lock()
@@ -802,15 +1054,22 @@ impl TaskRuntime {
                     entry.snapshot.state,
                     TaskState::Pending | TaskState::Running | TaskState::Cancelling
                 ) {
-                    entry.snapshot.finished_at = Some(Utc::now().to_rfc3339());
+                    let now = Utc::now().to_rfc3339();
+                    entry.snapshot.finished_at = Some(now.clone());
+                    entry.snapshot.updated_at = now;
+                    entry.snapshot.revision += 1;
                     match result {
                         Ok(_detail) if cancellation.is_cancelled() => {
                             entry.snapshot.state = TaskState::Canceled;
+                            entry.snapshot.outcome = Some(TaskOutcome::Canceled);
                             entry.snapshot.error =
                                 Some(AppError::Cancelled("后台任务已取消".to_string()).view());
                         }
                         Ok(detail) => {
                             entry.snapshot.state = TaskState::Succeeded;
+                            if entry.snapshot.outcome.is_none() {
+                                entry.snapshot.outcome = Some(TaskOutcome::Success);
+                            }
                             entry.snapshot.result = Some(detail);
                         }
                         Err(error)
@@ -818,6 +1077,7 @@ impl TaskRuntime {
                                 || matches!(error, AppError::Cancelled(_)) =>
                         {
                             entry.snapshot.state = TaskState::Canceled;
+                            entry.snapshot.outcome = Some(TaskOutcome::Canceled);
                             entry.snapshot.error = Some(
                                 if matches!(error, AppError::Cancelled(_)) {
                                     error
@@ -829,6 +1089,9 @@ impl TaskRuntime {
                         }
                         Err(error) => {
                             entry.snapshot.state = TaskState::Failed;
+                            if entry.snapshot.outcome.is_none() {
+                                entry.snapshot.outcome = Some(TaskOutcome::Failure);
+                            }
                             entry.snapshot.error = Some(error.view());
                         }
                     }
@@ -960,6 +1223,7 @@ impl TaskRuntime {
         let mut snapshots = tasks
             .values()
             .filter(|entry| filter.kind.is_none_or(|kind| kind == entry.snapshot.kind))
+            .filter(|entry| !filter.user_visible_only || entry.snapshot.user_visible)
             .filter(|entry| {
                 !filter.active_only
                     || matches!(
@@ -997,6 +1261,8 @@ impl TaskRuntime {
         if entry.snapshot.state.is_active() {
             entry.cancellation.cancel();
             entry.snapshot.state = TaskState::Cancelling;
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
             let snapshot = entry.snapshot.clone();
             drop(tasks);
             self.publish(&snapshot);
@@ -1056,6 +1322,251 @@ impl TaskRuntime {
         self.shutdown_until(Instant::now() + grace).await
     }
 
+    pub(crate) fn set_stages(
+        &self,
+        task_id: &str,
+        stages: Vec<TaskStage>,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            entry.snapshot.stages = stages;
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn update_stage_status(
+        &self,
+        task_id: &str,
+        stage_id: &str,
+        status: StageStatus,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+                stage.status = status;
+                if status == StageStatus::Running && stage.started_at.is_none() {
+                    stage.started_at = Some(now.clone());
+                } else if status.is_terminal() && stage.finished_at.is_none() {
+                    stage.finished_at = Some(now.clone());
+                    if let Some(started_at) = &stage.started_at {
+                        if let (Ok(s), Ok(f)) = (
+                            chrono::DateTime::parse_from_rfc3339(started_at),
+                            chrono::DateTime::parse_from_rfc3339(&now),
+                        ) {
+                            if let Ok(duration) = (f - s).to_std() {
+                                stage.duration_ms = Some(duration.as_millis() as u64);
+                            }
+                        }
+                    }
+                }
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn record_activity(
+        &self,
+        task_id: &str,
+        activity: TaskActivity,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry
+                .snapshot
+                .stages
+                .iter_mut()
+                .find(|s| s.id == activity.stage_id)
+            {
+                if let Some(existing) = stage
+                    .current_activities
+                    .iter_mut()
+                    .find(|a| a.worker_id == activity.worker_id)
+                {
+                    *existing = activity;
+                } else {
+                    stage.current_activities.push(activity);
+                }
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn remove_activity(
+        &self,
+        task_id: &str,
+        stage_id: &str,
+        worker_id: &str,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+                stage
+                    .current_activities
+                    .retain(|a| a.worker_id != worker_id);
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn finish_stage(
+        &self,
+        task_id: &str,
+        stage_id: &str,
+        status: StageStatus,
+        metrics: Vec<TaskMetric>,
+        failures: Vec<TaskFailure>,
+        skipped: Vec<TaskSkippedGroup>,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+                stage.status = status;
+                stage.finished_at = Some(now.clone());
+                if stage.started_at.is_none() {
+                    stage.started_at = Some(now.clone());
+                }
+                if let (Some(started_at), Some(finished_at)) =
+                    (&stage.started_at, &stage.finished_at)
+                {
+                    if let (Ok(s), Ok(f)) = (
+                        chrono::DateTime::parse_from_rfc3339(started_at),
+                        chrono::DateTime::parse_from_rfc3339(finished_at),
+                    ) {
+                        if let Ok(duration) = (f - s).to_std() {
+                            stage.duration_ms = Some(duration.as_millis() as u64);
+                        }
+                    }
+                }
+                stage.current_activities.clear();
+                stage.metrics.extend(metrics.clone());
+                stage.failures.extend(failures.clone());
+                stage.skipped.extend(skipped.clone());
+            }
+            for metric in metrics {
+                if let Some(existing) = entry
+                    .snapshot
+                    .metrics
+                    .iter_mut()
+                    .find(|m| m.code == metric.code)
+                {
+                    existing.value += metric.value;
+                } else {
+                    entry.snapshot.metrics.push(metric);
+                }
+            }
+            entry.snapshot.failures.extend(failures);
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn set_outcome(
+        &self,
+        task_id: &str,
+        outcome: TaskOutcome,
+        result_summary: Option<String>,
+        error_summary: Option<String>,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            entry.snapshot.outcome = Some(outcome);
+            if let Some(r) = result_summary {
+                entry.snapshot.result_summary = Some(r);
+            }
+            if let Some(e) = error_summary {
+                entry.snapshot.error_summary = Some(e);
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn clear_terminal(&self, tenant_id: Option<&str>) -> usize {
+        let Ok(mut tasks) = self.tasks.lock() else {
+            return 0;
+        };
+        let mut to_remove = Vec::new();
+        for (task_id, entry) in tasks.iter() {
+            if entry.snapshot.state.is_terminal() {
+                if tenant_id.is_none()
+                    || entry.snapshot.tenant_id.as_deref() == tenant_id
+                    || entry.snapshot.tenant_id.is_none()
+                {
+                    to_remove.push(task_id.clone());
+                }
+            }
+        }
+        let count = to_remove.len();
+        for task_id in to_remove {
+            if let Some(mut entry) = tasks.remove(&task_id) {
+                let _ = entry.tracking.take();
+            }
+        }
+        count
+    }
+
     fn prune_terminal_tasks_locked(tasks: &mut HashMap<String, TaskEntry>) {
         let now = Utc::now();
         let retention = chrono::Duration::from_std(TASK_TERMINAL_RETENTION)
@@ -1070,27 +1581,31 @@ impl TaskRuntime {
                     .as_deref()
                     .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
                     .map(|value| value.with_timezone(&Utc));
-                (entry.snapshot.task_id.clone(), finished_at)
+                (
+                    entry.snapshot.task_id.clone(),
+                    finished_at,
+                    entry.snapshot.user_visible,
+                )
             })
             .collect::<Vec<_>>();
 
         let mut remove_ids = terminal
             .iter()
-            .filter_map(|(task_id, finished_at)| {
-                finished_at
-                    .is_some_and(|finished_at| now.signed_duration_since(finished_at) >= retention)
-                    .then_some(task_id.clone())
+            .filter_map(|(task_id, finished_at, user_visible)| {
+                (!user_visible
+                    && finished_at.is_some_and(|f| now.signed_duration_since(f) >= retention))
+                .then_some(task_id.clone())
             })
             .collect::<Vec<_>>();
-        terminal.retain(|(task_id, _)| !remove_ids.iter().any(|removed| removed == task_id));
+        terminal.retain(|(task_id, _, _)| !remove_ids.iter().any(|removed| removed == task_id));
 
-        terminal.sort_by(|(_, left), (_, right)| left.cmp(right));
+        terminal.sort_by(|(_, left, _), (_, right, _)| left.cmp(right));
         let excess = terminal.len().saturating_sub(TASK_TERMINAL_LIMIT);
         remove_ids.extend(
             terminal
                 .into_iter()
                 .take(excess)
-                .map(|(task_id, _)| task_id),
+                .map(|(task_id, _, _)| task_id),
         );
         for task_id in remove_ids {
             tasks.remove(&task_id);

@@ -299,6 +299,7 @@ export const settingsZh = {
   "settings.conversation.runtimeOverridesHint":
     "留空时使用系统 PATH。可填写绝对路径，适合运行时已安装但桌面 App 进程无法从 PATH 发现的情况。",
   "settings.showStartupNotification": "显示启动通知",
+  "settings.showTaskNotifications": "显示任务气泡通知",
   "settings.menu.sideRail": "全局入口",
   "settings.menu.headerTabs": "侧栏资产入口",
   "settings.menu.subNavigation": "页面子导航",

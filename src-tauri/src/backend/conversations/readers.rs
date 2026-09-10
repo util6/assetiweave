@@ -58,6 +58,27 @@ pub(crate) async fn read_source_sessions_with_control(
     cancellation: Option<&tokio_util::sync::CancellationToken>,
     on_progress: &mut (dyn FnMut(usize, usize) + Send),
 ) -> AppResult<ConversationSourceReadResult> {
+    read_source_sessions_with_progress_listener(
+        adapter,
+        source,
+        known_versions,
+        settings,
+        cancellation,
+        on_progress,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn read_source_sessions_with_progress_listener(
+    adapter: Option<&ConversationAdapter>,
+    source: &ConversationSource,
+    known_versions: &BTreeMap<String, String>,
+    settings: &Value,
+    cancellation: Option<&tokio_util::sync::CancellationToken>,
+    on_progress: &mut (dyn FnMut(usize, usize) + Send),
+    progress_listener: Option<super::external::ExternalAdapterProgressListener>,
+) -> AppResult<ConversationSourceReadResult> {
     let adapter = adapter.ok_or_else(|| {
         AppError::external(format!(
             "conversation adapter not found: {}",
@@ -66,7 +87,8 @@ pub(crate) async fn read_source_sessions_with_control(
     })?;
     let reader =
         super::external::ExternalAdapterSourceReader::new(adapter, source, settings, cancellation)
-            .await?;
+            .await?
+            .with_progress_listener(progress_listener);
     let Some(discovery) = reader.discover().await? else {
         on_progress(0, 0);
         let result = reader.read(None).await?;

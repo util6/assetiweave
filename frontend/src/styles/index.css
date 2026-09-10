@@ -184,6 +184,10 @@
     animation: aurora-route-transition-out 140ms ease-in both;
   }
 
+  .aurora-view-transition {
+    animation: aurora-view-fade-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .aurora-route-progress {
     position: absolute;
     top: 0;
@@ -812,6 +816,17 @@
     }
     to {
       opacity: 0;
+    }
+  }
+
+  @keyframes aurora-view-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 

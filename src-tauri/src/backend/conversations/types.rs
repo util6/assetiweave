@@ -282,6 +282,22 @@ pub(crate) struct ExternalMarkdownExport {
     pub(crate) relative_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ExternalAdapterProgress {
+    #[serde(default)]
+    pub(crate) stage: Option<String>,
+    #[serde(default)]
+    pub(crate) operation: Option<String>,
+    #[serde(default)]
+    pub(crate) path: Option<String>,
+    #[serde(default)]
+    pub(crate) current: Option<u64>,
+    #[serde(default)]
+    pub(crate) total: Option<u64>,
+    #[serde(default)]
+    pub(crate) worker: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ExternalAdapterLine {
     #[serde(rename = "type")]
@@ -292,4 +308,16 @@ pub(super) struct ExternalAdapterLine {
     pub(super) message: Option<String>,
     #[serde(default)]
     pub(super) error: Option<Value>,
+    #[serde(default)]
+    pub(super) stage: Option<String>,
+    #[serde(default)]
+    pub(super) operation: Option<String>,
+    #[serde(default)]
+    pub(super) path: Option<String>,
+    #[serde(default)]
+    pub(super) current: Option<u64>,
+    #[serde(default)]
+    pub(super) total: Option<u64>,
+    #[serde(default)]
+    pub(super) worker: Option<String>,
 }

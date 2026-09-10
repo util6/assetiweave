@@ -25,6 +25,7 @@ mod skill_remote;
 mod skills;
 mod sources;
 mod system;
+mod tasks_public;
 mod team;
 mod team_member_workflow;
 mod team_workflow;

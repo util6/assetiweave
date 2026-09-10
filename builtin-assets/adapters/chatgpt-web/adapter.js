@@ -16,6 +16,20 @@ function emit(value) {
   process.stdout.write(JSON.stringify(value) + "\n");
 }
 
+function emitProgress(progress = {}) {
+  emit({
+    type: "progress",
+    progress: {
+      stage: progress.stage || "reading",
+      operation: progress.operation || "scanning",
+      worker: progress.worker || process.env.ASSETIWEAVE_WORKER_ID || undefined,
+      path: progress.path,
+      current: progress.current,
+      total: progress.total,
+    },
+  });
+}
+
 let request = {};
 try {
   const input = fs.readFileSync(0, "utf8").trim();
@@ -58,7 +72,18 @@ for (const session of sessions) {
   session.source_fingerprint = sessionVersionToken(session);
 }
 if (request.method === "list_sessions") {
-  for (const session of sessions) {
+  emitProgress({ stage: "reading", operation: "list_sessions" });
+  for (let i = 0; i < sessions.length; i += 1) {
+    const session = sessions[i];
+    if (i === 0 || i === sessions.length - 1 || (i + 1) % 10 === 0) {
+      emitProgress({
+        stage: "reading",
+        operation: "list_sessions",
+        current: i + 1,
+        total: sessions.length,
+        path: session.external_id,
+      });
+    }
     emit({ type: "item", item: { kind: "session_descriptor", external_id: session.external_id, updated_at: session.updated_at || null, source_locator: session.source_locator || null, version_token: session.source_fingerprint } });
   }
   emit({ type: "complete", item: { session_count: sessions.length, snapshot_complete: true } });
@@ -72,7 +97,16 @@ const requestedSessionID = request.params && request.params.session_id;
 const selectedSessions = requestedSessionID
   ? sessions.filter((session) => String(session.external_id) === String(requestedSessionID))
   : sessions;
-for (const session of selectedSessions) {
+emitProgress({ stage: "reading", operation: "read_session" });
+for (let i = 0; i < selectedSessions.length; i += 1) {
+  const session = selectedSessions[i];
+  emitProgress({
+    stage: "reading",
+    operation: "read_session",
+    current: i + 1,
+    total: selectedSessions.length,
+    path: session.external_id,
+  });
   emit({ type: "item", item: { kind: "session", session } });
 }
 emit({ type: "complete", item: { session_count: selectedSessions.length } });

@@ -262,6 +262,7 @@ export interface AppSettings {
   promptOptimization: PromptOptimizationSettings;
 
   showStartupNotification: boolean;
+  showTaskNotifications: boolean;
   theme: ThemeId;
   typography: TypographySettings;
   conversations: ConversationPageSettings;
@@ -382,6 +383,7 @@ export const defaultSettings: AppSettings = {
   },
 
   showStartupNotification: true,
+  showTaskNotifications: true,
   theme: "promptStudio",
   typography: {
     baseFontSize: 14,
@@ -457,6 +459,10 @@ export function normalizeStoredSettings(value: unknown): AppSettings {
       typeof stored.showStartupNotification === "boolean"
         ? stored.showStartupNotification
         : defaultSettings.showStartupNotification,
+    showTaskNotifications:
+      typeof stored.showTaskNotifications === "boolean"
+        ? stored.showTaskNotifications
+        : defaultSettings.showTaskNotifications,
     theme: normalizeThemeId(stored.theme),
     typography,
     conversations,

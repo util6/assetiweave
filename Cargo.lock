@@ -142,6 +142,7 @@ dependencies = [
  "directories",
  "dirs",
  "flate2",
+ "futures",
  "globset",
  "libc",
  "objc2",

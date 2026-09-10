@@ -21,6 +21,19 @@ function fail(message) {
   emit("complete", { item: {} });
 }
 
+function emitProgress(progress = {}) {
+  emit("progress", {
+    progress: {
+      stage: progress.stage ?? "reading",
+      operation: progress.operation ?? "scanning",
+      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+      path: progress.path,
+      current: progress.current,
+      total: progress.total,
+    },
+  });
+}
+
 function expandPath(value) {
   if (!value) return value;
   if (value === "~") return homedir();
@@ -828,12 +841,36 @@ try {
   } else if (input.method === "probe") {
     emit("complete", { item: { session_count: 0 } });
   } else if (input.method === "list_sessions") {
+    emitProgress({ stage: "reading", operation: "list_sessions" });
     const descriptors = listSessions();
-    for (const descriptor of descriptors) emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+    for (let i = 0; i < descriptors.length; i += 1) {
+      const descriptor = descriptors[i];
+      if (i === 0 || i === descriptors.length - 1 || (i + 1) % 10 === 0) {
+        emitProgress({
+          stage: "reading",
+          operation: "list_sessions",
+          current: i + 1,
+          total: descriptors.length,
+          path: descriptor.external_id,
+        });
+      }
+      emit("item", { item: { kind: "session_descriptor", ...descriptor } });
+    }
     emit("complete", { item: { session_count: descriptors.length, snapshot_complete: true } });
   } else if (input.method === "read_session") {
+    emitProgress({ stage: "reading", operation: "read_session" });
     const sessions = readSession();
-    for (const session of sessions) emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
+    for (let i = 0; i < sessions.length; i += 1) {
+      const session = sessions[i];
+      emitProgress({
+        stage: "reading",
+        operation: "read_session",
+        current: i + 1,
+        total: sessions.length,
+        path: session.external_id,
+      });
+      emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
+    }
     emit("complete", { item: { session_count: sessions.length } });
   } else {
     fail(`unsupported method: ${input.method}`);

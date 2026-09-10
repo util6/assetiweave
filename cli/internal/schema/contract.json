@@ -293,7 +293,12 @@
     "team_mailbox_send",
     "team_mailbox_read",
     "team_run_task",
-    "list_team_run_tasks"
+    "list_team_run_tasks",
+    "list_public_tasks",
+    "get_public_task",
+    "cancel_public_task",
+    "retry_public_task",
+    "clear_terminal_tasks"
   ],
   "commands": [
     {
@@ -14596,6 +14601,188 @@
         "additionalProperties": false,
         "required": [],
         "properties": {}
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "list_public_tasks",
+      "canonical_method": "task.list",
+      "description": "List background tasks",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Tenant identifier",
+            "aliases": [
+              "tenantId"
+            ]
+          },
+          "all_tenants": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null,
+            "description": "Include all tenants",
+            "aliases": [
+              "allTenants"
+            ]
+          },
+          "active_only": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null,
+            "description": "Only active tasks",
+            "aliases": [
+              "activeOnly"
+            ]
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "get_public_task",
+      "canonical_method": "task.get",
+      "description": "Get one background task by ID",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "task_id"
+        ],
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "cancel_public_task",
+      "canonical_method": "task.cancel",
+      "description": "Cancel one active background task",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "task_id"
+        ],
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "retry_public_task",
+      "canonical_method": "task.retry",
+      "description": "Retry one failed background task",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "required": [
+          "task_id"
+        ],
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "cli": null,
+      "since": "0.1.0",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
+      "method": "clear_terminal_tasks",
+      "canonical_method": "task.clear",
+      "description": "Clear terminal background tasks",
+      "risk": "write",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "properties": {
+          "tenant_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Tenant identifier",
+            "aliases": [
+              "tenantId"
+            ]
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Task identifier",
+            "aliases": [
+              "taskId"
+            ]
+          }
+        },
+        "type": "object",
+        "additionalProperties": false,
+        "required": []
       },
       "cli": null,
       "since": "0.1.0",

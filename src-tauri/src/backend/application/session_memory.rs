@@ -15,7 +15,13 @@ use crate::backend::{
         NormalizedConversationTurn, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
         SessionMemoryJobStatus,
     },
-    runtime::{tasks::TaskContext, AppError, AppResult},
+    runtime::{
+        tasks::{
+            StageStatus, TaskActivity, TaskCapabilities, TaskContext, TaskFailure, TaskMetric,
+            TaskOutcome, TaskStage,
+        },
+        AppError, AppResult,
+    },
     store::{
         self, RecentMemoryEventInput, SessionMemoryPersistInput, SessionMemoryReferenceInput,
         SESSION_MEMORY_CONTRACT_VERSION, SESSION_MEMORY_PROMPT_VERSION,
@@ -38,6 +44,35 @@ const MAX_OUTPUT_ITEMS: usize = 64;
 const MAX_ITEM_LENGTH: usize = 4000;
 const MAX_AGENT_OUTPUT_LENGTH: usize = 200_000;
 const MAX_SESSION_MEMORY_CONCURRENCY: usize = 4;
+
+fn sanitize_memory_failure(code: &str, raw_message: &str, stage: &str) -> TaskFailure {
+    let sanitized_code = if code.is_empty() {
+        "memory_execution_failed".to_string()
+    } else {
+        code.chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(64)
+            .collect::<String>()
+    };
+    let safe_message = if raw_message.contains("prompt")
+        || raw_message.contains("bearer")
+        || raw_message.contains("token")
+        || raw_message.contains("secret")
+    {
+        "执行过程中发生受控错误".to_string()
+    } else {
+        raw_message.chars().take(200).collect::<String>()
+    };
+    TaskFailure {
+        code: sanitized_code,
+        message: safe_message,
+        stage: stage.to_string(),
+        identity: None,
+        retryable: true,
+        path: None,
+        timestamp: Utc::now().to_rfc3339(),
+    }
+}
 
 struct SessionMemoryLeaseGuard {
     task: tokio::task::JoinHandle<()>,
@@ -222,6 +257,89 @@ impl AppService {
             return store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await;
         }
 
+        let progress = context.progress();
+        let stages = vec![
+            TaskStage {
+                id: "claim".to_string(),
+                name: "领取工作与租约".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+            },
+            TaskStage {
+                id: "load_facts".to_string(),
+                name: "加载上下文与事实".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+            },
+            TaskStage {
+                id: "agent_execution".to_string(),
+                name: "调用 Agent 提取".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+            },
+            TaskStage {
+                id: "validation".to_string(),
+                name: "校验记忆卡片".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+            },
+            TaskStage {
+                id: "publish".to_string(),
+                name: "持久化与发布".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+            },
+        ];
+        progress.set_stages(stages);
+
+        let worker_id = format!("memory:{}", job_id);
+        progress.update_stage_status("claim", StageStatus::Running);
+        progress.record_activity(TaskActivity {
+            stage_id: "claim".to_string(),
+            worker_id: worker_id.clone(),
+            operation: "claim_lease".to_string(),
+            path: None,
+            display_path: None,
+            started_at: Utc::now().to_rfc3339(),
+            current: Some(0),
+            total: None,
+        });
+
         let detail =
             store::load_conversation_session_detail_sqlx(&pool, tenant_id, &job.session_id).await?;
         let roots = store::load_sources_sqlx(&pool, tenant_id)
@@ -234,6 +352,14 @@ impl AppService {
         let completed = session_has_completion_signal(&detail);
         let idle_ready = session_idle_ready(&detail, now);
         if !completed && !idle_ready {
+            progress.finish_stage(
+                "claim",
+                StageStatus::Skipped,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.remove_activity("claim", &worker_id);
             return Ok(None);
         }
         let ownership_token = format!("session-memory-owner-{}", Uuid::new_v4());
@@ -248,10 +374,46 @@ impl AppService {
         )
         .await?;
         let Some(job) = claimed else {
+            progress.finish_stage(
+                "claim",
+                StageStatus::Skipped,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.remove_activity("claim", &worker_id);
             return Ok(None);
         };
-        let progress = context.progress();
+        progress.finish_stage(
+            "claim",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        progress.remove_activity("claim", &worker_id);
         progress.progress(0, Some(3), Some("claimed"));
+
+        // Stage 2: load_facts
+        progress.update_stage_status("load_facts", StageStatus::Running);
+        progress.record_activity(TaskActivity {
+            stage_id: "load_facts".to_string(),
+            worker_id: worker_id.clone(),
+            operation: "load_conversation_facts".to_string(),
+            path: None,
+            display_path: None,
+            started_at: Utc::now().to_rfc3339(),
+            current: Some(1),
+            total: Some(1),
+        });
+        progress.finish_stage(
+            "load_facts",
+            StageStatus::Succeeded,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        progress.remove_activity("load_facts", &worker_id);
 
         let lease_guard = SessionMemoryLeaseGuard::start(
             self.db.clone(),
@@ -260,14 +422,51 @@ impl AppService {
             ownership_token.clone(),
             context.cancellation(),
         );
+
+        // Stage 3: agent_execution
+        progress.update_stage_status("agent_execution", StageStatus::Running);
+        progress.record_activity(TaskActivity {
+            stage_id: "agent_execution".to_string(),
+            worker_id: worker_id.clone(),
+            operation: "extract_session_memory".to_string(),
+            path: None,
+            display_path: None,
+            started_at: Utc::now().to_rfc3339(),
+            current: Some(0),
+            total: None,
+        });
+
         let result = self
             .execute_session_memory_agent(&job, &detail, context.cancellation())
             .await;
         let (output, short_refs, _is_empty_content) = match result {
-            Ok(output) => output,
+            Ok(output) => {
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                progress.remove_activity("agent_execution", &worker_id);
+                output
+            }
             Err(error) => {
                 drop(lease_guard);
+                progress.remove_activity("agent_execution", &worker_id);
                 if context.is_cancelled() {
+                    progress.finish_stage(
+                        "agent_execution",
+                        StageStatus::Canceled,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    progress.set_outcome(
+                        TaskOutcome::Canceled,
+                        None,
+                        Some("任务已被取消".to_string()),
+                    );
                     store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
                         .await?;
                     return Err(AppError::Cancelled(
@@ -280,16 +479,27 @@ impl AppService {
                     .chars()
                     .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
                     .collect::<String>();
+                let failure_code = if code.is_empty() {
+                    "phase1_failed".to_string()
+                } else {
+                    code
+                };
+                let safe_failure =
+                    sanitize_memory_failure(&failure_code, &error.to_string(), "agent_execution");
+                progress.finish_stage(
+                    "agent_execution",
+                    StageStatus::Failed,
+                    Vec::new(),
+                    vec![safe_failure.clone()],
+                    Vec::new(),
+                );
+                progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
                 store::mark_session_memory_job_failed_with_lease_sqlx(
                     &pool,
                     tenant_id,
                     job_id,
                     &ownership_token,
-                    if code.is_empty() {
-                        "phase1_failed"
-                    } else {
-                        &code
-                    },
+                    &failure_code,
                     &now_text,
                 )
                 .await?;
@@ -299,11 +509,26 @@ impl AppService {
         progress.progress(1, Some(3), Some("agent_completed"));
         if context.is_cancelled() {
             drop(lease_guard);
+            progress.finish_stage(
+                "validation",
+                StageStatus::Canceled,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            progress.set_outcome(
+                TaskOutcome::Canceled,
+                None,
+                Some("任务已被取消".to_string()),
+            );
             store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
             return Err(AppError::Cancelled(
                 "Session Memory task was canceled".to_string(),
             ));
         }
+
+        // Stage 4: validation
+        progress.update_stage_status("validation", StageStatus::Running);
         let evidence = if !short_refs.is_empty() {
             let mut refs = build_bounded_evidence_references(&detail, &short_refs);
             refs.extend(build_evidence_references(&detail));
@@ -314,9 +539,31 @@ impl AppService {
         let project_path = session_project_path(&detail, &registered_roots);
         let persist =
             match validated_persist_input(&job, &output, &evidence, project_path, &now_text) {
-                Ok(persist) => persist,
+                Ok(persist) => {
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Succeeded,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                    );
+                    persist
+                }
                 Err(error) => {
                     drop(lease_guard);
+                    let safe_failure = sanitize_memory_failure(
+                        "session_memory_validation_failed",
+                        &error.to_string(),
+                        "validation",
+                    );
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Failed,
+                        Vec::new(),
+                        vec![safe_failure.clone()],
+                        Vec::new(),
+                    );
+                    progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
                     store::mark_session_memory_job_failed_with_lease_sqlx(
                         &pool,
                         tenant_id,
@@ -330,14 +577,42 @@ impl AppService {
                 }
             };
         progress.progress(2, Some(3), Some("validated"));
+
+        // Stage 5: publish
+        progress.update_stage_status("publish", StageStatus::Running);
         if let Err(error) = store::persist_session_memory_sqlx(&pool, &persist).await {
             drop(lease_guard);
             if context.is_cancelled() {
+                progress.finish_stage(
+                    "publish",
+                    StageStatus::Canceled,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+                progress.set_outcome(
+                    TaskOutcome::Canceled,
+                    None,
+                    Some("任务已被取消".to_string()),
+                );
                 store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
                 return Err(AppError::Cancelled(
                     "Session Memory task was canceled".to_string(),
                 ));
             }
+            let safe_failure = sanitize_memory_failure(
+                "session_memory_persist_failed",
+                &error.to_string(),
+                "publish",
+            );
+            progress.finish_stage(
+                "publish",
+                StageStatus::Failed,
+                Vec::new(),
+                vec![safe_failure.clone()],
+                Vec::new(),
+            );
+            progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
             store::mark_session_memory_job_failed_with_lease_sqlx(
                 &pool,
                 tenant_id,
@@ -350,6 +625,21 @@ impl AppService {
             return Err(error);
         }
         drop(lease_guard);
+        progress.finish_stage(
+            "publish",
+            StageStatus::Succeeded,
+            vec![TaskMetric {
+                code: "memories_created".to_string(),
+                value: 1,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+        progress.set_outcome(
+            TaskOutcome::Success,
+            Some("会话记忆已成功生成并发布".to_string()),
+            None,
+        );
         progress.progress(3, Some(3), Some("persisted"));
         store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await
     }
@@ -379,6 +669,7 @@ impl AppService {
                 .list(crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(crate::backend::runtime::tasks::TaskKind::Memory),
                     active_only: true,
+                    ..Default::default()
                 })
                 .len()
                 >= MAX_SESSION_MEMORY_CONCURRENCY
@@ -414,18 +705,27 @@ impl AppService {
             let tenant_id_for_task = tenant_id.to_string();
             let session_id = job.session_id.clone();
             let run_at = now;
-            let spec = crate::backend::runtime::tasks::TaskSpec::new(
+            let short_id: String = session_id.chars().take(8).collect();
+            let title = format!("会话记忆生成 (#{short_id})");
+            let mut spec = crate::backend::runtime::tasks::TaskSpec::new(
                 crate::backend::runtime::tasks::TaskKind::Memory,
                 Some(format!("session-memory-job:{tenant_id}:{job_id}")),
             )
             .with_task_id(task_id)
             .with_tenant_id(tenant_id.to_string())
+            .with_title(title)
+            .with_capabilities(TaskCapabilities {
+                cancellable: true,
+                retryable: true,
+                clearable: true,
+            })
             .with_conflict_key(format!("session-memory-session:{tenant_id}:{session_id}"));
-            let mut spec = spec;
             spec.detail = json!({
                 "domain": "session_memory",
+                "scope": "session",
                 "job_id": job.id,
                 "session_id": session_id,
+                "attempt_count": job.attempt_count,
             });
             match self
                 .runtime
@@ -1566,6 +1866,18 @@ mod tests {
             scheduled_task.progress.as_ref().map(|value| value.current),
             Some(3)
         );
+        assert_eq!(scheduled_task.stages.len(), 5);
+        assert_eq!(scheduled_task.stages[0].id, "claim");
+        assert_eq!(scheduled_task.stages[0].status, StageStatus::Succeeded);
+        assert_eq!(scheduled_task.stages[1].id, "load_facts");
+        assert_eq!(scheduled_task.stages[1].status, StageStatus::Succeeded);
+        assert_eq!(scheduled_task.stages[2].id, "agent_execution");
+        assert_eq!(scheduled_task.stages[2].status, StageStatus::Succeeded);
+        assert_eq!(scheduled_task.stages[3].id, "validation");
+        assert_eq!(scheduled_task.stages[3].status, StageStatus::Succeeded);
+        assert_eq!(scheduled_task.stages[4].id, "publish");
+        assert_eq!(scheduled_task.stages[4].status, StageStatus::Succeeded);
+        assert_eq!(scheduled_task.outcome, Some(TaskOutcome::Success));
 
         let jobs = crate::backend::store::count_session_memory_rows_sqlx(
             service.db.pool(),

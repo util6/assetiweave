@@ -1,16 +1,19 @@
 import {
   lazy,
   Suspense,
+  useMemo,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import clsx from "clsx";
 import {
   AlertCircle,
   CheckCircle2,
   DownloadCloud,
   RefreshCw,
 } from "lucide-react";
+import { useOptionalTaskCenter } from "../../app/backgroundTasks/TaskCenterProvider";
 import {
   useAppUpdater,
   type AppUpdateDialogMode,
@@ -33,6 +36,7 @@ import { WindowTitleBar } from "./WindowTitleBar";
 import { SideRail, type SideRailBrandAction } from "./navigation/SideRail";
 import { SubNavigation } from "./navigation/SubNavigation";
 import { useAppUiStore } from "../../store/ui/appUiStore";
+import { ErrorBoundary } from "../../components/foundation/ErrorBoundary";
 
 const GlobalSettingsDialog = lazy(() =>
   import("../../components/settings/GlobalSettingsDialog").then((module) => ({
@@ -40,7 +44,14 @@ const GlobalSettingsDialog = lazy(() =>
   })),
 );
 
+const TaskCenterModal = lazy(() =>
+  import("../../components/tasks/TaskCenterModal").then((module) => ({
+    default: module.TaskCenterModal,
+  })),
+);
+
 export function AppLayout({
+  activeRailId,
   activeSubNavId,
   appShortcuts,
   children,
@@ -57,11 +68,13 @@ export function AppLayout({
   onSettingsOpen,
   onSubNavSelect,
   onSubNavPrefetch,
+  onTasksOpen,
   logViewerOpen,
   settingsPanel,
   settingsOpen,
   tenantControls,
 }: {
+  activeRailId?: string;
   activeSubNavId: string;
   appShortcuts: AppShortcut[];
   children: ReactNode;
@@ -79,6 +92,7 @@ export function AppLayout({
   onSettingsOpen?: () => void;
   onSubNavSelect: (id: string) => void;
   onSubNavPrefetch?: (id: string) => void;
+  onTasksOpen?: () => void;
   settingsPanel?: SettingsPanelId;
   settingsOpen?: boolean;
   tenantControls: {
@@ -95,6 +109,10 @@ export function AppLayout({
   const storeSetLogViewerOpen = useAppUiStore(
     (state) => state.setLogViewerOpen,
   );
+  const storeTaskCenterOpen = useAppUiStore((state) => state.taskCenterOpen);
+  const storeSetTaskCenterOpen = useAppUiStore(
+    (state) => state.setTaskCenterOpen,
+  );
   const storeSettingsPanel = useAppUiStore((state) => state.settingsPanel);
   const storeOpenSettings = useAppUiStore((state) => state.openSettings);
   const storeCloseSettings = useAppUiStore((state) => state.closeSettings);
@@ -108,6 +126,8 @@ export function AppLayout({
   const handleCloseSettings = onSettingsClose ?? storeCloseSettings;
   const handleOpenLogViewer =
     onLogViewerOpen ?? (() => storeSetLogViewerOpen(true));
+  const handleOpenTasks =
+    onTasksOpen ?? (() => storeSetTaskCenterOpen(true));
 
   const { t } = useI18n();
   const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();
@@ -115,7 +135,7 @@ export function AppLayout({
   const [sideRailExpanded, setSideRailExpanded] = useState(false);
   const activeSubNavItems =
     navigationModel.subNavItems[navigationModel.activeHeaderTabId] ?? [];
-  const railItems = ensureLogRailItem(navigationModel.railItems).filter(
+  const railItems = ensureSecondaryRailItems(navigationModel.railItems).filter(
     isSupportedRailItem,
   );
   const updateBrandAction = getUpdateBrandAction(
@@ -129,7 +149,48 @@ export function AppLayout({
     "--app-route-viewport-height": "calc(100dvh - var(--app-toolbar-top))",
   } as CSSProperties;
 
+  const taskCenter = useOptionalTaskCenter();
+  const activeCount = taskCenter?.activeCount ?? 0;
+  const failureCount = taskCenter?.failureCount ?? 0;
+
+  const taskBadge = useMemo(() => {
+    if (failureCount > 0) {
+      return (
+        <span
+          className={clsx(
+            sideRailExpanded
+              ? "rounded-full bg-status-remove/15 px-1.5 py-0.5 text-[10px] font-semibold text-status-remove"
+              : "absolute -right-1 -top-1 size-2.5 rounded-full bg-status-remove ring-2 ring-background",
+          )}
+          aria-label={`失败任务 ${failureCount}`}
+        >
+          {sideRailExpanded ? failureCount : null}
+        </span>
+      );
+    }
+    if (activeCount > 0) {
+      return (
+        <span
+          className={clsx(
+            sideRailExpanded
+              ? "animate-pulse rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary"
+              : "absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-primary ring-2 ring-background",
+          )}
+          aria-label={`进行中任务 ${activeCount}`}
+        >
+          {sideRailExpanded ? activeCount : null}
+        </span>
+      );
+    }
+    return null;
+  }, [activeCount, failureCount, sideRailExpanded]);
+
   function handleRailItemSelect(item: RailMenuItem) {
+    if (item.id === "tasks") {
+      handleOpenTasks();
+      return;
+    }
+
     if (item.id === "settings") {
       handleOpenSettings();
       return;
@@ -146,16 +207,20 @@ export function AppLayout({
       style={layoutStyle}
     >
       <WindowTitleBar />
-      <div className="grid-texture flex min-h-screen pt-[var(--app-window-titlebar-height)]">
+      <div className="flex min-h-[calc(100vh-var(--app-window-titlebar-height))]">
         <SideRail
           activeId={
-            effectiveLogViewerOpen
-              ? "logs"
-              : effectiveSettingsOpen
-                ? "settings"
-                : navigationModel.activeRailId
+            activeRailId ??
+            (storeTaskCenterOpen
+              ? "tasks"
+              : effectiveLogViewerOpen
+                ? "logs"
+                : effectiveSettingsOpen
+                  ? "settings"
+                  : navigationModel.activeRailId)
           }
           activeHeaderTabId={navigationModel.activeHeaderTabId}
+          badges={{ tasks: taskBadge }}
           brandAction={updateBrandAction}
           expanded={sideRailExpanded}
           headerTabs={navigationModel.headerTabs}
@@ -216,6 +281,17 @@ export function AppLayout({
             open={effectiveSettingsOpen}
           />
         </Suspense>
+      ) : null}
+
+      {storeTaskCenterOpen ? (
+        <ErrorBoundary onReset={() => storeSetTaskCenterOpen(false)}>
+          <Suspense fallback={null}>
+            <TaskCenterModal
+              onClose={() => storeSetTaskCenterOpen(false)}
+              open={storeTaskCenterOpen}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
     </div>
   );
@@ -313,6 +389,15 @@ function getUpdateBrandTone(
   return "update";
 }
 
+const tasksRailItem: RailMenuItem = {
+  id: "tasks",
+  label: "Tasks",
+  icon: "tasks",
+  scope: "global",
+  enabled: true,
+  position: "secondary",
+};
+
 const logRailItem: RailMenuItem = {
   id: "logs",
   label: "Logs",
@@ -322,27 +407,36 @@ const logRailItem: RailMenuItem = {
   position: "secondary",
 };
 
-const supportedRailItemIds = new Set(["logs", "settings"]);
+const supportedRailItemIds = new Set(["tasks", "logs", "settings"]);
 
 function isSupportedRailItem(item: RailMenuItem) {
   return supportedRailItemIds.has(item.id);
 }
 
-function ensureLogRailItem(items: RailMenuItem[]) {
-  if (items.some((item) => item.id === "logs")) {
-    return items;
+function ensureSecondaryRailItems(items: RailMenuItem[]) {
+  const result = [...items];
+  if (!result.some((item) => item.id === "tasks")) {
+    const logsIndex = result.findIndex((item) => item.id === "logs");
+    if (logsIndex !== -1) {
+      result.splice(logsIndex, 0, tasksRailItem);
+    } else {
+      const settingsIndex = result.findIndex((item) => item.id === "settings");
+      if (settingsIndex !== -1) {
+        result.splice(settingsIndex, 0, tasksRailItem);
+      } else {
+        result.push(tasksRailItem);
+      }
+    }
   }
 
-  const settingsIndex = items.findIndex(
-    (item) => item.id === "settings" && item.position === "secondary",
-  );
-  if (settingsIndex === -1) {
-    return [...items, logRailItem];
+  if (!result.some((item) => item.id === "logs")) {
+    const settingsIndex = result.findIndex((item) => item.id === "settings");
+    if (settingsIndex !== -1) {
+      result.splice(settingsIndex, 0, logRailItem);
+    } else {
+      result.push(logRailItem);
+    }
   }
 
-  return [
-    ...items.slice(0, settingsIndex),
-    logRailItem,
-    ...items.slice(settingsIndex),
-  ];
+  return result;
 }

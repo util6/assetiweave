@@ -16,6 +16,7 @@ pub(crate) use external::{
     list_conversation_adapter_runtime_statuses_with_settings,
     project_external_adapter_command_parts_with_settings, register_external_adapter_with_settings,
     scaffold_external_adapter, try_run_external_adapter_with_settings, validate_external_adapter,
+    ExternalAdapterProgressListener,
 };
 #[cfg(test)]
 pub(crate) use external::{register_external_adapter, try_run_external_adapter};
@@ -35,14 +36,14 @@ pub(crate) use readers::{
 pub(crate) use readers::{
     read_source_sessions_incrementally_with_adapter_with_settings,
     read_source_sessions_with_adapter_with_settings, read_source_sessions_with_control,
-    ConversationSourceReadResult,
+    read_source_sessions_with_progress_listener, ConversationSourceReadResult,
 };
 #[allow(unused_imports)]
 pub(crate) use types::{
     ConversationAdapterCatalog, ConversationAdapterManifest, ConversationAdapterRuntimeKind,
     ConversationAdapterRuntimeStatus, ConversationCommandProjection,
     ConversationCommandProjectionParams, ConversationCommandProjectionPart,
-    ConversationSessionDescriptor, ExternalAdapterRegisterParams, ExternalAdapterRunResult,
-    ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult, ExternalAdapterTryRunParams,
-    ExternalAdapterValidateParams, ExternalAdapterValidationResult,
+    ConversationSessionDescriptor, ExternalAdapterProgress, ExternalAdapterRegisterParams,
+    ExternalAdapterRunResult, ExternalAdapterScaffoldParams, ExternalAdapterScaffoldResult,
+    ExternalAdapterTryRunParams, ExternalAdapterValidateParams, ExternalAdapterValidationResult,
 };

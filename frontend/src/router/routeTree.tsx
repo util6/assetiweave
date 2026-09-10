@@ -6,6 +6,7 @@ import {
   Outlet,
 } from "@tanstack/react-router";
 import { AppSkeleton } from "../components/foundation/skeleton";
+import { TaskNotificationBubble } from "../components/tasks/TaskNotificationBubble";
 import { useWorkspaceContext } from "./WorkspaceContext";
 
 const CatalogPage = lazyRouteComponent(
@@ -254,7 +255,12 @@ function UnderConstructionView() {
 }
 
 export const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: () => (
+    <>
+      <Outlet />
+      <TaskNotificationBubble />
+    </>
+  ),
 });
 
 export const indexRoute = createRoute({

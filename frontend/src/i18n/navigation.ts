@@ -21,6 +21,7 @@ const railLabelKeys: Partial<Record<string, TranslationKey>> = {
   security: "nav.rail.security",
   docs: "nav.rail.docs",
   logs: "nav.rail.logs",
+  tasks: "nav.rail.tasks",
   settings: "nav.rail.settings",
 };
 
@@ -38,6 +39,7 @@ const railDefaultLabels: Partial<Record<string, string[]>> = {
   security: ["Security Policies", "安全策略"],
   docs: ["Docs", "文档"],
   logs: ["Logs", "日志"],
+  tasks: ["Task Center", "任务中心", "任务"],
   settings: ["Settings", "设置"],
 };
 

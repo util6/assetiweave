@@ -1844,6 +1844,101 @@ esac
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn conversation_sync_grouped_concurrency_and_task_runtime_integration() {
+    let root = std::env::temp_dir().join(format!("assetiweave-sync-grouped-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).unwrap();
+    let service = AppService::open_with_db_path(root.join("app.db"))
+        .await
+        .unwrap();
+
+    let script_1 = write_executable_script(
+        &root,
+        "adapter1.sh",
+        r#"#!/bin/sh
+request=$(cat)
+case "$request" in
+  *list_sessions*)
+    printf '%s\n' '{"type":"progress","progress":{"stage":"reading","operation":"scanning","worker":"worker-1","current":1,"total":1}}'
+    printf '%s\n' '{"type":"item","item":{"kind":"session_descriptor","external_id":"s1","version_token":"v1"}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1,"snapshot_complete":true}}'
+    ;;
+  *)
+    printf '%s\n' '{"type":"item","item":{"kind":"session","session":{"external_id":"s1","source_fingerprint":"v1","turns":[{"external_id":"turn-1","turn_index":0,"user_text":"Hello from 1","parts":[]}]}}}'
+    printf '%s\n' '{"type":"complete","item":{"session_count":1}}'
+    ;;
+esac
+"#,
+    );
+
+    let session_id = upsert_conversation_export_fixture(
+        &service,
+        &root,
+        vec!["list_sessions".to_string(), "read_session".to_string()],
+        Some(&script_1),
+        false,
+    )
+    .await;
+    let source_id: String = sqlx::query_scalar(
+        "SELECT source_id FROM conversation_sessions WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(service.tenant_id())
+    .bind(&session_id)
+    .fetch_one(service.db.pool())
+    .await
+    .unwrap();
+
+    let task_runtime = service.runtime.task_runtime();
+    let spec = crate::backend::runtime::tasks::TaskSpec::new(
+        crate::backend::runtime::tasks::TaskKind::ConversationSync,
+        None,
+    )
+    .with_tenant_id(service.tenant_id());
+    let outcome = task_runtime.register_external(spec).unwrap();
+    let task_id = match outcome {
+        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Started(s) => s.task_id,
+        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Existing(s) => s.task_id,
+        crate::backend::runtime::tasks::ExternalRegistrationOutcome::Conflict(s) => s.task_id,
+    };
+    let cancellation = task_runtime.cancellation_token(&task_id).unwrap();
+
+    let mut progress_events = Vec::new();
+    let result = service
+        .sync_conversations_with_control(
+            ConversationSyncParams {
+                source_id: Some(source_id),
+                adapter_id: None,
+                record_kind: Some("session".to_string()),
+                mode: ConversationSyncMode::Full,
+                dry_run: false,
+            },
+            Some(&cancellation),
+            Some(&task_id),
+            &mut |done, total, label| progress_events.push((done, total, label)),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["results"].as_array().unwrap().len(), 1);
+
+    let snapshot = task_runtime.get(&task_id).unwrap();
+    assert_eq!(snapshot.stages.len(), 1);
+    let stage = &snapshot.stages[0];
+    assert!(stage.id.starts_with("adapter:"));
+    assert_eq!(
+        stage.status,
+        crate::backend::runtime::tasks::StageStatus::Succeeded
+    );
+    assert_eq!(
+        snapshot.outcome,
+        Some(crate::backend::runtime::tasks::TaskOutcome::Success)
+    );
+
+    drop(service);
+    fs::remove_dir_all(root).ok();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn conversation_sync_isolates_single_session_failure_and_retries_dirty() {
     let root = std::env::temp_dir().join(format!("assetiweave-fault-isolation-{}", Uuid::new_v4()));
     fs::create_dir_all(&root).unwrap();

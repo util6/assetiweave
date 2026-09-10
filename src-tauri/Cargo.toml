@@ -25,6 +25,7 @@ config = { version = "=0.15.25", default-features = false }
 camino = { version = "=1.2.5", features = ["serde1"] }
 directories = "=6.0.0"
 dirs = "6"
+futures = "0.3"
 
 globset = "0.4"
 libc = "0.2"

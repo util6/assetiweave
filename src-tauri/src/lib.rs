@@ -377,24 +377,55 @@ pub fn run() {
     let task_event_app = app.handle().clone();
     let task_event_runtime = runtime.clone();
     tauri::async_runtime::spawn(async move {
+        let mut last_emitted: std::collections::HashMap<String, std::time::Instant> =
+            std::collections::HashMap::new();
         loop {
             match task_events.recv().await {
-                Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::TeamRun => {
-                    let member_event =
-                        backend::application::AppService::from_runtime(&task_event_runtime)
-                            .member_stream_event_for_task(&snapshot);
-                    let _ = task_event_app.emit("team-run-task-updated", &snapshot);
-                    if let Some(member_event) = member_event {
-                        let _ = task_event_app.emit(
-                            adapters::tauri::commands::TEAM_MEMBER_SESSION_UPDATED_EVENT,
-                            member_event,
-                        );
+                Ok(snapshot) => {
+                    if snapshot.user_visible {
+                        let should_emit = if snapshot.state.is_terminal() {
+                            last_emitted.remove(&snapshot.task_id);
+                            true
+                        } else {
+                            let now = std::time::Instant::now();
+                            match last_emitted.get(&snapshot.task_id) {
+                                Some(last) => {
+                                    if now.duration_since(*last)
+                                        >= std::time::Duration::from_millis(100)
+                                    {
+                                        last_emitted.insert(snapshot.task_id.clone(), now);
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                                None => {
+                                    last_emitted.insert(snapshot.task_id.clone(), now);
+                                    true
+                                }
+                            }
+                        };
+                        if should_emit {
+                            let view = backend::dto::TaskView::from_snapshot(&snapshot);
+                            let _ = task_event_app.emit("task-updated", &view);
+                        }
+                    }
+
+                    if snapshot.kind == backend::runtime::tasks::TaskKind::TeamRun {
+                        let member_event =
+                            backend::application::AppService::from_runtime(&task_event_runtime)
+                                .member_stream_event_for_task(&snapshot);
+                        let _ = task_event_app.emit("team-run-task-updated", &snapshot);
+                        if let Some(member_event) = member_event {
+                            let _ = task_event_app.emit(
+                                adapters::tauri::commands::TEAM_MEMBER_SESSION_UPDATED_EVENT,
+                                member_event,
+                            );
+                        }
+                    } else if snapshot.kind == backend::runtime::tasks::TaskKind::Memory {
+                        let _ = task_event_app.emit("memory-task-updated", ());
                     }
                 }
-                Ok(snapshot) if snapshot.kind == backend::runtime::tasks::TaskKind::Memory => {
-                    let _ = task_event_app.emit("memory-task-updated", ());
-                }
-                Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }

@@ -60,7 +60,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Panel } from "@/components/foundation/Panel";
 import { Input } from "@/components/ui/input";
 import { SimpleSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -1013,6 +1013,18 @@ export function GlobalSettingsDialog({
                     label={t("settings.showStartupNotification")}
                     onChange={(checked) =>
                       updateSetting("showStartupNotification", checked)
+                    }
+                  />
+                </SettingRow>
+                <SettingRow
+                  icon={<Bell size={18} />}
+                  label={t("settings.showTaskNotifications")}
+                >
+                  <SwitchControl
+                    checked={settings.showTaskNotifications}
+                    label={t("settings.showTaskNotifications")}
+                    onChange={(checked) =>
+                      updateSetting("showTaskNotifications", checked)
                     }
                   />
                 </SettingRow>
@@ -1988,9 +2000,9 @@ function agentActionIdForService(serviceId: AgentCapabilityServiceId) {
 
 function SettingsGroup({ children }: { children: ReactNode }) {
   return (
-    <Card className="overflow-hidden">
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
+    <Panel className="overflow-hidden p-0" variant="default">
+      {children}
+    </Panel>
   );
 }
 
@@ -2004,15 +2016,15 @@ function MenuSection({
   title: string;
 }) {
   return (
-    <Card aria-label={title} className="overflow-hidden" role="region">
-      <CardHeader className="flex h-12 flex-row items-center gap-3 bg-theme-card-header px-4 py-0">
+    <Panel aria-label={title} className="overflow-hidden p-0" role="region" variant="default">
+      <div className="flex h-12 flex-row items-center gap-3 border-b border-theme-card-border/60 bg-theme-card-header/60 px-4 py-0">
         <span className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
           {icon}
         </span>
-        <CardTitle className="text-body-md">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="p-0">{children}</CardContent>
-    </Card>
+        <h3 className="text-body-md font-semibold text-on-surface">{title}</h3>
+      </div>
+      <div>{children}</div>
+    </Panel>
   );
 }
 

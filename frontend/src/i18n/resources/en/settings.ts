@@ -316,6 +316,7 @@ export const settingsEn = {
   "settings.conversation.runtimeOverridesHint":
     "Leave blank to use the system PATH. Use absolute paths when a runtime is installed but the desktop app process cannot discover it on PATH.",
   "settings.showStartupNotification": "Show startup notification",
+  "settings.showTaskNotifications": "Show task notification bubbles",
   "settings.menu.sideRail": "Global entries",
   "settings.menu.headerTabs": "Side rail asset entries",
   "settings.menu.subNavigation": "Page sub-navigation",

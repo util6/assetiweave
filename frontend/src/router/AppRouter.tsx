@@ -1,13 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { RouterProvider } from "@tanstack/react-router";
 import { AppUpdateDialog } from "../app/updates/AppUpdateDialog";
-import { useConversationSync } from "../app/backgroundTasks/ConversationSyncProvider";
-import { useSearchIndex } from "../app/backgroundTasks/SearchIndexProvider";
 import { useSkillBackup } from "../app/backgroundTasks/SkillBackupProvider";
-import { useMemoryTasks } from "../app/backgroundTasks/MemoryTaskProvider";
-import { useOptionalTeamTasks } from "../app/backgroundTasks/TeamTaskProvider";
-import { SkillBackupBackgroundTaskIndicator } from "../components/backup/SkillBackupProgress";
-import { ConversationBackgroundTaskIndicator } from "../components/conversations/ConversationToolbarControls";
 import { AppSkeleton } from "../components/foundation/skeleton";
 import { useCatalogController } from "../hooks/catalog/useCatalogController";
 import { useI18n } from "../i18n/I18nProvider";
@@ -42,12 +36,7 @@ const ManualPage = lazy(() =>
 
 export function AppRouter() {
   const { t } = useI18n();
-  const { tasks: conversationSyncTasks } = useConversationSync();
-  const { task: searchIndexTask } = useSearchIndex();
   const { task: skillBackupTask } = useSkillBackup();
-  const { publicTasks: memoryTasks } = useMemoryTasks();
-  const teamTaskContext = useOptionalTeamTasks();
-  const teamTasks = teamTaskContext?.tasks ?? [];
   const catalog = useCatalogController();
   const handledSkillBackupTaskId = useRef<string | null>(null);
   const runningSkillBackupTaskIds = useRef(new Set<string>());
@@ -59,6 +48,7 @@ export function AppRouter() {
     useState<ConversationNavigationTarget | null>(null);
   const logViewerOpen = useAppUiStore((state) => state.logViewerOpen);
   const setLogViewerOpen = useAppUiStore((state) => state.setLogViewerOpen);
+  const setTaskCenterOpen = useAppUiStore((state) => state.setTaskCenterOpen);
   const openSettings = useAppUiStore((state) => state.openSettings);
 
   const initialPath = useMemo(
@@ -271,6 +261,7 @@ export function AppRouter() {
         onSkillBackupLibraryChange={() => catalog.refreshOverview()}
         onSubNavSelect={handleSubNavSelect}
         onSubNavPrefetch={handleSubNavPrefetch}
+        onTasksOpen={() => setTaskCenterOpen(true)}
         tenantControls={{
           activeTenant: catalog.activeTenant,
           busy: catalog.tenantBusy,
@@ -311,55 +302,6 @@ export function AppRouter() {
         </Suspense>
       ) : null}
       <AppUpdateDialog />
-      <div className="pointer-events-none fixed bottom-5 right-5 z-30 grid gap-3">
-        {teamTasks
-          .filter((task) =>
-            ["Pending", "Running", "Cancelling"].includes(task.state),
-          )
-          .map((task) => (
-            <div
-              className="rounded-lg border border-primary/30 bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
-              key={task.task_id}
-            >
-              <div className="font-medium">{t("team.task.global")}</div>
-              <div className="mt-1 text-on-surface-variant">
-                {task.progress
-                  ? `${task.progress.current}/${task.progress.total ?? "?"}`
-                  : t("team.task.active")}
-                {task.progress?.note ? ` · ${task.progress.note}` : ""}
-              </div>
-            </div>
-          ))}
-        {searchIndexTask?.status === "running" ? (
-          <div className="aurora-task-indicator rounded-xl border px-4 py-3 text-body-sm text-on-surface">
-            {t("conversation.searchIndex.building")}
-          </div>
-        ) : null}
-        {conversationSyncTasks.map((task) => (
-          <ConversationBackgroundTaskIndicator
-            key={task.id}
-            task={task}
-            t={t}
-          />
-        ))}
-        {memoryTasks
-          .filter((task) =>
-            ["pending", "running", "cancelling"].includes(task.status),
-          )
-          .map((task) => (
-            <div
-              className="rounded-lg border border-outline-variant bg-surface-container px-4 py-3 text-body-sm text-on-surface shadow-lg"
-              key={task.id}
-            >
-              <div className="font-medium">{t("memory.task.running")}</div>
-              <div className="mt-1 text-on-surface-variant">
-                {task.progress?.note ?? task.kind} ·{" "}
-                {task.progress?.current ?? 0}/{task.progress?.total ?? "?"}
-              </div>
-            </div>
-          ))}
-        <SkillBackupBackgroundTaskIndicator task={skillBackupTask} t={t} />
-      </div>
     </>
   );
 }

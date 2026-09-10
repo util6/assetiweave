@@ -1,4 +1,7 @@
 import {
+  Brain,
+  CheckCircle2,
+  Clock,
   LoaderCircle,
   MessageCircle,
   Plus,
@@ -23,8 +26,8 @@ import type {
 } from "../../types/memory";
 import type { Translator } from "../../i18n/I18nProvider";
 import { EmptyState } from "../foundation/EmptyState";
+import { Panel } from "../foundation/Panel";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Input } from "../ui/input";
 
 export function MemoryRecallWorkspace({
@@ -141,15 +144,21 @@ export function MemoryRecallWorkspace({
   const activeTurn = session.turns.find(
     (turn) => turn.id === session.activeTurnId,
   );
+
   return (
-    <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(18rem,0.7fr)_minmax(32rem,1.7fr)]">
-      <Card className="min-h-0 overflow-auto">
-        <CardHeader>
-          <CardTitle>{t("memory.recall.session")}</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <label className="grid gap-2 text-body-sm">
-            <span>{t("memory.recall.projectPath")}</span>
+    <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(20rem,0.75fr)_minmax(32rem,1.65fr)]">
+      {/* 左栏：会话范围控制面板 */}
+      <Panel className="flex min-h-0 flex-col overflow-y-auto p-4" variant="default">
+        <div className="flex items-center gap-2 border-b border-theme-control-border/60 pb-3 text-title-sm font-semibold text-on-surface">
+          <Brain className="size-4 text-primary" />
+          <span>{t("memory.recall.session")}</span>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5 text-body-sm">
+            <span className="font-medium text-on-surface">
+              {t("memory.recall.projectPath")}
+            </span>
             <Input
               aria-label={t("memory.recall.projectPath")}
               disabled={session.turns.length > 0}
@@ -158,52 +167,67 @@ export function MemoryRecallWorkspace({
               value={projectPath}
             />
           </label>
+
           <div className="flex flex-wrap gap-2">
             <Button
               disabled={busy || Boolean(session.activeTurnId)}
               onClick={() => void startSession()}
+              size="sm"
               variant="outline"
             >
-              <Plus size={15} />
+              <Plus className="mr-1.5 size-3.5" />
               {t("memory.recall.newSession")}
             </Button>
             {activeTurn ? (
               <Button
                 disabled={busy}
                 onClick={() => void cancelTurn()}
-                variant="outline"
+                size="sm"
+                variant="destructive"
               >
-                <Square size={14} />
+                <Square className="mr-1.5 size-3.5" />
                 {t("common.cancel")}
               </Button>
             ) : null}
           </div>
-          <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3 text-body-sm text-on-surface-variant">
-            <div>
-              {t("memory.recall.turnCount")}: {session.turnCount}
+
+          <div className="flex flex-col gap-2 rounded-xl border border-theme-control-border/60 bg-theme-control/25 p-3.5 text-body-sm">
+            <div className="flex items-center justify-between text-caption">
+              <span className="text-on-surface-variant">{t("memory.recall.turnCount")}:</span>
+              <strong className="font-mono text-on-surface">{session.turnCount}</strong>
             </div>
-            <div>
-              {t("memory.recall.agent")}: {session.agentId}
-              {session.model ? ` · ${session.model}` : ""}
+            <div className="flex items-center justify-between text-caption">
+              <span className="text-on-surface-variant">{t("memory.recall.agent")}:</span>
+              <span className="font-mono text-on-surface">
+                {session.agentId}
+                {session.model ? ` · ${session.model}` : ""}
+              </span>
             </div>
-            <div>
-              {t("memory.recall.status")}: {turnStatusLabel(session, t)}
+            <div className="flex items-center justify-between text-caption">
+              <span className="text-on-surface-variant">{t("memory.recall.status")}:</span>
+              <span className="font-medium text-primary">
+                {turnStatusLabel(session, t)}
+              </span>
             </div>
           </div>
+
           {error ? (
-            <div className="rounded-md border border-status-remove/40 bg-status-remove/10 p-3 text-body-sm text-status-remove">
+            <div className="rounded-xl border border-status-remove/40 bg-status-remove/10 p-3 text-body-sm text-status-remove">
               {error}
             </div>
           ) : null}
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
 
-      <Card className="min-h-0 overflow-hidden">
-        <CardHeader>
-          <CardTitle>{t("memory.recall.conversation")}</CardTitle>
-        </CardHeader>
-        <CardContent className="flex h-[calc(100%-4rem)] min-h-0 flex-col gap-4">
-          <div className="min-h-0 flex-1 space-y-4 overflow-auto pr-1">
+      {/* 右栏：对话回溯工作区 */}
+      <Panel className="flex min-h-0 flex-1 flex-col overflow-hidden p-4" variant="default">
+        <div className="flex items-center gap-2 border-b border-theme-control-border/60 pb-3 text-title-sm font-semibold text-on-surface">
+          <MessageCircle className="size-4 text-primary" />
+          <span>{t("memory.recall.conversation")}</span>
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col gap-4 pt-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {session.turns.length === 0 ? (
               <EmptyState
                 description={t("memory.recall.emptyDescription")}
@@ -230,10 +254,11 @@ export function MemoryRecallWorkspace({
               ))
             )}
           </div>
-          <div className="grid gap-2 border-t border-outline-variant pt-4">
+
+          <div className="flex flex-col gap-2.5 border-t border-theme-control-border/60 pt-3">
             <textarea
               aria-label={t("memory.recall.query")}
-              className="min-h-24 w-full rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 text-body-md text-on-surface outline-none placeholder:text-outline focus:border-primary-strong/60"
+              className="min-h-20 w-full resize-none rounded-xl border border-theme-control-border bg-theme-control/40 p-3 text-body-sm text-on-surface outline-none placeholder:text-outline transition-all focus:border-primary focus:bg-theme-control/60"
               disabled={Boolean(session.activeTurnId) || busy}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -246,26 +271,25 @@ export function MemoryRecallWorkspace({
               value={query}
             />
             <div className="flex items-center justify-between gap-3">
-              <span className="text-label-sm text-on-surface-variant">
+              <span className="text-caption text-on-surface-variant">
                 {t("memory.recall.sendHint")}
               </span>
               <Button
-                disabled={
-                  busy || Boolean(session.activeTurnId) || !query.trim()
-                }
+                disabled={busy || Boolean(session.activeTurnId) || !query.trim()}
                 onClick={() => void sendTurn()}
+                size="sm"
               >
                 {busy ? (
-                  <LoaderCircle className="animate-spin" size={15} />
+                  <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
                 ) : (
-                  <Search size={15} />
+                  <Search className="mr-1.5 size-3.5" />
                 )}
                 {t("memory.recall.send")}
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -280,47 +304,51 @@ function RecallTurn({
   turn: MemoryRecallTurn;
 }) {
   return (
-    <article className="grid gap-3 rounded-xl border border-outline-variant p-4">
-      <div className="flex items-center justify-between gap-3 text-label-sm text-on-surface-variant">
-        <span>
+    <article className="flex flex-col gap-2.5 rounded-xl border border-theme-control-border/60 bg-surface-elevated/40 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-3 text-caption text-on-surface-variant">
+        <span className="font-semibold text-on-surface">
           {t("memory.recall.turn")} {turn.sequence + 1}
         </span>
         <span className="inline-flex items-center gap-1">
           {turn.status === "running" ? (
-            <LoaderCircle className="animate-spin" size={13} />
+            <LoaderCircle className="size-3 animate-spin text-primary" />
+          ) : turn.status === "completed" ? (
+            <CheckCircle2 className="size-3 text-status-create" />
+          ) : turn.status === "failed" ? (
+            <XCircle className="size-3 text-status-remove" />
           ) : (
-            <XCircle size={13} />
-          )}{" "}
-          {turnStatusLabel(turn, t)}
+            <Clock className="size-3 text-outline" />
+          )}
+          <span>{turnStatusLabel(turn, t)}</span>
         </span>
       </div>
-      <div className="rounded-lg bg-surface-container-low p-3 text-body-md">
+
+      <div className="rounded-lg bg-theme-control/40 px-3 py-2 text-body-sm text-on-surface">
         {turn.userText}
       </div>
+
       {turn.structuredOutput ? (
-        <div className="grid gap-3">
-          <div className="whitespace-pre-wrap text-body-md">
+        <div className="flex flex-col gap-2.5 pt-1">
+          <div className="whitespace-pre-wrap text-body-sm text-on-surface">
             {turn.structuredOutput.answer}
           </div>
           {turn.structuredOutput.contentReferences.length > 0 ? (
-            <div className="flex flex-wrap gap-2">
-              {turn.structuredOutput.contentReferences.map(
-                (reference, index) => (
-                  <Button
-                    key={`${reference.blockId}:${index}`}
-                    onClick={() => onNavigate(reference)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {t("memory.recall.openReference")} {index + 1}
-                  </Button>
-                ),
-              )}
+            <div className="flex flex-wrap gap-1.5">
+              {turn.structuredOutput.contentReferences.map((reference, index) => (
+                <Button
+                  key={`${reference.blockId}:${index}`}
+                  onClick={() => onNavigate(reference)}
+                  size="sm"
+                  variant="outline"
+                >
+                  {t("memory.recall.openReference")} {index + 1}
+                </Button>
+              ))}
             </div>
           ) : null}
           {turn.structuredOutput.followUpSuggestions.length > 0 ? (
-            <div className="grid gap-1 text-body-sm text-on-surface-variant">
-              <span className="font-semibold">
+            <div className="flex flex-col gap-1 rounded-lg border border-theme-control-border/40 bg-theme-control/20 p-2.5 text-caption text-on-surface-variant">
+              <span className="font-medium text-on-surface">
                 {t("memory.recall.followUps")}
               </span>
               {turn.structuredOutput.followUpSuggestions.map((suggestion) => (
@@ -330,7 +358,9 @@ function RecallTurn({
           ) : null}
         </div>
       ) : turn.lastError ? (
-        <div className="text-body-sm text-status-remove">{turn.lastError}</div>
+        <div className="rounded-lg border border-status-remove/30 bg-status-remove/10 p-2.5 text-caption text-status-remove">
+          {turn.lastError}
+        </div>
       ) : null}
     </article>
   );

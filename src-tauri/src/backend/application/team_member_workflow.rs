@@ -316,6 +316,7 @@ impl AppService {
                 crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(TaskKind::TeamRun),
                     active_only: false,
+                    ..Default::default()
                 },
             )
             .into_iter()

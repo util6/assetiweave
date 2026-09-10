@@ -6,6 +6,14 @@ export const navigationModel: NavigationModel = {
   activeSubNavId: "recent",
   railItems: [
     {
+      id: "tasks",
+      label: "Tasks",
+      icon: "tasks",
+      scope: "global",
+      enabled: true,
+      position: "secondary",
+    },
+    {
       id: "logs",
       label: "Logs",
       icon: "file-text",

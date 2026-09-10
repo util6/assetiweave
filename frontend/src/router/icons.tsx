@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  ListTodo,
   Users,
 } from "lucide-react";
 import type { NavigationIcon } from "./types";
@@ -32,6 +33,7 @@ const iconRegistry = {
   settings: Settings,
   shield: ShieldCheck,
   sparkles: Sparkles,
+  tasks: ListTodo,
   users: Users,
 } satisfies Record<NavigationIcon, typeof Archive>;
 

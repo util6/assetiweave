@@ -23,6 +23,7 @@ export interface SideRailBrandAction {
 export function SideRail({
   activeId,
   activeHeaderTabId,
+  badges,
   brandAction,
   expanded,
   headerTabs,
@@ -35,6 +36,7 @@ export function SideRail({
 }: {
   activeId: string;
   activeHeaderTabId: string;
+  badges?: Record<string, ReactNode>;
   brandAction?: SideRailBrandAction;
   expanded: boolean;
   headerTabs: HeaderTabItem[];
@@ -108,6 +110,7 @@ export function SideRail({
       >
         <RailGroup
           activeId={activeId}
+          badges={badges}
           expanded={expanded}
           items={secondaryItems}
           onItemSelect={onItemSelect}
@@ -276,11 +279,13 @@ function HeaderTabRailGroup({
 
 function RailGroup({
   activeId,
+  badges,
   expanded,
   items,
   onItemSelect,
 }: {
   activeId: string;
+  badges?: Record<string, ReactNode>;
   expanded: boolean;
   items: RailMenuItem[];
   onItemSelect?: (item: RailMenuItem) => void;
@@ -300,6 +305,7 @@ function RailGroup({
         return (
           <RailButton
             active={item.id === activeId}
+            badge={badges?.[item.id]}
             expanded={expanded}
             icon={item.icon}
             key={item.id}
@@ -314,6 +320,7 @@ function RailGroup({
 
 function RailButton({
   active,
+  badge,
   expanded,
   icon,
   label,
@@ -321,6 +328,7 @@ function RailButton({
   onClick,
 }: {
   active: boolean;
+  badge?: ReactNode;
   expanded: boolean;
   icon: NavigationIcon;
   label: string;
@@ -345,16 +353,20 @@ function RailButton({
       title={label}
       type="button"
     >
-      <span className="grid size-5 shrink-0 place-items-center">
+      <span className="relative grid size-5 shrink-0 place-items-center">
         <MenuIcon name={icon} />
+        {!expanded && badge ? badge : null}
       </span>
       {expanded ? (
         <span
-          className="min-w-0 truncate text-left text-body-sm font-medium"
+          className="min-w-0 flex-1 truncate text-left text-body-sm font-medium"
           data-side-rail-label=""
         >
           {label}
         </span>
+      ) : null}
+      {expanded && badge ? (
+        <span className="ml-auto shrink-0 flex items-center">{badge}</span>
       ) : null}
     </button>
   );

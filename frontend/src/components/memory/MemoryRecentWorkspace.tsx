@@ -1,5 +1,6 @@
 import { Clock3, FolderOpen, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import clsx from "clsx";
 import type { Translator } from "../../i18n/I18nProvider";
 import { listMemoryRecent } from "../../services/memory";
 import type {
@@ -8,8 +9,9 @@ import type {
   RecentMemorySession,
 } from "../../types/memory";
 import { EmptyState } from "../foundation/EmptyState";
+import { Panel } from "../foundation/Panel";
+import { AppSkeleton } from "../foundation/skeleton";
 import { Button } from "../ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { MarkdownContent } from "../conversations/ConversationMarkdown";
 
 export function MemoryRecentWorkspace({
@@ -51,12 +53,9 @@ export function MemoryRecentWorkspace({
   }, [sessions, t, view]);
 
   if (sessions === null && !error) {
-    return (
-      <div className="grid min-h-0 flex-1 place-items-center text-body-sm text-on-surface-variant">
-        {t("common.loading")}
-      </div>
-    );
+    return <AppSkeleton label={t("common.loading")} layout="list" />;
   }
+
   if (sessions && sessions.length === 0) {
     return (
       <EmptyState
@@ -70,60 +69,87 @@ export function MemoryRecentWorkspace({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      {/* 视图切换与刷新工具栏 */}
       <div className="flex shrink-0 items-center justify-between gap-3">
-        <div className="flex gap-2">
-          <Button
+        <div className="flex rounded-xl border border-theme-control-border bg-theme-control/40 p-0.5">
+          <button
+            className={clsx(
+              "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body-sm font-medium transition-colors",
+              view === "project"
+                ? "bg-surface-elevated text-on-surface shadow-sm"
+                : "text-on-surface-variant hover:text-on-surface",
+            )}
             onClick={() => setView("project")}
-            variant={view === "project" ? "default" : "outline"}
+            type="button"
           >
+            <FolderOpen size={14} />
             {t("memory.recent.projectView")}
-          </Button>
-          <Button
+          </button>
+          <button
+            className={clsx(
+              "flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-body-sm font-medium transition-colors",
+              view === "time"
+                ? "bg-surface-elevated text-on-surface shadow-sm"
+                : "text-on-surface-variant hover:text-on-surface",
+            )}
             onClick={() => setView("time")}
-            variant={view === "time" ? "default" : "outline"}
+            type="button"
           >
+            <Clock3 size={14} />
             {t("memory.recent.timeView")}
-          </Button>
+          </button>
         </div>
+
         <Button
           aria-label={t("memory.recent.refresh")}
           onClick={() => setReloadKey((value) => value + 1)}
+          size="sm"
           variant="outline"
         >
-          <RefreshCw size={15} />
+          <RefreshCw size={14} className="mr-1.5" />
           {t("memory.recent.refresh")}
         </Button>
       </div>
+
       {error ? (
-        <div className="rounded-md border border-status-remove/40 bg-status-remove/10 p-3 text-body-sm text-status-remove">
+        <div className="rounded-xl border border-status-remove/40 bg-status-remove/10 p-3 text-body-sm text-status-remove">
           {error}
         </div>
       ) : null}
+
       <div className="min-h-0 flex-1 overflow-auto pr-1">
         {view === "project"
           ? groups.map(([project, items]) => (
-              <section className="mb-4 grid gap-2" key={project}>
-                <h2 className="flex items-center gap-2 px-1 text-label-caps text-on-surface-variant">
-                  <FolderOpen size={14} />
-                  {project}
-                </h2>
-                {items.map((session) => (
-                  <RecentSessionCard
-                    key={`${session.session.title}:${session.last_activity_at}`}
-                    session={session}
-                    onEventOpen={onEventOpen}
-                    t={t}
-                  />
-                ))}
+              <section className="mb-6 flex flex-col gap-3" key={project}>
+                <div className="flex items-center gap-2 px-1 text-label-md font-semibold text-on-surface">
+                  <span className="grid size-6 place-items-center rounded-md border border-theme-control-border bg-theme-control/60 text-primary">
+                    <FolderOpen size={13} />
+                  </span>
+                  <span>{project}</span>
+                  <span className="text-caption text-on-surface-variant">
+                    ({items.length})
+                  </span>
+                </div>
+                <div className="flex flex-col gap-3">
+                  {items.map((session) => (
+                    <RecentSessionCard
+                      key={`${session.session.title}:${session.last_activity_at}`}
+                      onEventOpen={onEventOpen}
+                      session={session}
+                      t={t}
+                    />
+                  ))}
+                </div>
               </section>
             ))
           : sessions?.map((session) => (
-              <RecentSessionCard
-                key={`${session.session.title}:${session.last_activity_at}`}
-                session={session}
-                onEventOpen={onEventOpen}
-                t={t}
-              />
+              <div className="mb-3" key={`${session.session.title}:${session.last_activity_at}`}>
+                <RecentSessionCard
+                  onEventOpen={onEventOpen}
+                  session={session}
+                  t={t}
+                />
+              </div>
             ))}
       </div>
     </div>
@@ -140,37 +166,58 @@ function RecentSessionCard({
   t: Translator;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{session.session.title}</CardTitle>
-        <div className="text-label-sm text-on-surface-variant">
-          {session.source_agent} · {formatTime(session.last_activity_at)} ·{" "}
-          {session.question_count} {t("memory.recent.questions")}
+    <Panel className="flex flex-col gap-3 p-4" variant="default">
+      <div className="flex items-start justify-between gap-3 border-b border-theme-control-border/60 pb-3">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-title-sm font-semibold text-on-surface">
+            {session.session.title}
+          </h3>
+          <div className="flex flex-wrap items-center gap-2 text-caption text-on-surface-variant">
+            <span className="rounded-md border border-theme-control-border/80 bg-theme-control/40 px-1.5 py-0.5 font-mono text-[11px] text-primary">
+              {session.source_agent}
+            </span>
+            <span>·</span>
+            <span>{formatTime(session.last_activity_at)}</span>
+            <span>·</span>
+            <span>
+              {session.question_count} {t("memory.recent.questions")}
+            </span>
+          </div>
         </div>
-      </CardHeader>
-      <CardContent className="grid gap-2">
+      </div>
+
+      <div className="flex flex-col gap-2">
         {session.recent_events.length ? (
           session.recent_events.map((event) => (
             <button
-              className="grid gap-1 rounded-md border border-theme-card-border px-3 py-2 text-left hover:bg-surface-container-high"
+              className="group flex flex-col gap-1.5 rounded-xl border border-theme-control-border/60 bg-theme-control/20 p-3 text-left transition-all hover:border-theme-control-border hover:bg-theme-control/40"
               key={event.id}
               onClick={() => onEventOpen?.(event)}
               type="button"
             >
-              <span className="text-label-md">{event.title}</span>
-              <MarkdownContent value={event.summary} />
-              <span className="text-label-sm text-on-surface-variant">
-                {event.category} · {formatTime(event.occurred_at)}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-body-sm font-medium text-on-surface transition-colors group-hover:text-primary">
+                  {event.title}
+                </span>
+                <span className="rounded-full border border-theme-control-border/60 bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
+                  {event.category}
+                </span>
+              </div>
+              <div className="line-clamp-2 text-body-sm text-on-surface-variant">
+                <MarkdownContent value={event.summary} />
+              </div>
+              <span className="text-caption text-outline">
+                {formatTime(event.occurred_at)}
               </span>
             </button>
           ))
         ) : (
-          <div className="text-body-sm text-on-surface-variant">
+          <div className="py-2 text-center text-caption text-on-surface-variant">
             {t("memory.recent.noEvents")}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }
 

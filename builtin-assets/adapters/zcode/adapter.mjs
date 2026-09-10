@@ -37,6 +37,20 @@ function fail(error) {
   });
 }
 
+function emitProgress(progress = {}) {
+  emit({
+    type: "progress",
+    progress: {
+      stage: progress.stage ?? "reading",
+      operation: progress.operation ?? "scanning",
+      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+      path: progress.path,
+      current: progress.current,
+      total: progress.total,
+    },
+  });
+}
+
 function compactJson(value) {
   return JSON.stringify(value);
 }
@@ -922,7 +936,18 @@ function run(request) {
   const rows = sessionRows(dbPath, sessionId, maxSessions);
 
   if (method === "list_sessions") {
-    for (const row of rows) {
+    emitProgress({ stage: "reading", operation: "list_sessions" });
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      if (i === 0 || i === rows.length - 1 || (i + 1) % 10 === 0) {
+        emitProgress({
+          stage: "reading",
+          operation: "list_sessions",
+          current: i + 1,
+          total: rows.length,
+          path: String(row.id),
+        });
+      }
       emit({
         type: "item",
         item: {
@@ -946,6 +971,7 @@ function run(request) {
   }
 
   // read_session
+  emitProgress({ stage: "reading", operation: "read_session" });
   const sessions = [];
   for (const row of rows) {
     const turns = loadTurns(dbPath, String(row.id));
@@ -971,7 +997,15 @@ function run(request) {
   }
 
   let turnCount = 0;
-  for (const session of sessions) {
+  for (let i = 0; i < sessions.length; i += 1) {
+    const session = sessions[i];
+    emitProgress({
+      stage: "reading",
+      operation: "read_session",
+      current: i + 1,
+      total: sessions.length,
+      path: session.external_id,
+    });
     turnCount += session.turns.length;
     emit({
       type: "item",

@@ -1146,3 +1146,67 @@ function runSqlite(directory, sql) {
 function sqlString(value) {
   return value.replaceAll("'", "''");
 }
+
+test("Codex adapter emits progress messages during list_sessions and read_session", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-progress-"));
+  try {
+    const rolloutPath = path.join(fixtureRoot, "rollout.jsonl");
+    writeFileSync(
+      rolloutPath,
+      [
+        event("2026-07-27T00:00:00Z", "user", "Hello"),
+        event("2026-07-27T00:00:01Z", "assistant", "World"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT);",
+        `INSERT INTO threads VALUES ('session-1', '${sqlString(rolloutPath)}', 'Fixture', '2026-07-27T00:00:02Z');`,
+      ].join("\n")
+    );
+
+    // 1. list_sessions
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "list_sessions",
+        source: { location: fixtureRoot },
+        params: {},
+      }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const listMessages = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const listProgress = listMessages.filter((msg) => msg.type === "progress");
+    assert.ok(listProgress.length > 0, "should emit progress during list_sessions");
+    assert.equal(listProgress[0].progress.stage, "reading");
+    assert.equal(listProgress[0].progress.operation, "list_sessions");
+
+    // 2. read_session
+    const readResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: {},
+      }),
+    });
+    assert.equal(readResult.status, 0, readResult.stderr);
+    const readMessages = readResult.stdout
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const readProgress = readMessages.filter((msg) => msg.type === "progress");
+    assert.ok(readProgress.length > 0, "should emit progress during read_session");
+    assert.equal(readProgress[0].progress.stage, "reading");
+    assert.equal(readProgress[0].progress.operation, "read_session");
+    assert.equal(readProgress[readProgress.length - 1].progress.current, 1);
+    assert.equal(readProgress[readProgress.length - 1].progress.total, 1);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});

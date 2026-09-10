@@ -1,4 +1,7 @@
 use super::prelude::*;
+use crate::backend::runtime::tasks::{
+    StageStatus, TaskActivity, TaskFailure, TaskOutcome, TaskStage,
+};
 use crate::backend::runtime::{AppError, AppResult};
 
 fn conversation_storage_error(error: AppError) -> AppError {
@@ -357,6 +360,209 @@ impl AppService {
     where
         F: FnMut(usize, usize, Option<String>) + Send,
     {
+        self.sync_conversations_with_control(params, cancellation, None, on_progress)
+            .await
+    }
+
+    async fn sync_single_conversation_source(
+        &self,
+        source: &ConversationSource,
+        params: &ConversationSyncParams,
+        record_kind: Option<crate::backend::dto::ConversationRecordKind>,
+        settings: &Value,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        progress_listener: Option<crate::backend::conversations::ExternalAdapterProgressListener>,
+        on_progress_detail: &mut (dyn FnMut(String) + Send),
+    ) -> AppResult<Option<Value>> {
+        ensure_conversation_sync_not_cancelled(cancellation)?;
+        let adapter = crate::backend::store::load_conversation_adapter_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &source.adapter_id,
+        )
+        .await
+        .map_err(conversation_storage_error)?;
+        if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
+            return Ok(None);
+        }
+        let web_record_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
+        let source_record_kind = if web_record_source {
+            crate::backend::dto::ConversationRecordKind::Web
+        } else {
+            crate::backend::dto::ConversationRecordKind::Session
+        };
+        let adapter_content_hash = adapter
+            .as_ref()
+            .and_then(|adapter| adapter.content_hash.clone());
+        let card_contract_version = adapter
+            .as_ref()
+            .and_then(|adapter| adapter.card_contract_version);
+        let payload_policy_version =
+            crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
+        let known_versions = if params.mode.uses_known_versions() {
+            crate::backend::store::load_conversation_session_versions_sqlx(
+                self.db.pool(),
+                self.tenant_id(),
+                &source.id,
+                source_record_kind,
+                adapter_content_hash.as_deref(),
+                card_contract_version,
+                payload_policy_version,
+            )
+            .await
+            .map_err(conversation_storage_error)?
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        if !params.dry_run && web_record_source {
+            on_progress_detail(format!("{} · 采集网页记录", source.name));
+        }
+        let ready_check = match adapter.as_ref() {
+            Some(adapter) => self
+                .ensure_conversation_adapter_package_runtime_ready(adapter)
+                .await
+                .map_err(|error| AppError::External(error.to_string())),
+            None => Ok(()),
+        };
+        let mut on_read_progress = |done: usize, total: usize| {
+            on_progress_detail(format!("{} · 读取会话 {done}/{total}", source.name));
+        };
+        let read_result = match ready_check {
+            Ok(()) => {
+                if !params.dry_run && web_record_source {
+                    crate::backend::conversations::run_conversation_harvester_with_control(
+                        adapter.as_ref(),
+                        source,
+                        matches!(params.mode, ConversationSyncMode::Full),
+                        settings,
+                        cancellation,
+                    )
+                    .await
+                    .map_err(conversation_external_error)?;
+                }
+                crate::backend::conversations::read_source_sessions_with_progress_listener(
+                    adapter.as_ref(),
+                    source,
+                    &known_versions,
+                    settings,
+                    cancellation,
+                    &mut on_read_progress,
+                    progress_listener,
+                )
+                .await
+                .map_err(conversation_external_error)
+            }
+            Err(error) => Err(error),
+        };
+        ensure_conversation_sync_not_cancelled(cancellation)?;
+        let sync_result = match read_result {
+            Ok(read) if web_record_source => {
+                let pool = self.db.pool();
+                let tenant_id = self.tenant_id();
+                let result = crate::backend::store::import_web_record_sessions_sqlx(
+                    pool,
+                    tenant_id,
+                    source,
+                    &read.sessions,
+                    params.dry_run,
+                )
+                .await
+                .map_err(conversation_storage_error)?;
+                let retained_session_count = persist_successful_conversation_observation(
+                    pool,
+                    tenant_id,
+                    &source.id,
+                    source_record_kind,
+                    &read,
+                    params.dry_run,
+                    adapter_content_hash.as_deref(),
+                    card_contract_version,
+                    payload_policy_version,
+                )
+                .await
+                .map_err(conversation_storage_error)?;
+                Ok(conversation_sync_result_value(
+                    result,
+                    &read,
+                    retained_session_count,
+                    params.mode,
+                ))
+            }
+            Ok(read) => {
+                let pool = self.db.pool();
+                let tenant_id = self.tenant_id();
+                let discovered_external_ids = read.incremental.then(|| {
+                    read.session_descriptors
+                        .iter()
+                        .map(|descriptor| descriptor.external_id.clone())
+                        .collect::<std::collections::BTreeSet<_>>()
+                });
+                let descriptor_versions = {
+                    let mut map = std::collections::BTreeMap::new();
+                    for descriptor in &read.session_descriptors {
+                        map.insert(
+                            descriptor.external_id.clone(),
+                            descriptor.version_token.clone(),
+                        );
+                    }
+                    map
+                };
+                let mut on_import_progress = |done: usize, total: usize| {
+                    on_progress_detail(format!("{} · 写入会话 {done}/{total}", source.name));
+                };
+                let result = crate::backend::store::import_conversation_sessions_advanced_sqlx(
+                    pool,
+                    tenant_id,
+                    source,
+                    &read.sessions,
+                    discovered_external_ids.as_ref(),
+                    Some(&descriptor_versions),
+                    read.session_failures.clone(),
+                    read.session_warnings.clone(),
+                    adapter_content_hash.as_deref(),
+                    card_contract_version,
+                    payload_policy_version,
+                    params.dry_run,
+                    cancellation,
+                    &mut on_import_progress,
+                )
+                .await
+                .map_err(conversation_storage_error)?;
+                let retained_session_count = persist_successful_conversation_observation(
+                    pool,
+                    tenant_id,
+                    &source.id,
+                    source_record_kind,
+                    &read,
+                    params.dry_run,
+                    adapter_content_hash.as_deref(),
+                    card_contract_version,
+                    payload_policy_version,
+                )
+                .await
+                .map_err(conversation_storage_error)?;
+                Ok(conversation_sync_result_value(
+                    result,
+                    &read,
+                    retained_session_count,
+                    params.mode,
+                ))
+            }
+            Err(error) => Err(error),
+        };
+        sync_result.map(Some)
+    }
+
+    pub(crate) async fn sync_conversations_with_control<F>(
+        &self,
+        params: ConversationSyncParams,
+        cancellation: Option<&tokio_util::sync::CancellationToken>,
+        task_id: Option<&str>,
+        on_progress: &mut F,
+    ) -> AppResult<Value>
+    where
+        F: FnMut(usize, usize, Option<String>) + Send,
+    {
         ensure_conversation_sync_not_cancelled(cancellation)?;
         let record_kind = normalize_sync_record_kind(params.record_kind.as_deref())?;
         let settings = self.app_settings_value();
@@ -380,236 +586,266 @@ impl AppService {
             ));
         }
 
-        let total_source_count = sources.len();
-        let mut completed_source_count = 0;
-        on_progress(0, total_source_count, None);
+        let mut adapter_groups: std::collections::BTreeMap<String, Vec<ConversationSource>> =
+            std::collections::BTreeMap::new();
+        for source in sources {
+            adapter_groups
+                .entry(source.adapter_id.clone())
+                .or_default()
+                .push(source);
+        }
+
+        let task_runtime = self.runtime.task_runtime();
+        if let Some(task_id) = task_id {
+            let stages = adapter_groups
+                .keys()
+                .map(|adapter_id| TaskStage {
+                    id: format!("adapter:{adapter_id}"),
+                    name: format!("Adapter: {adapter_id}"),
+                    status: StageStatus::Pending,
+                    started_at: None,
+                    finished_at: None,
+                    duration_ms: None,
+                    progress: None,
+                    current_activities: Vec::new(),
+                    metrics: Vec::new(),
+                    failures: Vec::new(),
+                    skipped: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            let _ = task_runtime.set_stages(task_id, stages);
+        }
+
+        let total_source_count = adapter_groups.values().map(|g| g.len()).sum::<usize>();
+        let completed_source_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let on_progress_mutex = std::sync::Arc::new(tokio::sync::Mutex::new(on_progress));
+        {
+            let mut lock = on_progress_mutex.lock().await;
+            (**lock)(0, total_source_count, None);
+        }
+
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        let mut group_futures = Vec::new();
+
+        for (adapter_id, group_sources) in adapter_groups {
+            let semaphore = semaphore.clone();
+            let completed_source_count = completed_source_count.clone();
+            let on_progress_mutex = on_progress_mutex.clone();
+            let params = &params;
+            let settings = &settings;
+            let cancellation = cancellation;
+            let task_runtime = task_runtime.clone();
+
+            group_futures.push(async move {
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .map_err(|_| AppError::Cancelled("同步并发信号量已关闭".to_string()))?;
+
+                ensure_conversation_sync_not_cancelled(cancellation)?;
+                let stage_id = format!("adapter:{adapter_id}");
+                if let Some(task_id) = task_id {
+                    let _ = task_runtime.update_stage_status(task_id, &stage_id, StageStatus::Running);
+                }
+
+                let mut group_results = Vec::new();
+                let mut group_errors = Vec::new();
+
+                for source in group_sources {
+                    ensure_conversation_sync_not_cancelled(cancellation)?;
+                    let completed = completed_source_count.load(std::sync::atomic::Ordering::Relaxed);
+                    {
+                        let mut lock = on_progress_mutex.lock().await;
+                        (**lock)(completed, total_source_count, Some(source.name.clone()));
+                    }
+
+                    let task_id_string = task_id.map(|s| s.to_string());
+                    let stage_id_clone = stage_id.clone();
+                    let worker_id = format!("{}:{}", adapter_id, source.id);
+                    let worker_id_clone = worker_id.clone();
+                    let progress_task_runtime = task_runtime.clone();
+
+                    let progress_listener: crate::backend::conversations::ExternalAdapterProgressListener =
+                        std::sync::Arc::new(move |progress| {
+                            if let Some(ref tid) = task_id_string {
+                                let activity = TaskActivity {
+                                    stage_id: stage_id_clone.clone(),
+                                    worker_id: progress
+                                        .worker
+                                        .clone()
+                                        .unwrap_or_else(|| worker_id_clone.clone()),
+                                    operation: progress
+                                        .operation
+                                        .clone()
+                                        .unwrap_or_else(|| "processing".to_string()),
+                                    path: progress.path.clone(),
+                                    display_path: None,
+                                    started_at: chrono::Utc::now().to_rfc3339(),
+                                    current: progress.current,
+                                    total: progress.total,
+                                };
+                                let _ = progress_task_runtime.record_activity(tid, activity);
+                            }
+                        });
+
+                    let on_progress_mutex_detail = on_progress_mutex.clone();
+                    let completed_detail = completed_source_count.clone();
+                    let mut on_detail = move |msg: String| {
+                        let completed = completed_detail.load(std::sync::atomic::Ordering::Relaxed);
+                        if let Ok(mut lock) = on_progress_mutex_detail.try_lock() {
+                            (**lock)(completed, total_source_count, Some(msg));
+                        }
+                    };
+
+                    let sync_result = self
+                        .sync_single_conversation_source(
+                            &source,
+                            params,
+                            record_kind,
+                            settings,
+                            cancellation,
+                            Some(progress_listener),
+                            &mut on_detail,
+                        )
+                        .await;
+
+                    if let Some(task_id) = task_id {
+                        let _ = task_runtime.remove_activity(task_id, &stage_id, &worker_id);
+                    }
+
+                    let completed =
+                        completed_source_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    {
+                        let mut lock = on_progress_mutex.lock().await;
+                        (**lock)(completed, total_source_count, None);
+                    }
+
+                    match sync_result {
+                        Ok(Some(result)) => {
+                            if !params.dry_run {
+                                self.runtime.notify_domain_events();
+                            }
+                            group_results.push(result);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            if params.source_id.is_some() {
+                                if let Some(task_id) = task_id {
+                                    let _ = task_runtime.finish_stage(
+                                        task_id,
+                                        &stage_id,
+                                        StageStatus::Failed,
+                                        Vec::new(),
+                                        vec![TaskFailure {
+                                            code: "ADAPTER_SOURCE_ERROR".to_string(),
+                                            message: error.to_string(),
+                                            stage: stage_id.clone(),
+                                            identity: Some(format!("{}:{}", adapter_id, source.id)),
+                                            retryable: false,
+                                            path: None,
+                                            timestamp: chrono::Utc::now().to_rfc3339(),
+                                        }],
+                                        Vec::new(),
+                                    );
+                                }
+                                return Err(error);
+                            }
+                            group_errors.push(json!({
+                                "source_id": source.id,
+                                "adapter_id": source.adapter_id,
+                                "message": error.to_string()
+                            }));
+                        }
+                    }
+                }
+
+                if let Some(task_id) = task_id {
+                    let (status, failures) = if group_errors.is_empty() {
+                        (StageStatus::Succeeded, Vec::new())
+                    } else {
+                        let failures = group_errors
+                            .iter()
+                            .map(|err| TaskFailure {
+                                code: "ADAPTER_SOURCE_ERROR".to_string(),
+                                message: err
+                                    .get("message")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("未知错误")
+                                    .to_string(),
+                                stage: stage_id.clone(),
+                                identity: Some(adapter_id.clone()),
+                                retryable: false,
+                                path: None,
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                            })
+                            .collect::<Vec<_>>();
+                        (StageStatus::Failed, failures)
+                    };
+                    let _ = task_runtime.finish_stage(
+                        task_id,
+                        &stage_id,
+                        status,
+                        Vec::new(),
+                        failures,
+                        Vec::new(),
+                    );
+                }
+
+                Ok((group_results, group_errors))
+            });
+        }
+
+        let group_outcomes = futures::future::join_all(group_futures).await;
         let mut results = Vec::new();
         let mut errors = Vec::new();
-        for source in sources {
-            ensure_conversation_sync_not_cancelled(cancellation)?;
-            on_progress(
-                completed_source_count,
-                total_source_count,
-                Some(source.name.clone()),
-            );
-            let adapter = crate::backend::store::load_conversation_adapter_sqlx(
-                self.db.pool(),
-                self.tenant_id(),
-                &source.adapter_id,
-            )
-            .await
-            .map_err(conversation_storage_error)?;
-            if !sync_source_matches_record_kind(adapter.as_ref(), &source.adapter_id, record_kind) {
-                completed_source_count += 1;
-                on_progress(completed_source_count, total_source_count, None);
-                continue;
-            }
-            let web_record_source = is_web_record_adapter(adapter.as_ref(), &source.adapter_id);
-            let source_record_kind = if web_record_source {
-                crate::backend::dto::ConversationRecordKind::Web
-            } else {
-                crate::backend::dto::ConversationRecordKind::Session
-            };
-            let adapter_content_hash = adapter
-                .as_ref()
-                .and_then(|adapter| adapter.content_hash.clone());
-            let card_contract_version = adapter
-                .as_ref()
-                .and_then(|adapter| adapter.card_contract_version);
-            let payload_policy_version =
-                crate::backend::conversations::CONVERSATION_PAYLOAD_POLICY_VERSION;
-            let known_versions = if params.mode.uses_known_versions() {
-                crate::backend::store::load_conversation_session_versions_sqlx(
-                    self.db.pool(),
-                    self.tenant_id(),
-                    &source.id,
-                    source_record_kind,
-                    adapter_content_hash.as_deref(),
-                    card_contract_version,
-                    payload_policy_version,
-                )
-                .await
-                .map_err(conversation_storage_error)?
-            } else {
-                BTreeMap::new()
-            };
-            if !params.dry_run && web_record_source {
-                on_progress(
-                    completed_source_count,
-                    total_source_count,
-                    Some(format!("{} · 采集网页记录", source.name)),
-                );
-            }
-            let mut on_read_progress = |done, total| {
-                on_progress(
-                    completed_source_count,
-                    total_source_count,
-                    Some(format!("{} · 读取会话 {done}/{total}", source.name,)),
-                );
-            };
-            let ready_check = match adapter.as_ref() {
-                Some(adapter) => self
-                    .ensure_conversation_adapter_package_runtime_ready(adapter)
-                    .await
-                    .map_err(|error| AppError::External(error.to_string())),
-                None => Ok(()),
-            };
-            let read_result = match ready_check {
-                Ok(()) => {
-                    if !params.dry_run && web_record_source {
-                        crate::backend::conversations::run_conversation_harvester_with_control(
-                            adapter.as_ref(),
-                            &source,
-                            matches!(params.mode, ConversationSyncMode::Full),
-                            &settings,
-                            cancellation,
-                        )
-                        .await
-                        .map_err(conversation_external_error)?;
-                    }
-                    crate::backend::conversations::read_source_sessions_with_control(
-                        adapter.as_ref(),
-                        &source,
-                        &known_versions,
-                        &settings,
-                        cancellation,
-                        &mut on_read_progress,
-                    )
-                    .await
-                    .map_err(conversation_external_error)
+
+        for outcome in group_outcomes {
+            match outcome {
+                Ok((group_results, group_errors)) => {
+                    results.extend(group_results);
+                    errors.extend(group_errors);
                 }
-                Err(error) => Err(error),
-            };
-            ensure_conversation_sync_not_cancelled(cancellation)?;
-            let sync_result = match read_result {
-                Ok(read) if web_record_source => {
-                    let pool = self.db.pool();
-                    let tenant_id = self.tenant_id();
-                    let result = crate::backend::store::import_web_record_sessions_sqlx(
-                        pool,
-                        tenant_id,
-                        &source,
-                        &read.sessions,
-                        params.dry_run,
-                    )
-                    .await
-                    .map_err(conversation_storage_error)?;
-                    let retained_session_count = persist_successful_conversation_observation(
-                        pool,
-                        tenant_id,
-                        &source.id,
-                        source_record_kind,
-                        &read,
-                        params.dry_run,
-                        adapter_content_hash.as_deref(),
-                        card_contract_version,
-                        payload_policy_version,
-                    )
-                    .await
-                    .map_err(conversation_storage_error)?;
-                    Ok(conversation_sync_result_value(
-                        result,
-                        &read,
-                        retained_session_count,
-                        params.mode,
-                    ))
-                }
-                Ok(read) => {
-                    let pool = self.db.pool();
-                    let tenant_id = self.tenant_id();
-                    let on_progress = &mut *on_progress;
-                    let discovered_external_ids = read.incremental.then(|| {
-                        read.session_descriptors
-                            .iter()
-                            .map(|descriptor| descriptor.external_id.clone())
-                            .collect::<std::collections::BTreeSet<_>>()
-                    });
-                    let descriptor_versions = {
-                        let mut map = std::collections::BTreeMap::new();
-                        for descriptor in &read.session_descriptors {
-                            map.insert(
-                                descriptor.external_id.clone(),
-                                descriptor.version_token.clone(),
-                            );
-                        }
-                        map
-                    };
-                    let result = crate::backend::store::import_conversation_sessions_advanced_sqlx(
-                        pool,
-                        tenant_id,
-                        &source,
-                        &read.sessions,
-                        discovered_external_ids.as_ref(),
-                        Some(&descriptor_versions),
-                        read.session_failures.clone(),
-                        read.session_warnings.clone(),
-                        adapter_content_hash.as_deref(),
-                        card_contract_version,
-                        payload_policy_version,
-                        params.dry_run,
-                        cancellation,
-                        &mut |done, total| {
-                            on_progress(
-                                completed_source_count,
-                                total_source_count,
-                                Some(format!("{} · 写入会话 {done}/{total}", source.name,)),
-                            )
-                        },
-                    )
-                    .await
-                    .map_err(conversation_storage_error)?;
-                    let retained_session_count = persist_successful_conversation_observation(
-                        pool,
-                        tenant_id,
-                        &source.id,
-                        source_record_kind,
-                        &read,
-                        params.dry_run,
-                        adapter_content_hash.as_deref(),
-                        card_contract_version,
-                        payload_policy_version,
-                    )
-                    .await
-                    .map_err(conversation_storage_error)?;
-                    Ok(conversation_sync_result_value(
-                        result,
-                        &read,
-                        retained_session_count,
-                        params.mode,
-                    ))
-                }
-                Err(error) => Err(error),
-            };
-            let source_error = match sync_result {
-                Ok(result) => {
-                    if !params.dry_run {
-                        self.runtime.notify_domain_events();
-                    }
-                    results.push(result);
-                    None
-                }
-                Err(error) if params.source_id.is_some() => Some(error),
                 Err(error) => {
-                    errors.push(json!({
-                        "source_id": source.id,
-                        "adapter_id": source.adapter_id,
-                        "message": error
-                    }));
-                    None
+                    return Err(error);
                 }
-            };
-            completed_source_count += 1;
-            on_progress(completed_source_count, total_source_count, None);
-            ensure_conversation_sync_not_cancelled(cancellation)?;
-            if let Some(error) = source_error {
-                return Err(error);
             }
         }
+
         if results.is_empty() && errors.is_empty() {
             return Err(AppError::NotFound(
                 "no matching conversation sources".to_string(),
             ));
         }
+
+        if let Some(task_id) = task_id {
+            if !results.is_empty() && errors.is_empty() {
+                let _ = task_runtime.set_outcome(
+                    task_id,
+                    TaskOutcome::Success,
+                    Some(format!("成功同步 {} 个数据源", results.len())),
+                    None,
+                );
+            } else if !results.is_empty() && !errors.is_empty() {
+                let _ = task_runtime.set_outcome(
+                    task_id,
+                    TaskOutcome::PartialSuccess,
+                    Some(format!(
+                        "部分成功：{} 成功，{} 失败",
+                        results.len(),
+                        errors.len()
+                    )),
+                    Some(format!("{} 个数据源同步发生异常", errors.len())),
+                );
+            } else if results.is_empty() && !errors.is_empty() {
+                let _ = task_runtime.set_outcome(
+                    task_id,
+                    TaskOutcome::Failure,
+                    None,
+                    Some(format!("所有数据源同步均失败（共 {} 个）", errors.len())),
+                );
+            }
+        }
+
         if !params.dry_run
             && params.source_id.is_none()
             && params.adapter_id.is_none()

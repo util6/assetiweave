@@ -15,6 +15,7 @@ export type NavigationIcon =
   | "settings"
   | "shield"
   | "sparkles"
+  | "tasks"
   | "users";
 
 export type MenuScope = "global" | "asset-catalog" | "profile" | "settings";

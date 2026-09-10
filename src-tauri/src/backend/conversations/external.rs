@@ -1,5 +1,8 @@
 use super::prelude::*;
 
+pub(crate) type ExternalAdapterProgressListener =
+    std::sync::Arc<dyn Fn(&ExternalAdapterProgress) + Send + Sync + 'static>;
+
 /// One source sync shares runtime discovery/probing, not mutable adapter output.
 /// Revalidate package contents on each call so mid-sync edits still invalidate trust.
 pub(super) struct ExternalAdapterSourceReader<'a> {
@@ -9,6 +12,7 @@ pub(super) struct ExternalAdapterSourceReader<'a> {
     content_hash: String,
     source_value: Value,
     cancellation: Option<&'a tokio_util::sync::CancellationToken>,
+    progress_listener: Option<ExternalAdapterProgressListener>,
 }
 
 impl<'a> ExternalAdapterSourceReader<'a> {
@@ -38,7 +42,16 @@ impl<'a> ExternalAdapterSourceReader<'a> {
             content_hash: validation.content_hash,
             source_value,
             cancellation,
+            progress_listener: None,
         })
+    }
+
+    pub(super) fn with_progress_listener(
+        mut self,
+        progress_listener: Option<ExternalAdapterProgressListener>,
+    ) -> Self {
+        self.progress_listener = progress_listener;
+        self
     }
 
     pub(super) async fn discover(&self) -> AppResult<Option<ExternalAdapterRunResult>> {
@@ -101,6 +114,7 @@ impl<'a> ExternalAdapterSourceReader<'a> {
             }),
             Duration::from_millis(timeout_ms),
             self.cancellation,
+            self.progress_listener.clone(),
         )
         .await
     }
@@ -1139,7 +1153,16 @@ pub(super) async fn run_external_adapter_with_settings(
     settings: &Value,
 ) -> AppResult<ExternalAdapterRunResult> {
     let invocation = prepare_adapter_invocation(validation, settings).await?;
-    run_prepared_adapter(validation, &invocation, method, request, timeout, None).await
+    run_prepared_adapter(
+        validation,
+        &invocation,
+        method,
+        request,
+        timeout,
+        None,
+        None,
+    )
+    .await
 }
 
 async fn prepare_adapter_invocation(
@@ -1176,10 +1199,25 @@ async fn run_prepared_adapter(
     request: Value,
     timeout: Duration,
     cancellation: Option<&tokio_util::sync::CancellationToken>,
+    progress_listener: Option<ExternalAdapterProgressListener>,
 ) -> AppResult<ExternalAdapterRunResult> {
     let manifest = &validation.manifest;
     let request_text = serde_json::to_vec(&request).map_err(AppError::external)?;
-    let output = crate::backend::host_process::run_host_command_async(
+    let line_listener: Option<crate::backend::host_process::HostStdoutLineListener> =
+        progress_listener.map(|cb| {
+            std::sync::Arc::new(move |line: &str| {
+                let trimmed = line.trim();
+                if trimmed.starts_with('{') {
+                    if let Ok(parsed) = serde_json::from_str::<ExternalAdapterLine>(trimmed) {
+                        if parsed.kind == "progress" {
+                            let prog = sanitize_adapter_progress(&parsed);
+                            cb(&prog);
+                        }
+                    }
+                }
+            }) as crate::backend::host_process::HostStdoutLineListener
+        });
+    let output = crate::backend::host_process::run_host_command_async_streaming(
         crate::backend::host_process::HostCommandSpec {
             program: invocation.program.clone(),
             args: invocation.args.clone(),
@@ -1193,6 +1231,7 @@ async fn run_prepared_adapter(
             stderr_limit: 1024 * 1024,
         },
         cancellation,
+        line_listener,
     )
     .await
     .map_err(|error| match error {
@@ -1369,6 +1408,9 @@ fn parse_external_adapter_output_impl(
                         .or(parsed.message)
                         .unwrap_or_else(|| "unknown adapter error".to_string())
                 )));
+            }
+            "progress" => {
+                // Progress lines are valid in the protocol; ignored during final item aggregation.
             }
             other => {
                 return Err(AppError::external(format!(
@@ -1671,4 +1713,40 @@ fn example_session_detail() -> Value {
             }]
         }]
     })
+}
+
+pub(crate) fn sanitize_adapter_progress(line: &ExternalAdapterLine) -> ExternalAdapterProgress {
+    ExternalAdapterProgress {
+        stage: line.stage.as_deref().map(|s| sanitize_progress_text(s, 64)),
+        operation: line
+            .operation
+            .as_deref()
+            .map(|s| sanitize_progress_text(s, 128)),
+        path: line.path.as_deref().map(|s| sanitize_progress_path(s, 512)),
+        current: line.current,
+        total: line.total,
+        worker: line
+            .worker
+            .as_deref()
+            .map(|s| sanitize_progress_text(s, 64)),
+    }
+}
+
+pub(crate) fn sanitize_progress_text(text: &str, max_len: usize) -> String {
+    let sanitized: String = text
+        .chars()
+        .filter(|c| !c.is_control() && *c != '<' && *c != '>')
+        .take(max_len)
+        .collect();
+    sanitized.trim().to_string()
+}
+
+pub(crate) fn sanitize_progress_path(path_str: &str, max_len: usize) -> String {
+    let sanitized: String = path_str
+        .chars()
+        .filter(|c| !c.is_control() && *c != '<' && *c != '>')
+        .take(max_len)
+        .collect();
+    let trimmed = sanitized.trim();
+    trimmed.replace('\\', "/")
 }

@@ -135,6 +135,29 @@ describe("SideRail", () => {
     expect(actionIndex).toBeLessThan(html.indexOf("展开侧边栏"));
     expect(actionIndex).toBeLessThan(html.indexOf('aria-label="技能"'));
   });
+
+  it("renders badge on secondary rail items when provided", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <SideRail
+          activeHeaderTabId="skills"
+          activeId="logs"
+          badges={{
+            logs: <span data-testid="logs-badge">3</span>,
+          }}
+          expanded={true}
+          headerTabs={headerTabs}
+          items={railItems}
+          onExpandedChange={vi.fn()}
+          onHeaderTabSelect={vi.fn()}
+          onItemSelect={vi.fn()}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain('data-testid="logs-badge"');
+    expect(html).toContain(">3<");
+  });
 });
 
 function renderSideRail(

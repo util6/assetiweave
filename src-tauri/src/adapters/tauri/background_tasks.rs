@@ -550,6 +550,7 @@ impl BackgroundTaskRegistry {
             .list(crate::backend::runtime::tasks::TaskFilter {
                 kind: Some(kind),
                 active_only: false,
+                ..Default::default()
             })
             .into_iter()
             .map(|runtime| self.projection_from_runtime(&runtime))
@@ -567,6 +568,7 @@ impl BackgroundTaskRegistry {
                 crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(kind),
                     active_only: false,
+                    ..Default::default()
                 },
             )
             .into_iter()
@@ -2081,6 +2083,7 @@ impl BackgroundTaskRegistry {
             .list(crate::backend::runtime::tasks::TaskFilter {
                 kind: Some(TaskKind::AiExecution),
                 active_only: true,
+                ..Default::default()
             })
             .into_iter()
             .map(|snapshot| snapshot.task_id)
@@ -2131,6 +2134,7 @@ impl BackgroundTaskRegistry {
             .list(crate::backend::runtime::tasks::TaskFilter {
                 kind: Some(TaskKind::AiExecution),
                 active_only: true,
+                ..Default::default()
             })
             .len())
     }
@@ -2834,6 +2838,7 @@ mod tests {
                 .list(crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
                     active_only: true,
+                    ..Default::default()
                 })
                 .len(),
             2
@@ -2846,6 +2851,7 @@ mod tests {
                 .list(crate::backend::runtime::tasks::TaskFilter {
                     kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
                     active_only: true,
+                    ..Default::default()
                 })
                 .is_empty()
             {
@@ -2857,6 +2863,7 @@ mod tests {
             .list(crate::backend::runtime::tasks::TaskFilter {
                 kind: Some(crate::backend::runtime::tasks::TaskKind::ExtensionLifecycle),
                 active_only: true,
+                ..Default::default()
             })
             .is_empty());
 
@@ -3312,9 +3319,9 @@ mod tests {
         registry
             .finish_ai_execution(&task.id, Ok(ai_result("done")))
             .unwrap();
-        registry
-            .task_runtime()
-            .unwrap()
+        let runtime = registry.task_runtime().unwrap();
+        runtime.set_user_visible_for_test(&task.id, false).unwrap();
+        runtime
             .set_finished_at_for_test(
                 &task.id,
                 (Utc::now()
@@ -3331,12 +3338,12 @@ mod tests {
     }
 
     #[test]
-    fn task_11_12_count_retention_keeps_100_terminal_tasks_and_all_running_tasks() {
+    fn task_11_12_count_retention_keeps_50_terminal_tasks_and_all_running_tasks() {
         let registry = BackgroundTaskRegistry::default();
         let (running, _) = registry
             .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
             .unwrap();
-        for index in 0..101 {
+        for index in 0..51 {
             let (task, _) = registry
                 .begin_ai_execution(AiExecutionPurpose::Translation, &opencode_id())
                 .unwrap();
@@ -3351,7 +3358,7 @@ mod tests {
                 .iter()
                 .filter(|snapshot| snapshot.state.is_terminal())
                 .count(),
-            100
+            crate::backend::runtime::tasks::TASK_TERMINAL_LIMIT
         );
         assert!(snapshots.iter().any(|snapshot| snapshot.id == running.id));
     }

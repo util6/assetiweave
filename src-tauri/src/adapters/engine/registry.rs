@@ -4672,6 +4672,73 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         &[],
         None
     ),
+    command!(
+        "list_public_tasks",
+        "task.list",
+        "List background tasks",
+        Read,
+        App,
+        false,
+        crate::backend::dto::TaskListParams,
+        Service => |service, params| service.list_public_tasks(params),
+        &[
+            param!("tenant_id", "Tenant identifier", ["tenantId"]),
+            param!("all_tenants", "Include all tenants", ["allTenants"]),
+            param!("active_only", "Only active tasks", ["activeOnly"]),
+        ],
+        None
+    ),
+    command!(
+        "get_public_task",
+        "task.get",
+        "Get one background task by ID",
+        Read,
+        App,
+        false,
+        crate::backend::dto::TaskGetParams,
+        Service => |service, params| service.get_public_task(params),
+        &[param!("task_id", "Task identifier", ["taskId"])],
+        None
+    ),
+    command!(
+        "cancel_public_task",
+        "task.cancel",
+        "Cancel one active background task",
+        Write,
+        App,
+        false,
+        crate::backend::dto::TaskCancelParams,
+        Service => |service, params| service.cancel_public_task(params),
+        &[param!("task_id", "Task identifier", ["taskId"])],
+        None
+    ),
+    command!(
+        "retry_public_task",
+        "task.retry",
+        "Retry one failed background task",
+        Write,
+        App,
+        false,
+        crate::backend::dto::TaskRetryParams,
+        ServiceAsync => |service, params| service.retry_public_task(params).await,
+        &[param!("task_id", "Task identifier", ["taskId"])],
+        None
+    ),
+    command!(
+        "clear_terminal_tasks",
+        "task.clear",
+        "Clear terminal background tasks",
+        Write,
+        App,
+        false,
+        crate::backend::dto::TaskClearParams,
+        Service => |service, params| service.clear_terminal_tasks(params),
+        &[
+            param!("tenant_id", "Tenant identifier", ["tenantId"]),
+            param!("task_id", "Task identifier", ["taskId"]),
+        ],
+        None
+    ),
 ];
 
 pub(crate) fn command_specs() -> &'static [CommandSpec] {
