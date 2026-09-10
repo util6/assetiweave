@@ -13,6 +13,27 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { TeamPage } from "./TeamPage";
 
+const storageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => {
+      store[key] = String(value);
+    },
+    removeItem: (key: string) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    },
+  };
+})();
+
+Object.defineProperty(window, "localStorage", {
+  value: storageMock,
+  writable: true,
+});
+
 beforeAll(() => {
   window.HTMLElement.prototype.hasPointerCapture = vi.fn();
   window.HTMLElement.prototype.setPointerCapture = vi.fn();
@@ -199,8 +220,14 @@ describe("TeamPage", () => {
     draftTeamMock.mockReset();
     reviewTeamRunMock.mockReset();
     confirmTeamRunMock.mockReset();
-    getTeamRunMock.mockReset().mockResolvedValue(null);
     getLatestTeamRunMock.mockResolvedValue(null);
+    getTeamRunMock.mockResolvedValue(null);
+    try {
+      window.localStorage?.setItem(
+        "assetiweave:team-view-mode:team-1",
+        "single",
+      );
+    } catch {}
   });
 
   afterEach(() => {

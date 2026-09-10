@@ -165,4 +165,7 @@ export const teamEn = {
   "team.chat.item.noText": "This activity has no body to display.",
   "team.task.global": "Team background task running",
   "team.task.active": "Working",
+  "team.view.label": "View",
+  "team.view.parallel": "Parallel",
+  "team.view.single": "Single",
 } as const;

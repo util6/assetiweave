@@ -156,4 +156,7 @@ export const teamZh = {
   "team.chat.item.noText": "该活动没有可显示正文。",
   "team.task.global": "Team 后台任务运行中",
   "team.task.active": "处理中",
+  "team.view.label": "视图",
+  "team.view.parallel": "并行",
+  "team.view.single": "单聊",
 } as const;

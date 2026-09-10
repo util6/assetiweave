@@ -148,7 +148,7 @@ describe("TeamWorkspaceShell", () => {
       task: { ...memberProjection("first").task!, state: "Succeeded" },
     };
     renderShell();
-    const composer = screen.getByLabelText("Message content");
+    const composer = screen.getAllByLabelText("Message content")[0];
     fireEvent.change(composer, { target: { value: "Keyboard message" } });
     fireEvent.keyDown(composer, { ctrlKey: true, key: "Enter" });
 
