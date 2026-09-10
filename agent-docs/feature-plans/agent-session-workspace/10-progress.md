@@ -20,8 +20,8 @@
 | T04 | — | verified | c8a8604d | G-04, G-06, G-10, G-11 | AionUi 风格单聊 Header/Composer/自动滚动与状态机 |
 | T05 | — | verified | d182f26c | G-01, G-05, G-07, G-11 | 补齐终端与命令结果展示、ANSI过滤、退出码与截断 |
 | T06 | — | verified | b06cdea1 | G-05, G-07, G-10, G-11 | 补齐文件、Diff、图片与 Artifact 展示 |
-| T07 | — | ready | — | — | frontier；等待执行（已解阻） |
-| T08 | — | blocked | — | — | blocked by T07 |
+| T07 | — | verified | 865f4942 | G-06, G-08, G-10, G-11 | 实现 Team 多成员 Parallel / Single 工作区 |
+| T08 | — | ready | — | — | frontier；等待执行（已解阻） |
 | T09 | — | ready | — | — | frontier；可并行（#33 基线已满足） |
 | T10 | — | blocked | — | — | blocked by T09 |
 | T11 | — | blocked | — | — | blocked by T08 + T10 |
