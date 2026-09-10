@@ -7,7 +7,7 @@
 - Parent Issue：#31
 - Related：#20、#33
 - Phase：Specification ready
-- Initial frontier: T10
+- Initial frontier: T11
 - 外部前置条件：Issue #33 Task View/Memory Stage 基线已由 `dcb0fcbf` 满足
 
 ## Ticket Progress
@@ -23,8 +23,8 @@
 | T07 | — | verified | 865f4942 | G-06, G-08, G-10, G-11 | 实现 Team 多成员 Parallel / Single 工作区 |
 | T08 | — | verified | eb12d537 | G-06, G-08, G-11 | 迁移 Team Plan、Task 与成员运行操作 |
 | T09 | — | verified | 90e46823 | G-02, G-03, G-04, G-05, G-09, G-11 | 接入 Session Memory 只读执行现场与 Task Center 观察者 |
-| T10 | — | ready | — | — | frontier；解阻，可执行 |
-| T11 | — | blocked | — | — | blocked by T08 + T10 (等待 T10) |
+| T10 | — | verified | 0fbd8e93 | G-02, G-03, G-04, G-05, G-09, G-11 | 接入 Project/Global/Recall 只读执行现场与 unavailable |
+| T11 | — | ready | — | — | frontier；解阻，可执行 |
 | T12 | — | blocked | — | — | blocked by T05/T06/T08/T10/T11 |
 
 ## Checkpoints
@@ -33,7 +33,7 @@
 |---|---|---|
 | CP-1 Shared Contract | verified | T01–T03 Canonical Fixture、全量 155 前端测试与 949 Rust 测试全部通过 |
 | CP-2 Chat + Team | verified | T04, T07, T08 验证完成，前台构建与 161 前端测试、949 Rust 测试全绿 |
-| CP-3 Memory Observer | pending | — |
+| CP-3 Memory Observer | verified | T09, T10 完成，全量 162 前端测试与 953 Rust 测试全绿 |
 | CP-4 Final | pending | — |
 
 ## 更新规则
