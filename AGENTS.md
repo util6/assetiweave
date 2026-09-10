@@ -69,3 +69,4 @@
 - **Memory 架构重写 (Issue #20)**：涉及 Recent Work、Session/Project/Global Memory、Context Resolver、Recall Agent 或旧版 Memory 切换时，先读取 `agent-docs/feature-plans/memory-rewrite/00-execution-router.md`。
 - **后端基础设施收口 (Issue #24)**：涉及 Database Runtime、Event Dispatcher、HostProcess、后端 Settings、tracing、路径契约或 SQLx row 收口时，先读取 `agent-docs/feature-plans/backend-infrastructure-convergence-v2/00-execution-router.md`。
 - **统一任务中心与并发同步 (Issue #33)**：涉及 Task Center、TaskRuntime 阶段/活动/保留、Conversation Adapter 分组并发、Adapter 结构化进度、气泡通知或任务设置时，先读取 `agent-docs/feature-plans/task-center-and-sync/00-execution-router.md`。
+- **共享 Agent Session 与 AionUi 聊天工作区 (Issue #31)**：涉及 Agent Session View、Team 聊天/并行成员、Thinking/Tool Steps、Memory Agent 执行现场或旧 Team Session 呈现收缩时，先读取 `agent-docs/feature-plans/agent-session-workspace/00-execution-router.md`。
