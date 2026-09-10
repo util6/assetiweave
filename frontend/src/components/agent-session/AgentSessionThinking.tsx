@@ -50,7 +50,7 @@ export function AgentSessionThinking({
             <Sparkles size={14} />
           )}
         </span>
-        <span className="truncate font-medium">{title}</span>
+        <span className="truncate font-medium">{item.status || title}</span>
         <span className="text-caption text-outline">{item.state}</span>
         {!isProcessingOnly ? (
           <span className="ml-auto text-outline">

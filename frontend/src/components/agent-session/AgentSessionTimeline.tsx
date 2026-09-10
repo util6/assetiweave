@@ -48,7 +48,9 @@ export function AgentSessionTimeline({
 
   return (
     <div
+      aria-atomic="false"
       aria-label={ariaLabel || t("agentSession.timeline") || t("team.chat.sessionArea")}
+      aria-live="polite"
       className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
       data-testid={`${testIdPrefix}-timeline`}
       id={`${testIdPrefix}-session-timeline`}
@@ -105,13 +107,20 @@ export function AgentSessionTimeline({
       ) : (
         <EmptyState
           className="min-h-56 border-0 bg-transparent shadow-none"
+          data-testid={`${testIdPrefix}-empty-state`}
           description={
             emptyDescription ||
             t("agentSession.emptyDescription") ||
-            t("team.chat.emptyTitle")
+            t("team.chat.emptyDescription") ||
+            "This session has not recorded any activity."
           }
           icon={emptyIcon || <MessageSquare size={21} />}
-          title={emptyTitle || t("agentSession.emptyTitle") || t("team.chat.emptyTitle")}
+          title={
+            emptyTitle ||
+            t("agentSession.emptyTitle") ||
+            t("team.chat.emptyTitle") ||
+            "No activity yet"
+          }
         />
       )}
     </div>
