@@ -33,6 +33,9 @@ export interface AdaptTeamSessionOptions {
   activityDependencyKey?: string;
   sessionResetKey?: string;
   testIdPrefix?: string;
+  onStop?: () => void | Promise<void>;
+  isExecuting?: boolean;
+  model?: string | null;
 }
 
 export function mapSessionItemSnapshotToView(
@@ -71,8 +74,11 @@ export function adaptTeamSessionToWorkspaceProps({
   composerExtra,
   disabled = false,
   draft,
+  isExecuting,
+  model,
   onDraftChange,
   onSend,
+  onStop,
   placeholder,
   restoreStatus,
   roleLabelText,
@@ -85,17 +91,21 @@ export function adaptTeamSessionToWorkspaceProps({
   const capabilities: AgentSessionCapabilities = {
     ...DEFAULT_INTERACTIVE_CAPABILITIES,
     send: Boolean(activeMember),
+    stop: Boolean(activeMember && onStop),
   };
 
   return {
     capabilities,
     items: activeTimelineItems.map(mapSessionItemSnapshotToView),
     recipientTitle: roleLabelText,
+    model,
     status,
     restoreState: restoreStatus,
     draft,
     onDraftChange,
     onSend,
+    onStop,
+    isExecuting,
     canSend,
     disabled,
     placeholder,

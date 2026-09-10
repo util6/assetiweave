@@ -32,4 +32,11 @@ export const agentSessionEn = {
   "agentSession.truncatedDetail": "Retained {{retained}} of {{original}} bytes",
   "agentSession.source.memory": "Memory Agent Input",
   "agentSession.thinking.title": "Thinking Process",
+  "agentSession.stop": "Stop",
+  "agentSession.interrupt": "Interrupt",
+  "agentSession.queue": "Queue",
+  "agentSession.readOnly": "Read-only Execution",
+  "agentSession.model": "Model",
+  "agentSession.unavailableTitle": "Execution Unavailable",
+  "agentSession.unavailableDescription": "No execution context is available in the current process.",
 };

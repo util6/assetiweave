@@ -1,46 +1,94 @@
-import { Send } from "lucide-react";
+import { Hand, Send, Square } from "lucide-react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useI18n } from "../../i18n/I18nProvider";
+import type { AgentSessionCapabilities } from "../../types/agentSession";
 import { Button } from "../ui/button";
 
 export interface AgentSessionComposerProps {
   draft?: string;
   onDraftChange?: (draft: string) => void;
   onSubmit?: () => void | Promise<void>;
+  onStop?: () => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
+  onQueue?: (message: string) => void | Promise<void>;
   disabled?: boolean;
   canSend?: boolean;
+  isExecuting?: boolean;
+  capabilities?: AgentSessionCapabilities;
   placeholder?: string;
   recipientTitle?: ReactNode;
   composerExtra?: ReactNode;
   statusLabel?: ReactNode;
   submitLabel?: string;
+  stopLabel?: string;
+  interruptLabel?: string;
+  queueLabel?: string;
   testIdPrefix?: string;
 }
 
 export function AgentSessionComposer({
   canSend = true,
+  capabilities,
   composerExtra,
   disabled = false,
   draft = "",
+  interruptLabel,
+  isExecuting = false,
   onDraftChange,
+  onInterrupt,
+  onQueue,
+  onStop,
   onSubmit,
   placeholder,
+  queueLabel,
   recipientTitle,
   statusLabel,
+  stopLabel,
   submitLabel,
   testIdPrefix = "agent-session",
 }: AgentSessionComposerProps) {
   const { t } = useI18n();
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    void onSubmit?.();
+  const isStopMode = Boolean(isExecuting && capabilities?.stop);
+  const isInterruptMode = Boolean(
+    isExecuting && !capabilities?.stop && capabilities?.interrupt,
+  );
+  const isQueueMode = Boolean(
+    isExecuting && !capabilities?.stop && capabilities?.queue,
+  );
+
+  const handleSubmit = (event?: FormEvent) => {
+    event?.preventDefault();
+    if (isStopMode) {
+      void onStop?.();
+      return;
+    }
+    if (isInterruptMode) {
+      void onInterrupt?.();
+      return;
+    }
+    if (isQueueMode) {
+      if (draft.trim()) {
+        void onQueue?.(draft.trim());
+      }
+      return;
+    }
+    if (canSend && !disabled && draft.trim()) {
+      void onSubmit?.();
+    }
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    const isComposing =
+      event.nativeEvent.isComposing ||
+      Boolean((event as unknown as { isComposing?: boolean }).isComposing);
+    if (isComposing) {
+      return;
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      void onSubmit?.();
+      handleSubmit(event);
     }
   };
 
@@ -89,17 +137,60 @@ export function AgentSessionComposer({
           rows={2}
           value={draft}
         />
-        <Button
-          aria-label={
-            submitLabel || t("agentSession.send") || t("team.chat.send")
-          }
-          disabled={!canSend || disabled}
-          size="sm"
-          type="submit"
-        >
-          <Send size={14} />
-          {submitLabel || t("agentSession.send") || t("team.chat.send")}
-        </Button>
+        {isStopMode ? (
+          <Button
+            aria-label={stopLabel || t("agentSession.stop")}
+            data-testid={`${testIdPrefix}-stop`}
+            disabled={disabled}
+            onClick={() => void onStop?.()}
+            size="sm"
+            type="button"
+            variant="destructive"
+          >
+            <Square size={14} />
+            {stopLabel || t("agentSession.stop")}
+          </Button>
+        ) : isInterruptMode ? (
+          <Button
+            aria-label={interruptLabel || t("agentSession.interrupt")}
+            data-testid={`${testIdPrefix}-interrupt`}
+            disabled={disabled}
+            onClick={() => void onInterrupt?.()}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            <Hand size={14} />
+            {interruptLabel || t("agentSession.interrupt")}
+          </Button>
+        ) : isQueueMode ? (
+          <Button
+            aria-label={queueLabel || t("agentSession.queue")}
+            data-testid={`${testIdPrefix}-queue`}
+            disabled={!draft.trim() || disabled}
+            onClick={() => {
+              if (draft.trim()) void onQueue?.(draft.trim());
+            }}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {queueLabel || t("agentSession.queue")}
+          </Button>
+        ) : (
+          <Button
+            aria-label={
+              submitLabel || t("agentSession.send") || t("team.chat.send")
+            }
+            data-testid={`${testIdPrefix}-send`}
+            disabled={!canSend || disabled || !draft.trim()}
+            size="sm"
+            type="submit"
+          >
+            <Send size={14} />
+            {submitLabel || t("agentSession.send") || t("team.chat.send")}
+          </Button>
+        )}
       </form>
     </section>
   );

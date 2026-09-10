@@ -136,17 +136,23 @@ export interface AgentSessionWorkspaceProps {
   capabilities: AgentSessionCapabilities;
   items: AgentSessionItemView[];
   recipientTitle?: ReactNode;
+  model?: string | null;
   status?: AgentSessionStatus;
   restoreState?: AgentSessionRestoreStateInfo | null;
   draft?: string;
   disabled?: boolean;
   canSend?: boolean;
+  isExecuting?: boolean;
   placeholder?: string;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyIcon?: ReactNode;
   submitLabel?: string;
+  stopLabel?: string;
   onSend?: (message: string) => void | Promise<void>;
+  onStop?: () => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
+  onQueue?: (message: string) => void | Promise<void>;
   onDraftChange?: (draft: string) => void;
   headerActions?: ReactNode;
   composerExtra?: ReactNode;
@@ -155,4 +161,7 @@ export interface AgentSessionWorkspaceProps {
   sessionResetKey?: string;
   testIdPrefix?: string;
   className?: string;
+  unavailable?: boolean;
+  unavailableDescription?: string;
+  isReadOnly?: boolean;
 }

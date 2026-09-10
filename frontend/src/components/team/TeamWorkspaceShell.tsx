@@ -463,7 +463,9 @@ export function TeamWorkspaceShell({
                 activeMemberSending ||
                 (composerMode === "task" && taskModeBusy),
               draft: activeDraft,
+              isExecuting: isActiveTask(activeSession?.task),
               isLeader,
+              model: activeMember?.agent_id ?? null,
               onDraftChange: (value) => {
                 if (!activeMember) return;
                 setDrafts((current) => ({
@@ -472,6 +474,14 @@ export function TeamWorkspaceShell({
                 }));
               },
               onSend: submitComposer,
+              onStop:
+                activeMember && activeSession?.execution_id
+                  ? async () => {
+                      const executionId = activeSession.execution_id;
+                      if (!executionId) return;
+                      await session.cancelTurn(activeMember.id, executionId);
+                    }
+                  : undefined,
               placeholder:
                 composerMode === "task"
                   ? t("team.chat.taskPlaceholder")

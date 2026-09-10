@@ -17,10 +17,10 @@
 | T01 | — | verified | 72c856e3 | G-00, G-04, G-11 | 抽取共享 Agent Session 兼容工作区 |
 | T02 | — | verified | 12f8cd3 | G-01, G-04, G-05, G-11 | 打通一条完整 Tool Step |
 | T03 | — | verified | 9a3eb4cd | G-01, G-02, G-04, G-05, G-11 | 完整 Turn/Thinking/View Steps 还原与冲突单调性 |
-| T04 | — | ready | — | — | frontier；等待执行 |
+| T04 | — | verified | c8a8604d | G-04, G-06, G-10, G-11 | AionUi 风格单聊 Header/Composer/自动滚动与状态机 |
 | T05 | — | ready | — | — | frontier；可并行 |
 | T06 | — | ready | — | — | frontier；可并行 |
-| T07 | — | blocked | — | — | blocked by T04 |
+| T07 | — | ready | — | — | frontier；等待执行（已解阻） |
 | T08 | — | blocked | — | — | blocked by T07 |
 | T09 | — | ready | — | — | frontier；可并行（#33 基线已满足） |
 | T10 | — | blocked | — | — | blocked by T09 |

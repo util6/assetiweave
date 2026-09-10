@@ -32,4 +32,11 @@ export const agentSessionZh = {
   "agentSession.truncatedDetail": "保留 {{retained}} / 原始 {{original}} 字节",
   "agentSession.source.memory": "Memory Agent 输入",
   "agentSession.thinking.title": "思考过程",
+  "agentSession.stop": "停止",
+  "agentSession.interrupt": "打断",
+  "agentSession.queue": "排队",
+  "agentSession.readOnly": "只读执行现场",
+  "agentSession.model": "模型",
+  "agentSession.unavailableTitle": "执行现场不可用",
+  "agentSession.unavailableDescription": "当前进程没有可用执行现场。",
 };

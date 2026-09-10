@@ -239,4 +239,159 @@ describe("AgentSessionWorkspace", () => {
     expect(screen.getAllByText("succeeded").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/"status":\s*200/)).toBeTruthy();
   });
+
+  it("handles keyboard events correctly: Enter sends, Shift+Enter keeps draft, IME composing does not send", () => {
+    const onSend = vi.fn();
+    render(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={DEFAULT_INTERACTIVE_CAPABILITIES}
+          draft="Line one"
+          items={[]}
+          onSend={onSend}
+        />
+      </I18nProvider>,
+    );
+
+    const textarea = screen.getByLabelText("Message content");
+
+    // 1. Shift+Enter should NOT send
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+
+    // 2. IME composing Enter should NOT send
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false, isComposing: true });
+    expect(onSend).not.toHaveBeenCalled();
+
+    // 3. Plain Enter should send
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false, isComposing: false });
+    expect(onSend).toHaveBeenCalledWith("Line one");
+  });
+
+  it("switches main composer action between Send, Stop, Interrupt, and Queue based on running capabilities", () => {
+    const onSend = vi.fn();
+    const onStop = vi.fn();
+    const onInterrupt = vi.fn();
+    const onQueue = vi.fn();
+
+    const { rerender } = render(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={{ ...DEFAULT_INTERACTIVE_CAPABILITIES, stop: true }}
+          draft="Some task"
+          isExecuting={false}
+          items={[]}
+          onSend={onSend}
+          onStop={onStop}
+        />
+      </I18nProvider>,
+    );
+
+    // Idle -> Send button
+    expect(screen.getByTestId("agent-session-send")).toBeTruthy();
+
+    // Running with stop capability -> Stop button
+    rerender(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={{ ...DEFAULT_INTERACTIVE_CAPABILITIES, stop: true }}
+          draft="Some task"
+          isExecuting={true}
+          items={[]}
+          onSend={onSend}
+          onStop={onStop}
+        />
+      </I18nProvider>,
+    );
+    const stopButton = screen.getByTestId("agent-session-stop");
+    expect(stopButton).toBeTruthy();
+    fireEvent.click(stopButton);
+    expect(onStop).toHaveBeenCalled();
+
+    // Running with interrupt capability (stop=false) -> Interrupt button
+    rerender(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={{
+            ...DEFAULT_INTERACTIVE_CAPABILITIES,
+            stop: false,
+            interrupt: true,
+          }}
+          draft="Some task"
+          isExecuting={true}
+          items={[]}
+          onInterrupt={onInterrupt}
+        />
+      </I18nProvider>,
+    );
+    const interruptButton = screen.getByTestId("agent-session-interrupt");
+    expect(interruptButton).toBeTruthy();
+    fireEvent.click(interruptButton);
+    expect(onInterrupt).toHaveBeenCalled();
+
+    // Running with queue capability (stop=false, interrupt=false) -> Queue button
+    rerender(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={{
+            ...DEFAULT_INTERACTIVE_CAPABILITIES,
+            stop: false,
+            interrupt: false,
+            queue: true,
+          }}
+          draft="Queued instruction"
+          isExecuting={true}
+          items={[]}
+          onQueue={onQueue}
+        />
+      </I18nProvider>,
+    );
+    const queueButton = screen.getByTestId("agent-session-queue");
+    expect(queueButton).toBeTruthy();
+    fireEvent.click(queueButton);
+    expect(onQueue).toHaveBeenCalledWith("Queued instruction");
+  });
+
+  it("renders header with model pill and read-only indicator in observer mode", () => {
+    render(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={DEFAULT_OBSERVER_CAPABILITIES}
+          items={[]}
+          model="claude-3-7-sonnet"
+          recipientTitle="Reviewer"
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTestId("agent-session-header-model").textContent).toBe(
+      "claude-3-7-sonnet",
+    );
+    expect(screen.getByTestId("agent-session-header-readonly")).toBeTruthy();
+    expect(screen.queryByTestId("agent-session-composer")).toBeNull();
+  });
+
+  it("renders unavailable state gracefully while maintaining header context", () => {
+    render(
+      <I18nProvider>
+        <AgentSessionWorkspace
+          capabilities={DEFAULT_OBSERVER_CAPABILITIES}
+          items={[]}
+          model="gpt-4o"
+          recipientTitle="Worker Agent"
+          unavailable={true}
+        />
+      </I18nProvider>,
+    );
+
+    expect(screen.getByTestId("agent-session-active-recipient").textContent).toBe(
+      "Worker Agent",
+    );
+    expect(screen.getByTestId("agent-session-header-model").textContent).toBe(
+      "gpt-4o",
+    );
+    expect(screen.getByTestId("agent-session-unavailable")).toBeTruthy();
+    expect(screen.queryByTestId("agent-session-timeline")).toBeNull();
+    expect(screen.queryByTestId("agent-session-composer")).toBeNull();
+  });
 });
