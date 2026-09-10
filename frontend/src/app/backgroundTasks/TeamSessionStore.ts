@@ -339,13 +339,9 @@ function mergeSessionItems(
   incoming: SessionItemSnapshot[],
 ): SessionItemSnapshot[] {
   const byIdentity = new Map(
-    current.map((item) => {
-      const normalized = sanitizeSessionItem(item);
-      return [itemIdentity(normalized), normalized];
-    }),
+    current.map((item) => [itemIdentity(item), item]),
   );
-  for (const rawItem of incoming) {
-    const item = sanitizeSessionItem(rawItem);
+  for (const item of incoming) {
     const key = itemIdentity(item);
     const previous = byIdentity.get(key);
     if (!previous || shouldReplaceItem(previous, item)) {
@@ -355,10 +351,6 @@ function mergeSessionItems(
   return [...byIdentity.values()]
     .sort(compareItems)
     .slice(-MAX_TEAM_SESSION_ITEMS);
-}
-
-function sanitizeSessionItem(item: SessionItemSnapshot): SessionItemSnapshot {
-  return item;
 }
 
 function boundedSessionSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
