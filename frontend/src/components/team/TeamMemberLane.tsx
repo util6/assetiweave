@@ -23,6 +23,8 @@ export interface TeamMemberLaneProps {
   onDraftChange: (value: string) => void;
   onSend: (message: string) => void | Promise<void>;
   onStop?: () => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
+  onQueue?: (message: string) => void | Promise<void>;
   isLeader: boolean;
   canSend: boolean;
   disabled?: boolean;
@@ -74,7 +76,9 @@ export function TeamMemberLane({
   onConfirmRun,
   onDraftChange,
   onFocusSingle,
+  onInterrupt,
   onMoveTask,
+  onQueue,
   onReview,
   onSend,
   onStop,
@@ -181,6 +185,8 @@ export function TeamMemberLane({
           isLeader,
           model: member.agent_id,
           onDraftChange,
+          onInterrupt,
+          onQueue,
           onSend,
           onStop,
           placeholder,

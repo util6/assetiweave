@@ -34,6 +34,8 @@ export interface AdaptTeamSessionOptions {
   sessionResetKey?: string;
   testIdPrefix?: string;
   onStop?: () => void | Promise<void>;
+  onInterrupt?: () => void | Promise<void>;
+  onQueue?: (message: string) => void | Promise<void>;
   isExecuting?: boolean;
   model?: string | null;
 }
@@ -77,6 +79,8 @@ export function adaptTeamSessionToWorkspaceProps({
   isExecuting,
   model,
   onDraftChange,
+  onInterrupt,
+  onQueue,
   onSend,
   onStop,
   placeholder,
@@ -92,6 +96,8 @@ export function adaptTeamSessionToWorkspaceProps({
     ...DEFAULT_INTERACTIVE_CAPABILITIES,
     send: Boolean(activeMember),
     stop: Boolean(activeMember && onStop),
+    interrupt: Boolean(activeMember && onInterrupt),
+    queue: Boolean(activeMember && onQueue),
   };
 
   return {
@@ -103,6 +109,8 @@ export function adaptTeamSessionToWorkspaceProps({
     restoreState: restoreStatus,
     draft,
     onDraftChange,
+    onInterrupt,
+    onQueue,
     onSend,
     onStop,
     isExecuting,

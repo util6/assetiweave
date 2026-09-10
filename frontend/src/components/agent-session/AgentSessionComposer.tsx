@@ -126,7 +126,7 @@ export function AgentSessionComposer({
             t("agentSession.composerInput") || t("team.chat.composerInput")
           }
           className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
-          disabled={disabled}
+          disabled={disabled || (isExecuting && !capabilities?.queue)}
           onChange={(e) => onDraftChange?.(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={

@@ -248,7 +248,6 @@ export function TeamWorkspaceShell({
     const memberSending = memberMessages.some((m) => m.state === "sending");
     const isMemberLeader = member.role === "leader";
     const memberDisabled =
-      memberBusy ||
       memberSending ||
       (isMemberLeader && composerMode === "task" && taskModeBusy);
     const memberCanSend = Boolean(
@@ -367,6 +366,15 @@ export function TeamWorkspaceShell({
           onMoveTask={onMoveTask}
           onReview={onReview}
           onSend={() => submitComposerForMember(member)}
+          onInterrupt={
+            memberSession?.execution_id
+              ? async () => {
+                  const executionId = memberSession.execution_id;
+                  if (!executionId) return;
+                  await session.cancelTurn(member.id, executionId);
+                }
+              : undefined
+          }
           onStop={
             memberSession?.execution_id
               ? async () => {
