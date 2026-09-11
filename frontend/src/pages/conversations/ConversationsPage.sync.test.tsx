@@ -234,48 +234,6 @@ describe("ConversationsPage sync scope", () => {
     },
   );
 
-  it("renders structured session failure items with sanitized paths on partial_success", async () => {
-    conversationSyncTaskMock.current = {
-      adapter_id: "opencode",
-      dry_run: false,
-      error: null,
-      finished_at: "2026-06-15T00:01:00Z",
-      id: "sync-partial-1",
-      record_kind: "session",
-      result: {
-        results: [
-          {
-            adapter_id: "opencode",
-            source_id: "source-1",
-            status: "partial_success",
-            session_failures: [
-              {
-                session_external_id: "session-xyz",
-                stage: "read",
-                error_code: "adapter_timeout",
-                error_message:
-                  "/Users/secretuser/workspace/repo timed out after 120s",
-                retryable: true,
-              },
-            ],
-          },
-        ],
-        errors: [],
-      },
-      source_id: "source-1",
-      started_at: "2026-06-15T00:00:00Z",
-      status: "partial_success",
-    };
-
-    renderConversationsPage("session");
-
-    await waitFor(() => {
-      expect(screen.queryByText(/\/Users\/secretuser/)).toBeNull();
-      expect(screen.getByText(/\[read\/adapter_timeout\]/)).toBeTruthy();
-      expect(screen.getByText(/可重试/)).toBeTruthy();
-    });
-  });
-
   it("uses the notification outlet instead of an inline status report after exporting from detail view", async () => {
     const onNotify = vi.fn((_: Parameters<ConversationNotify>[0]) => undefined);
     listConversationAdaptersMock.mockResolvedValue([conversationAdapter]);
@@ -1050,38 +1008,7 @@ describe("ConversationsPage sync scope", () => {
     },
   );
 
-  it("clears session sync progress when switching to web records", async () => {
-    const view = renderConversationsPage("session");
-
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
-
-    expect(
-      await screen.findByText("Reading and importing conversations"),
-    ).toBeTruthy();
-
-    view.rerender(
-      <QueryClientProvider client={testQueryClient}>
-        <I18nProvider>
-          <ConversationsPage
-            appShortcuts={[]}
-            onManualOpen={vi.fn()}
-            onNotify={() => undefined}
-            onNotifyError={vi.fn()}
-            onOpenSettings={vi.fn()}
-            recordKind="web"
-          />
-        </I18nProvider>
-      </QueryClientProvider>,
-    );
-
-    await waitFor(() => {
-      expect(
-        screen.queryByText("Reading and importing conversations"),
-      ).toBeNull();
-    });
-  });
-
-  it("shows progress updates within the same running source without refreshing the catalog", async () => {
+  it("does not render inline sync progress banner on page when sync is running or completed", async () => {
     conversationSyncTaskMock.current = {
       id: "live-progress",
       status: "running",
@@ -1089,35 +1016,10 @@ describe("ConversationsPage sync scope", () => {
       source_id: null,
       progress: { current_source_name: "Codex · 读取会话 1/3" },
     };
-    const view = renderConversationsPage("session");
-    expect(await screen.findByText(/Codex · 读取会话 1\/3/)).toBeTruthy();
-    const refreshCount = listConversationSessionsMock.mock.calls.length;
-    conversationSyncTaskMock.current = {
-      ...conversationSyncTaskMock.current,
-      progress: { current_source_name: "Codex · 写入会话 2/3" },
-    };
-    view.rerender(
-      <QueryClientProvider client={testQueryClient}>
-        <I18nProvider>
-          <ConversationsPage
-            appShortcuts={[]}
-            onManualOpen={vi.fn()}
-            onNotify={() => undefined}
-            onNotifyError={vi.fn()}
-            onOpenSettings={vi.fn()}
-            recordKind="session"
-          />
-        </I18nProvider>
-      </QueryClientProvider>,
-    );
-    expect(await screen.findByText(/Codex · 写入会话 2\/3/)).toBeTruthy();
+    renderConversationsPage("session");
     expect(screen.queryByText(/Codex · 读取会话 1\/3/)).toBeNull();
-    expect(listConversationSessionsMock.mock.calls.length).toBe(refreshCount);
-  });
+    expect(screen.queryByRole("progressbar")).toBeNull();
 
-  it("does not leave a non-dismissible sync summary after the completed progress is dismissed", async () => {
-    const summary =
-      "Added/updated 1 web records and 3 content items, skipped 0 unchanged records across 1 sources.";
     conversationSyncTaskMock.current = {
       adapter_id: null,
       dry_run: false,
@@ -1125,115 +1027,26 @@ describe("ConversationsPage sync scope", () => {
       finished_at: "2026-06-15T00:00:05Z",
       id: "sync-completed",
       record_kind: "web",
-      result: {
-        errors: [],
-        results: [
-          {
-            adapter_id: "chatgpt-web",
-            record_kind: "web",
-            session_count: 1,
-            skipped_session_count: 0,
-            source_id: "chatgpt-web-export",
-            turn_count: 3,
-            warning_count: 0,
-          },
-        ],
-      },
+      result: { errors: [], results: [] },
       source_id: null,
       started_at: "2026-06-15T00:00:00Z",
       status: "completed",
     };
-
     renderConversationsPage("web");
-
-    expect(await screen.findByText("Web record sync completed")).toBeTruthy();
-    expect(screen.getAllByText(summary)).toHaveLength(1);
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss sync progress" }),
-    );
-
-    await waitFor(() => {
-      expect(screen.queryByText(summary)).toBeNull();
-    });
+    expect(screen.queryByText("Web record sync completed")).toBeNull();
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
-  it("shows usage guidance when a completed web sync has failed sources", async () => {
+  it("triggers catalog refresh when sync task transitions to completed without local progress banner", async () => {
+    const initialRefreshCount = listConversationSessionsMock.mock.calls.length;
     conversationSyncTaskMock.current = {
       adapter_id: null,
       dry_run: false,
       error: null,
       finished_at: "2026-06-15T00:00:05Z",
-      id: "sync-completed-with-errors",
-      record_kind: "web",
-      result: {
-        errors: [
-          {
-            adapter_id: "gemini-web",
-            message: "Gemini web CSRF token SNlM0e was not found",
-            source_id: "gemini-web-export",
-          },
-        ],
-        results: [
-          {
-            adapter_id: "chatgpt-web",
-            record_kind: "web",
-            session_count: 1,
-            skipped_session_count: 0,
-            source_id: "chatgpt-web-export",
-            turn_count: 3,
-            warning_count: 0,
-          },
-        ],
-      },
-      source_id: null,
-      started_at: "2026-06-15T00:00:00Z",
-      status: "completed",
-    };
-
-    renderConversationsPage("web");
-
-    expect(await screen.findByText("Web record sync completed")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Successful sources were imported. Fix the failed web source below, then sync that source again.",
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText("Failed web sources")).toBeTruthy();
-    expect(screen.getByText("gemini-web · gemini-web-export")).toBeTruthy();
-    expect(
-      screen.getByText("Gemini web CSRF token SNlM0e was not found"),
-    ).toBeTruthy();
-  });
-
-  it("shows failed source details when a completed session sync has failed sources", async () => {
-    conversationSyncTaskMock.current = {
-      adapter_id: null,
-      dry_run: false,
-      error: null,
-      finished_at: "2026-06-15T00:00:05Z",
-      id: "session-sync-completed-with-errors",
+      id: "sync-done-refresh",
       record_kind: "session",
-      result: {
-        errors: [
-          {
-            adapter_id: "claude-code",
-            message: "adapter trusted hash mismatch: claude-code",
-            source_id: "claude-code-export",
-          },
-        ],
-        results: [
-          {
-            adapter_id: "codex",
-            record_kind: "session",
-            session_count: 2,
-            skipped_session_count: 1,
-            source_id: "codex-export",
-            turn_count: 5,
-            warning_count: 0,
-          },
-        ],
-      },
+      result: { errors: [], results: [] },
       source_id: null,
       started_at: "2026-06-15T00:00:00Z",
       status: "completed",
@@ -1241,64 +1054,12 @@ describe("ConversationsPage sync scope", () => {
 
     renderConversationsPage("session");
 
-    expect(await screen.findByText("Sync completed")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Successful sources were imported. Fix the failed source below, then sync that source again.",
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText("Failed sources")).toBeTruthy();
-    expect(screen.getByText("claude-code · claude-code-export")).toBeTruthy();
-    expect(
-      screen.getByText("adapter trusted hash mismatch: claude-code"),
-    ).toBeTruthy();
-  });
-
-  it("keeps completed sync progress dismissed after leaving and returning to the page", async () => {
-    conversationSyncTaskMock.current = {
-      adapter_id: null,
-      dry_run: false,
-      error: null,
-      finished_at: "2026-06-15T00:00:05Z",
-      id: "sync-completed-return",
-      record_kind: "web",
-      result: {
-        errors: [],
-        results: [
-          {
-            adapter_id: "chatgpt-web",
-            record_kind: "web",
-            session_count: 1,
-            skipped_session_count: 0,
-            source_id: "chatgpt-web-export",
-            turn_count: 3,
-            warning_count: 0,
-          },
-        ],
-      },
-      source_id: null,
-      started_at: "2026-06-15T00:00:00Z",
-      status: "completed",
-    };
-
-    const view = renderConversationsPage("web");
-
-    expect(await screen.findByText("Web record sync completed")).toBeTruthy();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss sync progress" }),
-    );
-
     await waitFor(() => {
-      expect(screen.queryByText("Web record sync completed")).toBeNull();
+      expect(listConversationSessionsMock.mock.calls.length).toBeGreaterThan(
+        initialRefreshCount,
+      );
     });
-
-    view.unmount();
-    renderConversationsPage("web");
-
-    await expect(
-      screen.findByText("Web record sync completed", {}, { timeout: 200 }),
-    ).rejects.toThrow();
+    expect(screen.queryByText("Sync completed")).toBeNull();
   });
 });
 

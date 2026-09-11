@@ -20,7 +20,6 @@ import {
 import {
   ConversationBackgroundTaskIndicator,
   ConversationContentFilter,
-  ConversationSyncProgress,
 } from "../../components/conversations/ConversationToolbarControls";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
 import { DebouncedToolbarSearch } from "../../components/common/DataToolbar";
@@ -1599,67 +1598,6 @@ describe("MarkdownContent", () => {
         "/tmp/selected-export-root",
       );
     });
-  });
-
-  it("renders explicit sync phases and accessible progress", () => {
-    const html = renderToStaticMarkup(
-      <ConversationSyncProgress
-        state={{
-          phase: "importing",
-          sourceLabel: "全部来源",
-        }}
-        t={t}
-      />,
-    );
-
-    expect(html).toContain('role="status"');
-    expect(html).toContain('role="progressbar"');
-    expect(html).toContain('aria-valuenow="2"');
-    expect(html).toContain('aria-valuemax="4"');
-    expect(html).toContain("正在读取并导入对话");
-    expect(html).toContain("第 2/4 阶段");
-    expect(html).toContain("全部来源");
-  });
-
-  it("renders web record sync copy without session labels", () => {
-    const html = renderToStaticMarkup(
-      <ConversationSyncProgress
-        recordKind="web"
-        state={{
-          phase: "importing",
-          sourceLabel: "ChatGPT Web",
-          summary:
-            "本次新增/更新 3 条网页记录、18 条内容，跳过 7 条未变化记录，覆盖 2 个来源。",
-        }}
-        t={t}
-      />,
-    );
-
-    expect(html).toContain("正在读取并导入网页记录");
-    expect(html).toContain("网页来源：ChatGPT Web");
-    expect(html).toContain("3 条网页记录");
-    expect(html).not.toContain("3 个 Session");
-    expect(html).toContain("md:grid-cols-[minmax(0,1fr)_auto]");
-    expect(html).toContain("break-words");
-  });
-
-  it("renders completed sync summary with a dismiss action", () => {
-    const html = renderToStaticMarkup(
-      <ConversationSyncProgress
-        onDismiss={() => undefined}
-        state={{
-          phase: "completed",
-          sourceLabel: "全部来源",
-          summary:
-            "本次新增/更新 3 个 Session、18 条内容，跳过 7 个未变化 Session，覆盖 2 个来源。",
-        }}
-        t={t}
-      />,
-    );
-
-    expect(html).toContain("同步完成");
-    expect(html).toContain("本次新增/更新 3 个 Session、18 条内容");
-    expect(html).toContain("关闭同步进度");
   });
 
   it("opens directly on the script market without an import form", async () => {

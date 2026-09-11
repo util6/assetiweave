@@ -72,10 +72,7 @@ import {
   isRedundantConversationCardKind,
   useConversationCardKindRegistry,
 } from "../../components/conversations/ConversationCardKindRegistry";
-import {
-  ConversationContentFilter,
-  ConversationSyncProgress,
-} from "../../components/conversations/ConversationToolbarControls";
+import { ConversationContentFilter } from "../../components/conversations/ConversationToolbarControls";
 import { ConversationImportDialog } from "../../components/conversations/ConversationImportDialog";
 import {
   ConversationLoadingState,
@@ -117,9 +114,6 @@ import {
   mergeConversationQuestions,
   searchConversationRecords,
   splitConversationQuestion,
-  summarizeConversationSyncTask,
-  type ConversationSyncSummaryCounts,
-  type ConversationSyncTaskSnapshot,
 } from "../../services/conversations";
 import { selectTargetDirectory } from "../../services/catalog";
 import {
@@ -166,8 +160,6 @@ const CONVERSATION_SHORT_ID_PATTERN = /^[0-9a-f]{8}$/i;
 export function isConversationShortIdQuery(value: string) {
   return CONVERSATION_SHORT_ID_PATTERN.test(value.trim());
 }
-const DISMISSED_SYNC_PROGRESS_TASK_LIMIT = 50;
-const dismissedConversationSyncProgressTaskKeys = new Set<string>();
 
 type ListConversationSessionPage = (params: {
   query?: string | null;
@@ -259,12 +251,8 @@ export function ConversationsPage({
     setQuery,
     setSessionSortBy,
     setSessionSortDirection,
-    setSyncProgress,
-    setSyncProgressDismissed,
     showAllContentSearchCardTypes,
     showSessionBrowser,
-    syncProgress,
-    syncProgressDismissed,
     toggleContentSearchCardKind,
     toggleContentSearchSemanticRole,
     toggleQuestionSelection,
@@ -700,111 +688,36 @@ export function ConversationsPage({
     if (syncTask.record_kind && syncTask.record_kind !== currentRecordKind) {
       return;
     }
-    if (
-      (syncTask.status === "completed" ||
-        syncTask.status === "partial_success") &&
-      dismissedConversationSyncProgressTaskKeys.has(
-        conversationSyncProgressTaskKey(currentRecordKind, syncTask.id),
-      )
-    ) {
-      handledSyncTaskIdRef.current = syncTask.id;
-      setSyncProgress(null);
-      setSyncProgressDismissed(true);
-      return;
-    }
-
-    const sourceLabel = syncSourceLabel(syncTask.source_id);
-    if (syncTask.status === "running" || syncTask.status === "cancelling") {
-      setSyncProgressDismissed(false);
-      setSyncProgress({ phase: "importing", sourceLabel, taskId: syncTask.id });
-      return;
-    }
     if (handledSyncTaskIdRef.current === syncTask.id) {
       return;
     }
-    handledSyncTaskIdRef.current = syncTask.id;
 
-    if (syncTask.status === "failed") {
-      setSyncProgress({
-        failedStep: 2,
-        phase: "failed",
-        sourceLabel,
-        taskId: syncTask.id,
+    if (
+      syncTask.status === "completed" ||
+      syncTask.status === "partial_success"
+    ) {
+      handledSyncTaskIdRef.current = syncTask.id;
+      void refreshCatalog({ rethrow: true }).catch((error) => {
+        onNotifyError(errorMessage(error));
       });
-      onNotifyError(
-        syncTask.error?.message ?? t("conversation.sync.description.failed"),
-      );
       return;
     }
 
-    const summaryCounts = summarizeConversationSyncTask(syncTask);
-    const summary = formatConversationSyncSummary(
-      summaryCounts,
-      t,
-      currentRecordKind,
-    );
-    const advice = formatConversationSyncAdvice(
-      summaryCounts,
-      t,
-      currentRecordKind,
-    );
-    const failureItems = formatConversationSyncFailureItems(
-      syncTask,
-      syncSourceLabel,
-      t,
-    );
-    let cancelled = false;
-    setSyncProgress({
-      advice,
-      failureItems,
-      phase: "refreshing",
-      sourceLabel,
-      summary,
-      taskId: syncTask.id,
-    });
-    void refreshCatalog({ rethrow: true })
-      .then(() => {
-        if (cancelled) {
-          return;
-        }
-        setSyncProgress({
-          advice,
-          failureItems,
-          phase: "completed",
-          sourceLabel,
-          summary,
-          taskId: syncTask.id,
-        });
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setSyncProgress({
-            failedStep: 3,
-            phase: "failed",
-            sourceLabel,
-            taskId: syncTask.id,
-          });
-          onNotifyError(errorMessage(error));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    if (syncTask.status === "failed") {
+      handledSyncTaskIdRef.current = syncTask.id;
+      onNotifyError(
+        syncTask.error?.message ?? t("conversation.sync.description.failed"),
+      );
+    }
   }, [
     currentRecordKind,
+    onNotifyError,
+    syncTask?.error?.message,
     syncTask?.id,
     syncTask?.record_kind,
-    syncTask?.source_id,
     syncTask?.status,
+    t,
   ]);
-
-  function syncSourceLabel(sourceId: string | null | undefined) {
-    if (!sourceId) {
-      return t("conversation.sync.allSources");
-    }
-    return importedSourceNamesRef.current.get(sourceId) ?? sourceId;
-  }
 
   async function refreshCatalog(options: { rethrow?: boolean } = {}) {
     try {
@@ -871,49 +784,14 @@ export function ConversationsPage({
   }
 
   async function handleSync() {
-    const sourceLabel = t("conversation.sync.allSources");
-    setSyncProgressDismissed(false);
     handledSyncTaskIdRef.current = null;
-    setSyncProgress({ phase: "preparing", sourceLabel });
-
     try {
-      const task = await startSync({
+      await startSync({
         dry_run: false,
         record_kind: currentRecordKind,
         source_id: null,
       });
-      const summaryCounts = summarizeConversationSyncTask(task);
-      const summary = formatConversationSyncSummary(
-        summaryCounts,
-        t,
-        currentRecordKind,
-      );
-      const advice = formatConversationSyncAdvice(
-        summaryCounts,
-        t,
-        currentRecordKind,
-      );
-      const failureItems = formatConversationSyncFailureItems(
-        task,
-        syncSourceLabel,
-        t,
-      );
-      setSyncProgress({
-        advice,
-        failedStep: task.status === "failed" ? 2 : undefined,
-        failureItems,
-        phase:
-          task.status === "failed"
-            ? "failed"
-            : task.status === "completed"
-              ? "refreshing"
-              : "importing",
-        sourceLabel,
-        summary,
-        taskId: task.id,
-      });
     } catch (error) {
-      setSyncProgress({ failedStep: 1, phase: "failed", sourceLabel });
       onNotifyError(errorMessage(error));
     }
   }
@@ -1052,17 +930,6 @@ export function ConversationsPage({
       .filter((question) => selectedQuestionIds.has(question.question.id))
       .map((question) => question.question.id);
     openExportDialog("questions", questionIds);
-  }
-
-  function handleDismissSyncProgress() {
-    if (syncProgress?.phase === "completed" && syncProgress.taskId) {
-      rememberDismissedConversationSyncProgressTask(
-        currentRecordKind,
-        syncProgress.taskId,
-      );
-    }
-    setSyncProgressDismissed(true);
-    setSyncProgress(null);
   }
 
   return (
@@ -1266,25 +1133,6 @@ export function ConversationsPage({
         </div>
       )}
 
-      {syncProgress && !syncProgressDismissed ? (
-        <ConversationSyncProgress
-          onDismiss={
-            syncProgress.phase === "completed"
-              ? handleDismissSyncProgress
-              : undefined
-          }
-          recordKind={currentRecordKind}
-          state={
-            syncRunning && syncTask?.progress?.current_source_name
-              ? {
-                  ...syncProgress,
-                  sourceLabel: syncTask.progress.current_source_name,
-                }
-              : syncProgress
-          }
-          t={t}
-        />
-      ) : null}
       {sessionView === "browser" &&
       (contentSearchResult || contentSearchLoading || contentQuery.trim()) ? (
         <ConversationContentSearchResults
@@ -3456,213 +3304,4 @@ function errorMessage(error: unknown) {
     if (typeof message === "string" && message.trim()) return message;
   }
   return String(error);
-}
-
-function rememberDismissedConversationSyncProgressTask(
-  recordKind: ConversationRecordKind,
-  taskId: string,
-) {
-  dismissedConversationSyncProgressTaskKeys.add(
-    conversationSyncProgressTaskKey(recordKind, taskId),
-  );
-  if (
-    dismissedConversationSyncProgressTaskKeys.size <=
-    DISMISSED_SYNC_PROGRESS_TASK_LIMIT
-  ) {
-    return;
-  }
-  const oldestKey = dismissedConversationSyncProgressTaskKeys
-    .values()
-    .next().value;
-  if (oldestKey) {
-    dismissedConversationSyncProgressTaskKeys.delete(oldestKey);
-  }
-}
-
-function conversationSyncProgressTaskKey(
-  recordKind: ConversationRecordKind,
-  taskId: string,
-) {
-  return `${recordKind}:${taskId}`;
-}
-
-function formatConversationSyncSummary(
-  summary: ConversationSyncSummaryCounts | null,
-  t: Translator,
-  recordKind: ConversationRecordKind = "session",
-) {
-  if (!summary) {
-    return t(
-      recordKind === "web"
-        ? "conversation.sync.web.summaryUnavailable"
-        : "conversation.sync.summaryUnavailable",
-    );
-  }
-
-  return t(
-    recordKind === "web"
-      ? summary.incrementalStatsAvailable
-        ? summary.errorCount > 0
-          ? "conversation.sync.web.incrementalSummaryWithErrors"
-          : "conversation.sync.web.incrementalSummary"
-        : summary.errorCount > 0
-          ? "conversation.sync.web.summaryWithErrors"
-          : "conversation.sync.web.summary"
-      : summary.incrementalStatsAvailable
-        ? summary.errorCount > 0
-          ? "conversation.sync.incrementalSummaryWithErrors"
-          : "conversation.sync.incrementalSummary"
-        : summary.errorCount > 0
-          ? "conversation.sync.summaryWithErrors"
-          : "conversation.sync.summary",
-    {
-      errors: summary.errorCount,
-      discovered: summary.discoveredSessionCount,
-      retained: summary.retainedSessionCount,
-      sessions: summary.changedSessionCount,
-      skipped: summary.skippedSessionCount,
-      sources: summary.sourceCount,
-      turns: summary.turnCount,
-      warnings: summary.warningCount,
-    },
-  );
-}
-
-function formatConversationSyncAdvice(
-  summary: ConversationSyncSummaryCounts | null,
-  t: Translator,
-  recordKind: ConversationRecordKind = "session",
-) {
-  if (!summary || summary.errorCount <= 0) {
-    return undefined;
-  }
-  return t(
-    recordKind === "web"
-      ? "conversation.sync.web.partialFailureAdvice"
-      : "conversation.sync.partialFailureAdvice",
-  );
-}
-
-function formatConversationSyncFailureItems(
-  task: ConversationSyncTaskSnapshot,
-  sourceLabel: (sourceId: string | null | undefined) => string,
-  t: Translator,
-) {
-  if (!isPlainRecord(task.result)) {
-    return undefined;
-  }
-
-  const items: { message: string; source: string }[] = [];
-
-  if (Array.isArray(task.result.errors)) {
-    for (const rawError of task.result.errors) {
-      const item = formatConversationSyncFailureItem(rawError, sourceLabel, t);
-      if (item) {
-        items.push(item);
-      }
-    }
-  }
-
-  if (Array.isArray(task.result.results)) {
-    for (const res of task.result.results) {
-      if (isPlainRecord(res) && Array.isArray(res.session_failures)) {
-        const adapterId = stringRecordValue(res.adapter_id);
-        const sourceId = stringRecordValue(res.source_id);
-        const sourceName = sourceId ? sourceLabel(sourceId) : null;
-        for (const failure of res.session_failures) {
-          if (isPlainRecord(failure)) {
-            const externalId =
-              stringRecordValue(failure.session_external_id) ?? "unknown";
-            const stage = stringRecordValue(failure.stage) ?? "sync";
-            const errorCode = stringRecordValue(failure.error_code) ?? "error";
-            const rawMsg = stringRecordValue(failure.error_message);
-            const retryable = Boolean(failure.retryable);
-            const src = [
-              sourceName ?? sourceId,
-              adapterId,
-              `会话 ${externalId}`,
-            ]
-              .filter(Boolean)
-              .join(" · ");
-            const compactMsg = compactConversationSyncFailureMessage(rawMsg, t);
-            const msg = `[${stage}/${errorCode}] ${compactMsg}${retryable ? " (可重试)" : ""}`;
-            items.push({
-              message: sanitizeSyncPath(msg),
-              source: src,
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return items.length > 0 ? items : undefined;
-}
-
-function sanitizeSyncPath(text: string): string {
-  return text
-    .replace(/(?:(?:\/Users|\/home)\/[^/\s]+)/g, "~")
-    .replace(/[a-zA-Z]:\\Users\\[^\\\s]+/g, "~");
-}
-
-function formatConversationSyncFailureItem(
-  rawError: unknown,
-  sourceLabel: (sourceId: string | null | undefined) => string,
-  t: Translator,
-) {
-  if (!isPlainRecord(rawError)) {
-    return null;
-  }
-
-  const adapterId = stringRecordValue(rawError.adapter_id);
-  const sourceId = stringRecordValue(rawError.source_id);
-  const sourceName = sourceId ? sourceLabel(sourceId) : null;
-  const source = formatConversationSyncFailureSource(
-    adapterId,
-    sourceId,
-    sourceName,
-    t,
-  );
-  const message = compactConversationSyncFailureMessage(
-    stringRecordValue(rawError.message),
-    t,
-  );
-
-  return { message, source };
-}
-
-function formatConversationSyncFailureSource(
-  adapterId: string | null,
-  sourceId: string | null,
-  sourceName: string | null,
-  t: Translator,
-) {
-  const labelParts = [adapterId, sourceName ?? sourceId]
-    .filter((part): part is string => Boolean(part))
-    .filter((part, index, parts) => parts.indexOf(part) === index);
-
-  return labelParts.length > 0
-    ? labelParts.join(" · ")
-    : t("conversation.sync.unknownFailedSource");
-}
-
-function compactConversationSyncFailureMessage(
-  message: string | null,
-  t: Translator,
-) {
-  const normalized = message?.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return t("conversation.sync.failureMessageUnavailable");
-  }
-  return normalized.length > 260
-    ? `${normalized.slice(0, 257)}...`
-    : normalized;
-}
-
-function stringRecordValue(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

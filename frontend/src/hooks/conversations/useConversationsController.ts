@@ -9,7 +9,6 @@ import {
   type ConversationRecordKind,
   type ConversationSearchCardType,
   type ConversationSearchHit,
-  type ConversationSyncProgressState,
 } from "../../types";
 
 export type ConversationSessionView = "browser" | "detail";
@@ -83,9 +82,6 @@ export function useConversationsController({
       ...DEFAULT_CONVERSATION_CONTENT_VISIBILITY,
     });
   const [importDialogOpen, setImportDialogOpen] = useState(false);
-  const [syncProgress, setSyncProgress] =
-    useState<ConversationSyncProgressState | null>(null);
-  const [syncProgressDismissed, setSyncProgressDismissed] = useState(false);
   const [query, setQuery] = useState("");
   const [outputRoot, setOutputRoot] = useState(
     webRecordMode
@@ -305,8 +301,6 @@ export function useConversationsController({
     setActiveSearchTarget(null);
     setExportDialog(null);
     setImportDialogOpen(false);
-    setSyncProgress(null);
-    setSyncProgressDismissed(false);
     setOutputRoot(
       webRecordMode
         ? "~/Desktop/assetiweave-web-records"
@@ -361,12 +355,8 @@ export function useConversationsController({
     setQuery,
     setSessionSortBy,
     setSessionSortDirection,
-    setSyncProgress,
-    setSyncProgressDismissed,
     showAllContentSearchCardTypes,
     showSessionBrowser,
-    syncProgress,
-    syncProgressDismissed,
     toggleContentSearchCardKind,
     toggleContentSearchSemanticRole,
     toggleQuestionSelection,
