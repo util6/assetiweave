@@ -7,6 +7,7 @@
 处理以下任一内容时进入本执行包：
 
 - GitHub Issue #20 或由它拆出的 Memory 子 Issue（如 Issue #30 高密度证据与受限归纳）；
+- GitHub Issue #35 或由它拆出的时间窗口、三层漏斗、Generation Skill、统一 Markdown 与 Recent UI 子 Issue；
 - 新的 Recent Work、Session/Project/Global Memory、Context Resolver；
 - 新的 Recall Agent、Memory 后台 Job、Memory 投影文档；
 - 精简证据首包、短引用、受限补读、脱敏精度优化与 Memory Recipe；
@@ -19,10 +20,11 @@
 发生冲突时按以下顺序处理：
 
 1. 仓库根 `AGENTS.md` 与已接受 ADR：工程和不可逆架构约束。
-2. [GitHub Issue #20](https://github.com/util6/assetiweave/issues/20) 及子 [Issue #30](https://github.com/util6/assetiweave/issues/30)：Memory 产品规格。
-3. 当前子 Issue、blocker 和验收：本轮交付范围。
-4. 代码、追加 migration、测试、生成契约与 CLI `--help`：当前已实现事实。
-5. 本目录文档：执行方法、稳定契约、接缝与验证索引。
+2. [GitHub Issue #35](https://github.com/util6/assetiweave/issues/35)、ADR-0015 与 `q1-q36-spec/`：时间窗口、三层漏斗、Generation Skill、统一 Markdown 和 Recent UI 的目标规格。
+3. [GitHub Issue #20](https://github.com/util6/assetiweave/issues/20) 及 [Issue #30](https://github.com/util6/assetiweave/issues/30) 中与 Issue #35 不冲突的有界证据、Durable Job、脱敏和 ACP 隔离约束。
+4. 当前子 Issue、blocker 和验收：本轮交付范围。
+5. 代码、追加 migration、测试、生成契约与 CLI `--help`：当前已实现事实和迁移起点。
+6. 本目录旧 T01–T15/E0–E8 文档：已完成历史、接缝与测试先例。
 
 Issue 与代码不同先用失败测试证明缺口。上位来源互相冲突时执行 `05-luna-flash-playbook.md` 的 Stop protocol，不自行选择新语义。
 
@@ -31,13 +33,13 @@ Issue 与代码不同先用失败测试证明缺口。上位来源互相冲突�
 每个执行 Agent 按顺序读取：
 
 1. `AGENTS.md`。
-2. 父 Issue #20、当前子 Issue、最新评论和 blocker；子 Issue 尚未发布时读取 `03-ticket-map.md` 对应行。
+2. 父 Issue、当前子 Issue、最新评论和 blocker。Issue #35 工作读取 `q1-q36-spec/09-execution-slices.md`；旧 Issue #20/#30 工作才读取 `03-ticket-map.md`。
 3. 本文件。
-4. 当前执行卡列出的 `01-contract.md` Contract IDs。
+4. Issue #35 工作读取 `q1-q36-spec/00-index.md`、`01-product-contract.md` 和当前切片专题；旧工作读取执行卡列出的 `01-contract.md` Contract IDs。
 5. 当前执行卡列出的 `02-codebase-seams.md` Seam IDs。
-6. 当前执行卡列出的 `04-verification-matrix.md` Gate IDs。
+6. Issue #35 工作读取 `q1-q36-spec/08-migration-testing-and-rollout.md`；旧工作读取 `04-verification-matrix.md` Gate IDs。
 7. `05-luna-flash-playbook.md`。
-8. `tickets/` 中唯一一张当前执行卡。
+8. `tickets/` 或 Issue #35 子 Issue 中唯一一张当前执行卡。
 
 除 Checkpoint Review 外，不加载其他执行卡。单卡上下文是范围边界，不是建议。
 
@@ -64,7 +66,10 @@ Issue 与代码不同先用失败测试证明缺口。上位来源互相冲突�
 | `05-luna-flash-playbook.md` | 每轮 | 工作卡、执行循环、停止协议、模型校正 |
 | `06-handoff-template.md` | 每轮交付 | Issue 评论、提交说明和跨上下文交接 |
 | `tickets/TNN-*.md` | 只读当前卡 | 本轮 Outcome、Red test、步骤、验收和非目标 |
+| `q1-q36-spec/00-index.md` | Issue #35 及其子 Issue | 新目标 Authority、渐进阅读路由与完成定义 |
+| `q1-q36-spec/01-product-contract.md` | Issue #35 每轮 | Q1–Q36 的稳定 `M35-*` Contract ID |
+| `q1-q36-spec/02`–`09` | Issue #35 按分支 | 领域/存储、管线、Skill、API、UI、验证和执行切片 |
 
 ## 6. 父功能完成条件
 
-只有 T15 的最终验收矩阵全部通过，并且 T14 已删除或归档旧公开表面，父 Issue #20 才具备关闭证据。任何单卡通过都只代表一个垂直切片完成。
+旧父 Issue #20 的历史完成证据仍由 T15/T14 定义。Issue #35 只有在 `q1-q36-spec/09-execution-slices.md` 的 N11 完成且 M35-V01–V40 全部通过后才具备关闭证据。任何单卡通过都只代表一个垂直切片完成。

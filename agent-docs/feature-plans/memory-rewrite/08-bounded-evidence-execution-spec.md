@@ -1,5 +1,7 @@
 # Memory 增量规格：高密度证据输入与受限归纳管线
 
+> **Issue #35 提示**：高密度首包、有界补读、短引用、预算、脱敏和 ACP 隔离继续有效；固定 72h、逐项目 Markdown、长期条目级联删除和 Recipe 新任务路径由 `q1-q36-spec/` 取代。
+
 - 日期：2026-09-09。
 - 状态：已发布为 GitHub [Issue #30](https://github.com/util6/assetiweave/issues/30)，测试接缝已确认（AppService + 临时 SQLite + 可控时钟 + Fake AgentExecutor）。
 - 归属：AssetIWeave Memory 重写，补充 [Issue #20](https://github.com/util6/assetiweave/issues/20)，进入 E0–E8 切片执行。

@@ -1,5 +1,7 @@
 # Memory 重写：不可变执行契约
 
+> **Issue #35 提示**：处理时间窗口、三层漏斗、Generation Skill、统一 Markdown 或新版 Recent UI 时，以 `q1-q36-spec/00-index.md` 与 `01-product-contract.md` 的 `M35-*` 合同为目标 Authority。本文件中的固定 72h、逐项目 Markdown、来源级联删除和 Memory Recipe 语义只代表旧实现基线。
+
 本文件只保存跨 Ticket 稳定约束。DTO、表名和组件名由实现确定；执行卡通过 Contract ID 引用。
 
 ## 领域与产品边界

@@ -5,6 +5,7 @@
 - 归属：AssetIWeave Memory 重写；Issue #35 补充并修订 Issue #20 与 Issue #30
 - 性质：产品与执行契约；不包含本轮生产实现
 - 事实源：本轮访谈 Q1–Q36 的最终答复、当前代码、`01-contract.md`、`08-bounded-evidence-execution-spec.md`
+- 执行规格：`q1-q36-spec/00-index.md`（按分支渐进读取）
 
 ## 1. 目的
 
