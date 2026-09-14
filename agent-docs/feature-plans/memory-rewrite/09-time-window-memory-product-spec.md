@@ -1,8 +1,8 @@
 # Memory 完整产品规格：Q1–Q36 时间窗口、三层漏斗与用户可编辑生成 Skill
 
 - 日期：2026-09-14
-- 状态：待用户评审
-- 归属：AssetIWeave Memory 重写，补充 Issue #20 与 Issue #30
+- 状态：已发布（[GitHub Issue #35](https://github.com/util6/assetiweave/issues/35)，`ready-for-agent`）
+- 归属：AssetIWeave Memory 重写；Issue #35 补充并修订 Issue #20 与 Issue #30
 - 性质：产品与执行契约；不包含本轮生产实现
 - 事实源：本轮访谈 Q1–Q36 的最终答复、当前代码、`01-contract.md`、`08-bounded-evidence-execution-spec.md`
 
