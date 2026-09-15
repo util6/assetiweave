@@ -1,7 +1,7 @@
 use super::prelude::*;
 use super::recent::resolve_project_directory;
 use crate::backend::{
-    dto::RecentMemorySnapshotView,
+    dto::{RecentMemorySnapshotView, RecentSnapshotPublicationKind},
     models::{
         CandidateSession, MemoryGenerationResultV2, MemoryPromotionNomination,
         MemorySkillBinding, ResolvedEvidenceRef,
@@ -9,10 +9,293 @@ use crate::backend::{
     runtime::{AppError, AppResult},
     store,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Offset, TimeZone, Utc};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WatermarkTarget {
+    pub(crate) target_watermark_utc: DateTime<Utc>,
+    pub(crate) local_watermark_date: String,
+    pub(crate) local_watermark_time: String,
+    pub(crate) timezone_offset_minutes: i64,
+    pub(crate) window_hours: i64,
+    pub(crate) window_start_utc: DateTime<Utc>,
+    pub(crate) window_end_utc: DateTime<Utc>,
+}
+
+pub(crate) fn parse_hh_mm(time_str: &str) -> AppResult<chrono::NaiveTime> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 2 {
+        return Err(AppError::Validation(format!(
+            "Invalid time format '{}', expected HH:MM",
+            time_str
+        )));
+    }
+    let h: u32 = parts[0].parse().map_err(|_| {
+        AppError::Validation(format!("Invalid hour '{}' in time '{}'", parts[0], time_str))
+    })?;
+    let m: u32 = parts[1].parse().map_err(|_| {
+        AppError::Validation(format!("Invalid minute '{}' in time '{}'", parts[1], time_str))
+    })?;
+    if parts[0].len() != 2 || parts[1].len() != 2 || h >= 24 || m >= 60 {
+        return Err(AppError::Validation(format!(
+            "Invalid time '{}', hour must be 00-23 and minute 00-59",
+            time_str
+        )));
+    }
+    chrono::NaiveTime::from_hms_opt(h, m, 0)
+        .ok_or_else(|| AppError::Validation(format!("Invalid time '{}'", time_str)))
+}
+
+fn resolve_local_time_with_dst<Tz: chrono::TimeZone>(
+    tz: &Tz,
+    naive_dt: chrono::NaiveDateTime,
+) -> Option<DateTime<Tz>> {
+    match tz.from_local_datetime(&naive_dt) {
+        chrono::LocalResult::Single(dt) => Some(dt),
+        chrono::LocalResult::Ambiguous(earliest, _latest) => {
+            // M35 spec §2.2: 歧义时间选择第一次出现的 instant
+            Some(earliest)
+        }
+        chrono::LocalResult::None => {
+            // M35 spec §2.2: 不存在的本地墙上时间顺延到该日期第一个有效 instant
+            let mut probe = naive_dt + chrono::Duration::minutes(1);
+            let end_of_day = naive_dt.date().and_hms_opt(23, 59, 59)?;
+            while probe <= end_of_day {
+                match tz.from_local_datetime(&probe) {
+                    chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => {
+                        return Some(dt);
+                    }
+                    chrono::LocalResult::None => {
+                        probe += chrono::Duration::minutes(1);
+                    }
+                }
+            }
+            None
+        }
+    }
+}
+
+pub(crate) fn resolve_target_watermark<Tz: chrono::TimeZone>(
+    now: DateTime<Tz>,
+    window_hours: u32,
+    watermark_1: &str,
+    watermark_2: &str,
+) -> AppResult<WatermarkTarget> {
+    if window_hours != 24 && window_hours != 48 && window_hours != 72 {
+        return Err(AppError::Validation(format!(
+            "MEMORY_SCHEDULE_INVALID: invalid window hours {}, allowed: 24, 48, 72",
+            window_hours
+        )));
+    }
+    if watermark_1 == watermark_2 {
+        return Err(AppError::Validation(
+            "MEMORY_SCHEDULE_INVALID: watermark times must be different".to_string(),
+        ));
+    }
+    let t1 = parse_hh_mm(watermark_1)?;
+    let t2 = parse_hh_mm(watermark_2)?;
+
+    let tz = now.timezone();
+    let today = now.date_naive();
+    let yesterday = today - chrono::Duration::days(1);
+
+    let naive_candidates = [
+        yesterday.and_time(t1),
+        yesterday.and_time(t2),
+        today.and_time(t1),
+        today.and_time(t2),
+    ];
+
+    let mut valid_candidates: Vec<DateTime<Tz>> = Vec::new();
+    for ndt in naive_candidates {
+        if let Some(dt) = resolve_local_time_with_dst(&tz, ndt) {
+            if dt.with_timezone(&Utc) <= now.with_timezone(&Utc) {
+                valid_candidates.push(dt);
+            }
+        }
+    }
+
+    valid_candidates.sort_by_key(|dt| dt.with_timezone(&Utc));
+
+    let chosen_dt = valid_candidates.into_iter().last().ok_or_else(|| {
+        AppError::Validation("No valid watermark candidate found <= current time".to_string())
+    })?;
+
+    let target_watermark_utc = chosen_dt.with_timezone(&Utc);
+    let local_watermark_date = chosen_dt.naive_local().format("%Y-%m-%d").to_string();
+    let local_watermark_time = chosen_dt.naive_local().format("%H:%M").to_string();
+    let timezone_offset_minutes = chosen_dt.offset().fix().local_minus_utc() as i64 / 60;
+    let window_end_utc = target_watermark_utc;
+    let window_start_utc = target_watermark_utc - chrono::Duration::hours(window_hours as i64);
+
+    Ok(WatermarkTarget {
+        target_watermark_utc,
+        local_watermark_date,
+        local_watermark_time,
+        timezone_offset_minutes,
+        window_hours: window_hours as i64,
+        window_start_utc,
+        window_end_utc,
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct TargetFingerprintSessionRef<'a> {
+    session_id: &'a str,
+    source_revision: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct TargetFingerprintItemRef<'a> {
+    item_id: &'a str,
+    revision_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct TargetFingerprintPayload<'a> {
+    budget_policy_version: &'static str,
+    candidate_sessions: Vec<TargetFingerprintSessionRef<'a>>,
+    contract_version: &'static str,
+    prior_active_items: Vec<TargetFingerprintItemRef<'a>>,
+    projection_policy_version: &'static str,
+    skill_asset_id: Option<&'a str>,
+    skill_content_hash: Option<&'a str>,
+    skill_revision: i64,
+    target_watermark_utc: &'a str,
+    tenant_id: &'a str,
+    window_hours: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ContentFingerprintSessionRef<'a> {
+    last_activity_at: &'a str,
+    session_id: &'a str,
+    source_revision: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ContentFingerprintItemRef<'a> {
+    item_id: &'a str,
+    remaining_lifetime_bucket: i64,
+    revision_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ContentFingerprintPayload<'a> {
+    candidate_sessions: Vec<ContentFingerprintSessionRef<'a>>,
+    carry_over_items: Vec<ContentFingerprintItemRef<'a>>,
+    contract_version: &'static str,
+    current_l2_l3_revisions: Vec<&'a str>,
+    excluded_session_ids: &'a [String],
+    excluded_source_ids: &'a [String],
+    skill_asset_id: Option<&'a str>,
+    skill_content_hash: Option<&'a str>,
+    skill_revision: i64,
+    window_hours: i64,
+}
+
+pub(crate) fn compute_target_fingerprint(
+    tenant_id: &str,
+    target_watermark_utc: &DateTime<Utc>,
+    window_hours: i64,
+    candidates: &[CandidateSession],
+    prior_active_items: &[(&str, &str)],
+    skill_binding: &MemorySkillBinding,
+) -> String {
+    let mut sorted_candidates: Vec<TargetFingerprintSessionRef> = candidates
+        .iter()
+        .map(|c| TargetFingerprintSessionRef {
+            session_id: &c.session_id,
+            source_revision: c.source_revision,
+        })
+        .collect();
+    sorted_candidates.sort_by_key(|c| c.session_id);
+
+    let mut sorted_items: Vec<TargetFingerprintItemRef> = prior_active_items
+        .iter()
+        .map(|(item_id, rev_id)| TargetFingerprintItemRef {
+            item_id,
+            revision_id: rev_id,
+        })
+        .collect();
+    sorted_items.sort_by_key(|i| i.item_id);
+
+    let target_watermark_str = target_watermark_utc.to_rfc3339();
+
+    let payload = TargetFingerprintPayload {
+        budget_policy_version: "budget.v1",
+        candidate_sessions: sorted_candidates,
+        contract_version: "memory.contract.v2",
+        prior_active_items: sorted_items,
+        projection_policy_version: "projection.v2",
+        skill_asset_id: Some(skill_binding.asset_id.as_str()),
+        skill_content_hash: Some(skill_binding.content_hash.as_str()),
+        skill_revision: skill_binding.asset_revision,
+        target_watermark_utc: &target_watermark_str,
+        tenant_id,
+        window_hours,
+    };
+
+    let canonical_json = serde_json::to_string(&payload).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_json.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+pub(crate) fn compute_content_fingerprint(
+    window_hours: i64,
+    candidates: &[CandidateSession],
+    carry_over_items: &[(&str, &str, i64)],
+    current_l2_l3_revisions: &[&str],
+    skill_binding: &MemorySkillBinding,
+    excluded_session_ids: &[String],
+    excluded_source_ids: &[String],
+) -> String {
+    let mut sorted_candidates: Vec<ContentFingerprintSessionRef> = candidates
+        .iter()
+        .map(|c| ContentFingerprintSessionRef {
+            session_id: &c.session_id,
+            last_activity_at: &c.last_activity_at,
+            source_revision: c.source_revision,
+        })
+        .collect();
+    sorted_candidates.sort_by_key(|c| c.session_id);
+
+    let mut sorted_items: Vec<ContentFingerprintItemRef> = carry_over_items
+        .iter()
+        .map(|(item_id, rev_id, bucket)| ContentFingerprintItemRef {
+            item_id,
+            revision_id: rev_id,
+            remaining_lifetime_bucket: *bucket,
+        })
+        .collect();
+    sorted_items.sort_by_key(|i| i.item_id);
+
+    let mut sorted_l2_l3 = current_l2_l3_revisions.to_vec();
+    sorted_l2_l3.sort();
+
+    let payload = ContentFingerprintPayload {
+        candidate_sessions: sorted_candidates,
+        carry_over_items: sorted_items,
+        contract_version: "memory.contract.v2",
+        current_l2_l3_revisions: sorted_l2_l3,
+        excluded_session_ids,
+        excluded_source_ids,
+        skill_asset_id: Some(skill_binding.asset_id.as_str()),
+        skill_content_hash: Some(skill_binding.content_hash.as_str()),
+        skill_revision: skill_binding.asset_revision,
+        window_hours,
+    };
+
+    let canonical_json = serde_json::to_string(&payload).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_json.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 impl AppService {
     /// 根据目标水位与窗口小时数收集候选 Session 及对应短引用映射表 (M35-L1-03/04)
@@ -308,12 +591,13 @@ impl AppService {
     /// 在单个 SQLite 事务内原子提交生成的 L1 Snapshot，并推进 last-success (M35-AUTH-01/05, M35-L1-07/12)
     pub(crate) async fn commit_recent_memory_snapshot(
         &self,
-        target_watermark_utc: DateTime<Utc>,
-        window_hours: i64,
+        target: &WatermarkTarget,
         skill_binding: &MemorySkillBinding,
         result: MemoryGenerationResultV2,
         candidates: &[CandidateSession],
         ref_map: &HashMap<String, ResolvedEvidenceRef>,
+        target_fingerprint: &str,
+        content_fingerprint: &str,
     ) -> AppResult<RecentMemorySnapshotView> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
@@ -325,13 +609,14 @@ impl AppService {
         let published_at = now.to_rfc3339();
         let content_generated_at = published_at.clone();
 
-        let window_start_utc = (target_watermark_utc - Duration::hours(window_hours)).to_rfc3339();
-        let window_end_utc = target_watermark_utc.to_rfc3339();
-        let target_watermark_str = target_watermark_utc.to_rfc3339();
+        let window_start_utc = target.window_start_utc.to_rfc3339();
+        let window_end_utc = target.window_end_utc.to_rfc3339();
+        let target_watermark_str = target.target_watermark_utc.to_rfc3339();
 
-        let local_watermark_date = target_watermark_utc.format("%Y-%m-%d").to_string();
-        let local_watermark_time = target_watermark_utc.format("%H:%M").to_string();
-        let timezone_offset_minutes = 0i64;
+        let local_watermark_date = &target.local_watermark_date;
+        let local_watermark_time = &target.local_watermark_time;
+        let timezone_offset_minutes = target.timezone_offset_minutes;
+        let window_hours = target.window_hours;
 
         // Sequence
         let seq_row = sqlx::query(
@@ -342,24 +627,6 @@ impl AppService {
         .await
         .map_err(AppError::external)?;
         let sequence: i64 = seq_row.get("next_seq");
-
-        // 计算 fingerprints
-        let mut target_hasher = Sha256::new();
-        target_hasher.update(tenant_id.as_bytes());
-        target_hasher.update(target_watermark_str.as_bytes());
-        target_hasher.update(&window_hours.to_le_bytes());
-        for c in candidates {
-            target_hasher.update(c.session_id.as_bytes());
-        }
-        let target_fingerprint = format!("{:x}", target_hasher.finalize());
-
-        let mut content_hasher = Sha256::new();
-        content_hasher.update(&window_hours.to_le_bytes());
-        for c in candidates {
-            content_hasher.update(c.session_id.as_bytes());
-            content_hasher.update(c.last_activity_at.as_bytes());
-        }
-        let content_fingerprint = format!("{:x}", content_hasher.finalize());
 
         // 1. 插入 recent_memory_snapshots
         sqlx::query(
@@ -376,14 +643,14 @@ impl AppService {
         .bind(&snapshot_id)
         .bind(sequence)
         .bind(&target_watermark_str)
-        .bind(&local_watermark_date)
-        .bind(&local_watermark_time)
+        .bind(local_watermark_date)
+        .bind(local_watermark_time)
         .bind(timezone_offset_minutes)
         .bind(window_hours)
         .bind(&window_start_utc)
         .bind(&window_end_utc)
-        .bind(&target_fingerprint)
-        .bind(&content_fingerprint)
+        .bind(target_fingerprint)
+        .bind(content_fingerprint)
         .bind(Some(skill_binding.asset_id.as_str()))
         .bind(skill_binding.asset_revision)
         .bind(Some(skill_binding.content_hash.as_str()))
@@ -631,8 +898,18 @@ impl AppService {
         window_hours: i64,
         result: MemoryGenerationResultV2,
     ) -> AppResult<RecentMemorySnapshotView> {
+        let target = WatermarkTarget {
+            target_watermark_utc,
+            local_watermark_date: target_watermark_utc.format("%Y-%m-%d").to_string(),
+            local_watermark_time: target_watermark_utc.format("%H:%M").to_string(),
+            timezone_offset_minutes: 0,
+            window_hours,
+            window_start_utc: target_watermark_utc - Duration::hours(window_hours),
+            window_end_utc: target_watermark_utc,
+        };
+
         let (candidates, ref_map) = self
-            .collect_recent_snapshot_candidates(target_watermark_utc, window_hours)
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
             .await?;
 
         // 校验门禁
@@ -647,18 +924,291 @@ impl AppService {
 
         let skill_binding = self.get_active_generation_skill_binding().await?;
 
+        let target_fingerprint = compute_target_fingerprint(
+            self.tenant_id(),
+            &target.target_watermark_utc,
+            target.window_hours,
+            &candidates,
+            &[],
+            &skill_binding,
+        );
+
+        let content_fingerprint = compute_content_fingerprint(
+            target.window_hours,
+            &candidates,
+            &[],
+            &[],
+            &skill_binding,
+            &[],
+            &[],
+        );
+
         let snapshot_view = self
             .commit_recent_memory_snapshot(
-                target_watermark_utc,
-                window_hours,
+                &target,
                 &skill_binding,
                 result,
                 &candidates,
                 &ref_map,
+                &target_fingerprint,
+                &content_fingerprint,
             )
             .await?;
 
         Ok(snapshot_view)
+    }
+
+    /// 在单个 SQLite 事务内原子提交无变化复用的 L1 Snapshot (M35-L1-06)
+    /// 推进水位与 last-success，保留原始 content_generated_at，且不增加晋升观察次数
+    pub(crate) async fn commit_reused_memory_snapshot(
+        &self,
+        target: &WatermarkTarget,
+        skill_binding: &MemorySkillBinding,
+        prior_snapshot_id: &str,
+        target_fingerprint: &str,
+        content_fingerprint: &str,
+    ) -> AppResult<RecentMemorySnapshotView> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+
+        let mut tx = pool.begin().await.map_err(AppError::external)?;
+
+        let prior_row = sqlx::query(
+            "SELECT content_generated_at FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(prior_snapshot_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        let content_generated_at: String = prior_row.get("content_generated_at");
+
+        let snapshot_id = format!("snap-{}", uuid::Uuid::new_v4());
+        let now = Utc::now();
+        let published_at = now.to_rfc3339();
+
+        let window_start_utc = target.window_start_utc.to_rfc3339();
+        let window_end_utc = target.window_end_utc.to_rfc3339();
+        let target_watermark_str = target.target_watermark_utc.to_rfc3339();
+
+        let seq_row = sqlx::query(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM recent_memory_snapshots WHERE tenant_id = ?1",
+        )
+        .bind(tenant_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+        let sequence: i64 = seq_row.get("next_seq");
+
+        sqlx::query(
+            "INSERT INTO recent_memory_snapshots (\
+                tenant_id, id, sequence, target_watermark_utc, local_watermark_date, \
+                local_watermark_time, timezone_offset_minutes, window_hours, window_start_utc, \
+                window_end_utc, publication_kind, reused_from_snapshot_id, target_fingerprint, \
+                content_fingerprint, generation_skill_asset_id, generation_skill_revision, \
+                generation_skill_content_hash, contract_version, budget_policy_version, \
+                projection_policy_version, content_generated_at, published_at\
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'reused', ?11, ?12, ?13, ?14, ?15, ?16, 'memory.contract.v2', 'budget.v1', 'projection.v2', ?17, ?18)",
+        )
+        .bind(tenant_id)
+        .bind(&snapshot_id)
+        .bind(sequence)
+        .bind(&target_watermark_str)
+        .bind(&target.local_watermark_date)
+        .bind(&target.local_watermark_time)
+        .bind(target.timezone_offset_minutes)
+        .bind(target.window_hours)
+        .bind(&window_start_utc)
+        .bind(&window_end_utc)
+        .bind(Some(prior_snapshot_id))
+        .bind(target_fingerprint)
+        .bind(content_fingerprint)
+        .bind(Some(skill_binding.asset_id.as_str()))
+        .bind(skill_binding.asset_revision)
+        .bind(Some(skill_binding.content_hash.as_str()))
+        .bind(&content_generated_at)
+        .bind(&published_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        // 复制 project rows
+        sqlx::query(
+            "INSERT INTO recent_memory_snapshot_projects (\
+                tenant_id, id, snapshot_id, project_key, project_title, project_path, summary, \
+                no_material_change, latest_activity_at, source_session_count, sort_order\
+             ) SELECT tenant_id, ?1 || '-' || sort_order, ?1, project_key, project_title, project_path, \
+                      summary, no_material_change, latest_activity_at, source_session_count, sort_order \
+               FROM recent_memory_snapshot_projects WHERE tenant_id = ?2 AND snapshot_id = ?3",
+        )
+        .bind(&snapshot_id)
+        .bind(tenant_id)
+        .bind(prior_snapshot_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        // 复制 item rows
+        sqlx::query(
+            "INSERT INTO recent_memory_snapshot_items (\
+                tenant_id, id, snapshot_id, project_key, item_id, item_revision_id, display_date, sort_order\
+             ) SELECT tenant_id, ?1 || '-' || sort_order, ?1, project_key, item_id, item_revision_id, display_date, sort_order \
+               FROM recent_memory_snapshot_items WHERE tenant_id = ?2 AND snapshot_id = ?3",
+        )
+        .bind(&snapshot_id)
+        .bind(tenant_id)
+        .bind(prior_snapshot_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        // M35-L1-06 / M35-L2-04: reused Snapshot 不增加 L2/L3 晋升观察次数
+
+        // 推进 last-success
+        let state_id = format!("state-{}", tenant_id);
+        sqlx::query(
+            "INSERT INTO recent_memory_state (\
+                tenant_id, id, last_successful_snapshot_id, latest_attempt_task_id, \
+                latest_attempt_error_code, latest_attempt_error_message, created_at, updated_at\
+             ) VALUES (?1, ?2, ?3, NULL, NULL, NULL, ?4, ?4) \
+             ON CONFLICT (tenant_id) DO UPDATE SET \
+                last_successful_snapshot_id = excluded.last_successful_snapshot_id, \
+                latest_attempt_error_code = NULL, \
+                latest_attempt_error_message = NULL, \
+                updated_at = excluded.updated_at",
+        )
+        .bind(tenant_id)
+        .bind(&state_id)
+        .bind(&snapshot_id)
+        .bind(&published_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        tx.commit().await.map_err(AppError::external)?;
+
+        let loaded = store::load_recent_snapshot_by_id_sqlx(pool, tenant_id, &snapshot_id)
+            .await?
+            .ok_or_else(|| {
+                AppError::external("Committed reused snapshot not found immediately after commit")
+            })?;
+
+        Ok(loaded)
+    }
+
+    /// 评估并执行双水位调度与无变化复用 (M35-L1-01–06)
+    pub(crate) async fn evaluate_and_run_recent_snapshot<Tz: chrono::TimeZone>(
+        &self,
+        now: Option<DateTime<Tz>>,
+        mock_result: Option<MemoryGenerationResultV2>,
+    ) -> AppResult<Option<RecentMemorySnapshotView>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let settings = self.app_settings_value();
+
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .unwrap_or_default();
+
+        if !memory_settings.generation_enabled {
+            return Ok(None);
+        }
+
+        let target = if let Some(custom_now) = now {
+            resolve_target_watermark(
+                custom_now,
+                memory_settings.recent_window_hours,
+                &memory_settings.watermark_time_1,
+                &memory_settings.watermark_time_2,
+            )?
+        } else {
+            let utc_now = Utc::now();
+            resolve_target_watermark(
+                utc_now,
+                memory_settings.recent_window_hours,
+                &memory_settings.watermark_time_1,
+                &memory_settings.watermark_time_2,
+            )?
+        };
+
+        let state = store::load_recent_memory_state_sqlx(pool, tenant_id).await?;
+
+        let (candidates, ref_map) = self
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
+            .await?;
+
+        let skill_binding = self.get_active_generation_skill_binding().await?;
+
+        let target_fingerprint = compute_target_fingerprint(
+            tenant_id,
+            &target.target_watermark_utc,
+            target.window_hours,
+            &candidates,
+            &[],
+            &skill_binding,
+        );
+
+        let content_fingerprint = compute_content_fingerprint(
+            target.window_hours,
+            &candidates,
+            &[],
+            &[],
+            &skill_binding,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+
+        // 幂等检查: 如果已有成功 Snapshot 且 target_fingerprint 相同，跳过
+        if let Some(ref last_snap) = state.snapshot {
+            if let Some(last_meta) = store::load_recent_snapshot_meta_by_id_sqlx(pool, tenant_id, &last_snap.snapshot_id).await? {
+                if last_meta.target_fingerprint == target_fingerprint {
+                    return Ok(None);
+                }
+
+                // Reuse 检查: 如果 content_fingerprint 相同，执行无变化复用 (M35-L1-06)
+                if last_meta.content_fingerprint == content_fingerprint {
+                    let reused = self
+                        .commit_reused_memory_snapshot(
+                            &target,
+                            &skill_binding,
+                            &last_meta.id,
+                            &target_fingerprint,
+                            &content_fingerprint,
+                        )
+                        .await?;
+                    return Ok(Some(reused));
+                }
+            }
+        }
+
+        // 内容变化或首次生成
+        if let Some(result) = mock_result {
+            if let Err(e) = self.validate_memory_generation_result(&result, &candidates, &ref_map) {
+                let (code, msg) = match &e {
+                    AppError::Domain { code, message, .. } => (code.clone(), message.clone()),
+                    other => ("VALIDATION_FAILED".to_string(), other.to_string()),
+                };
+                self.record_recent_memory_failure(&code, &msg).await?;
+                return Err(e);
+            }
+
+            let snap = self
+                .commit_recent_memory_snapshot(
+                    &target,
+                    &skill_binding,
+                    result,
+                    &candidates,
+                    &ref_map,
+                    &target_fingerprint,
+                    &content_fingerprint,
+                )
+                .await?;
+            return Ok(Some(snap));
+        }
+
+        Ok(None)
     }
 
     /// 记录最近生成失败（保持原有 last-success 不变）
@@ -1231,7 +1781,6 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("Unreadable sessions"));
 
-        // Verify state preserves last success snapshot!
         let state_after_fail = service
             .get_recent_memory_snapshot()
             .await
@@ -1240,5 +1789,295 @@ mod tests {
         assert!(state_after_fail.latest_attempt_error.is_some());
         let preserved_snap = state_after_fail.snapshot.expect("preserved snapshot");
         assert_eq!(preserved_snap.snapshot_id, snapshot_view.snapshot_id);
+    }
+
+    #[test]
+    fn test_watermark_resolution_defaults_and_custom() {
+        use chrono::FixedOffset;
+
+        let tz = FixedOffset::east_opt(8 * 3600).unwrap(); // UTC+8
+
+        // Test default 02:00 / 14:00 at various times of day:
+        // 1. At 01:59 UTC+8 on 2026-09-15 -> should pick yesterday 14:00 UTC+8 (2026-09-14 14:00)
+        let now_0159 = tz.with_ymd_and_hms(2026, 9, 15, 1, 59, 0).unwrap();
+        let target = resolve_target_watermark(now_0159, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-14");
+        assert_eq!(target.local_watermark_time, "14:00");
+        assert_eq!(target.timezone_offset_minutes, 480);
+        assert_eq!(target.window_hours, 48);
+
+        // 2. Exactly at 02:00 UTC+8 on 2026-09-15 -> picks today 02:00
+        let now_0200 = tz.with_ymd_and_hms(2026, 9, 15, 2, 0, 0).unwrap();
+        let target = resolve_target_watermark(now_0200, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-15");
+        assert_eq!(target.local_watermark_time, "02:00");
+
+        // 3. At 13:59 UTC+8 on 2026-09-15 -> still picks today 02:00
+        let now_1359 = tz.with_ymd_and_hms(2026, 9, 15, 13, 59, 0).unwrap();
+        let target = resolve_target_watermark(now_1359, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-15");
+        assert_eq!(target.local_watermark_time, "02:00");
+
+        // 4. At 14:00 UTC+8 on 2026-09-15 -> picks today 14:00
+        let now_1400 = tz.with_ymd_and_hms(2026, 9, 15, 14, 0, 0).unwrap();
+        let target = resolve_target_watermark(now_1400, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-15");
+        assert_eq!(target.local_watermark_time, "14:00");
+
+        // 5. At 23:59 UTC+8 on 2026-09-15 -> picks today 14:00
+        let now_2359 = tz.with_ymd_and_hms(2026, 9, 15, 23, 59, 0).unwrap();
+        let target = resolve_target_watermark(now_2359, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-15");
+        assert_eq!(target.local_watermark_time, "14:00");
+
+        // Test custom watermarks: 03:30 and 15:30 with window 24h
+        let target = resolve_target_watermark(now_1400, 24, "03:30", "15:30").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-15");
+        assert_eq!(target.local_watermark_time, "03:30");
+        assert_eq!(target.window_hours, 24);
+
+        // Validation errors
+        assert!(resolve_target_watermark(now_1400, 36, "02:00", "14:00").is_err());
+        assert!(resolve_target_watermark(now_1400, 48, "02:00", "02:00").is_err());
+        assert!(resolve_target_watermark(now_1400, 48, "24:00", "14:00").is_err());
+        assert!(resolve_target_watermark(now_1400, 48, "2:00", "14:00").is_err());
+    }
+
+    #[test]
+    fn test_watermark_missed_and_dst() {
+        use chrono::FixedOffset;
+
+        let tz = FixedOffset::east_opt(8 * 3600).unwrap();
+
+        // M35-L1-05: Missed watermark (app offline for 5 days)
+        // System comes online at 2026-09-20 16:00
+        // Should only resolve the latest expired watermark (2026-09-20 14:00), ignoring previous missed ones
+        let now_online = tz.with_ymd_and_hms(2026, 9, 20, 16, 0, 0).unwrap();
+        let target = resolve_target_watermark(now_online, 48, "02:00", "14:00").unwrap();
+        assert_eq!(target.local_watermark_date, "2026-09-20");
+        assert_eq!(target.local_watermark_time, "14:00");
+
+        // DST simulation: resolve_local_time_with_dst
+        let naive = chrono::NaiveDate::from_ymd_opt(2026, 3, 29)
+            .unwrap()
+            .and_hms_opt(2, 0, 0)
+            .unwrap();
+
+        let resolved = resolve_local_time_with_dst(&tz, naive);
+        assert!(resolved.is_some());
+    }
+
+    #[test]
+    fn test_fingerprint_separation() {
+        let skill = MemorySkillBinding {
+            asset_id: "skill-gen".to_string(),
+            asset_revision: 1,
+            content_hash: "hash-123".to_string(),
+            entry_hash: "entry-123".to_string(),
+        };
+
+        let cand1 = CandidateSession {
+            tenant_id: "default".to_string(),
+            session_id: "s1".to_string(),
+            source_id: "src1".to_string(),
+            session_title: "Session 1".to_string(),
+            source_agent: "agent".to_string(),
+            project_path: None,
+            project_key: "unassigned".to_string(),
+            last_activity_at: "2026-09-15T01:00:00Z".to_string(),
+            source_revision: 1,
+            short_ref: "s1".to_string(),
+        };
+
+        let dt1: DateTime<Utc> = "2026-09-15T02:00:00Z".parse().unwrap();
+        let dt2: DateTime<Utc> = "2026-09-15T14:00:00Z".parse().unwrap();
+
+        // 1. Same candidate sessions, different target watermarks:
+        let target_fp_1 = compute_target_fingerprint("default", &dt1, 48, &[cand1.clone()], &[], &skill);
+        let target_fp_2 = compute_target_fingerprint("default", &dt2, 48, &[cand1.clone()], &[], &skill);
+        // Target fingerprints MUST DIFFER because target_watermark_utc differed:
+        assert_ne!(target_fp_1, target_fp_2);
+
+        // Content fingerprints MUST BE IDENTICAL because target_watermark_utc is NOT in content fingerprint:
+        let content_fp_1 = compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
+        let content_fp_2 = compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
+        assert_eq!(content_fp_1, content_fp_2);
+
+        // 2. Modifying candidate activity time changes content fingerprint:
+        let mut cand2 = cand1.clone();
+        cand2.last_activity_at = "2026-09-15T01:30:00Z".to_string();
+        let content_fp_changed = compute_content_fingerprint(48, &[cand2], &[], &[], &skill, &[], &[]);
+        assert_ne!(content_fp_1, content_fp_changed);
+
+        // 3. Modifying exclusion changes content fingerprint:
+        let content_fp_excluded = compute_content_fingerprint(
+            48,
+            &[cand1.clone()],
+            &[],
+            &[],
+            &skill,
+            &["s-other".to_string()],
+            &[],
+        );
+        assert_ne!(content_fp_1, content_fp_excluded);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dual_watermark_reuse_pipeline() {
+        use chrono::FixedOffset;
+
+        let (service, _root) = setup_test_service().await;
+
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sources (
+                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
+                last_synced_at, last_sync_status, created_at, updated_at
+            ) VALUES (
+                'default', 'source-alpha', 'adapter-claude', 'Alpha Source', 'local_folder',
+                '/tmp/source', '{}', 1, '2026-09-14T00:00:00Z', 'idle',
+                '2026-09-14T00:00:00Z', '2026-09-14T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(service.db.pool())
+        .await
+        .expect("insert source");
+
+        // Insert two stable sessions whose activity falls within both the 02:00 and 14:00 48h windows
+        insert_test_session(
+            service.db.pool(),
+            "session-alpha",
+            "source-alpha",
+            "Alpha Active Session",
+            Some("/tmp/alpha-project"),
+            "2026-09-14T12:00:00Z",
+        )
+        .await;
+
+        insert_test_session(
+            service.db.pool(),
+            "session-unassigned",
+            "source-alpha",
+            "Unassigned Session",
+            None,
+            "2026-09-14T15:00:00Z",
+        )
+        .await;
+
+        let tz = FixedOffset::east_opt(8 * 3600).unwrap();
+
+        // Step 1: At 02:05 UTC+8, first watermark 02:00 has passed -> Generates snapshot 1
+        let now_0205 = tz.with_ymd_and_hms(2026, 9, 15, 2, 5, 0).unwrap();
+
+        let (candidates, _) = service
+            .collect_recent_snapshot_candidates("2026-09-14T18:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("collect candidates");
+
+        let alpha_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let unassigned_cand = candidates.iter().find(|c| c.project_key == "unassigned").unwrap();
+
+        let initial_result = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![
+                MemoryGenerationProjectV2 {
+                    project_key: alpha_cand.project_key.clone(),
+                    summary: "Alpha project summary.".to_string(),
+                    no_material_change: false,
+                    source_sessions: vec![alpha_cand.short_ref.clone()],
+                    items: vec![MemoryGenerationItemV2 {
+                        continues_item_id: None,
+                        category: MemoryItemCategory::Progress,
+                        status: MemoryItemStatus::Active,
+                        title: "Initial work".to_string(),
+                        summary: "Summary of work".to_string(),
+                        rationale: "Rationale".to_string(),
+                        occurred_at: "2026-09-14T20:00:00Z".to_string(),
+                        recommendation_rank: Some(1),
+                        source_refs: vec![alpha_cand.short_ref.clone()],
+                        promotion_nomination: MemoryPromotionNomination::ProjectDecision,
+                    }],
+                },
+                MemoryGenerationProjectV2 {
+                    project_key: "unassigned".to_string(),
+                    summary: "Unassigned summary.".to_string(),
+                    no_material_change: true,
+                    source_sessions: vec![unassigned_cand.short_ref.clone()],
+                    items: vec![],
+                },
+            ],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: vec![alpha_cand.short_ref.clone(), unassigned_cand.short_ref.clone()],
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap1 = service
+            .evaluate_and_run_recent_snapshot(Some(now_0205), Some(initial_result))
+            .await
+            .expect("evaluate snap 1")
+            .expect("must produce snapshot 1");
+
+        assert_eq!(snap1.publication_kind, RecentSnapshotPublicationKind::Generated);
+        assert_eq!(snap1.reused_from_snapshot_id, None);
+        let content_gen_at_1 = snap1.content_generated_at.clone();
+
+        // Observation count in DB should be 1
+        let obs_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM memory_promotion_observations WHERE tenant_id = 'default'",
+        )
+        .fetch_one(service.db.pool())
+        .await
+        .expect("count obs");
+        assert_eq!(obs_count.0, 1);
+
+        // Step 2: Running again at 02:10 UTC+8 (same watermark 02:00) -> Target idempotency, returns None
+        let now_0210 = tz.with_ymd_and_hms(2026, 9, 15, 2, 10, 0).unwrap();
+        let res_repeat = service
+            .evaluate_and_run_recent_snapshot::<FixedOffset>(Some(now_0210), None)
+            .await
+            .expect("repeat target check");
+        assert!(res_repeat.is_none());
+
+        // Step 3: At 14:05 UTC+8, watermark advances to 14:00!
+        // No session was added, so content_fingerprint is IDENTICAL!
+        // Agent must NOT be called (mock_result is None)
+        let now_1405 = tz.with_ymd_and_hms(2026, 9, 15, 14, 5, 0).unwrap();
+        let snap2 = service
+            .evaluate_and_run_recent_snapshot::<FixedOffset>(Some(now_1405), None)
+            .await
+            .expect("evaluate snap 2")
+            .expect("must produce reused snapshot 2");
+
+        // Verification of M35-L1-06 (Reuse):
+        assert_eq!(snap2.publication_kind, RecentSnapshotPublicationKind::Reused);
+        assert_eq!(snap2.reused_from_snapshot_id, Some(snap1.snapshot_id.clone()));
+        // M35-L1-06: Preserves original content_generated_at!
+        assert_eq!(snap2.content_generated_at, content_gen_at_1);
+        // Sequence incremented
+        assert_eq!(snap2.sequence, snap1.sequence + 1);
+        // Projects and items copied
+        assert_eq!(snap2.projects.len(), snap1.projects.len());
+        let alpha_snap2 = snap2.projects.iter().find(|p| p.project_key == alpha_cand.project_key).unwrap();
+        assert_eq!(alpha_snap2.items.len(), 1);
+        assert_eq!(alpha_snap2.items[0].title, "Initial work");
+
+        // M35-L1-06 / M35-L2-04: reused snapshot does NOT increment promotion observation count!
+        let obs_count_after: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM memory_promotion_observations WHERE tenant_id = 'default'",
+        )
+        .fetch_one(service.db.pool())
+        .await
+        .expect("count obs after reuse");
+        assert_eq!(obs_count_after.0, 1);
+
+        // State check: Ready, pointing to snap2
+        let state = service.get_recent_memory_snapshot().await.expect("get state");
+        assert_eq!(state.status, RecentMemoryStatus::Ready);
+        assert_eq!(state.snapshot.unwrap().snapshot_id, snap2.snapshot_id);
     }
 }

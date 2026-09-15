@@ -318,6 +318,55 @@ pub(crate) async fn load_recent_snapshot_by_id_sqlx(
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub(crate) struct RecentSnapshotMetadata {
+    pub(crate) id: String,
+    pub(crate) sequence: i64,
+    pub(crate) target_watermark_utc: String,
+    pub(crate) content_fingerprint: String,
+    pub(crate) target_fingerprint: String,
+    pub(crate) content_generated_at: String,
+    pub(crate) publication_kind: RecentSnapshotPublicationKind,
+    pub(crate) reused_from_snapshot_id: Option<String>,
+}
+
+#[allow(dead_code)]
+pub(crate) async fn load_recent_snapshot_meta_by_id_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    snapshot_id: &str,
+) -> AppResult<Option<RecentSnapshotMetadata>> {
+    let row_opt = sqlx::query(
+        "SELECT id, sequence, target_watermark_utc, content_fingerprint, target_fingerprint, \
+         content_generated_at, publication_kind, reused_from_snapshot_id \
+         FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2",
+    )
+    .bind(tenant_id)
+    .bind(snapshot_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::external)?;
+
+    Ok(row_opt.map(|row| {
+        let pub_kind_str: String = row.get("publication_kind");
+        let publication_kind = match pub_kind_str.as_str() {
+            "reused" => RecentSnapshotPublicationKind::Reused,
+            _ => RecentSnapshotPublicationKind::Generated,
+        };
+        RecentSnapshotMetadata {
+            id: row.get("id"),
+            sequence: row.get("sequence"),
+            target_watermark_utc: row.get("target_watermark_utc"),
+            content_fingerprint: row.get("content_fingerprint"),
+            target_fingerprint: row.get("target_fingerprint"),
+            content_generated_at: row.get("content_generated_at"),
+            publication_kind,
+            reused_from_snapshot_id: row.get("reused_from_snapshot_id"),
+        }
+    }))
+}
+
+#[allow(dead_code)]
 pub(crate) async fn save_fixture_recent_snapshot_sqlx(
     pool: &SqlitePool,
     input: &FixtureRecentSnapshotInput,

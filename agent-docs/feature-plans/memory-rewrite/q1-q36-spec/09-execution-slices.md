@@ -59,11 +59,11 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] 默认 02:00/14:00，自定义值验证和持久化。
-- [ ] 可控时钟覆盖跨日、DST 和 missed-watermark。
-- [ ] target/content fingerprint 分工正确。
-- [ ] reused Snapshot 推进水位、保留 contentGeneratedAt。
-- [ ] 页面/任务状态显示内容复用。
+- [x] 默认 02:00/14:00，自定义值验证和持久化。
+- [x] 可控时钟覆盖跨日、DST 和 missed-watermark。
+- [x] target/content fingerprint 分工正确。
+- [x] reused Snapshot 推进水位、保留 contentGeneratedAt。
+- [x] 页面/任务状态显示内容复用。
 
 ## N05：L1 续接与增量历史垂直切片
 
