@@ -15,6 +15,7 @@ mod generation_skill;
 mod global_consolidation_pipeline;
 mod global_memory;
 pub(crate) mod memory_agent_session;
+pub(crate) mod memory_projection_v2;
 mod memory_public;
 mod memory_recall_workflow;
 mod memory_search;

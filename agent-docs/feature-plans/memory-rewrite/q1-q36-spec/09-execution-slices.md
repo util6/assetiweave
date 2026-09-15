@@ -116,12 +116,12 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] `memory_summary.md` 来自 L1，`MEMORY.md` 来自 L2/L3。
-- [ ] 日期/项目/Item 排序确定，reused 元数据正确。
-- [ ] 原子替换失败保留旧文件。
-- [ ] 删除文件后无需 Agent 即可重建。
-- [ ] Snapshot 30 天清理不影响长期 revision。
-- [ ] 没有新的逐 Session/逐项目 Markdown。
+- [x] `memory_summary.md` 来自 L1，`MEMORY.md` 来自 L2/L3。
+- [x] 日期/项目/Item 排序确定，reused 元数据正确。
+- [x] 原子替换失败保留旧文件。
+- [x] 删除文件后无需 Agent 即可重建。
+- [x] Snapshot 30 天清理不影响长期 revision。
+- [x] 没有新的逐 Session/逐项目 Markdown。
 
 ## N09：时间优先 Recent UI 垂直切片
 

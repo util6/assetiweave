@@ -120,6 +120,32 @@ impl AppService {
         .await
     }
 
+    /// 重建 Markdown 投影文件 (M35-PROJ-01 ~ M35-PROJ-03)
+    pub(crate) async fn rebuild_markdown_projections(
+        &self,
+    ) -> AppResult<crate::backend::application::memory_projection_v2::MemoryProjectionPaths> {
+        crate::backend::application::memory_projection_v2::rebuild_markdown_projections(
+            self.db.pool(),
+            self.tenant_id(),
+            None,
+        )
+        .await
+    }
+
+    /// 清理过期的 Recent Snapshot 历史 (M35-PROJ-04，默认 30 天)
+    pub(crate) async fn purge_expired_memory_snapshots(
+        &self,
+        retention_days: i64,
+    ) -> AppResult<usize> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+        crate::backend::application::memory_projection_v2::purge_stale_recent_memory_snapshots(
+            self.db.pool(),
+            self.tenant_id(),
+            cutoff,
+        )
+        .await
+    }
+
     pub(crate) async fn rebuild_memory_scope(
         &self,
         params: MemoryScopeRebuildParams,
