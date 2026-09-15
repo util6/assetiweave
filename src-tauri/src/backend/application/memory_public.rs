@@ -37,6 +37,41 @@ impl AppService {
         }))
     }
 
+    /// 获取当前项目的 L2 长期记忆视图 (M35-L2-01 ~ M35-L2-06)
+    pub(crate) async fn get_project_memory_l2(
+        &self,
+        project_path: &str,
+    ) -> AppResult<Option<crate::backend::models::L2ProjectMemoryView>> {
+        let normalized_path = self
+            .resolve_context_project_path(Some(project_path))
+            .await?
+            .unwrap_or_else(|| project_path.to_string());
+        let tenant_id = self.tenant_id();
+        crate::backend::application::project_consolidation_pipeline::load_l2_project_memory_view(
+            self.db.pool(),
+            tenant_id,
+            &normalized_path,
+        )
+        .await
+    }
+
+    /// 协调并执行指定项目的 L2 Consolidation
+    pub(crate) async fn reconcile_project_consolidation(
+        &self,
+        project_key: &str,
+        project_path: Option<&str>,
+    ) -> AppResult<Option<crate::backend::models::L2ProjectMemoryView>> {
+        let lock_map = crate::backend::application::project_consolidation_pipeline::global_project_consolidation_lock_map();
+        crate::backend::application::project_consolidation_pipeline::reconcile_project_consolidation_default(
+            self.db.pool(),
+            self.tenant_id(),
+            project_key,
+            project_path,
+            lock_map,
+        )
+        .await
+    }
+
     pub(crate) async fn rebuild_memory_scope(
         &self,
         params: MemoryScopeRebuildParams,

@@ -87,12 +87,12 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] 用户明确决定一次观察可候选。
-- [ ] blocker/todo/research 需要两个 generated Snapshot。
-- [ ] completion/progress 不晋升。
-- [ ] unassigned 不晋升。
-- [ ] 无候选时 Project Agent 调用 0 次。
-- [ ] 同项目串行，失败保留 current L2。
+- [x] 用户明确决定一次观察可候选。
+- [x] blocker/todo/research 需要两个 generated Snapshot。
+- [x] completion/progress 不晋升。
+- [x] unassigned 不晋升。
+- [x] 无候选时 Project Agent 调用 0 次。
+- [x] 同项目串行，失败保留 current L2。
 
 ## N07：L3、长期来源与 supersede 垂直切片
 

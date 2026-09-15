@@ -20,6 +20,7 @@ mod memory_search;
 mod params;
 mod prelude;
 mod profiles_navigation;
+mod project_consolidation_pipeline;
 mod project_memory;
 mod recent;
 mod recent_snapshot;
