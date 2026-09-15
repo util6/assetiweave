@@ -280,6 +280,16 @@ pub(crate) async fn list_source_assets(
 }
 
 #[tauri::command]
+pub(crate) async fn get_memory_recent_snapshot(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<crate::backend::dto::RecentMemoryStateView> {
+    AppService::from_runtime(&state.runtime)
+        .get_recent_memory_snapshot()
+        .await
+        .into()
+}
+
+#[tauri::command]
 pub(crate) async fn list_memory_recent(
     state: State<'_, AppState>,
     params: RecentConversationSessionListParams,
@@ -297,6 +307,26 @@ pub(crate) async fn get_memory_recent_event_target(
 ) -> RuntimeAppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
     AppService::from_runtime(&state.runtime)
         .get_recent_memory_event_target(event_id)
+        .await
+        .into()
+}
+
+#[tauri::command]
+pub(crate) async fn duplicate_memory_generation_skill(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<crate::backend::dto::CatalogAsset> {
+    AppService::from_runtime(&state.runtime)
+        .duplicate_generation_skill_to_library()
+        .await
+        .into()
+}
+
+#[tauri::command]
+pub(crate) async fn reset_memory_generation_skill_to_default(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<()> {
+    AppService::from_runtime(&state.runtime)
+        .reset_generation_skill_to_default()
         .await
         .into()
 }
@@ -2731,6 +2761,171 @@ pub(crate) fn cancel_conversation_sync(
 }
 
 #[tauri::command]
+pub(crate) async fn get_conversation_usage_dashboard(
+    state: State<'_, AppState>,
+    filter: crate::backend::dto::UsageDashboardFilter,
+) -> RuntimeAppResult<crate::backend::dto::UsageDashboardDto> {
+    AppService::from_runtime(&state.runtime)
+        .get_conversation_usage_dashboard(filter)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn get_conversation_usage_scan_status(
+    state: State<'_, AppState>,
+) -> RuntimeAppResult<crate::backend::dto::UsageScanStatusDto> {
+    let mut status = AppService::from_runtime(&state.runtime)
+        .get_conversation_usage_scan_status()
+        .await?;
+    let context = state.runtime.context();
+    let tenant_id = context.tenant.id.as_str();
+    if let Some(active_id) = state
+        .background_tasks
+        .active_conversation_usage_scan_id(tenant_id)
+    {
+        status.active_scan_task_id = Some(active_id);
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+pub(crate) fn scan_conversation_usage(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    options: crate::backend::dto::UsageScanOptions,
+) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
+    start_conversation_usage_scan_background(
+        app,
+        state.runtime.clone(),
+        state.background_tasks.clone(),
+        options,
+    )
+}
+
+pub(crate) fn start_conversation_usage_scan_background(
+    app: AppHandle,
+    runtime: std::sync::Arc<crate::backend::runtime::AppRuntime>,
+    background_tasks: std::sync::Arc<
+        crate::adapters::tauri::background_tasks::BackgroundTaskRegistry,
+    >,
+    options: crate::backend::dto::UsageScanOptions,
+) -> RuntimeAppResult<crate::adapters::tauri::background_tasks::ConversationUsageScanTaskSnapshot> {
+    let tenant_id = runtime.context().tenant.id.clone();
+    let mode = options
+        .mode
+        .clone()
+        .unwrap_or_else(|| "incremental".to_string());
+    let (snapshot, should_start) = background_tasks.begin_conversation_usage_scan_for_tenant(
+        &tenant_id,
+        options.source_id.clone(),
+        &mode,
+    )?;
+    if !should_start {
+        return Ok(snapshot);
+    }
+
+    let task_id = snapshot.id.clone();
+    let task_runtime = background_tasks
+        .task_runtime()
+        .ok_or_else(|| AppError::Conflict("TaskRuntime 未初始化".to_string()))?;
+    let task_detail = task_runtime
+        .get(&task_id)
+        .map(|task| task.detail)
+        .ok_or_else(|| AppError::NotFound(format!("background task not found: {task_id}")))?;
+    let task_background_tasks = background_tasks.clone();
+    let task_app = app.clone();
+    let task_id_for_runtime = task_id.clone();
+    let outcome =
+        task_runtime.start_external_with_async(&task_id, task_detail, move |context| async move {
+            let progress_app = task_app.clone();
+            let progress_tasks = task_background_tasks.clone();
+            let progress_task_id = task_id_for_runtime.clone();
+            let mut on_progress = move |completed_source_count: usize,
+                                        total_source_count: usize,
+                                        current_source_name: Option<String>,
+                                        total_events: usize| {
+                match progress_tasks.update_conversation_usage_scan_progress(
+                    &progress_task_id,
+                    completed_source_count,
+                    total_source_count,
+                    current_source_name,
+                    total_events,
+                ) {
+                    Ok(snapshot) => {
+                        if let Err(error) =
+                            progress_app.emit("conversation-usage-scan-task-updated", &snapshot)
+                        {
+                            tracing::error!(
+                                action = "conversation.usage.scan",
+                                task_id = %progress_task_id,
+                                error = %error,
+                                "推送后台用量扫描进度失败"
+                            );
+                        }
+                    }
+                    Err(error) => tracing::error!(
+                        action = "conversation.usage.scan",
+                        task_id = %progress_task_id,
+                        error = %error,
+                        "更新后台用量扫描进度失败"
+                    ),
+                }
+            };
+            let cancellation = context.cancellation();
+            if context.is_cancelled() {
+                return Err(AppError::Cancelled(
+                    "conversation usage scan cancelled".to_string(),
+                ));
+            }
+            let result = AppService::from_runtime(&runtime)
+                .scan_conversation_usage_with_control(
+                    options,
+                    Some(&cancellation),
+                    Some(&task_id_for_runtime),
+                    &mut on_progress,
+                )
+                .await;
+
+            match &result {
+                Ok(value) => tracing::info!(
+                    action = "conversation.usage.scan",
+                    task_id = %task_id_for_runtime,
+                    result = %value,
+                    "后台扫描对话用量成功"
+                ),
+                Err(error) => tracing::error!(
+                    action = "conversation.usage.scan",
+                    task_id = %task_id_for_runtime,
+                    error = %error,
+                    "后台扫描对话用量失败"
+                ),
+            }
+            match task_background_tasks.finish_conversation_usage_scan(&task_id_for_runtime, result)
+            {
+                Ok(snapshot) => {
+                    if let Err(error) =
+                        task_app.emit("conversation-usage-scan-task-updated", &snapshot)
+                    {
+                        tracing::error!(
+                            action = "conversation.usage.scan",
+                            task_id = %task_id_for_runtime,
+                            error = %error,
+                            "推送后台用量扫描任务状态失败"
+                        );
+                    }
+                    Ok(serde_json::Value::Null)
+                }
+                Err(error) => Err(error),
+            }
+        });
+    if let Err(error) = outcome {
+        return Err(error);
+    }
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
 pub(crate) fn audit_conversation_data(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -3892,6 +4087,9 @@ pub(crate) fn command_handler(
         complete_app_close,
         list_assets,
         list_source_assets,
+        get_memory_recent_snapshot,
+        duplicate_memory_generation_skill,
+        reset_memory_generation_skill_to_default,
         list_memory_recent,
         get_memory_recent_event_target,
         resolve_memory_context,
@@ -4026,6 +4224,9 @@ pub(crate) fn command_handler(
         get_conversation_sync_task,
         list_conversation_sync_tasks,
         cancel_conversation_sync,
+        get_conversation_usage_dashboard,
+        get_conversation_usage_scan_status,
+        scan_conversation_usage,
         audit_conversation_data,
         repair_conversation_data,
         get_conversation_data_maintenance_task,

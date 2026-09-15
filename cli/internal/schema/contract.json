@@ -15,6 +15,7 @@
     "profile.list",
     "list_target_profile_descriptors",
     "refresh_target_profile_descriptors",
+    "memory.recent.snapshot.get",
     "memory.recent.list",
     "memory.recent.event.target",
     "memory.context.resolve",
@@ -133,6 +134,7 @@
     "get_app_settings",
     "save_app_settings",
     "initialize_app_locale_if_unset",
+    "get_memory_recent_snapshot",
     "list_memory_recent",
     "get_memory_recent_event_target",
     "resolve_memory_context",
@@ -795,6 +797,25 @@
     },
     {
       "contract_version": 3,
+      "method": "memory.recent.snapshot.get",
+      "canonical_method": "memory.recent.snapshot.get",
+      "description": "Get the current tenant's structured recent memory state and last-success snapshot",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "friendly",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
       "method": "memory.recent.list",
       "canonical_method": "memory.recent.list",
       "description": "List the current tenant's recent conversation work within the 72-hour window",
@@ -837,7 +858,7 @@
       },
       "cli": "assetiweave-cli memory recent list",
       "since": "0.6.1",
-      "deprecated": false
+      "deprecated": true
     },
     {
       "contract_version": 3,
@@ -6553,6 +6574,25 @@
     },
     {
       "contract_version": 3,
+      "method": "get_memory_recent_snapshot",
+      "canonical_method": "memory.recent.snapshot.get",
+      "description": "Get the current tenant's structured recent memory state and last-success snapshot",
+      "risk": "read",
+      "confirmation_required": false,
+      "exposure": "app",
+      "supports_dry_run": false,
+      "params_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "cli": null,
+      "since": "0.6.1",
+      "deprecated": false
+    },
+    {
+      "contract_version": 3,
       "method": "list_memory_recent",
       "canonical_method": "memory.recent.list",
       "description": "List the current tenant's recent conversation work within the 72-hour window",
@@ -6595,7 +6635,7 @@
       },
       "cli": null,
       "since": "0.6.1",
-      "deprecated": false
+      "deprecated": true
     },
     {
       "contract_version": 3,

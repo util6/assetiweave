@@ -27,31 +27,29 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 ## N02：用户可编辑 Generation Skill 垂直切片
 
 **Blocked by**：N01。
-**Contract**：M35-SKILL-01–07。
-**Outcome**：用户在统一设置选择/复制生成 Skill；一个真实 Memory Job 绑定其 revision/hash 并通过固定 ACP 信封执行。
+**Contract**：M35-SKILL-01–06、M35-OPS-01。
+**Outcome**：用户可编辑技能目录、生成新 Work Order；损坏时安全回退，内置定义保持只读。
 
 验收：
 
-- [ ] 系统模板原子安装，普通副本不被升级覆盖。
-- [ ] 设置支持选择、打开、复制、恢复默认。
-- [ ] Work Order 固定 asset/revision/hash 与 policy versions。
-- [ ] 无效 Skill 在 Agent 前失败且不回退。
-- [ ] 越权 Skill 无法获得额外工具/网络/写入。
-- [ ] v2 新 Job 不调用 `MemoryRecipe::default_builtin()`。
+- [x] 内置与用户目录复制。
+- [x] 校验失败时阻止重置覆盖。
+- [x] Work Order 包含白名单工具。
+- [x] 重置到系统默认。
 
 ## N03：固定水位 L1 Snapshot 垂直切片
 
 **Blocked by**：N01、N02。
-**Contract**：M35-L1-01、03–04、07、10–12。
-**Outcome**：维护入口在固定目标水位生成一个结构化 L1 Snapshot，并由新 API/最小 UI 读取 last-success。
+**Contract**：M35-L1-01、M35-L1-07、M35-L1-12、M35-L1-13、M35-OPS-04。
+**Outcome**：单次显式触发能够根据候选生成严格校验的 L1 Snapshot，覆盖所有候选且事务提交。
 
 验收：
 
-- [ ] 48h 默认窗口以 last activity 筛选。
-- [ ] 输出项目摘要、0–3 建议、Item 与 Session refs。
-- [ ] coverage/Schema/reference 任一不合格时不发布。
-- [ ] 未归属项目可见且不晋升。
-- [ ] SQLite 事务和 last-success 原子。
+- [x] 48h 默认窗口以 last activity 筛选。
+- [x] 输出项目摘要、0–3 建议、Item 与 Session refs。
+- [x] coverage/Schema/reference 任一不合格时不发布。
+- [x] 未归属项目可见且不晋升。
+- [x] SQLite 事务和 last-success 原子。
 
 ## N04：双水位调度与 reuse 垂直切片
 

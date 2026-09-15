@@ -590,6 +590,19 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         since: "0.6.1", deprecated: false
     ),
     command!(
+        "memory.recent.snapshot.get",
+        "memory.recent.snapshot.get",
+        "Get the current tenant's structured recent memory state and last-success snapshot",
+        Read,
+        Friendly,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.get_recent_memory_snapshot().await,
+        &[],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
         "memory.recent.list",
         "memory.recent.list",
         "List the current tenant's recent conversation work within the 72-hour window",
@@ -604,7 +617,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("offset", "Pagination offset"),
         ],
         Some("assetiweave-cli memory recent list"),
-        since: "0.6.1", deprecated: false
+        since: "0.6.1", deprecated: true
     ),
     command!(
         "memory.recent.event.target",
@@ -2314,6 +2327,19 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         None
     ),
     command!(
+        "get_memory_recent_snapshot",
+        "memory.recent.snapshot.get",
+        "Get the current tenant's structured recent memory state and last-success snapshot",
+        Read,
+        App,
+        false,
+        NoParams,
+        ServiceAsync => |service, _params| service.get_recent_memory_snapshot().await,
+        &[],
+        None,
+        since: "0.6.1", deprecated: false
+    ),
+    command!(
         "list_memory_recent",
         "memory.recent.list",
         "List the current tenant's recent conversation work within the 72-hour window",
@@ -2328,7 +2354,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
             param!("offset", "Pagination offset"),
         ],
         None,
-        since: "0.6.1", deprecated: false
+        since: "0.6.1", deprecated: true
     ),
     command!(
         "get_memory_recent_event_target",

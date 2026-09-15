@@ -526,6 +526,11 @@ pub(crate) static SURFACE_MAPPINGS: &[SurfaceMapping] = &[
         note: None,
     },
     SurfaceMapping {
+        canonical_method: "memory.recent.snapshot.get",
+        tauri_command: Some("get_memory_recent_snapshot"),
+        note: None,
+    },
+    SurfaceMapping {
         canonical_method: "memory.task.cancel",
         tauri_command: Some("cancel_memory_public_task"),
         note: None,

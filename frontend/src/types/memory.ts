@@ -191,3 +191,69 @@ export interface MemoryTaskView {
   } | null;
   detail: Record<string, unknown>;
 }
+
+export type RecentMemoryStatus = "empty" | "generating" | "ready" | "update_failed";
+export type RecentSnapshotPublicationKind = "generated" | "reused";
+export type SourceAvailability = "available" | "partially_unavailable" | "unavailable";
+
+export interface RecentMemoryErrorView {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+export interface RecentSessionReferenceView {
+  sourceId: string;
+  sessionId: string;
+  sessionTitle: string;
+  sourceAgent: string;
+  lastActivityAt: string;
+  available: boolean;
+  unavailableReason: string | null;
+}
+
+export interface RecentMemoryItemView {
+  itemId: string;
+  revisionId: string;
+  category: string;
+  status: string;
+  title: string;
+  summary: string;
+  rationale: string;
+  occurredAt: string;
+  recommendationRank: number | null;
+  sourceAvailability: SourceAvailability;
+  sessionReferences: RecentSessionReferenceView[];
+}
+
+export interface RecentProjectView {
+  projectKey: string;
+  projectTitle: string;
+  projectPath: string | null;
+  summary: string;
+  noMaterialChange: boolean;
+  latestActivityAt: string;
+  sourceSessionCount: number;
+  items: RecentMemoryItemView[];
+}
+
+export interface RecentMemorySnapshotView {
+  snapshotId: string;
+  sequence: number;
+  targetWatermark: string;
+  windowStart: string;
+  windowEnd: string;
+  windowHours: number;
+  publicationKind: RecentSnapshotPublicationKind;
+  reusedFromSnapshotId: string | null;
+  contentGeneratedAt: string;
+  publishedAt: string;
+  projects: RecentProjectView[];
+}
+
+export interface RecentMemoryStateView {
+  status: RecentMemoryStatus;
+  snapshot: RecentMemorySnapshotView | null;
+  latestAttemptTaskId: string | null;
+  latestAttemptError: RecentMemoryErrorView | null;
+}

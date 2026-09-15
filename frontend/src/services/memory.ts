@@ -9,6 +9,7 @@ import {
   memoryTaskViewSchema,
   recentMemoryEventTargetSchema,
   recentMemorySessionSchema,
+  recentMemoryStateViewSchema,
 } from "../schemas/memory";
 import type {
   MemoryScope,
@@ -20,6 +21,7 @@ import type {
   MemoryTaskView,
   RecentMemoryEventTarget,
   RecentMemorySession,
+  RecentMemoryStateView,
   RecentConversationView,
 } from "../types/memory";
 
@@ -29,6 +31,20 @@ const DESKTOP_REQUIRED =
 export function subscribeMemoryTasks(listener: () => void) {
   if (!isTauriRuntime()) return Promise.resolve(() => undefined);
   return listen<void>("memory-task-updated", () => listener());
+}
+
+export async function getRecentMemorySnapshot(): Promise<RecentMemoryStateView> {
+  if (!isTauriRuntime()) {
+    return {
+      status: "empty",
+      snapshot: null,
+      latestAttemptTaskId: null,
+      latestAttemptError: null,
+    };
+  }
+  return recentMemoryStateViewSchema.parse(
+    await invoke("get_memory_recent_snapshot"),
+  );
 }
 
 export async function listMemoryRecent(

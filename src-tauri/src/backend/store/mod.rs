@@ -14,6 +14,7 @@ mod mount_observation_repo;
 mod mount_repo;
 mod profile_repo;
 mod project_memory_repo;
+pub(crate) mod recent_snapshot_repo;
 mod search_index_repo;
 mod session_memory_repo;
 mod settings_repo;
@@ -100,6 +101,7 @@ pub(crate) use search_index_repo::{
     mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
+pub(crate) use recent_snapshot_repo::*;
 pub(crate) use session_memory_repo::*;
 pub(crate) use settings_repo::{
     initialize_app_locale_sqlx, load_app_settings_sqlx, save_app_settings_sqlx,
