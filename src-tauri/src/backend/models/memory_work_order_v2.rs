@@ -147,3 +147,54 @@ impl MemoryWorkOrderV2 {
         ALLOWED_MEMORY_GENERATION_TOOLS.contains(&tool_name)
     }
 }
+
+use crate::backend::models::memory_generation_v2::{MemoryItemCategory, MemoryItemStatus};
+
+/// M35-L1-08 / M35-L1-10: 上一轮结构化可续接条目，严禁使用旧 Markdown
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuableMemoryItemView {
+    pub item_id: String,
+    pub project_key: String,
+    pub category: MemoryItemCategory,
+    pub status: MemoryItemStatus,
+    pub title: String,
+    pub summary: String,
+    pub rationale: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    pub days_since_first_seen: i64,
+    pub remaining_days: i64,
+    pub current_revision_id: String,
+    pub current_revision_number: i64,
+    pub evidence_fingerprint: String,
+    pub source_refs: Vec<String>,
+}
+
+/// M35-L1-11: 结构化候选会话事实概要
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CandidateSessionSummary {
+    pub session_ref: String,
+    pub session_id: String,
+    pub project_key: String,
+    pub title: String,
+    pub last_activity_at: String,
+    pub source_id: String,
+}
+
+/// M35-L1-10 / M35-L1-11: 证据首包数据，纯结构化事实，绝无旧 Markdown
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentSnapshotWorkOrderEvidencePack {
+    pub target_watermark_utc: String,
+    pub window_start_utc: String,
+    pub window_end_utc: String,
+    pub window_hours: u32,
+    pub project_keys: Vec<String>,
+    pub candidate_sessions: Vec<CandidateSessionSummary>,
+    pub continuable_items: Vec<ContinuableMemoryItemView>,
+    pub allowed_tools: Vec<String>,
+    pub output_schema_version: u32,
+}
+

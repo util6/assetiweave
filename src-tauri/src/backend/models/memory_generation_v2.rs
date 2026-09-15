@@ -49,6 +49,17 @@ impl MemoryItemStatus {
             Self::Superseded => "superseded",
         }
     }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Verified | Self::Abandoned | Self::Superseded
+        )
+    }
+
+    pub fn is_continuable(&self) -> bool {
+        matches!(self, Self::Active | Self::Blocked | Self::Waiting)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -3,8 +3,10 @@ use super::recent::resolve_project_directory;
 use crate::backend::{
     dto::{RecentMemorySnapshotView, RecentSnapshotPublicationKind},
     models::{
-        CandidateSession, MemoryGenerationResultV2, MemoryPromotionNomination,
-        MemorySkillBinding, ResolvedEvidenceRef,
+        CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView,
+        MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus,
+        MemoryPromotionNomination, MemorySkillBinding, RecentSnapshotWorkOrderEvidencePack,
+        ResolvedEvidenceRef, ALLOWED_MEMORY_GENERATION_TOOLS,
     },
     runtime::{AppError, AppResult},
     store,
@@ -424,6 +426,308 @@ impl AppService {
         Ok((candidates, ref_map))
     }
 
+    /// M35-L3-04: 同步来源与会话有效性，并将来源已失效的未晋升 L1 条目退出 (lifecycle = 'retired')
+    /// 注意：已晋升到 L2/L3 的条目保持知识不删，仅引用标记为 unavailable
+    pub(crate) async fn sync_source_availability_and_retire_unpromoted_items(
+        &self,
+        now_str: &str,
+    ) -> AppResult<()> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+
+        // 1. conversation_source 被禁用 (enabled = 0)
+        sqlx::query(
+            "UPDATE memory_item_source_references \
+             SET availability = 'unavailable', \
+                 unavailable_reason = 'source_disabled', \
+                 unavailable_at = COALESCE(unavailable_at, ?2) \
+             WHERE tenant_id = ?1 \
+               AND availability = 'available' \
+               AND source_id IN (SELECT id FROM conversation_sources WHERE tenant_id = ?1 AND enabled = 0)",
+        )
+        .bind(tenant_id)
+        .bind(now_str)
+        .execute(pool)
+        .await
+        .map_err(AppError::external)?;
+
+        // 2. conversation_session 缺失 (missing = 1)
+        sqlx::query(
+            "UPDATE memory_item_source_references \
+             SET availability = 'unavailable', \
+                 unavailable_reason = 'missing', \
+                 unavailable_at = COALESCE(unavailable_at, ?2) \
+             WHERE tenant_id = ?1 \
+               AND availability = 'available' \
+               AND session_id IN (SELECT id FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 1)",
+        )
+        .bind(tenant_id)
+        .bind(now_str)
+        .execute(pool)
+        .await
+        .map_err(AppError::external)?;
+
+        // 3. conversation_source 或 conversation_session 被删除
+        sqlx::query(
+            "UPDATE memory_item_source_references \
+             SET availability = 'unavailable', \
+                 unavailable_reason = 'deleted', \
+                 unavailable_at = COALESCE(unavailable_at, ?2) \
+             WHERE tenant_id = ?1 \
+               AND availability = 'available' \
+               AND ( \
+                   source_id NOT IN (SELECT id FROM conversation_sources WHERE tenant_id = ?1) \
+                   OR session_id NOT IN (SELECT id FROM conversation_sessions WHERE tenant_id = ?1) \
+               )",
+        )
+        .bind(tenant_id)
+        .bind(now_str)
+        .execute(pool)
+        .await
+        .map_err(AppError::external)?;
+
+        // 4. 设置中排除的 source 或 session
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .unwrap_or_default();
+
+        for excluded_source in &memory_settings.excluded_source_ids {
+            sqlx::query(
+                "UPDATE memory_item_source_references \
+                 SET availability = 'unavailable', \
+                     unavailable_reason = 'excluded', \
+                     unavailable_at = COALESCE(unavailable_at, ?2) \
+                 WHERE tenant_id = ?1 \
+                   AND availability = 'available' \
+                   AND source_id = ?3",
+            )
+            .bind(tenant_id)
+            .bind(now_str)
+            .bind(excluded_source)
+            .execute(pool)
+            .await
+            .map_err(AppError::external)?;
+        }
+
+        for excluded_session in &memory_settings.excluded_session_ids {
+            sqlx::query(
+                "UPDATE memory_item_source_references \
+                 SET availability = 'unavailable', \
+                     unavailable_reason = 'excluded', \
+                     unavailable_at = COALESCE(unavailable_at, ?2) \
+                 WHERE tenant_id = ?1 \
+                   AND availability = 'available' \
+                   AND session_id = ?3",
+            )
+            .bind(tenant_id)
+            .bind(now_str)
+            .bind(excluded_session)
+            .execute(pool)
+            .await
+            .map_err(AppError::external)?;
+        }
+
+        // 5. M35-L3-04: 来源失效使未晋升 L1 退出 (layer = 'l1' AND lifecycle = 'current')
+        // 已晋升的 L2/L3 保持不变，仅引用标记 unavailable
+        sqlx::query(
+            "UPDATE memory_items \
+             SET lifecycle = 'retired', \
+                 updated_at = ?2 \
+             WHERE tenant_id = ?1 \
+               AND layer = 'l1' \
+               AND lifecycle = 'current' \
+               AND NOT EXISTS ( \
+                   SELECT 1 \
+                   FROM memory_item_source_references sr \
+                   JOIN memory_item_revisions mir ON sr.item_revision_id = mir.id \
+                   WHERE mir.tenant_id = memory_items.tenant_id \
+                     AND mir.item_id = memory_items.id \
+                     AND sr.availability = 'available' \
+               )",
+        )
+        .bind(tenant_id)
+        .bind(now_str)
+        .execute(pool)
+        .await
+        .map_err(AppError::external)?;
+
+        Ok(())
+    }
+
+    /// M35-L1-08 / M35-L1-10: 收集未完成事项 (active/blocked/waiting)，跨窗口延续最长 7 天
+    /// 超过 7 天则自动退休，输入完全基于结构化事实与引用，严禁读取旧 Markdown
+    pub(crate) async fn collect_continuable_items(
+        &self,
+        target_watermark_utc: &DateTime<Utc>,
+    ) -> AppResult<Vec<ContinuableMemoryItemView>> {
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let target_watermark_str = target_watermark_utc.to_rfc3339();
+
+        // 1. 同步来源有效性并淘汰来源失效的未晋升 L1
+        self.sync_source_availability_and_retire_unpromoted_items(&target_watermark_str)
+            .await?;
+
+        // 2. 查询活跃/阻塞/等待中的当前 L1 条目
+        let rows = sqlx::query(
+            "SELECT mi.id as item_id, mi.project_key, mi.first_seen_at, mi.last_seen_at, \
+                    mir.id as rev_id, mir.revision_number, mir.category, mir.status, \
+                    mir.title, mir.summary, mir.rationale, mir.evidence_fingerprint \
+             FROM memory_items mi \
+             JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
+             WHERE mi.tenant_id = ?1 \
+               AND mi.layer = 'l1' \
+               AND mi.lifecycle = 'current' \
+               AND mir.status IN ('active', 'blocked', 'waiting') \
+             ORDER BY mir.occurred_at DESC",
+        )
+        .bind(tenant_id)
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::external)?;
+
+        let mut continuable = Vec::new();
+
+        for row in rows {
+            let item_id: String = row.get("item_id");
+            let first_seen_at: String = row.get("first_seen_at");
+            let last_seen_at: String = row.get("last_seen_at");
+            let rev_id: String = row.get("rev_id");
+            let current_revision_number: i64 = row.get("revision_number");
+            let project_key: Option<String> = row.get("project_key");
+            let category_str: String = row.get("category");
+            let status_str: String = row.get("status");
+            let title: String = row.get("title");
+            let summary: String = row.get("summary");
+            let rationale: String = row.get("rationale");
+            let evidence_fingerprint: String = row.get("evidence_fingerprint");
+
+            // 计算生命周期 (最长 7 天)
+            let fs_dt = match DateTime::parse_from_rfc3339(&first_seen_at) {
+                Ok(dt) => dt.with_timezone(&Utc),
+                Err(_) => continue,
+            };
+
+            let seconds_elapsed = (*target_watermark_utc - fs_dt).num_seconds();
+            if seconds_elapsed > 7 * 86400 {
+                // 超过 7 天上限，退休
+                sqlx::query(
+                    "UPDATE memory_items SET lifecycle = 'retired', updated_at = ?3 \
+                     WHERE tenant_id = ?1 AND id = ?2",
+                )
+                .bind(tenant_id)
+                .bind(&item_id)
+                .bind(&target_watermark_str)
+                .execute(pool)
+                .await
+                .map_err(AppError::external)?;
+                continue;
+            }
+
+            let days_since_first_seen = (seconds_elapsed.max(0) / 86400).min(7);
+            let remaining_days = (7 - days_since_first_seen).max(0);
+
+            // 查询有效引用
+            let ref_rows = sqlx::query(
+                "SELECT reference_key FROM memory_item_source_references \
+                 WHERE tenant_id = ?1 AND item_revision_id = ?2 AND availability = 'available'",
+            )
+            .bind(tenant_id)
+            .bind(&rev_id)
+            .fetch_all(pool)
+            .await
+            .map_err(AppError::external)?;
+
+            let source_refs: Vec<String> = ref_rows
+                .into_iter()
+                .map(|r| r.get("reference_key"))
+                .collect();
+
+            let category = match category_str.as_str() {
+                "decision" => MemoryItemCategory::Decision,
+                "research" => MemoryItemCategory::Research,
+                "verification" => MemoryItemCategory::Verification,
+                "blocker" => MemoryItemCategory::Blocker,
+                "follow_up" => MemoryItemCategory::FollowUp,
+                _ => MemoryItemCategory::Progress,
+            };
+
+            let status = match status_str.as_str() {
+                "blocked" => MemoryItemStatus::Blocked,
+                "waiting" => MemoryItemStatus::Waiting,
+                _ => MemoryItemStatus::Active,
+            };
+
+            continuable.push(ContinuableMemoryItemView {
+                item_id,
+                project_key: project_key.unwrap_or_else(|| "unassigned".to_string()),
+                category,
+                status,
+                title,
+                summary,
+                rationale,
+                first_seen_at,
+                last_seen_at,
+                days_since_first_seen,
+                remaining_days,
+                current_revision_id: rev_id,
+                current_revision_number,
+                evidence_fingerprint,
+                source_refs,
+            });
+        }
+
+        Ok(continuable)
+    }
+
+    /// M35-L1-10 / M35-L1-11: 构建 Work Order 证据首包，包含结构化候选 Session 与可续接条目，绝不读取 Markdown
+    pub(crate) fn build_recent_snapshot_work_order_evidence_pack(
+        &self,
+        target: &WatermarkTarget,
+        candidates: &[CandidateSession],
+        continuable_items: &[ContinuableMemoryItemView],
+    ) -> RecentSnapshotWorkOrderEvidencePack {
+        let candidate_sessions = candidates
+            .iter()
+            .map(|c| CandidateSessionSummary {
+                session_ref: c.short_ref.clone(),
+                session_id: c.session_id.clone(),
+                project_key: c.project_key.clone(),
+                title: c.session_title.clone(),
+                last_activity_at: c.last_activity_at.clone(),
+                source_id: c.source_id.clone(),
+            })
+            .collect();
+
+        let mut project_keys: Vec<String> = candidates
+            .iter()
+            .map(|c| c.project_key.clone())
+            .chain(continuable_items.iter().map(|i| i.project_key.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        project_keys.sort();
+
+        let allowed_tools = ALLOWED_MEMORY_GENERATION_TOOLS
+            .iter()
+            .map(|&s| s.to_string())
+            .collect();
+
+        RecentSnapshotWorkOrderEvidencePack {
+            target_watermark_utc: target.target_watermark_utc.to_rfc3339(),
+            window_start_utc: target.window_start_utc.to_rfc3339(),
+            window_end_utc: target.window_end_utc.to_rfc3339(),
+            window_hours: target.window_hours as u32,
+            project_keys,
+            candidate_sessions,
+            continuable_items: continuable_items.to_vec(),
+            allowed_tools,
+            output_schema_version: 2,
+        }
+    }
+
     /// 校验 Agent 输出是否符合准入与质量门禁 (M35-L1-07/12, Schema, Coverage, Refs)
     pub(crate) fn validate_memory_generation_result(
         &self,
@@ -719,19 +1023,86 @@ impl AppService {
             .map_err(AppError::external)?;
 
             for (item_idx, item) in project.items.into_iter().enumerate() {
-                let item_id = item
-                    .continues_item_id
-                    .unwrap_or_else(|| format!("item-{}", uuid::Uuid::new_v4()));
+                let mut resolved_item_id = None;
+                let mut resolved_rev_num = 1i64;
+                let mut resolved_supersedes_id = None;
+                let mut first_seen_str = target_watermark_str.clone();
+
+                if let Some(ref prior_id) = item.continues_item_id {
+                    let prior_row = sqlx::query(
+                        "SELECT mi.id, mi.project_key, mi.lifecycle, mi.first_seen_at, mir.revision_number, mir.status, mir.id as rev_id \
+                         FROM memory_items mi \
+                         JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
+                         WHERE mi.tenant_id = ?1 AND mi.id = ?2",
+                    )
+                    .bind(tenant_id)
+                    .bind(prior_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(AppError::external)?;
+
+                    if let Some(row) = prior_row {
+                        let prior_proj: Option<String> = row.get("project_key");
+                        let prior_lifecycle: String = row.get("lifecycle");
+                        let prior_first_seen: String = row.get("first_seen_at");
+                        let prior_status: String = row.get("status");
+                        let prior_rev: i64 = row.get("revision_number");
+                        let prior_rev_id: String = row.get("rev_id");
+
+                        let proj_match = prior_proj.as_deref().unwrap_or("unassigned") == project.project_key.as_str();
+                        let is_current = prior_lifecycle == "current";
+                        let was_continuable_status = matches!(prior_status.as_str(), "active" | "blocked" | "waiting");
+
+                        let within_7_days = match (
+                            DateTime::parse_from_rfc3339(&target_watermark_str),
+                            DateTime::parse_from_rfc3339(&prior_first_seen),
+                        ) {
+                            (Ok(tw), Ok(fs)) => (tw.signed_duration_since(fs)).num_seconds() <= 7 * 86400,
+                            _ => false,
+                        };
+
+                        if proj_match && is_current && was_continuable_status && within_7_days {
+                            resolved_item_id = Some(prior_id.clone());
+                            resolved_rev_num = prior_rev + 1;
+                            resolved_supersedes_id = Some(prior_rev_id);
+                            first_seen_str = prior_first_seen;
+                        } else {
+                            // M35-L1-08 §7.2: 超过 7 天上限或原条目已终态/项目不匹配：旧条目 retired
+                            sqlx::query(
+                                "UPDATE memory_items SET lifecycle = 'retired', updated_at = ?3 \
+                                 WHERE tenant_id = ?1 AND id = ?2",
+                            )
+                            .bind(tenant_id)
+                            .bind(prior_id)
+                            .bind(&published_at)
+                            .execute(&mut *tx)
+                            .await
+                            .map_err(AppError::external)?;
+                        }
+                    }
+                }
+
+                let item_id = resolved_item_id.unwrap_or_else(|| format!("item-{}", uuid::Uuid::new_v4()));
                 let revision_id = format!("rev-{}", uuid::Uuid::new_v4());
+
+                // M35-L1-09: 终态条目在当前 Snapshot 展示一次后 lifecycle 标记为 retired/superseded，退出 L1
+                let new_lifecycle = if item.status == MemoryItemStatus::Superseded {
+                    "superseded"
+                } else if item.status.is_terminal() {
+                    "retired"
+                } else {
+                    "current"
+                };
 
                 // Upsert memory_items
                 sqlx::query(
                     "INSERT INTO memory_items (\
                         tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
                         first_seen_at, last_seen_at, created_at, updated_at\
-                     ) VALUES (?1, ?2, 'l1', ?3, ?4, 'current', ?5, ?5, ?6, ?6) \
+                     ) VALUES (?1, ?2, 'l1', ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
                      ON CONFLICT (tenant_id, id) DO UPDATE SET \
                         current_revision_id = excluded.current_revision_id, \
+                        lifecycle = excluded.lifecycle, \
                         last_seen_at = excluded.last_seen_at, \
                         updated_at = excluded.updated_at",
                 )
@@ -739,7 +1110,9 @@ impl AppService {
                 .bind(&item_id)
                 .bind(&project.project_key)
                 .bind(&revision_id)
-                .bind(&item.occurred_at)
+                .bind(new_lifecycle)
+                .bind(&first_seen_str)
+                .bind(&target_watermark_str)
                 .bind(&published_at)
                 .execute(&mut *tx)
                 .await
@@ -759,12 +1132,13 @@ impl AppService {
                     "INSERT INTO memory_item_revisions (\
                         tenant_id, id, item_id, revision_number, category, status, title, summary, \
                         rationale, recommendation_rank, promotion_nomination, occurred_at, \
-                        evidence_fingerprint, generated_by_snapshot_id, created_at\
-                     ) VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                        evidence_fingerprint, generated_by_snapshot_id, supersedes_revision_id, created_at\
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 )
                 .bind(tenant_id)
                 .bind(&revision_id)
                 .bind(&item_id)
+                .bind(resolved_rev_num)
                 .bind(item.category.as_str())
                 .bind(item.status.as_str())
                 .bind(&item.title)
@@ -775,6 +1149,7 @@ impl AppService {
                 .bind(&item.occurred_at)
                 .bind(&evidence_fingerprint)
                 .bind(&snapshot_id)
+                .bind(resolved_supersedes_id)
                 .bind(&published_at)
                 .execute(&mut *tx)
                 .await
@@ -858,6 +1233,66 @@ impl AppService {
                 }
             }
         }
+
+        // 计算提交后有效内容指纹 (包含当前生成条目状态)，确保后续无变化水位能够精准触发复用
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .unwrap_or_default();
+
+        let active_rows = sqlx::query(
+            "SELECT mi.id as item_id, mir.id as rev_id, mi.first_seen_at \
+             FROM memory_items mi \
+             JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
+             WHERE mi.tenant_id = ?1 \
+               AND mi.layer = 'l1' \
+               AND mi.lifecycle = 'current' \
+               AND mir.status IN ('active', 'blocked', 'waiting')",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+
+        let mut carry_over: Vec<(String, String, i64)> = Vec::new();
+        for r in active_rows {
+            let item_id: String = r.get("item_id");
+            let rev_id: String = r.get("rev_id");
+            let fs: String = r.get("first_seen_at");
+            let days_elapsed = match DateTime::parse_from_rfc3339(&fs) {
+                Ok(dt) => (target.target_watermark_utc - dt.with_timezone(&Utc)).num_seconds().max(0) / 86400,
+                Err(_) => 0,
+            };
+            let rem_bucket = (7 - days_elapsed).max(0);
+            carry_over.push((item_id, rev_id, rem_bucket));
+        }
+
+        let carry_over_refs: Vec<(&str, &str, i64)> = carry_over
+            .iter()
+            .map(|(i, r, b)| (i.as_str(), r.as_str(), *b))
+            .collect();
+
+        let effective_content_fp = compute_content_fingerprint(
+            target.window_hours,
+            candidates,
+            &carry_over_refs,
+            &[],
+            skill_binding,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+
+        sqlx::query(
+            "UPDATE recent_memory_snapshots SET content_fingerprint = ?3 \
+             WHERE tenant_id = ?1 AND id = ?2",
+        )
+        .bind(tenant_id)
+        .bind(&snapshot_id)
+        .bind(&effective_content_fp)
+        .execute(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
 
         // 3. 更新 recent_memory_state (原子更新 last-success，清除错误)
         let state_id = format!("state-{}", tenant_id);
@@ -1141,29 +1576,57 @@ impl AppService {
 
         let skill_binding = self.get_active_generation_skill_binding().await?;
 
+        let continuable_items = self
+            .collect_continuable_items(&target.target_watermark_utc)
+            .await?;
+
+        let prior_items_for_target: Vec<(&str, &str)> = continuable_items
+            .iter()
+            .map(|i| (i.item_id.as_str(), i.current_revision_id.as_str()))
+            .collect();
+
+        let carry_over_items_for_content: Vec<(&str, &str, i64)> = continuable_items
+            .iter()
+            .map(|i| {
+                (
+                    i.item_id.as_str(),
+                    i.current_revision_id.as_str(),
+                    i.remaining_days,
+                )
+            })
+            .collect();
+
         let target_fingerprint = compute_target_fingerprint(
             tenant_id,
             &target.target_watermark_utc,
             target.window_hours,
             &candidates,
-            &[],
+            &prior_items_for_target,
             &skill_binding,
         );
 
         let content_fingerprint = compute_content_fingerprint(
             target.window_hours,
             &candidates,
-            &[],
+            &carry_over_items_for_content,
             &[],
             &skill_binding,
             &memory_settings.excluded_session_ids,
             &memory_settings.excluded_source_ids,
         );
 
-        // 幂等检查: 如果已有成功 Snapshot 且 target_fingerprint 相同，跳过
+        let _evidence_pack = self.build_recent_snapshot_work_order_evidence_pack(
+            &target,
+            &candidates,
+            &continuable_items,
+        );
+
+        // 幂等检查 (M35-L1-05): 如果已有成功 Snapshot 且目标水位已处理或 target_fingerprint 相同，跳过
         if let Some(ref last_snap) = state.snapshot {
             if let Some(last_meta) = store::load_recent_snapshot_meta_by_id_sqlx(pool, tenant_id, &last_snap.snapshot_id).await? {
-                if last_meta.target_fingerprint == target_fingerprint {
+                if last_meta.target_watermark_utc == target.target_watermark_utc.to_rfc3339()
+                    || last_meta.target_fingerprint == target_fingerprint
+                {
                     return Ok(None);
                 }
 
@@ -2080,4 +2543,594 @@ mod tests {
         assert_eq!(state.status, RecentMemoryStatus::Ready);
         assert_eq!(state.snapshot.unwrap().snapshot_id, snap2.snapshot_id);
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_l1_item_continuation_and_7_day_limit() {
+        use chrono::FixedOffset;
+
+        let (service, _root) = setup_test_service().await;
+        let pool = service.db.pool();
+
+        // 1. Setup source and session
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sources (
+                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
+                last_synced_at, last_sync_status, created_at, updated_at
+            ) VALUES (
+                'default', 'source-alpha', 'adapter-claude', 'Alpha Source', 'local_folder',
+                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
+                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .expect("insert source");
+
+        insert_test_session(
+            pool,
+            "session-alpha",
+            "source-alpha",
+            "Alpha Session",
+            Some("/tmp/alpha-project"),
+            "2026-09-10T01:00:00Z",
+        )
+        .await;
+
+        let tz = FixedOffset::east_opt(0).unwrap();
+
+        // Step 1: Day 0 (2026-09-10T02:05:00Z) -> Generates Snapshot 1 with Active Item
+        let now_day0 = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
+        let (candidates, _) = service
+            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("collect candidates");
+
+        let alpha_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
+
+        let initial_result = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![MemoryGenerationProjectV2 {
+                project_key: alpha_cand.project_key.clone(),
+                summary: "Initial day 0 work.".to_string(),
+                no_material_change: false,
+                source_sessions: vec![alpha_cand.short_ref.clone()],
+                items: vec![MemoryGenerationItemV2 {
+                    continues_item_id: None,
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Active,
+                    title: "Feature A initial work".to_string(),
+                    summary: "Started feature A".to_string(),
+                    rationale: "Needed for milestone".to_string(),
+                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
+                    recommendation_rank: None,
+                    source_refs: vec![alpha_cand.short_ref.clone()],
+                    promotion_nomination: MemoryPromotionNomination::None,
+                }],
+            }],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: vec![alpha_cand.short_ref.clone()],
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap1 = service
+            .evaluate_and_run_recent_snapshot(Some(now_day0), Some(initial_result))
+            .await
+            .expect("snap 1")
+            .expect("snap 1 some");
+
+        let item1_id = snap1.projects[0].items[0].item_id.clone();
+
+        // Verify Item 1 in DB
+        let row1: (String, String, String, i64) = sqlx::query_as(
+            "SELECT mi.first_seen_at, mi.last_seen_at, mi.lifecycle, mir.revision_number \
+             FROM memory_items mi JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
+             WHERE mi.tenant_id = 'default' AND mi.id = ?1",
+        )
+        .bind(&item1_id)
+        .fetch_one(pool)
+        .await
+        .expect("query item 1");
+
+        assert_eq!(row1.2, "current");
+        assert_eq!(row1.3, 1);
+        let first_seen_at_day0 = row1.0.clone();
+
+        // Step 2: Day 2 (2026-09-12T02:05:00Z)
+        // Check collect_continuable_items at Day 2: item 1 must be present with remaining_days = 5
+        let now_day2 = tz.with_ymd_and_hms(2026, 9, 12, 2, 5, 0).unwrap();
+        let continuable_day2 = service
+            .collect_continuable_items(&"2026-09-12T02:00:00Z".parse().unwrap())
+            .await
+            .expect("collect continuable day 2");
+
+        let cont1 = continuable_day2.iter().find(|i| i.item_id == item1_id).expect("must find item1");
+        assert_eq!(cont1.days_since_first_seen, 2);
+        assert_eq!(cont1.remaining_days, 5);
+
+        // Insert new activity at Day 2
+        insert_test_session(
+            pool,
+            "session-alpha-day2",
+            "source-alpha",
+            "Alpha Session Day 2",
+            Some("/tmp/alpha-project"),
+            "2026-09-12T01:00:00Z",
+        )
+        .await;
+
+        let (candidates_day2, _) = service
+            .collect_recent_snapshot_candidates("2026-09-12T02:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("collect candidates day 2");
+        let alpha_cand_day2 = candidates_day2.iter().find(|c| c.project_key != "unassigned").unwrap();
+
+        // Agent continues item 1, updates status to Blocked
+        let day2_result = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![MemoryGenerationProjectV2 {
+                project_key: alpha_cand_day2.project_key.clone(),
+                summary: "Day 2 work blocked.".to_string(),
+                no_material_change: false,
+                source_sessions: vec![alpha_cand_day2.short_ref.clone()],
+                items: vec![MemoryGenerationItemV2 {
+                    continues_item_id: Some(item1_id.clone()),
+                    category: MemoryItemCategory::Blocker,
+                    status: MemoryItemStatus::Blocked,
+                    title: "Feature A blocked by dependency".to_string(),
+                    summary: "Feature A is now blocked".to_string(),
+                    rationale: "Upstream API change".to_string(),
+                    occurred_at: "2026-09-12T01:30:00Z".to_string(),
+                    recommendation_rank: None,
+                    source_refs: vec![alpha_cand_day2.short_ref.clone()],
+                    promotion_nomination: MemoryPromotionNomination::None,
+                }],
+            }],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: vec![alpha_cand_day2.short_ref.clone()],
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap2 = service
+            .evaluate_and_run_recent_snapshot(Some(now_day2), Some(day2_result))
+            .await
+            .expect("snap 2")
+            .expect("snap 2 some");
+
+        assert_eq!(snap2.projects[0].items[0].item_id, item1_id);
+
+        // Verify revision 2 and first_seen_at preserved
+        let row2: (String, String, String, i64, Option<String>) = sqlx::query_as(
+            "SELECT mi.first_seen_at, mi.last_seen_at, mi.lifecycle, mir.revision_number, mir.supersedes_revision_id \
+             FROM memory_items mi JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
+             WHERE mi.tenant_id = 'default' AND mi.id = ?1",
+        )
+        .bind(&item1_id)
+        .fetch_one(pool)
+        .await
+        .expect("query item 1 after day 2");
+
+        // M35-L1-08: first_seen_at remains Day 0!
+        assert_eq!(row2.0, first_seen_at_day0);
+        // last_seen_at is updated to Day 2!
+        assert_eq!(row2.1, "2026-09-12T02:00:00+00:00");
+        assert_eq!(row2.2, "current");
+        assert_eq!(row2.3, 2); // revision 2
+        assert!(row2.4.is_some()); // supersedes rev 1
+
+        // Step 3: Day 8 (> 7 days after first_seen_at)
+        // 2026-09-18T02:00:00Z is 8 days after 2026-09-10T02:00:00Z
+        let continuable_day8 = service
+            .collect_continuable_items(&"2026-09-18T02:00:00Z".parse().unwrap())
+            .await
+            .expect("collect continuable day 8");
+
+        // M35-L1-08: item 1 must be retired and NOT in continuable items!
+        assert!(continuable_day8.iter().all(|i| i.item_id != item1_id));
+
+        let lifecycle_day8: (String,) = sqlx::query_as(
+            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
+        )
+        .bind(&item1_id)
+        .fetch_one(pool)
+        .await
+        .expect("query item 1 lifecycle day 8");
+        assert_eq!(lifecycle_day8.0, "retired");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_l1_terminal_state_displays_once_and_exits() {
+        use chrono::FixedOffset;
+
+        let (service, _root) = setup_test_service().await;
+        let pool = service.db.pool();
+
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sources (
+                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
+                last_synced_at, last_sync_status, created_at, updated_at
+            ) VALUES (
+                'default', 'source-beta', 'adapter-claude', 'Beta Source', 'local_folder',
+                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
+                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .expect("insert source");
+
+        insert_test_session(
+            pool,
+            "session-beta-1",
+            "source-beta",
+            "Beta Session 1",
+            Some("/tmp/beta-project"),
+            "2026-09-10T01:00:00Z",
+        )
+        .await;
+
+        let tz = FixedOffset::east_opt(0).unwrap();
+
+        // Step 1: Snapshot 1: Item created as Active
+        let now_1 = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
+        let (cand1, _) = service
+            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("cand1");
+        let beta_cand1 = cand1.iter().find(|c| c.project_key != "unassigned").unwrap();
+
+        let res1 = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![MemoryGenerationProjectV2 {
+                project_key: beta_cand1.project_key.clone(),
+                summary: "Beta active task.".to_string(),
+                no_material_change: false,
+                source_sessions: vec![beta_cand1.short_ref.clone()],
+                items: vec![MemoryGenerationItemV2 {
+                    continues_item_id: None,
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Active,
+                    title: "Feature B development".to_string(),
+                    summary: "Under development".to_string(),
+                    rationale: "Milestone B".to_string(),
+                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
+                    recommendation_rank: None,
+                    source_refs: vec![beta_cand1.short_ref.clone()],
+                    promotion_nomination: MemoryPromotionNomination::None,
+                }],
+            }],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: vec![beta_cand1.short_ref.clone()],
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap1 = service
+            .evaluate_and_run_recent_snapshot(Some(now_1), Some(res1))
+            .await
+            .expect("snap 1")
+            .unwrap();
+        let item_id = snap1.projects[0].items[0].item_id.clone();
+
+        // Step 2: Snapshot 2: Item is Completed (terminal)
+        insert_test_session(
+            pool,
+            "session-beta-2",
+            "source-beta",
+            "Beta Session 2",
+            Some("/tmp/beta-project"),
+            "2026-09-10T13:00:00Z",
+        )
+        .await;
+
+        let now_2 = tz.with_ymd_and_hms(2026, 9, 10, 14, 5, 0).unwrap();
+        let (cand2, _) = service
+            .collect_recent_snapshot_candidates("2026-09-10T14:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("cand2");
+        let beta_cand2 = cand2.iter().find(|c| c.project_key != "unassigned").unwrap();
+
+        let res2 = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![MemoryGenerationProjectV2 {
+                project_key: beta_cand2.project_key.clone(),
+                summary: "Beta task completed.".to_string(),
+                no_material_change: false,
+                source_sessions: vec![beta_cand2.short_ref.clone()],
+                items: vec![MemoryGenerationItemV2 {
+                    continues_item_id: Some(item_id.clone()),
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Completed,
+                    title: "Feature B development finished".to_string(),
+                    summary: "Completed and merged".to_string(),
+                    rationale: "Done".to_string(),
+                    occurred_at: "2026-09-10T13:30:00Z".to_string(),
+                    recommendation_rank: None,
+                    source_refs: vec![beta_cand2.short_ref.clone()],
+                    promotion_nomination: MemoryPromotionNomination::None,
+                }],
+            }],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: cand2.iter().map(|c| c.short_ref.clone()).collect(),
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap2 = service
+            .evaluate_and_run_recent_snapshot(Some(now_2), Some(res2))
+            .await
+            .expect("snap 2")
+            .unwrap();
+
+        // M35-L1-09: In the snapshot where it becomes terminal, it displays once!
+        assert_eq!(snap2.projects[0].items.len(), 1);
+        assert_eq!(snap2.projects[0].items[0].item_id, item_id);
+        assert_eq!(snap2.projects[0].items[0].status, "completed");
+
+        // In DB, its lifecycle is now 'retired'
+        let lifecycle: (String,) = sqlx::query_as(
+            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
+        )
+        .bind(&item_id)
+        .fetch_one(pool)
+        .await
+        .expect("lifecycle check");
+        assert_eq!(lifecycle.0, "retired");
+
+        // Step 3: Snapshot 3: Next day
+        // collect_continuable_items must NOT return the completed item!
+        let continuable_step3 = service
+            .collect_continuable_items(&"2026-09-11T02:00:00Z".parse().unwrap())
+            .await
+            .expect("continuable step 3");
+        assert!(continuable_step3.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_source_invalidation_retires_unpromoted_l1_item() {
+        use chrono::FixedOffset;
+
+        let (service, _root) = setup_test_service().await;
+        let pool = service.db.pool();
+
+        sqlx::query(
+            r#"
+            INSERT INTO conversation_sources (
+                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
+                last_synced_at, last_sync_status, created_at, updated_at
+            ) VALUES (
+                'default', 'source-gamma', 'adapter-claude', 'Gamma Source', 'local_folder',
+                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
+                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
+            )
+            "#,
+        )
+        .execute(pool)
+        .await
+        .expect("insert source");
+
+        insert_test_session(
+            pool,
+            "session-gamma",
+            "source-gamma",
+            "Gamma Session",
+            Some("/tmp/gamma-project"),
+            "2026-09-10T01:00:00Z",
+        )
+        .await;
+
+        let tz = FixedOffset::east_opt(0).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
+
+        let (candidates, _) = service
+            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
+            .await
+            .expect("candidates");
+        let gamma_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
+
+        let res = MemoryGenerationResultV2 {
+            schema_version: 2,
+            projects: vec![MemoryGenerationProjectV2 {
+                project_key: gamma_cand.project_key.clone(),
+                summary: "Gamma task.".to_string(),
+                no_material_change: false,
+                source_sessions: vec![gamma_cand.short_ref.clone()],
+                items: vec![MemoryGenerationItemV2 {
+                    continues_item_id: None,
+                    category: MemoryItemCategory::Progress,
+                    status: MemoryItemStatus::Active,
+                    title: "Gamma Item".to_string(),
+                    summary: "Gamma summary".to_string(),
+                    rationale: "Gamma rationale".to_string(),
+                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
+                    recommendation_rank: None,
+                    source_refs: vec![gamma_cand.short_ref.clone()],
+                    promotion_nomination: MemoryPromotionNomination::None,
+                }],
+            }],
+            coverage: MemoryGenerationCoverageV2 {
+                covered_sessions: vec![gamma_cand.short_ref.clone()],
+                no_memory_sessions: vec![],
+                unreadable_sessions: vec![],
+                budget_exhausted: false,
+            },
+            unknowns: vec![],
+        };
+
+        let snap = service
+            .evaluate_and_run_recent_snapshot(Some(now), Some(res))
+            .await
+            .expect("eval")
+            .unwrap();
+        let l1_item_id = snap.projects[0].items[0].item_id.clone();
+
+        // Also insert an L2 item to verify M35-L3-04 (L2 item is NOT retired on source invalidation)
+        let l2_item_id = "item-l2-test".to_string();
+        let l2_rev_id = "rev-l2-test".to_string();
+        sqlx::query(
+            "INSERT INTO memory_items (\
+                tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
+                first_seen_at, last_seen_at, created_at, updated_at\
+             ) VALUES ('default', ?1, 'l2', 'gamma', ?2, 'current', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z')",
+        )
+        .bind(&l2_item_id)
+        .bind(&l2_rev_id)
+        .execute(pool)
+        .await
+        .expect("insert l2 item");
+
+        sqlx::query(
+            "INSERT INTO memory_item_revisions (\
+                tenant_id, id, item_id, revision_number, category, status, title, summary, \
+                rationale, recommendation_rank, promotion_nomination, occurred_at, \
+                evidence_fingerprint, generated_by_snapshot_id, created_at\
+             ) VALUES ('default', ?1, ?2, 1, 'decision', 'active', 'L2 Rule', 'L2 summary', 'L2 rat', NULL, 'none', '2026-09-10T00:00:00Z', 'fp', NULL, '2026-09-10T00:00:00Z')",
+        )
+        .bind(&l2_rev_id)
+        .bind(&l2_item_id)
+        .execute(pool)
+        .await
+        .expect("insert l2 rev");
+
+        sqlx::query(
+            "INSERT INTO memory_item_source_references (\
+                tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
+                reference_key, source_revision, availability, created_at\
+             ) VALUES ('default', 'ref-l2', ?1, 'session', 'source-gamma', 'session-gamma', 'source-gamma/session-gamma', 1, 'available', '2026-09-10T00:00:00Z')",
+        )
+        .bind(&l2_rev_id)
+        .execute(pool)
+        .await
+        .expect("insert l2 ref");
+
+        // Now disable source-gamma:
+        sqlx::query("UPDATE conversation_sources SET enabled = 0 WHERE id = 'source-gamma'")
+            .execute(pool)
+            .await
+            .expect("disable source");
+
+        // Run sync
+        service
+            .sync_source_availability_and_retire_unpromoted_items("2026-09-11T00:00:00Z")
+            .await
+            .expect("sync source availability");
+
+        // 1. Unpromoted L1 item's references are unavailable
+        let l1_ref_status: (String, Option<String>) = sqlx::query_as(
+            "SELECT availability, unavailable_reason FROM memory_item_source_references WHERE item_revision_id = (SELECT current_revision_id FROM memory_items WHERE id = ?1)",
+        )
+        .bind(&l1_item_id)
+        .fetch_one(pool)
+        .await
+        .expect("l1 ref status");
+        assert_eq!(l1_ref_status.0, "unavailable");
+        assert_eq!(l1_ref_status.1.as_deref(), Some("source_disabled"));
+
+        // 2. Unpromoted L1 item is retired
+        let l1_lifecycle: (String,) = sqlx::query_as(
+            "SELECT lifecycle FROM memory_items WHERE id = ?1",
+        )
+        .bind(&l1_item_id)
+        .fetch_one(pool)
+        .await
+        .expect("l1 lifecycle");
+        assert_eq!(l1_lifecycle.0, "retired");
+
+        // 3. M35-L3-04: L2 item reference is unavailable, but L2 item lifecycle is STILL 'current'
+        let l2_ref_status: (String, Option<String>) = sqlx::query_as(
+            "SELECT availability, unavailable_reason FROM memory_item_source_references WHERE item_revision_id = ?1",
+        )
+        .bind(&l2_rev_id)
+        .fetch_one(pool)
+        .await
+        .expect("l2 ref status");
+        assert_eq!(l2_ref_status.0, "unavailable");
+        assert_eq!(l2_ref_status.1.as_deref(), Some("source_disabled"));
+
+        let l2_lifecycle: (String,) = sqlx::query_as(
+            "SELECT lifecycle FROM memory_items WHERE id = ?1",
+        )
+        .bind(&l2_item_id)
+        .fetch_one(pool)
+        .await
+        .expect("l2 lifecycle");
+        assert_eq!(l2_lifecycle.0, "current");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_work_order_evidence_pack_is_structured_facts_without_markdown() {
+        let (service, _root) = setup_test_service().await;
+        let target = WatermarkTarget {
+            target_watermark_utc: "2026-09-15T02:00:00Z".parse().unwrap(),
+            local_watermark_date: "2026-09-15".to_string(),
+            local_watermark_time: "02:00".to_string(),
+            timezone_offset_minutes: 0,
+            window_hours: 48,
+            window_start_utc: "2026-09-13T02:00:00Z".parse().unwrap(),
+            window_end_utc: "2026-09-15T02:00:00Z".parse().unwrap(),
+        };
+
+        let candidates = vec![CandidateSession {
+            tenant_id: "default".to_string(),
+            session_id: "s1".to_string(),
+            source_id: "src1".to_string(),
+            session_title: "Session 1".to_string(),
+            source_agent: "agent".to_string(),
+            project_key: "proj1".to_string(),
+            project_path: None,
+            last_activity_at: "2026-09-14T10:00:00Z".to_string(),
+            source_revision: 1,
+            short_ref: "SES-1".to_string(),
+        }];
+
+        let continuable = vec![ContinuableMemoryItemView {
+            item_id: "item1".to_string(),
+            project_key: "proj1".to_string(),
+            category: MemoryItemCategory::Blocker,
+            status: MemoryItemStatus::Blocked,
+            title: "Task Blocked".to_string(),
+            summary: "Blocked summary".to_string(),
+            rationale: "Rationale".to_string(),
+            first_seen_at: "2026-09-13T02:00:00Z".to_string(),
+            last_seen_at: "2026-09-14T02:00:00Z".to_string(),
+            days_since_first_seen: 1,
+            remaining_days: 6,
+            current_revision_id: "rev1".to_string(),
+            current_revision_number: 1,
+            evidence_fingerprint: "fp1".to_string(),
+            source_refs: vec!["SES-1".to_string()],
+        }];
+
+        let pack = service.build_recent_snapshot_work_order_evidence_pack(&target, &candidates, &continuable);
+
+        assert_eq!(pack.project_keys, vec!["proj1".to_string()]);
+        assert_eq!(pack.candidate_sessions.len(), 1);
+        assert_eq!(pack.candidate_sessions[0].session_ref, "SES-1");
+        assert_eq!(pack.continuable_items.len(), 1);
+        assert_eq!(pack.continuable_items[0].remaining_days, 6);
+        assert_eq!(pack.allowed_tools.len(), 4);
+
+        // M35-L1-10: Verify serialized JSON has zero markdown fields
+        let json_str = serde_json::to_string(&pack).expect("serialize pack");
+        assert!(!json_str.contains(".md"));
+        assert!(!json_str.contains("memory_summary"));
+    }
 }
+

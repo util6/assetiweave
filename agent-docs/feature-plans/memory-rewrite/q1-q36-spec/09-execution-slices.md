@@ -73,11 +73,11 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] active/blocked/waiting 延续最长 7 天。
-- [ ] reused 不刷新 7 天或晋升观察。
-- [ ] completed/verified/abandoned/superseded 展示一次。
-- [ ] 上一轮输入不读取 Markdown。
-- [ ] 来源失效使未晋升 L1 退出。
+- [x] active/blocked/waiting 延续最长 7 天。
+- [x] reused 不刷新 7 天或晋升观察。
+- [x] completed/verified/abandoned/superseded 展示一次。
+- [x] 上一轮输入不读取 Markdown。
+- [x] 来源失效使未晋升 L1 退出。
 
 ## N06：L2 项目长期记忆垂直切片
 
