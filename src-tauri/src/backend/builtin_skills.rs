@@ -43,6 +43,11 @@ const MEMORY_MANIFEST: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-memory/assetiweave.skill.json");
 const MEMORY_RECALL_SCRIPT: &[u8] =
     include_bytes!("../../../builtin-assets/skills/assetiweave-memory/scripts/recall.py");
+const MEMORY_GENERATION_SKILL: &[u8] =
+    include_bytes!("../../../builtin-assets/skills/assetiweave-memory-generation/SKILL.md");
+const MEMORY_GENERATION_MANIFEST: &[u8] = include_bytes!(
+    "../../../builtin-assets/skills/assetiweave-memory-generation/assetiweave.skill.json"
+);
 const FILE_OPERATION_ATTEMPTS: usize = 4;
 
 struct EmbeddedFile {
@@ -112,6 +117,16 @@ const EMBEDDED_FILES: &[EmbeddedFile] = &[
         contents: MEMORY_RECALL_SCRIPT,
         executable: true,
     },
+    EmbeddedFile {
+        relative_path: "assetiweave-memory-generation/SKILL.md",
+        contents: MEMORY_GENERATION_SKILL,
+        executable: false,
+    },
+    EmbeddedFile {
+        relative_path: "assetiweave-memory-generation/assetiweave.skill.json",
+        contents: MEMORY_GENERATION_MANIFEST,
+        executable: false,
+    },
 ];
 
 struct EmbeddedSkill {
@@ -150,6 +165,13 @@ const EMBEDDED_SKILLS: &[EmbeddedSkill] = &[
         id: "assetiweave.memory",
         skill: MEMORY_SKILL,
         manifest: MEMORY_MANIFEST,
+    },
+    EmbeddedSkill {
+        directory: "assetiweave-memory-generation",
+        name: "assetiweave-memory-generation",
+        id: "assetiweave.memory-generation",
+        skill: MEMORY_GENERATION_SKILL,
+        manifest: MEMORY_GENERATION_MANIFEST,
     },
 ];
 
@@ -540,6 +562,7 @@ mod tests {
             "assetiweave-conversation-recall",
             "assetiweave-web-conversation-repair",
             "assetiweave-memory",
+            "assetiweave-memory-generation",
         ] {
             assert!(root.join(skill).join("SKILL.md").is_file());
             assert!(root.join(skill).join("assetiweave.skill.json").is_file());

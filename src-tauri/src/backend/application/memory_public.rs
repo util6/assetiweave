@@ -107,7 +107,10 @@ impl AppService {
         let settings = self.app_settings_value();
         let memory_settings = settings
             .get("memory")
-            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone())
+                    .ok()
+            })
             .unwrap_or_default();
 
         crate::backend::application::global_consolidation_pipeline::reconcile_source_invalidation(
@@ -196,13 +199,7 @@ impl AppService {
                 .await?
         };
         if scheduled_tasks == 0 {
-            if let Some(path) = project_path.as_deref() {
-                self.rebuild_project_memory_documents_for_tenant_at(&tenant_id, Some(path))
-                    .await?;
-            } else {
-                self.rebuild_global_memory_documents_for_tenant_at(&tenant_id)
-                    .await?;
-            }
+            self.rebuild_markdown_projections().await?;
         }
         Ok(MemoryRebuildResult {
             scope: MemoryScope {

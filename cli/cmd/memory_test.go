@@ -7,13 +7,13 @@ import (
 	"github.com/util6/assetiweave/internal/schema"
 )
 
-func TestMemoryRecentListUsesEngineMethod(t *testing.T) {
+func TestMemoryRecentGetUsesEngineMethod(t *testing.T) {
 	client := &recordingClient{}
-	if err := executeSkillGroupTestCommand(t, client, "memory", "recent", "list"); err != nil {
+	if err := executeSkillGroupTestCommand(t, client, "memory", "recent", "get"); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if client.method != schema.MethodMemoryRecentList {
-		t.Fatalf("method = %q, want %q", client.method, schema.MethodMemoryRecentList)
+	if client.method != schema.MethodMemoryRecentSnapshotGet {
+		t.Fatalf("method = %q, want %q", client.method, schema.MethodMemoryRecentSnapshotGet)
 	}
 }
 

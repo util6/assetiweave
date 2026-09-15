@@ -197,4 +197,3 @@ pub struct RecentSnapshotWorkOrderEvidencePack {
     pub allowed_tools: Vec<String>,
     pub output_schema_version: u32,
 }
-

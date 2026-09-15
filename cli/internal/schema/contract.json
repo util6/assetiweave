@@ -16,8 +16,6 @@
     "list_target_profile_descriptors",
     "refresh_target_profile_descriptors",
     "memory.recent.snapshot.get",
-    "memory.recent.list",
-    "memory.recent.event.target",
     "memory.context.resolve",
     "memory.project.get",
     "memory.rebuild",
@@ -135,8 +133,6 @@
     "save_app_settings",
     "initialize_app_locale_if_unset",
     "get_memory_recent_snapshot",
-    "list_memory_recent",
-    "get_memory_recent_event_target",
     "resolve_memory_context",
     "get_memory_project",
     "rebuild_memory_scope",
@@ -810,79 +806,7 @@
         "required": [],
         "properties": {}
       },
-      "cli": null,
-      "since": "0.6.1",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "memory.recent.list",
-      "canonical_method": "memory.recent.list",
-      "description": "List the current tenant's recent conversation work within the 72-hour window",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "friendly",
-      "supports_dry_run": false,
-      "params_schema": {
-        "properties": {
-          "view": {
-            "type": "string",
-            "enum": [
-              "project",
-              "time"
-            ],
-            "description": "project or time ordering"
-          },
-          "limit": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint",
-            "minimum": 0,
-            "description": "Maximum number of sessions"
-          },
-          "offset": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint",
-            "minimum": 0,
-            "description": "Pagination offset"
-          }
-        },
-        "type": "object",
-        "additionalProperties": false,
-        "required": []
-      },
-      "cli": "assetiweave-cli memory recent list",
-      "since": "0.6.1",
-      "deprecated": true
-    },
-    {
-      "contract_version": 3,
-      "method": "memory.recent.event.target",
-      "canonical_method": "memory.recent.event.target",
-      "description": "Resolve a recent Memory event to the canonical conversation navigation target",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Recent Memory event identifier"
-          }
-        },
-        "additionalProperties": false
-      },
-      "cli": null,
+      "cli": "assetiweave-cli memory recent get",
       "since": "0.6.1",
       "deprecated": false
     },
@@ -6586,78 +6510,6 @@
         "additionalProperties": false,
         "required": [],
         "properties": {}
-      },
-      "cli": null,
-      "since": "0.6.1",
-      "deprecated": false
-    },
-    {
-      "contract_version": 3,
-      "method": "list_memory_recent",
-      "canonical_method": "memory.recent.list",
-      "description": "List the current tenant's recent conversation work within the 72-hour window",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "properties": {
-          "view": {
-            "type": "string",
-            "enum": [
-              "project",
-              "time"
-            ],
-            "description": "project or time ordering"
-          },
-          "limit": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint",
-            "minimum": 0,
-            "description": "Maximum number of sessions"
-          },
-          "offset": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint",
-            "minimum": 0,
-            "description": "Pagination offset"
-          }
-        },
-        "type": "object",
-        "additionalProperties": false,
-        "required": []
-      },
-      "cli": null,
-      "since": "0.6.1",
-      "deprecated": true
-    },
-    {
-      "contract_version": 3,
-      "method": "get_memory_recent_event_target",
-      "canonical_method": "memory.recent.event.target",
-      "description": "Resolve a recent Memory event to the canonical conversation navigation target",
-      "risk": "read",
-      "confirmation_required": false,
-      "exposure": "app",
-      "supports_dry_run": false,
-      "params_schema": {
-        "required": [
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Recent Memory event identifier"
-          }
-        },
-        "additionalProperties": false
       },
       "cli": null,
       "since": "0.6.1",

@@ -13,7 +13,7 @@ import time
 from typing import Any
 
 CONTRACTS = [
-    "memory.recent.list",
+    "memory.recent.snapshot.get",
     "memory.context.resolve",
     "memory.project.get",
     "memory.recall.search",

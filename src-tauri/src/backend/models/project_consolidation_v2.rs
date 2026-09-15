@@ -52,7 +52,9 @@ pub(crate) struct ProjectConsolidationInput {
 }
 
 /// 计算 Project Consolidation 输入指纹，用于幂等跳过（0 Agent 调用）
-pub(crate) fn compute_project_consolidation_fingerprint(input: &ProjectConsolidationInput) -> String {
+pub(crate) fn compute_project_consolidation_fingerprint(
+    input: &ProjectConsolidationInput,
+) -> String {
     let serialized = serde_json::to_string(input).unwrap_or_default();
     let mut hasher = Sha256::new();
     hasher.update(serialized.as_bytes());

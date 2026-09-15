@@ -102,8 +102,6 @@ impl AppService {
             store::list_global_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text)
                 .await?;
         let Some(job_id) = job_ids.into_iter().next() else {
-            self.rebuild_global_memory_documents_for_tenant_at(tenant_id)
-                .await?;
             return Ok(0);
         };
         if self
@@ -715,18 +713,16 @@ impl AppService {
             }
             None => Vec::new(),
         };
-        let l3_items = crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
-            &pool,
-            &tenant_id,
-        )
-        .await?
-        .map(|v| v.items)
-        .unwrap_or_default();
+        let l3_items =
+            crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
+                &pool, &tenant_id,
+            )
+            .await?
+            .map(|v| v.items)
+            .unwrap_or_default();
         let l2_items = if let Some(path) = project_path.as_deref() {
             crate::backend::application::project_consolidation_pipeline::load_l2_items(
-                &pool,
-                &tenant_id,
-                path,
+                &pool, &tenant_id, path,
             )
             .await
             .unwrap_or_default()
@@ -929,12 +925,7 @@ fn compile_memory_context(
             .iter()
             .map(|i| i.updated_at.clone())
             .max()
-            .or_else(|| {
-                l2_items
-                    .iter()
-                    .map(|i| i.updated_at.clone())
-                    .max()
-            })
+            .or_else(|| l2_items.iter().map(|i| i.updated_at.clone()).max())
             .or_else(|| global_version.map(|version| version.updated_at.clone()))
             .or_else(|| project_version.map(|version| version.updated_at.clone())),
         estimated_tokens,

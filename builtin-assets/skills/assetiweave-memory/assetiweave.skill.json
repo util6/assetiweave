@@ -5,7 +5,7 @@
   "engine_contract": ">=3",
   "entry": "SKILL.md",
   "capabilities": [
-    "memory.recent.list",
+    "memory.recent.snapshot.get",
     "memory.context.resolve",
     "memory.project.get",
     "memory.rebuild",

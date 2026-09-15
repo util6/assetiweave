@@ -21,15 +21,10 @@ func newCmdMemory(f *cmdutil.Factory) *cobra.Command {
 }
 
 func newCmdMemoryRecent(f *cmdutil.Factory) *cobra.Command {
-	var view string
-	var limit, offset int
-	parent := &cobra.Command{Use: "recent", Short: "Inspect recent conversation work"}
-	cmd := &cobra.Command{Use: "list", Short: "List recent conversation work", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		return callAndPrint(cmd, f, schema.MethodMemoryRecentList, map[string]any{"view": view, "limit": limit, "offset": offset})
+	parent := &cobra.Command{Use: "recent", Short: "Inspect recent memory state and snapshot"}
+	cmd := &cobra.Command{Use: "get", Short: "Get recent memory state and snapshot", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return callAndPrint(cmd, f, schema.MethodMemoryRecentSnapshotGet, nil)
 	}}
-	cmd.Flags().StringVar(&view, "view", "project", "ordering: project or time")
-	cmd.Flags().IntVar(&limit, "limit", 50, "maximum sessions")
-	cmd.Flags().IntVar(&offset, "offset", 0, "pagination offset")
 	parent.AddCommand(cmd)
 	return parent
 }

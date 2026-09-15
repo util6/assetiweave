@@ -4,9 +4,9 @@ use crate::backend::{
     dto::{RecentMemorySnapshotView, RecentSnapshotPublicationKind},
     models::{
         CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView,
-        MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus,
-        MemoryPromotionNomination, MemorySkillBinding, RecentSnapshotWorkOrderEvidencePack,
-        ResolvedEvidenceRef, ALLOWED_MEMORY_GENERATION_TOOLS,
+        MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
+        MemorySkillBinding, RecentSnapshotWorkOrderEvidencePack, ResolvedEvidenceRef,
+        ALLOWED_MEMORY_GENERATION_TOOLS,
     },
     runtime::{AppError, AppResult},
     store,
@@ -37,10 +37,16 @@ pub(crate) fn parse_hh_mm(time_str: &str) -> AppResult<chrono::NaiveTime> {
         )));
     }
     let h: u32 = parts[0].parse().map_err(|_| {
-        AppError::Validation(format!("Invalid hour '{}' in time '{}'", parts[0], time_str))
+        AppError::Validation(format!(
+            "Invalid hour '{}' in time '{}'",
+            parts[0], time_str
+        ))
     })?;
     let m: u32 = parts[1].parse().map_err(|_| {
-        AppError::Validation(format!("Invalid minute '{}' in time '{}'", parts[1], time_str))
+        AppError::Validation(format!(
+            "Invalid minute '{}' in time '{}'",
+            parts[1], time_str
+        ))
     })?;
     if parts[0].len() != 2 || parts[1].len() != 2 || h >= 24 || m >= 60 {
         return Err(AppError::Validation(format!(
@@ -334,7 +340,10 @@ impl AppService {
 
         let memory_settings = settings
             .get("memory")
-            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone())
+                    .ok()
+            })
             .unwrap_or_default();
 
         let excluded_sessions = memory_settings
@@ -367,13 +376,14 @@ impl AppService {
                 continue;
             }
 
-            let raw_project_path = record
-                .cwd
-                .as_deref()
-                .or(record.session.session.project_path.as_deref());
+            let raw_project_path = record.cwd.as_deref().or(record
+                .session
+                .session
+                .project_path
+                .as_deref());
 
-            let project_path =
-                raw_project_path.and_then(|path| resolve_project_directory(path, &registered_roots));
+            let project_path = raw_project_path
+                .and_then(|path| resolve_project_directory(path, &registered_roots));
             let project_key = project_path
                 .clone()
                 .unwrap_or_else(|| "unassigned".to_string());
@@ -490,7 +500,10 @@ impl AppService {
         let settings = self.app_settings_value();
         let memory_settings = settings
             .get("memory")
-            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone())
+                    .ok()
+            })
             .unwrap_or_default();
 
         for excluded_source in &memory_settings.excluded_source_ids {
@@ -801,7 +814,10 @@ impl AppService {
             }
 
             // 项目 key 必须来自候选集或为 unassigned
-            if !candidate_project_keys.contains(key) && key != "unassigned" && !candidates.is_empty() {
+            if !candidate_project_keys.contains(key)
+                && key != "unassigned"
+                && !candidates.is_empty()
+            {
                 return Err(AppError::Validation(format!(
                     "Project key '{}' not present in candidate work order",
                     key
@@ -809,7 +825,9 @@ impl AppService {
             }
 
             // 摘要长度
-            if !project.no_material_change && (project.summary.trim().is_empty() || project.summary.len() > 2000) {
+            if !project.no_material_change
+                && (project.summary.trim().is_empty() || project.summary.len() > 2000)
+            {
                 return Err(AppError::Validation(format!(
                     "Project '{}' summary must be 1..2000 chars when no_material_change is false",
                     key
@@ -1049,15 +1067,19 @@ impl AppService {
                         let prior_rev: i64 = row.get("revision_number");
                         let prior_rev_id: String = row.get("rev_id");
 
-                        let proj_match = prior_proj.as_deref().unwrap_or("unassigned") == project.project_key.as_str();
+                        let proj_match = prior_proj.as_deref().unwrap_or("unassigned")
+                            == project.project_key.as_str();
                         let is_current = prior_lifecycle == "current";
-                        let was_continuable_status = matches!(prior_status.as_str(), "active" | "blocked" | "waiting");
+                        let was_continuable_status =
+                            matches!(prior_status.as_str(), "active" | "blocked" | "waiting");
 
                         let within_7_days = match (
                             DateTime::parse_from_rfc3339(&target_watermark_str),
                             DateTime::parse_from_rfc3339(&prior_first_seen),
                         ) {
-                            (Ok(tw), Ok(fs)) => (tw.signed_duration_since(fs)).num_seconds() <= 7 * 86400,
+                            (Ok(tw), Ok(fs)) => {
+                                (tw.signed_duration_since(fs)).num_seconds() <= 7 * 86400
+                            }
                             _ => false,
                         };
 
@@ -1082,7 +1104,8 @@ impl AppService {
                     }
                 }
 
-                let item_id = resolved_item_id.unwrap_or_else(|| format!("item-{}", uuid::Uuid::new_v4()));
+                let item_id =
+                    resolved_item_id.unwrap_or_else(|| format!("item-{}", uuid::Uuid::new_v4()));
                 let revision_id = format!("rev-{}", uuid::Uuid::new_v4());
 
                 // M35-L1-09: 终态条目在当前 Snapshot 展示一次后 lifecycle 标记为 retired/superseded，退出 L1
@@ -1238,7 +1261,10 @@ impl AppService {
         let settings = self.app_settings_value();
         let memory_settings = settings
             .get("memory")
-            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone())
+                    .ok()
+            })
             .unwrap_or_default();
 
         let active_rows = sqlx::query(
@@ -1261,7 +1287,12 @@ impl AppService {
             let rev_id: String = r.get("rev_id");
             let fs: String = r.get("first_seen_at");
             let days_elapsed = match DateTime::parse_from_rfc3339(&fs) {
-                Ok(dt) => (target.target_watermark_utc - dt.with_timezone(&Utc)).num_seconds().max(0) / 86400,
+                Ok(dt) => {
+                    (target.target_watermark_utc - dt.with_timezone(&Utc))
+                        .num_seconds()
+                        .max(0)
+                        / 86400
+                }
                 Err(_) => 0,
             };
             let rem_bucket = (7 - days_elapsed).max(0);
@@ -1544,7 +1575,10 @@ impl AppService {
 
         let memory_settings = settings
             .get("memory")
-            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .and_then(|v| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone())
+                    .ok()
+            })
             .unwrap_or_default();
 
         if !memory_settings.generation_enabled {
@@ -1623,7 +1657,10 @@ impl AppService {
 
         // 幂等检查 (M35-L1-05): 如果已有成功 Snapshot 且目标水位已处理或 target_fingerprint 相同，跳过
         if let Some(ref last_snap) = state.snapshot {
-            if let Some(last_meta) = store::load_recent_snapshot_meta_by_id_sqlx(pool, tenant_id, &last_snap.snapshot_id).await? {
+            if let Some(last_meta) =
+                store::load_recent_snapshot_meta_by_id_sqlx(pool, tenant_id, &last_snap.snapshot_id)
+                    .await?
+            {
                 if last_meta.target_watermark_utc == target.target_watermark_utc.to_rfc3339()
                     || last_meta.target_fingerprint == target_fingerprint
                 {
@@ -1877,7 +1914,10 @@ mod tests {
             .find(|c| c.session_id == "session-in-alpha")
             .expect("find alpha candidate");
         assert_eq!(alpha_candidate.project_key, "/tmp/alpha-project");
-        assert_eq!(alpha_candidate.project_path.as_deref(), Some("/tmp/alpha-project"));
+        assert_eq!(
+            alpha_candidate.project_path.as_deref(),
+            Some("/tmp/alpha-project")
+        );
         assert!(!alpha_candidate.short_ref.is_empty());
 
         let unassigned_candidate = candidates
@@ -2081,7 +2121,9 @@ mod tests {
         let err = service
             .validate_memory_generation_result(&unassigned_nomination_result, &candidates, &ref_map)
             .unwrap_err();
-        assert!(err.to_string().contains("unassigned project cannot be nominated"));
+        assert!(err
+            .to_string()
+            .contains("unassigned project cannot be nominated"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2356,20 +2398,25 @@ mod tests {
         let dt2: DateTime<Utc> = "2026-09-15T14:00:00Z".parse().unwrap();
 
         // 1. Same candidate sessions, different target watermarks:
-        let target_fp_1 = compute_target_fingerprint("default", &dt1, 48, &[cand1.clone()], &[], &skill);
-        let target_fp_2 = compute_target_fingerprint("default", &dt2, 48, &[cand1.clone()], &[], &skill);
+        let target_fp_1 =
+            compute_target_fingerprint("default", &dt1, 48, &[cand1.clone()], &[], &skill);
+        let target_fp_2 =
+            compute_target_fingerprint("default", &dt2, 48, &[cand1.clone()], &[], &skill);
         // Target fingerprints MUST DIFFER because target_watermark_utc differed:
         assert_ne!(target_fp_1, target_fp_2);
 
         // Content fingerprints MUST BE IDENTICAL because target_watermark_utc is NOT in content fingerprint:
-        let content_fp_1 = compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
-        let content_fp_2 = compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
+        let content_fp_1 =
+            compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
+        let content_fp_2 =
+            compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
         assert_eq!(content_fp_1, content_fp_2);
 
         // 2. Modifying candidate activity time changes content fingerprint:
         let mut cand2 = cand1.clone();
         cand2.last_activity_at = "2026-09-15T01:30:00Z".to_string();
-        let content_fp_changed = compute_content_fingerprint(48, &[cand2], &[], &[], &skill, &[], &[]);
+        let content_fp_changed =
+            compute_content_fingerprint(48, &[cand2], &[], &[], &skill, &[], &[]);
         assert_ne!(content_fp_1, content_fp_changed);
 
         // 3. Modifying exclusion changes content fingerprint:
@@ -2438,8 +2485,14 @@ mod tests {
             .await
             .expect("collect candidates");
 
-        let alpha_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
-        let unassigned_cand = candidates.iter().find(|c| c.project_key == "unassigned").unwrap();
+        let alpha_cand = candidates
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
+        let unassigned_cand = candidates
+            .iter()
+            .find(|c| c.project_key == "unassigned")
+            .unwrap();
 
         let initial_result = MemoryGenerationResultV2 {
             schema_version: 2,
@@ -2471,7 +2524,10 @@ mod tests {
                 },
             ],
             coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![alpha_cand.short_ref.clone(), unassigned_cand.short_ref.clone()],
+                covered_sessions: vec![
+                    alpha_cand.short_ref.clone(),
+                    unassigned_cand.short_ref.clone(),
+                ],
                 no_memory_sessions: vec![],
                 unreadable_sessions: vec![],
                 budget_exhausted: false,
@@ -2485,7 +2541,10 @@ mod tests {
             .expect("evaluate snap 1")
             .expect("must produce snapshot 1");
 
-        assert_eq!(snap1.publication_kind, RecentSnapshotPublicationKind::Generated);
+        assert_eq!(
+            snap1.publication_kind,
+            RecentSnapshotPublicationKind::Generated
+        );
         assert_eq!(snap1.reused_from_snapshot_id, None);
         let content_gen_at_1 = snap1.content_generated_at.clone();
 
@@ -2517,15 +2576,25 @@ mod tests {
             .expect("must produce reused snapshot 2");
 
         // Verification of M35-L1-06 (Reuse):
-        assert_eq!(snap2.publication_kind, RecentSnapshotPublicationKind::Reused);
-        assert_eq!(snap2.reused_from_snapshot_id, Some(snap1.snapshot_id.clone()));
+        assert_eq!(
+            snap2.publication_kind,
+            RecentSnapshotPublicationKind::Reused
+        );
+        assert_eq!(
+            snap2.reused_from_snapshot_id,
+            Some(snap1.snapshot_id.clone())
+        );
         // M35-L1-06: Preserves original content_generated_at!
         assert_eq!(snap2.content_generated_at, content_gen_at_1);
         // Sequence incremented
         assert_eq!(snap2.sequence, snap1.sequence + 1);
         // Projects and items copied
         assert_eq!(snap2.projects.len(), snap1.projects.len());
-        let alpha_snap2 = snap2.projects.iter().find(|p| p.project_key == alpha_cand.project_key).unwrap();
+        let alpha_snap2 = snap2
+            .projects
+            .iter()
+            .find(|p| p.project_key == alpha_cand.project_key)
+            .unwrap();
         assert_eq!(alpha_snap2.items.len(), 1);
         assert_eq!(alpha_snap2.items[0].title, "Initial work");
 
@@ -2539,7 +2608,10 @@ mod tests {
         assert_eq!(obs_count_after.0, 1);
 
         // State check: Ready, pointing to snap2
-        let state = service.get_recent_memory_snapshot().await.expect("get state");
+        let state = service
+            .get_recent_memory_snapshot()
+            .await
+            .expect("get state");
         assert_eq!(state.status, RecentMemoryStatus::Ready);
         assert_eq!(state.snapshot.unwrap().snapshot_id, snap2.snapshot_id);
     }
@@ -2587,7 +2659,10 @@ mod tests {
             .await
             .expect("collect candidates");
 
-        let alpha_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let alpha_cand = candidates
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
 
         let initial_result = MemoryGenerationResultV2 {
             schema_version: 2,
@@ -2649,7 +2724,10 @@ mod tests {
             .await
             .expect("collect continuable day 2");
 
-        let cont1 = continuable_day2.iter().find(|i| i.item_id == item1_id).expect("must find item1");
+        let cont1 = continuable_day2
+            .iter()
+            .find(|i| i.item_id == item1_id)
+            .expect("must find item1");
         assert_eq!(cont1.days_since_first_seen, 2);
         assert_eq!(cont1.remaining_days, 5);
 
@@ -2668,7 +2746,10 @@ mod tests {
             .collect_recent_snapshot_candidates("2026-09-12T02:00:00Z".parse().unwrap(), 48)
             .await
             .expect("collect candidates day 2");
-        let alpha_cand_day2 = candidates_day2.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let alpha_cand_day2 = candidates_day2
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
 
         // Agent continues item 1, updates status to Blocked
         let day2_result = MemoryGenerationResultV2 {
@@ -2788,7 +2869,10 @@ mod tests {
             .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
             .await
             .expect("cand1");
-        let beta_cand1 = cand1.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let beta_cand1 = cand1
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
 
         let res1 = MemoryGenerationResultV2 {
             schema_version: 2,
@@ -2842,7 +2926,10 @@ mod tests {
             .collect_recent_snapshot_candidates("2026-09-10T14:00:00Z".parse().unwrap(), 48)
             .await
             .expect("cand2");
-        let beta_cand2 = cand2.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let beta_cand2 = cand2
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
 
         let res2 = MemoryGenerationResultV2 {
             schema_version: 2,
@@ -2943,7 +3030,10 @@ mod tests {
             .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
             .await
             .expect("candidates");
-        let gamma_cand = candidates.iter().find(|c| c.project_key != "unassigned").unwrap();
+        let gamma_cand = candidates
+            .iter()
+            .find(|c| c.project_key != "unassigned")
+            .unwrap();
 
         let res = MemoryGenerationResultV2 {
             schema_version: 2,
@@ -3044,13 +3134,12 @@ mod tests {
         assert_eq!(l1_ref_status.1.as_deref(), Some("source_disabled"));
 
         // 2. Unpromoted L1 item is retired
-        let l1_lifecycle: (String,) = sqlx::query_as(
-            "SELECT lifecycle FROM memory_items WHERE id = ?1",
-        )
-        .bind(&l1_item_id)
-        .fetch_one(pool)
-        .await
-        .expect("l1 lifecycle");
+        let l1_lifecycle: (String,) =
+            sqlx::query_as("SELECT lifecycle FROM memory_items WHERE id = ?1")
+                .bind(&l1_item_id)
+                .fetch_one(pool)
+                .await
+                .expect("l1 lifecycle");
         assert_eq!(l1_lifecycle.0, "retired");
 
         // 3. M35-L3-04: L2 item reference is unavailable, but L2 item lifecycle is STILL 'current'
@@ -3064,13 +3153,12 @@ mod tests {
         assert_eq!(l2_ref_status.0, "unavailable");
         assert_eq!(l2_ref_status.1.as_deref(), Some("source_disabled"));
 
-        let l2_lifecycle: (String,) = sqlx::query_as(
-            "SELECT lifecycle FROM memory_items WHERE id = ?1",
-        )
-        .bind(&l2_item_id)
-        .fetch_one(pool)
-        .await
-        .expect("l2 lifecycle");
+        let l2_lifecycle: (String,) =
+            sqlx::query_as("SELECT lifecycle FROM memory_items WHERE id = ?1")
+                .bind(&l2_item_id)
+                .fetch_one(pool)
+                .await
+                .expect("l2 lifecycle");
         assert_eq!(l2_lifecycle.0, "current");
     }
 
@@ -3118,7 +3206,11 @@ mod tests {
             source_refs: vec!["SES-1".to_string()],
         }];
 
-        let pack = service.build_recent_snapshot_work_order_evidence_pack(&target, &candidates, &continuable);
+        let pack = service.build_recent_snapshot_work_order_evidence_pack(
+            &target,
+            &candidates,
+            &continuable,
+        );
 
         assert_eq!(pack.project_keys, vec!["proj1".to_string()]);
         assert_eq!(pack.candidate_sessions.len(), 1);
@@ -3133,4 +3225,3 @@ mod tests {
         assert!(!json_str.contains("memory_summary"));
     }
 }
-

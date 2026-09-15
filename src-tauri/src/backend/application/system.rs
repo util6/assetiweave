@@ -160,6 +160,7 @@ impl AppService {
     ) -> AppResult<crate::backend::app_settings::AppSettingsFile> {
         self.validate_agent_capability_assignments(&settings)
             .await?;
+        self.validate_memory_settings(&settings).await?;
         let file =
             crate::backend::app_settings::save_app_settings_sqlx(self.db.pool(), settings).await?;
         self.runtime

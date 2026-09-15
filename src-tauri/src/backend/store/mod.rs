@@ -93,6 +93,7 @@ pub(crate) use profile_repo::{
     delete_profile_sqlx, load_profile_sqlx, load_profiles_sqlx, upsert_profile_sqlx,
 };
 pub(crate) use project_memory_repo::*;
+pub(crate) use recent_snapshot_repo::*;
 pub(crate) use search_index_repo::{
     bump_conversation_search_source_revision_sqlx_tx,
     complete_conversation_search_index_rebuild_with_offset_sqlx,
@@ -101,7 +102,6 @@ pub(crate) use search_index_repo::{
     mark_conversation_search_index_unusable_sqlx,
     try_acquire_conversation_search_writer_lease_sqlx, ConversationSearchIndexState,
 };
-pub(crate) use recent_snapshot_repo::*;
 pub(crate) use session_memory_repo::*;
 pub(crate) use settings_repo::{
     initialize_app_locale_sqlx, load_app_settings_sqlx, save_app_settings_sqlx,

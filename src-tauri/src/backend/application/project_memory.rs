@@ -107,8 +107,6 @@ impl AppService {
             store::list_project_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text, 32)
                 .await?;
         if job_ids.is_empty() {
-            self.rebuild_project_memory_documents_for_tenant_at(tenant_id, None)
-                .await?;
             return Ok(0);
         }
         let active_count = self

@@ -146,12 +146,12 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] CLI contract 连续生成一致，Go/TS/Rust DTO 同构。
-- [ ] `assetiweave-memory` 使用 Snapshot API，深度回忆行为不变。
-- [ ] 旧 `memory.recent.list`、event target 从 public surface 移除。
-- [ ] v2 生成无 Recipe 新任务调用。
-- [ ] 逐项目文档 writer 无 active call path。
-- [ ] 内部 Worker 未启动 CLI/AIWC 子进程。
+- [x] CLI contract 连续生成一致，Go/TS/Rust DTO 同构。
+- [x] `assetiweave-memory` 使用 Snapshot API，深度回忆行为不变。
+- [x] 旧 `memory.recent.list`、event target 从 public surface 移除。
+- [x] v2 生成无 Recipe 新任务调用。
+- [x] 逐项目文档 writer 无 active call path。
+- [x] 内部 Worker 未启动 CLI/AIWC 子进程。
 
 ## N11：Q1–Q36 综合验收与发布证据
 

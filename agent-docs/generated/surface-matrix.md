@@ -105,8 +105,7 @@
 | `memory.recall.session.get` | `get_memory_recall_session`<br>`memory.recall.session.get` | `assetiweave-cli memory recall session get <session-id>` | `get_memory_recall_session` | `read` | `false` |
 | `memory.recall.turn.cancel` | `cancel_memory_recall_turn`<br>`memory.recall.turn.cancel` | `assetiweave-cli memory recall turn cancel <turn-id>` | `cancel_memory_recall_turn` | `write` | `false` |
 | `memory.recall.turn.send` | `memory.recall.turn.send`<br>`send_memory_recall_turn` | `assetiweave-cli memory recall turn send <session-id> --query <query>` | `send_memory_recall_turn` | `write` | `false` |
-| `memory.recent.event.target` | `get_memory_recent_event_target`<br>`memory.recent.event.target` | — | `get_memory_recent_event_target` | `read` | `false` |
-| `memory.recent.list` | `list_memory_recent`<br>`memory.recent.list` | `assetiweave-cli memory recent list` | `list_memory_recent` | `read` | `false` |
+| `memory.recent.snapshot.get` | `get_memory_recent_snapshot`<br>`memory.recent.snapshot.get` | `assetiweave-cli memory recent get` | `get_memory_recent_snapshot` | `read` | `false` |
 | `memory.task.cancel` | `cancel_memory_public_task`<br>`memory.task.cancel` | `assetiweave-cli memory task cancel <task-id>` | `cancel_memory_public_task` | `write` | `false` |
 | `memory.task.get` | `get_memory_public_task`<br>`memory.task.get` | `assetiweave-cli memory task get <task-id>` | `get_memory_public_task` | `read` | `false` |
 | `memory.task.list` | `list_memory_public_tasks`<br>`memory.task.list` | `assetiweave-cli memory task list` | `list_memory_public_tasks` | `read` | `false` |
@@ -156,6 +155,11 @@
 | `system.version` | `system.version` | `assetiweave-cli version` | — | `read` | `false` |
 | `target.catalog.list` | `list_target_profile_descriptors` | — | `list_target_profile_descriptors` | `read` | `false` |
 | `target.catalog.refresh` | `refresh_target_profile_descriptors` | — | `refresh_target_profile_descriptors` | `write` | `false` |
+| `task.cancel` | `cancel_public_task` | — | `cancel_public_task` | `write` | `false` |
+| `task.clear` | `clear_terminal_tasks` | — | `clear_terminal_tasks` | `write` | `false` |
+| `task.get` | `get_public_task` | — | `get_public_task` | `read` | `false` |
+| `task.list` | `list_public_tasks` | — | `list_public_tasks` | `read` | `false` |
+| `task.retry` | `retry_public_task` | — | `retry_public_task` | `write` | `false` |
 | `team.create` | `create_team`<br>`team.create` | `assetiweave-cli team create --name <name>` | `create_team` | `write` | `false` |
 | `team.delete` | `delete_team`<br>`team.delete` | `assetiweave-cli team delete <team-id> --yes` | `delete_team` | `high-risk-write` | `true` |
 | `team.get` | `get_team`<br>`team.get` | `assetiweave-cli team get <team-id>` | `get_team` | `read` | `false` |

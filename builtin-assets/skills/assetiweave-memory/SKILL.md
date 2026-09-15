@@ -24,7 +24,7 @@ python3 "$MEMORY_SKILL_DIR/scripts/recall.py" doctor
 
 `doctor` 应确认 CLI、Engine 和以下方法合同可用：
 
-- `memory.recent.list`
+- `memory.recent.snapshot.get`
 - `memory.context.resolve`
 - `memory.project.get`
 - `memory.recall.search`
@@ -38,7 +38,7 @@ python3 "$MEMORY_SKILL_DIR/scripts/recall.py" doctor
 ### 最近工作
 
 ```bash
-aiwc memory recent list --view project --limit 24
+aiwc memory recent get
 ```
 
 需要当前项目时，在 CLI 具备该范围的命令上使用 `--current-project`；脚本会把路径放入统一 `scope`。
