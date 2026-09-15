@@ -30,7 +30,7 @@ export function MemoryPage({
         <MemoryRecallWorkspace onNavigate={onNavigate} t={t} />
       ) : (
         <MemoryRecentWorkspace
-          onEventOpen={(event) => void openRecentEvent(event, onNavigate)}
+          onNavigateSession={onNavigate}
           t={t}
         />
       )}

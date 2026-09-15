@@ -22,9 +22,11 @@ const memoryService = vi.hoisted(() => ({
   })),
   getMemoryRecentEventTarget: vi.fn(),
   getMemoryRecallSession: vi.fn(),
+  getRecentMemorySnapshot: vi.fn(),
   listMemoryRecent: vi.fn(),
   searchMemoryRecall: vi.fn(),
   sendMemoryRecallTurn: vi.fn(),
+  subscribeMemoryTasks: vi.fn(),
 }));
 vi.mock("../../services/memory", () => memoryService);
 
@@ -38,6 +40,13 @@ beforeEach(() => {
     project_path: null,
     session_id: null,
   });
+  memoryService.getRecentMemorySnapshot.mockResolvedValue({
+    status: "empty",
+    snapshot: null,
+    latestAttemptTaskId: null,
+    latestAttemptError: null,
+  });
+  memoryService.subscribeMemoryTasks.mockResolvedValue(() => undefined);
   memoryService.listMemoryRecent.mockResolvedValue([]);
   memoryService.createMemoryRecallSession.mockResolvedValue(session());
 });
