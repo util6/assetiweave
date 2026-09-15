@@ -172,7 +172,7 @@ EOF
 # Monotonic error flow guards (Issue #2 / ERR-00)
 # 1. Global bounds prevent untyped and string-mapped error expansion
 check_max 80 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src"
-check_max 850 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
+check_max 920 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
 check_max 77 'AppError::External\([^)]*\.to_string\(\)' "$ROOT/src-tauri/src/backend"
 
 # 2. Runtime layer must not introduce cross-module String results

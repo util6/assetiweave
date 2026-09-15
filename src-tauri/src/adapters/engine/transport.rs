@@ -1700,8 +1700,6 @@ mod tests {
             "get_conversation_usage_dashboard",
             "get_conversation_usage_scan_status",
             "scan_conversation_usage",
-            "get_memory_recent_event_target",
-            "memory.recent.event.target",
             "get_conversation_data_maintenance_task",
             "get_skill_backup_task",
             "install_cli_tools",
@@ -1732,6 +1730,8 @@ mod tests {
             "cancel_skill_acquire_task",
             "apply_skill_group_mount",
             "apply_skill_group_exclusive_mount",
+            "duplicate_memory_generation_skill",
+            "reset_memory_generation_skill_to_default",
             "scan_sources",
             "scan_skill_sources",
         ])

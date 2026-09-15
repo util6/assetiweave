@@ -56,6 +56,18 @@ impl AppSettingsDocument {
     }
 }
 
+fn default_recent_window_hours() -> u32 {
+    48
+}
+
+fn default_watermark_time_1() -> String {
+    "02:00".to_string()
+}
+
+fn default_watermark_time_2() -> String {
+    "14:00".to_string()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MemorySettings {
@@ -63,10 +75,65 @@ pub(crate) struct MemorySettings {
     pub(crate) generation_enabled: bool,
     #[serde(default = "default_true")]
     pub(crate) usage_enabled: bool,
+    #[serde(default = "default_recent_window_hours")]
+    pub(crate) recent_window_hours: u32,
+    #[serde(default = "default_watermark_time_1")]
+    pub(crate) watermark_time_1: String,
+    #[serde(default = "default_watermark_time_2")]
+    pub(crate) watermark_time_2: String,
+    #[serde(default)]
+    pub(crate) generation_skill_asset_id: Option<String>,
     #[serde(default)]
     pub(crate) excluded_session_ids: Vec<String>,
     #[serde(default)]
     pub(crate) excluded_source_ids: Vec<String>,
+}
+
+fn is_valid_hh_mm(time_str: &str) -> bool {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    let Ok(h) = parts[0].parse::<u32>() else {
+        return false;
+    };
+    let Ok(m) = parts[1].parse::<u32>() else {
+        return false;
+    };
+    h < 24 && m < 60 && parts[0].len() == 2 && parts[1].len() == 2
+}
+
+impl MemorySettings {
+    pub(crate) fn validate_schedule(&self) -> AppResult<()> {
+        if self.recent_window_hours != 24
+            && self.recent_window_hours != 48
+            && self.recent_window_hours != 72
+        {
+            return Err(AppError::Validation(format!(
+                "MEMORY_SCHEDULE_INVALID: invalid window hours {}, allowed: 24, 48, 72",
+                self.recent_window_hours
+            )));
+        }
+        if !is_valid_hh_mm(&self.watermark_time_1) {
+            return Err(AppError::Validation(format!(
+                "MEMORY_SCHEDULE_INVALID: invalid watermark_time_1 format: {}",
+                self.watermark_time_1
+            )));
+        }
+        if !is_valid_hh_mm(&self.watermark_time_2) {
+            return Err(AppError::Validation(format!(
+                "MEMORY_SCHEDULE_INVALID: invalid watermark_time_2 format: {}",
+                self.watermark_time_2
+            )));
+        }
+        if self.watermark_time_1 == self.watermark_time_2 {
+            return Err(AppError::Validation(
+                "MEMORY_SCHEDULE_INVALID: watermark_time_1 and watermark_time_2 cannot be identical"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn default_true() -> bool {
@@ -78,6 +145,10 @@ impl Default for MemorySettings {
         Self {
             generation_enabled: true,
             usage_enabled: true,
+            recent_window_hours: 48,
+            watermark_time_1: "02:00".to_string(),
+            watermark_time_2: "14:00".to_string(),
+            generation_skill_asset_id: None,
             excluded_session_ids: Vec::new(),
             excluded_source_ids: Vec::new(),
         }
@@ -560,8 +631,34 @@ fn normalize_shared_ai_settings(settings: &mut Value) {
         .get("usageEnabled")
         .and_then(Value::as_bool)
         .unwrap_or(true);
+    let recent_window_hours = memory
+        .get("recentWindowHours")
+        .and_then(Value::as_u64)
+        .unwrap_or(48);
+    let watermark_time_1 = memory
+        .get("watermarkTime1")
+        .and_then(Value::as_str)
+        .unwrap_or("02:00")
+        .to_string();
+    let watermark_time_2 = memory
+        .get("watermarkTime2")
+        .and_then(Value::as_str)
+        .unwrap_or("14:00")
+        .to_string();
+    let generation_skill_asset_id = memory
+        .get("generationSkillAssetId")
+        .cloned()
+        .unwrap_or(Value::Null);
+
     memory.insert("generationEnabled".to_string(), json!(generation_enabled));
     memory.insert("usageEnabled".to_string(), json!(usage_enabled));
+    memory.insert("recentWindowHours".to_string(), json!(recent_window_hours));
+    memory.insert("watermarkTime1".to_string(), json!(watermark_time_1));
+    memory.insert("watermarkTime2".to_string(), json!(watermark_time_2));
+    memory.insert(
+        "generationSkillAssetId".to_string(),
+        generation_skill_asset_id,
+    );
     for key in ["excludedSessionIds", "excludedSourceIds"] {
         let values = memory
             .get(key)
@@ -989,7 +1086,17 @@ mod tests {
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&root).expect("create settings test root");
-        let previous_home = std::env::var_os(TEST_HOME_VAR);
+        struct EnvReset(Option<std::ffi::OsString>, std::path::PathBuf);
+        impl Drop for EnvReset {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var(TEST_HOME_VAR, value),
+                    None => std::env::remove_var(TEST_HOME_VAR),
+                }
+                std::fs::remove_dir_all(&self.1).ok();
+            }
+        }
+        let _env_guard = EnvReset(std::env::var_os(TEST_HOME_VAR), root.clone());
         std::env::set_var(TEST_HOME_VAR, &root);
         let database =
             crate::backend::store::Database::open_initialized_async(&root.join("settings.db"))
@@ -1010,12 +1117,6 @@ mod tests {
             .await
             .expect("read settings from sqlite despite corrupt legacy file");
         assert_eq!(actual, expected);
-
-        match previous_home {
-            Some(value) => std::env::set_var(TEST_HOME_VAR, value),
-            None => std::env::remove_var(TEST_HOME_VAR),
-        }
-        std::fs::remove_dir_all(root).ok();
     }
 
     #[test]
