@@ -14,12 +14,15 @@ const LEGACY_TABLES: &[&str] = &[
     "memory_dream_notes",
     "memory_extractions",
     "memory_items",
+    "legacy_memory_items",
     "memory_item_revisions",
+    "legacy_memory_item_revisions",
     "memory_evidence_snapshots",
     "memory_run_evidence",
     "memory_dream_note_evidence",
     "memory_extraction_evidence",
     "memory_item_evidence",
+    "legacy_memory_item_evidence",
 ];
 
 #[derive(Debug, Serialize)]

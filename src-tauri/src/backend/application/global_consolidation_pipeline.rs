@@ -1,9 +1,9 @@
 use crate::backend::dto::recent_snapshot::SourceAvailability;
 use crate::backend::models::{
     compute_global_consolidation_fingerprint, GlobalConsolidationInput,
-    GlobalConsolidationOperation, L3CandidateReferenceView,
-    L3GlobalMemoryView, L3MemoryItemView, L3PromotionCandidate, L3SourceReferenceView,
-    L3SupersededIndexItem, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
+    GlobalConsolidationOperation, L3CandidateReferenceView, L3GlobalMemoryView, L3MemoryItemView,
+    L3PromotionCandidate, L3SourceReferenceView, L3SupersededIndexItem, MemoryItemCategory,
+    MemoryItemStatus, MemoryPromotionNomination,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Utc};
@@ -200,22 +200,26 @@ pub(crate) async fn evaluate_l3_candidates(
         }
 
         let cluster_key = title.trim().to_lowercase();
-        let entry = clusters.entry(cluster_key).or_insert_with(|| GroupedCandidate {
-            title: title.clone(),
-            summary: summary.clone(),
-            rationale: rationale.clone(),
-            category,
-            status,
-            nomination,
-            primary_item_id: item_id.clone(),
-            primary_revision_id: revision_id.clone(),
-            supporting_projects: HashSet::new(),
-            supporting_sessions: HashSet::new(),
-            references: Vec::new(),
-        });
+        let entry = clusters
+            .entry(cluster_key)
+            .or_insert_with(|| GroupedCandidate {
+                title: title.clone(),
+                summary: summary.clone(),
+                rationale: rationale.clone(),
+                category,
+                status,
+                nomination,
+                primary_item_id: item_id.clone(),
+                primary_revision_id: revision_id.clone(),
+                supporting_projects: HashSet::new(),
+                supporting_sessions: HashSet::new(),
+                references: Vec::new(),
+            });
 
         // 检查该项目是否有 available 引用
-        let project_has_available = item_refs.iter().any(|r| r.project_key == project_key && r.available);
+        let project_has_available = item_refs
+            .iter()
+            .any(|r| r.project_key == project_key && r.available);
         if project_has_available {
             entry.supporting_projects.insert(project_key);
             for r in &item_refs {
@@ -239,8 +243,8 @@ pub(crate) async fn evaluate_l3_candidates(
     // 4. 准入漏斗判定
     for (_, grouped) in clusters {
         let is_global_rule = grouped.nomination == MemoryPromotionNomination::GlobalRule;
-        let is_cross_project = grouped.supporting_projects.len() >= 2
-            && grouped.supporting_sessions.len() >= 2;
+        let is_cross_project =
+            grouped.supporting_projects.len() >= 2 && grouped.supporting_sessions.len() >= 2;
 
         if is_global_rule {
             // M35-L3-02 规则 1: 明确全局规则必须有至少一个 available 引用
@@ -262,7 +266,8 @@ pub(crate) async fn evaluate_l3_candidates(
         } else if is_cross_project {
             // M35-L3-02 规则 2: 跨项目模式必须由至少两个不同真实 project_key 独立支持
             // 且 session 也不能是同一 session 重复映射
-            let mut sorted_projects: Vec<String> = grouped.supporting_projects.into_iter().collect();
+            let mut sorted_projects: Vec<String> =
+                grouped.supporting_projects.into_iter().collect();
             sorted_projects.sort();
 
             candidates.push(L3PromotionCandidate {
@@ -1057,7 +1062,10 @@ pub(crate) mod tests {
     use chrono::TimeZone;
 
     async fn setup_test_db() -> (AppService, SqlitePool, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!("test-global-consolidation-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!(
+            "test-global-consolidation-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let db_path = root.join("app.db");
         let service = AppService::open_with_db_path(db_path)
@@ -1124,7 +1132,11 @@ pub(crate) mod tests {
         .expect("insert l2 revision");
 
         let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
-        let avail_str = if available { "available" } else { "unavailable" };
+        let avail_str = if available {
+            "available"
+        } else {
+            "unavailable"
+        };
         let reason = if available { None } else { Some("deleted") };
 
         sqlx::query(
@@ -1214,10 +1226,17 @@ pub(crate) mod tests {
         let candidates_two = evaluate_l3_candidates(&pool, "default").await.unwrap();
         assert_eq!(candidates_two.len(), 1);
         assert_eq!(candidates_two[0].title, "Shared Error Handling Pattern");
-        assert_eq!(candidates_two[0].nomination, MemoryPromotionNomination::CrossProjectPattern);
+        assert_eq!(
+            candidates_two[0].nomination,
+            MemoryPromotionNomination::CrossProjectPattern
+        );
         assert_eq!(candidates_two[0].supporting_project_keys.len(), 2);
-        assert!(candidates_two[0].supporting_project_keys.contains(&"project-alpha".to_string()));
-        assert!(candidates_two[0].supporting_project_keys.contains(&"project-beta".to_string()));
+        assert!(candidates_two[0]
+            .supporting_project_keys
+            .contains(&"project-alpha".to_string()));
+        assert!(candidates_two[0]
+            .supporting_project_keys
+            .contains(&"project-beta".to_string()));
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1289,7 +1308,10 @@ pub(crate) mod tests {
 
         let candidates = evaluate_l3_candidates(&pool, "default").await.unwrap();
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].nomination, MemoryPromotionNomination::GlobalRule);
+        assert_eq!(
+            candidates[0].nomination,
+            MemoryPromotionNomination::GlobalRule
+        );
         assert_eq!(candidates[0].title, "Global License Policy");
 
         let _ = std::fs::remove_dir_all(root);
@@ -1301,12 +1323,20 @@ pub(crate) mod tests {
         let (_service, pool, root) = setup_test_db().await;
 
         let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-        let should_trigger = should_trigger_global_consolidation(&pool, "default", 0, now, false).await.unwrap();
+        let should_trigger = should_trigger_global_consolidation(&pool, "default", 0, now, false)
+            .await
+            .unwrap();
         assert!(!should_trigger, "0 候选时 should_trigger 必须为 false");
 
         // 即使是 manual_rebuild，0 候选也不能触发
-        let should_trigger_manual = should_trigger_global_consolidation(&pool, "default", 0, now, true).await.unwrap();
-        assert!(!should_trigger_manual, "0 候选时 manual_rebuild 依然必须为 false");
+        let should_trigger_manual =
+            should_trigger_global_consolidation(&pool, "default", 0, now, true)
+                .await
+                .unwrap();
+        assert!(
+            !should_trigger_manual,
+            "0 候选时 manual_rebuild 依然必须为 false"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1319,12 +1349,17 @@ pub(crate) mod tests {
         let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
 
         // 少量候选 (3 个)
-        let trigger_few = should_trigger_global_consolidation(&pool, "default", 3, now, false).await.unwrap();
+        let trigger_few = should_trigger_global_consolidation(&pool, "default", 3, now, false)
+            .await
+            .unwrap();
         // 因为没有上次成功记录，首次有候选允许触发
         assert!(trigger_few);
 
         // 插入上次成功记录为 3 天前
-        let three_days_ago = Utc.with_ymd_and_hms(2026, 9, 12, 0, 0, 0).unwrap().to_rfc3339();
+        let three_days_ago = Utc
+            .with_ymd_and_hms(2026, 9, 12, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339();
         sqlx::query(
             "INSERT INTO global_memory_state (tenant_id, last_successful_consolidation_at, last_input_fingerprint, revision_hash, created_at, updated_at) \
              VALUES ('default', ?1, 'fp-old', 'rev-hash', ?1, ?1)",
@@ -1335,23 +1370,39 @@ pub(crate) mod tests {
         .unwrap();
 
         // 3 天前且只有 3 个候选 -> 不足 7 天且未达 8 候选，不触发
-        let trigger_blocked = should_trigger_global_consolidation(&pool, "default", 3, now, false).await.unwrap();
-        assert!(!trigger_blocked, "未达 7 天且候选少于 8 时不触发低频 Consolidation");
+        let trigger_blocked = should_trigger_global_consolidation(&pool, "default", 3, now, false)
+            .await
+            .unwrap();
+        assert!(
+            !trigger_blocked,
+            "未达 7 天且候选少于 8 时不触发低频 Consolidation"
+        );
 
         // 候选达到 8 个 -> 立即触发
-        let trigger_threshold = should_trigger_global_consolidation(&pool, "default", 8, now, false).await.unwrap();
+        let trigger_threshold =
+            should_trigger_global_consolidation(&pool, "default", 8, now, false)
+                .await
+                .unwrap();
         assert!(trigger_threshold, "候选达 8 个时立即触发");
 
         // 超过 7 天 (如 8 天前) -> 触发周级巩固
-        let eight_days_ago = Utc.with_ymd_and_hms(2026, 9, 7, 0, 0, 0).unwrap().to_rfc3339();
+        let eight_days_ago = Utc
+            .with_ymd_and_hms(2026, 9, 7, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339();
         sqlx::query("UPDATE global_memory_state SET last_successful_consolidation_at = ?1 WHERE tenant_id = 'default'")
             .bind(&eight_days_ago)
             .execute(&pool)
             .await
             .unwrap();
 
-        let trigger_weekly = should_trigger_global_consolidation(&pool, "default", 1, now, false).await.unwrap();
-        assert!(trigger_weekly, "距离上次成功超过 7 天且有候选时触发周级维护");
+        let trigger_weekly = should_trigger_global_consolidation(&pool, "default", 1, now, false)
+            .await
+            .unwrap();
+        assert!(
+            trigger_weekly,
+            "距离上次成功超过 7 天且有候选时触发周级维护"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1403,7 +1454,9 @@ pub(crate) mod tests {
             .execute(&pool).await.unwrap();
 
         // 执行来源失效协调
-        reconcile_source_invalidation(&pool, "default", now, &[], &[]).await.unwrap();
+        reconcile_source_invalidation(&pool, "default", now, &[], &[])
+            .await
+            .unwrap();
 
         // 验证引用的状态变为 unavailable, reason = missing
         let l2_ref_avail: String = sqlx::query_scalar(
@@ -1422,7 +1475,10 @@ pub(crate) mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(l2_lifecycle, "current", "已晋升的 L2 条目不能因来源失效而被删除或 retired");
+        assert_eq!(
+            l2_lifecycle, "current",
+            "已晋升的 L2 条目不能因来源失效而被删除或 retired"
+        );
 
         let l3_lifecycle: String = sqlx::query_scalar(
             "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
@@ -1431,7 +1487,10 @@ pub(crate) mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(l3_lifecycle, "current", "已晋升的 L3 条目不能因来源失效而被删除或 retired");
+        assert_eq!(
+            l3_lifecycle, "current",
+            "已晋升的 L3 条目不能因来源失效而被删除或 retired"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1467,14 +1526,18 @@ pub(crate) mod tests {
             rationale: "Observed batch timeout under high concurrency".to_string(),
             source_refs: vec!["ref-2".to_string()],
         }];
-        let view2 = reconcile_global_consolidation(&pool, "default", revise_now, true, Some(revise_op))
-            .await
-            .unwrap()
-            .unwrap();
+        let view2 =
+            reconcile_global_consolidation(&pool, "default", revise_now, true, Some(revise_op))
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(view2.items.len(), 1);
         assert_eq!(view2.items[0].item_id, item_id);
         assert_eq!(view2.items[0].revision_number, 2);
-        assert_eq!(view2.items[0].summary, "Use 1000ms lock timeout for large batches");
+        assert_eq!(
+            view2.items[0].summary,
+            "Use 1000ms lock timeout for large batches"
+        );
         let rev2_id = view2.items[0].revision_id.clone();
         assert_ne!(rev1_id, rev2_id);
 
@@ -1525,15 +1588,22 @@ pub(crate) mod tests {
         let supersede_op = vec![GlobalConsolidationOperation::Supersede {
             old_item_id: old_item_id.clone(),
             replacement_title: "Event-Driven State Architecture V2".to_string(),
-            replacement_statement: "Transition to distributed event-driven state machine".to_string(),
+            replacement_statement: "Transition to distributed event-driven state machine"
+                .to_string(),
             rationale: "ADR-0015 full replacement".to_string(),
             category: MemoryItemCategory::Decision,
             source_refs: vec!["ref-2".to_string()],
         }];
-        let view2 = reconcile_global_consolidation(&pool, "default", supersede_now, true, Some(supersede_op))
-            .await
-            .unwrap()
-            .unwrap();
+        let view2 = reconcile_global_consolidation(
+            &pool,
+            "default",
+            supersede_now,
+            true,
+            Some(supersede_op),
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
         // 活跃列表中旧条目已被过滤，只包含新条目 (M35-L3-06)
         assert_eq!(view2.items.len(), 1);
@@ -1541,13 +1611,12 @@ pub(crate) mod tests {
         assert_eq!(view2.items[0].title, "Event-Driven State Architecture V2");
 
         // 验证数据库中旧条目 lifecycle 为 superseded
-        let old_lifecycle: String = sqlx::query_scalar(
-            "SELECT lifecycle FROM memory_items WHERE id = ?1",
-        )
-        .bind(&old_item_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let old_lifecycle: String =
+            sqlx::query_scalar("SELECT lifecycle FROM memory_items WHERE id = ?1")
+                .bind(&old_item_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(old_lifecycle, "superseded");
 
         // 验证 memory_item_supersessions 关系表记录
@@ -1616,7 +1685,11 @@ pub(crate) mod tests {
         assert!(!ctx.text.contains("Old deprecated statement"));
 
         // 验证 references 包含 global_memory_l3
-        let l3_refs: Vec<_> = ctx.references.iter().filter(|r| r.kind == "global_memory_l3").collect();
+        let l3_refs: Vec<_> = ctx
+            .references
+            .iter()
+            .filter(|r| r.kind == "global_memory_l3")
+            .collect();
         assert_eq!(l3_refs.len(), 1);
 
         let _ = std::fs::remove_dir_all(root);

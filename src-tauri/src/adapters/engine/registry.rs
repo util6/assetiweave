@@ -599,37 +599,7 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         NoParams,
         ServiceAsync => |service, _params| service.get_recent_memory_snapshot().await,
         &[],
-        None,
-        since: "0.6.1", deprecated: false
-    ),
-    command!(
-        "memory.recent.list",
-        "memory.recent.list",
-        "List the current tenant's recent conversation work within the 72-hour window",
-        Read,
-        Friendly,
-        false,
-        crate::backend::application::RecentConversationSessionListParams,
-        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
-        &[
-            param!("view", "project or time ordering"),
-            param!("limit", "Maximum number of sessions"),
-            param!("offset", "Pagination offset"),
-        ],
-        Some("assetiweave-cli memory recent list"),
-        since: "0.6.1", deprecated: true
-    ),
-    command!(
-        "memory.recent.event.target",
-        "memory.recent.event.target",
-        "Resolve a recent Memory event to the canonical conversation navigation target",
-        Read,
-        App,
-        false,
-        crate::backend::application::IdParams,
-        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
-        &[param!("id", "Recent Memory event identifier")],
-        None,
+        Some("assetiweave-cli memory recent get"),
         since: "0.6.1", deprecated: false
     ),
     command!(
@@ -2336,36 +2306,6 @@ const COMMAND_SPECS: &[CommandSpec] = &[
         NoParams,
         ServiceAsync => |service, _params| service.get_recent_memory_snapshot().await,
         &[],
-        None,
-        since: "0.6.1", deprecated: false
-    ),
-    command!(
-        "list_memory_recent",
-        "memory.recent.list",
-        "List the current tenant's recent conversation work within the 72-hour window",
-        Read,
-        App,
-        false,
-        crate::backend::application::RecentConversationSessionListParams,
-        ServiceAsync => |service, params| service.list_recent_conversation_sessions(params).await,
-        &[
-            param!("view", "project or time ordering"),
-            param!("limit", "Maximum number of sessions"),
-            param!("offset", "Pagination offset"),
-        ],
-        None,
-        since: "0.6.1", deprecated: true
-    ),
-    command!(
-        "get_memory_recent_event_target",
-        "memory.recent.event.target",
-        "Resolve a recent Memory event to the canonical conversation navigation target",
-        Read,
-        App,
-        false,
-        crate::backend::application::IdParams,
-        ServiceAsync => |service, params| service.get_recent_memory_event_target(params.id).await,
-        &[param!("id", "Recent Memory event identifier")],
         None,
         since: "0.6.1", deprecated: false
     ),

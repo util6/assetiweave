@@ -290,28 +290,6 @@ pub(crate) async fn get_memory_recent_snapshot(
 }
 
 #[tauri::command]
-pub(crate) async fn list_memory_recent(
-    state: State<'_, AppState>,
-    params: RecentConversationSessionListParams,
-) -> RuntimeAppResult<Vec<crate::backend::application::RecentConversationSession>> {
-    AppService::from_runtime(&state.runtime)
-        .list_recent_conversation_sessions(params)
-        .await
-        .into()
-}
-
-#[tauri::command]
-pub(crate) async fn get_memory_recent_event_target(
-    state: State<'_, AppState>,
-    event_id: String,
-) -> RuntimeAppResult<Option<crate::backend::dto::RecentMemoryEventTarget>> {
-    AppService::from_runtime(&state.runtime)
-        .get_recent_memory_event_target(event_id)
-        .await
-        .into()
-}
-
-#[tauri::command]
 pub(crate) async fn duplicate_memory_generation_skill(
     state: State<'_, AppState>,
 ) -> RuntimeAppResult<crate::backend::dto::CatalogAsset> {
@@ -4090,8 +4068,6 @@ pub(crate) fn command_handler(
         get_memory_recent_snapshot,
         duplicate_memory_generation_skill,
         reset_memory_generation_skill_to_default,
-        list_memory_recent,
-        get_memory_recent_event_target,
         resolve_memory_context,
         get_memory_project,
         rebuild_memory_scope,

@@ -200,7 +200,8 @@ pub(crate) async fn evaluate_l2_candidates(
             let is_available = availability == "available";
 
             // 判断是否为用户内容引用 (question_id 非空，或者 reference_key 包含 user 标记)
-            let is_user_content = question_id.is_some() || turn_id.is_some() || reference_key.contains("user");
+            let is_user_content =
+                question_id.is_some() || turn_id.is_some() || reference_key.contains("user");
             if is_available && is_user_content {
                 has_available_user_ref = true;
             }
@@ -209,7 +210,11 @@ pub(crate) async fn evaluate_l2_candidates(
                 source_id,
                 session_id,
                 reference_key,
-                role: if is_user_content { Some("user".to_string()) } else { None },
+                role: if is_user_content {
+                    Some("user".to_string())
+                } else {
+                    None
+                },
                 question_id,
                 available: is_available,
             });
@@ -290,7 +295,11 @@ pub(crate) async fn reconcile_project_consolidation_default(
         project_key,
         project_path,
         lock_map,
-        None::<fn(ProjectConsolidationInput) -> std::future::Ready<AppResult<ProjectConsolidationResult>>>,
+        None::<
+            fn(
+                ProjectConsolidationInput,
+            ) -> std::future::Ready<AppResult<ProjectConsolidationResult>>,
+        >,
     )
     .await
 }
@@ -332,7 +341,8 @@ where
     let superseded_index = load_superseded_index(pool, tenant_id, project_key).await?;
 
     // 检查来源失效变更
-    let availability_changes = load_source_availability_summary(pool, tenant_id, project_key).await?;
+    let availability_changes =
+        load_source_availability_summary(pool, tenant_id, project_key).await?;
 
     // 3. 触发门禁判断 (M35-L2-06):
     // 仅在出现合格候选、来源可用性变更或后续证据修订时运行；无候选时不空转
@@ -1017,8 +1027,16 @@ mod tests {
     ) {
         let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
         let now = Utc::now().to_rfc3339();
-        let q_id = if is_user_content { Some("q-1".to_string()) } else { None };
-        let avail = if is_available { "available" } else { "unavailable" };
+        let q_id = if is_user_content {
+            Some("q-1".to_string())
+        } else {
+            None
+        };
+        let avail = if is_available {
+            "available"
+        } else {
+            "unavailable"
+        };
 
         sqlx::query(
             "INSERT INTO memory_item_source_references (\
@@ -1103,8 +1121,15 @@ mod tests {
             .await
             .expect("evaluate candidates");
 
-        assert_eq!(candidates.len(), 1, "M35-L2-03: project_decision with 1 generated observation must be a candidate");
-        assert_eq!(candidates[0].nomination, MemoryPromotionNomination::ProjectDecision);
+        assert_eq!(
+            candidates.len(),
+            1,
+            "M35-L2-03: project_decision with 1 generated observation must be a candidate"
+        );
+        assert_eq!(
+            candidates[0].nomination,
+            MemoryPromotionNomination::ProjectDecision
+        );
         assert_eq!(candidates[0].observation_count, 1);
     }
 
@@ -1144,7 +1169,11 @@ mod tests {
             .await
             .expect("evaluate candidates");
 
-        assert_eq!(candidates.len(), 0, "Decision without available user content reference must be rejected");
+        assert_eq!(
+            candidates.len(),
+            0,
+            "Decision without available user content reference must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1182,14 +1211,22 @@ mod tests {
         let candidates1 = evaluate_l2_candidates(pool, "default", "proj-alpha")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates1.len(), 0, "Single observation of blocker must not qualify");
+        assert_eq!(
+            candidates1.len(),
+            0,
+            "Single observation of blocker must not qualify"
+        );
 
         // 中间插入 reused snapshot: reused snapshot 不增加观察
         seed_snapshot(pool, "snap-2", 2, "2026-09-15T08:00:00Z", "reused").await;
         let candidates2 = evaluate_l2_candidates(pool, "default", "proj-alpha")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates2.len(), 0, "Reused snapshot does not qualify blocker");
+        assert_eq!(
+            candidates2.len(),
+            0,
+            "Reused snapshot does not qualify blocker"
+        );
 
         // 第 2 次 generated snapshot，但指纹没有变化: 依然不满足
         seed_snapshot(pool, "snap-3", 3, "2026-09-15T14:00:00Z", "generated").await;
@@ -1207,7 +1244,11 @@ mod tests {
         let candidates3 = evaluate_l2_candidates(pool, "default", "proj-alpha")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates3.len(), 0, "Identical fingerprint without new evidence must not qualify");
+        assert_eq!(
+            candidates3.len(),
+            0,
+            "Identical fingerprint without new evidence must not qualify"
+        );
 
         // 第 3 次 generated snapshot，指纹发生变化且有新证据: 满足晋升！
         seed_snapshot(pool, "snap-4", 4, "2026-09-16T02:00:00Z", "generated").await;
@@ -1226,8 +1267,15 @@ mod tests {
         let candidates4 = evaluate_l2_candidates(pool, "default", "proj-alpha")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates4.len(), 1, "Blocker with 2 distinct generated observations and changed fingerprint must qualify");
-        assert_eq!(candidates4[0].nomination, MemoryPromotionNomination::RecurringBlocker);
+        assert_eq!(
+            candidates4.len(),
+            1,
+            "Blocker with 2 distinct generated observations and changed fingerprint must qualify"
+        );
+        assert_eq!(
+            candidates4[0].nomination,
+            MemoryPromotionNomination::RecurringBlocker
+        );
         assert_eq!(candidates4[0].observation_count, 3);
     }
 
@@ -1268,13 +1316,37 @@ mod tests {
         )
         .await;
         seed_source_reference(pool, "rev-comp-1", "ref-2", true, true).await;
-        seed_observation(pool, "item-comp-1", "rev-comp-1", "snap-1", "recurring_blocker", "fp-comp-1", "proj-alpha", "2026-09-15T02:00:00Z").await;
-        seed_observation(pool, "item-comp-1", "rev-comp-1", "snap-2", "recurring_blocker", "fp-comp-2", "proj-alpha", "2026-09-15T14:00:00Z").await;
+        seed_observation(
+            pool,
+            "item-comp-1",
+            "rev-comp-1",
+            "snap-1",
+            "recurring_blocker",
+            "fp-comp-1",
+            "proj-alpha",
+            "2026-09-15T02:00:00Z",
+        )
+        .await;
+        seed_observation(
+            pool,
+            "item-comp-1",
+            "rev-comp-1",
+            "snap-2",
+            "recurring_blocker",
+            "fp-comp-2",
+            "proj-alpha",
+            "2026-09-15T14:00:00Z",
+        )
+        .await;
 
         let candidates = evaluate_l2_candidates(pool, "default", "proj-alpha")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates.len(), 0, "Progress items and completed blockers must NEVER promote to L2 (M35-L2-05)");
+        assert_eq!(
+            candidates.len(),
+            0,
+            "Progress items and completed blockers must NEVER promote to L2 (M35-L2-05)"
+        );
     }
 
     #[tokio::test]
@@ -1296,12 +1368,26 @@ mod tests {
         )
         .await;
         seed_source_reference(pool, "rev-unassigned", "ref-u", true, true).await;
-        seed_observation(pool, "item-unassigned", "rev-unassigned", "snap-1", "project_decision", "fp-u", "unassigned", "2026-09-15T02:00:00Z").await;
+        seed_observation(
+            pool,
+            "item-unassigned",
+            "rev-unassigned",
+            "snap-1",
+            "project_decision",
+            "fp-u",
+            "unassigned",
+            "2026-09-15T02:00:00Z",
+        )
+        .await;
 
         let candidates = evaluate_l2_candidates(pool, "default", "unassigned")
             .await
             .expect("evaluate candidates");
-        assert_eq!(candidates.len(), 0, "unassigned items must NEVER promote to L2 (M35-L2-02)");
+        assert_eq!(
+            candidates.len(),
+            0,
+            "unassigned items must NEVER promote to L2 (M35-L2-02)"
+        );
     }
 
     #[tokio::test]
@@ -1326,7 +1412,10 @@ mod tests {
         .await
         .expect("consolidation with zero candidates");
 
-        assert!(result.is_none(), "Zero candidates should result in None view");
+        assert!(
+            result.is_none(),
+            "Zero candidates should result in None view"
+        );
     }
 
     #[tokio::test]
@@ -1409,14 +1498,21 @@ mod tests {
         )
         .await;
 
-        assert!(consolidation_res.is_err(), "Consolidation should fail when Agent fails");
+        assert!(
+            consolidation_res.is_err(),
+            "Consolidation should fail when Agent fails"
+        );
 
         // 4. 验证原有的 current L2 条目保持完好无损 (M35-L2-06: 失败保留 current L2)
         let loaded = load_l2_items(pool, "default", "proj-alpha")
             .await
             .expect("load l2 items after failure");
 
-        assert_eq!(loaded.len(), 1, "Original L2 item must be preserved on failure");
+        assert_eq!(
+            loaded.len(),
+            1,
+            "Original L2 item must be preserved on failure"
+        );
         assert_eq!(loaded[0].item_id, existing_l2_item_id);
         assert_eq!(loaded[0].title, "Pre-existing Decision");
     }
@@ -1480,7 +1576,10 @@ mod tests {
 
         assert_eq!(view1.items.len(), 1);
         assert_eq!(view1.items[0].title, "Beta Decision Adopted");
-        assert!(!view1.revision_hash.is_empty(), "Revision hash must be generated");
+        assert!(
+            !view1.revision_hash.is_empty(),
+            "Revision hash must be generated"
+        );
 
         // 3. 再次运行 Consolidation: 由于输入指纹未变，Agent runner 被跳过 (0 Agent calls)
         let view2 = reconcile_project_consolidation(
@@ -1550,10 +1649,18 @@ mod tests {
             .await
             .expect("resolve memory context");
 
-        assert!(res.text.contains("Use SQLite WAL Mode"), "Context text must contain L2 title");
-        assert!(res.text.contains("Enable WAL mode for performance"), "Context text must contain L2 summary");
         assert!(
-            res.references.iter().any(|r| r.kind == "project_memory_l2" && r.id == rev_id),
+            res.text.contains("Use SQLite WAL Mode"),
+            "Context text must contain L2 title"
+        );
+        assert!(
+            res.text.contains("Enable WAL mode for performance"),
+            "Context text must contain L2 summary"
+        );
+        assert!(
+            res.references
+                .iter()
+                .any(|r| r.kind == "project_memory_l2" && r.id == rev_id),
             "Context references must include project_memory_l2"
         );
     }

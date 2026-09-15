@@ -4,11 +4,7 @@ import { MemoryRecallWorkspace } from "../../components/memory/MemoryRecallWorks
 import { MemoryRecentWorkspace } from "../../components/memory/MemoryRecentWorkspace";
 import { PageHeader } from "../../components/foundation/PageHeader";
 import { useI18n } from "../../i18n/I18nProvider";
-import { getMemoryRecentEventTarget } from "../../services/memory";
-import type {
-  MemoryNavigationTarget,
-  RecentMemoryEvent,
-} from "../../types/memory";
+import type { MemoryNavigationTarget } from "../../types/memory";
 
 export function MemoryPage({
   activeSubNavId,
@@ -36,24 +32,6 @@ export function MemoryPage({
       )}
     </MemoryWorkspacePage>
   );
-}
-
-async function openRecentEvent(
-  event: RecentMemoryEvent,
-  onNavigate?: (target: MemoryNavigationTarget) => void,
-) {
-  if (!onNavigate) return;
-  const target = await getMemoryRecentEventTarget(event.id);
-  if (!target) return;
-  onNavigate({
-    record_kind: target.record_kind,
-    source_id: null,
-    session_id: target.session_id,
-    question_id: target.question_id,
-    turn_id: target.turn_id,
-    part_id: null,
-    block_id: target.block_id,
-  });
 }
 
 function MemoryWorkspacePage({

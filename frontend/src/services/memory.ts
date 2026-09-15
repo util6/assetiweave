@@ -7,8 +7,6 @@ import {
   memoryProjectViewSchema,
   memoryRebuildResultSchema,
   memoryTaskViewSchema,
-  recentMemoryEventTargetSchema,
-  recentMemorySessionSchema,
   recentMemoryStateViewSchema,
 } from "../schemas/memory";
 import type {
@@ -19,10 +17,7 @@ import type {
   MemoryProjectView,
   MemoryRebuildResult,
   MemoryTaskView,
-  RecentMemoryEventTarget,
-  RecentMemorySession,
   RecentMemoryStateView,
-  RecentConversationView,
 } from "../types/memory";
 
 const DESKTOP_REQUIRED =
@@ -44,25 +39,6 @@ export async function getRecentMemorySnapshot(): Promise<RecentMemoryStateView> 
   }
   return recentMemoryStateViewSchema.parse(
     await invoke("get_memory_recent_snapshot"),
-  );
-}
-
-export async function listMemoryRecent(
-  params: {
-    view?: RecentConversationView;
-    limit?: number;
-    offset?: number;
-  } = {},
-): Promise<RecentMemorySession[]> {
-  if (!isTauriRuntime()) return [];
-  return recentMemorySessionSchema.array().parse(
-    await invoke("list_memory_recent", {
-      params: {
-        view: params.view ?? "project",
-        limit: params.limit ?? 50,
-        offset: params.offset ?? 0,
-      },
-    }),
   );
 }
 
@@ -145,14 +121,6 @@ export async function retryMemoryPublicTask(
       params: { task_id: taskId },
     }),
   );
-}
-
-export async function getMemoryRecentEventTarget(
-  eventId: string,
-): Promise<RecentMemoryEventTarget | null> {
-  if (!isTauriRuntime()) return null;
-  const value = await invoke("get_memory_recent_event_target", { eventId });
-  return value == null ? null : recentMemoryEventTargetSchema.parse(value);
 }
 
 export async function searchMemoryRecall(params: {

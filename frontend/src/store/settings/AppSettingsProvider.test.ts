@@ -417,6 +417,10 @@ describe("AppSettingsProvider", () => {
     expect(normalizeStoredSettings({}).memory).toEqual({
       generationEnabled: true,
       usageEnabled: true,
+      recentWindowHours: 48,
+      watermarkTime1: "02:00",
+      watermarkTime2: "14:00",
+      generationSkillAssetId: null,
       excludedSessionIds: [],
       excludedSourceIds: [],
     });
@@ -425,6 +429,10 @@ describe("AppSettingsProvider", () => {
         memory: {
           generationEnabled: false,
           usageEnabled: false,
+          recentWindowHours: 72,
+          watermarkTime1: "03:00",
+          watermarkTime2: "15:00",
+          generationSkillAssetId: "custom.skill",
           excludedSessionIds: [" session-1 ", "session-1"],
           excludedSourceIds: ["source-1"],
         },
@@ -432,6 +440,10 @@ describe("AppSettingsProvider", () => {
     ).toEqual({
       generationEnabled: false,
       usageEnabled: false,
+      recentWindowHours: 72,
+      watermarkTime1: "03:00",
+      watermarkTime2: "15:00",
+      generationSkillAssetId: "custom.skill",
       excludedSessionIds: ["session-1"],
       excludedSourceIds: ["source-1"],
     });

@@ -12,10 +12,7 @@ pub const MAX_SKILL_FILE_SIZE_BYTES: u64 = 131_072; // 128 KB
 
 impl AppService {
     /// 校验普通 Skill 是否满足 Memory Generation Skill 准入约束 (M35-SKILL-05/06)
-    pub(crate) async fn validate_generation_skill_asset(
-        &self,
-        asset_id: &str,
-    ) -> AppResult<Asset> {
+    pub(crate) async fn validate_generation_skill_asset(&self, asset_id: &str) -> AppResult<Asset> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
 
@@ -24,7 +21,9 @@ impl AppService {
             .into_iter()
             .find(|a| a.id == asset_id)
             .ok_or_else(|| {
-                AppError::NotFound(format!("MEMORY_SKILL_NOT_FOUND: asset not found: {asset_id}"))
+                AppError::NotFound(format!(
+                    "MEMORY_SKILL_NOT_FOUND: asset not found: {asset_id}"
+                ))
             })?;
 
         if asset.kind != AssetKind::Skill {
@@ -178,9 +177,7 @@ impl AppService {
     }
 
     /// 复制内置模板到用户 Skill Library，成为普通可编辑副本 (M35-SKILL-02)
-    pub(crate) async fn duplicate_generation_skill_to_library(
-        &self,
-    ) -> AppResult<CatalogAsset> {
+    pub(crate) async fn duplicate_generation_skill_to_library(&self) -> AppResult<CatalogAsset> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
 
@@ -218,7 +215,8 @@ impl AppService {
             serde_json::from_str(&skill_json_content).unwrap_or(serde_json::json!({}));
         let new_skill_id = format!("user.memory-generation.{}", &unique_suffix[..8]);
         manifest_val["id"] = Value::String(new_skill_id.clone());
-        manifest_val["derived_from_asset_id"] = Value::String(MEMORY_GENERATION_SKILL_ID.to_string());
+        manifest_val["derived_from_asset_id"] =
+            Value::String(MEMORY_GENERATION_SKILL_ID.to_string());
         fs::write(
             target_dir.join("assetiweave.skill.json"),
             serde_json::to_string_pretty(&manifest_val).map_err(AppError::external)?,
@@ -237,12 +235,17 @@ impl AppService {
                     && a.absolute_path == target_dir.to_string_lossy().to_string()
             })
             .ok_or_else(|| {
-                AppError::NotFound("duplicated skill asset was created but not found in catalog".to_string())
+                AppError::NotFound(
+                    "duplicated skill asset was created but not found in catalog".to_string(),
+                )
             })?;
 
         // 自动更新设置中的 generationSkillAssetId
         let mut current_settings = self.app_settings_value();
-        if let Some(mem) = current_settings.get_mut("memory").and_then(Value::as_object_mut) {
+        if let Some(mem) = current_settings
+            .get_mut("memory")
+            .and_then(Value::as_object_mut)
+        {
             mem.insert(
                 "generationSkillAssetId".to_string(),
                 Value::String(new_asset.id.clone()),
@@ -258,7 +261,8 @@ impl AppService {
         self.save_app_settings(current_settings).await?;
 
         // 转换为 CatalogAsset
-        let catalog_assets = capabilities::catalog_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
+        let catalog_assets =
+            capabilities::catalog_assets_sqlx(pool, tenant_id, Some(AssetKind::Skill)).await?;
         catalog_assets
             .into_iter()
             .find(|ca| ca.asset.id == new_asset.id)
@@ -268,7 +272,10 @@ impl AppService {
     /// 恢复使用内置默认 Generation Skill (M35-SKILL-02)
     pub(crate) async fn reset_generation_skill_to_default(&self) -> AppResult<()> {
         let mut current_settings = self.app_settings_value();
-        if let Some(mem) = current_settings.get_mut("memory").and_then(Value::as_object_mut) {
+        if let Some(mem) = current_settings
+            .get_mut("memory")
+            .and_then(Value::as_object_mut)
+        {
             mem.remove("generationSkillAssetId");
         }
         self.save_app_settings(current_settings).await?;
@@ -281,7 +288,10 @@ impl AppService {
             return Ok(());
         };
 
-        if let Ok(memory_settings) = serde_json::from_value::<crate::backend::app_settings::MemorySettings>(memory_val.clone()) {
+        if let Ok(memory_settings) = serde_json::from_value::<
+            crate::backend::app_settings::MemorySettings,
+        >(memory_val.clone())
+        {
             memory_settings.validate_schedule()?;
 
             if let Some(ref asset_id) = memory_settings.generation_skill_asset_id {
@@ -405,7 +415,10 @@ mod tests {
                 "watermarkTime2": "14:00"
             }
         });
-        assert!(service.validate_memory_settings(&valid_settings).await.is_ok());
+        assert!(service
+            .validate_memory_settings(&valid_settings)
+            .await
+            .is_ok());
 
         let invalid_window = serde_json::json!({
             "memory": {
@@ -414,7 +427,10 @@ mod tests {
                 "watermarkTime2": "14:00"
             }
         });
-        assert!(service.validate_memory_settings(&invalid_window).await.is_err());
+        assert!(service
+            .validate_memory_settings(&invalid_window)
+            .await
+            .is_err());
 
         let identical_watermarks = serde_json::json!({
             "memory": {
@@ -423,7 +439,10 @@ mod tests {
                 "watermarkTime2": "14:00"
             }
         });
-        assert!(service.validate_memory_settings(&identical_watermarks).await.is_err());
+        assert!(service
+            .validate_memory_settings(&identical_watermarks)
+            .await
+            .is_err());
 
         drop(service);
         let _ = fs::remove_dir_all(root);

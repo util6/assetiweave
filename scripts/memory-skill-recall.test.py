@@ -102,7 +102,7 @@ else:
         self.assertEqual(
             payload["data"]["contracts"],
             [
-                "memory.recent.list",
+                "memory.recent.snapshot.get",
                 "memory.context.resolve",
                 "memory.project.get",
                 "memory.recall.search",

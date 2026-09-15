@@ -223,6 +223,10 @@ export type ResolvedConversationTranslationSettings =
 export interface MemorySettings {
   generationEnabled: boolean;
   usageEnabled: boolean;
+  recentWindowHours: number;
+  watermarkTime1: string;
+  watermarkTime2: string;
+  generationSkillAssetId: string | null;
   excludedSessionIds: string[];
   excludedSourceIds: string[];
 }
@@ -375,6 +379,10 @@ export const defaultSettings: AppSettings = {
   memory: {
     generationEnabled: true,
     usageEnabled: true,
+    recentWindowHours: 48,
+    watermarkTime1: "02:00",
+    watermarkTime2: "14:00",
+    generationSkillAssetId: null,
     excludedSessionIds: [],
     excludedSourceIds: [],
   },
@@ -785,6 +793,23 @@ function normalizeAiRuntimeSettings(
 
 function normalizeMemorySettings(value: unknown): MemorySettings {
   const stored = isRecord(value) ? value : {};
+  const recentWindowHours =
+    stored.recentWindowHours === 24 || stored.recentWindowHours === 48 || stored.recentWindowHours === 72
+      ? stored.recentWindowHours
+      : defaultSettings.memory.recentWindowHours;
+  const watermarkTime1 =
+    typeof stored.watermarkTime1 === "string" && /^\d{2}:\d{2}$/.test(stored.watermarkTime1)
+      ? stored.watermarkTime1
+      : defaultSettings.memory.watermarkTime1;
+  const watermarkTime2 =
+    typeof stored.watermarkTime2 === "string" && /^\d{2}:\d{2}$/.test(stored.watermarkTime2)
+      ? stored.watermarkTime2
+      : defaultSettings.memory.watermarkTime2;
+  const generationSkillAssetId =
+    typeof stored.generationSkillAssetId === "string" && stored.generationSkillAssetId.trim().length > 0
+      ? stored.generationSkillAssetId.trim()
+      : null;
+
   return {
     generationEnabled:
       typeof stored.generationEnabled === "boolean"
@@ -794,6 +819,10 @@ function normalizeMemorySettings(value: unknown): MemorySettings {
       typeof stored.usageEnabled === "boolean"
         ? stored.usageEnabled
         : defaultSettings.memory.usageEnabled,
+    recentWindowHours,
+    watermarkTime1,
+    watermarkTime2,
+    generationSkillAssetId,
     excludedSessionIds: normalizeStringList(stored.excludedSessionIds),
     excludedSourceIds: normalizeStringList(stored.excludedSourceIds),
   };

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createMemoryRecallSession,
+  getRecentMemorySnapshot,
   listMemoryPublicTasks,
-  listMemoryRecent,
 } from "./memory";
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -14,7 +14,12 @@ describe("memory service", () => {
 
   it("does not simulate recent Memory in browser preview", async () => {
     vi.stubGlobal("window", {});
-    await expect(listMemoryRecent()).resolves.toEqual([]);
+    await expect(getRecentMemorySnapshot()).resolves.toEqual({
+      status: "empty",
+      snapshot: null,
+      latestAttemptTaskId: null,
+      latestAttemptError: null,
+    });
     expect(invokeMock).not.toHaveBeenCalled();
   });
 

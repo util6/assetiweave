@@ -161,13 +161,13 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] M35-V01–V40 全部有可复现证据。
-- [ ] migration/backfill/rollback 在临时旧库通过。
-- [ ] Rust、Frontend、Go、boundary、surface matrix 全仓 Gate 通过。
-- [ ] 日志/Task/event payload 无 Prompt、正文、tool body、secret。
-- [ ] 桌面视觉、键盘、窄窗口、Session 导航与设置 smoke 通过。
-- [ ] 独立 review 无 P0/P1。
-- [ ] Handoff 记录发布、回滚、保留数据和旧表后续处置。
+- [x] M35-V01–V40 全部有可复现证据。
+- [x] migration/backfill/rollback 在临时旧库通过。
+- [x] Rust、Frontend、Go、boundary、surface matrix 全仓 Gate 通过。
+- [x] 日志/Task/event payload 无 Prompt、正文、tool body、secret。
+- [x] 桌面视觉、键盘、窄窗口、Session 导航与设置 smoke 通过。
+- [x] 独立 review 无 P0/P1。
+- [x] Handoff 记录发布、回滚、保留数据和旧表后续处置。
 
 ## Frontier
 

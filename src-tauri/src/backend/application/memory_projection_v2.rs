@@ -2,9 +2,7 @@ use crate::backend::dto::recent_snapshot::{
     RecentMemoryItemView, RecentMemorySnapshotView, RecentProjectView,
     RecentSnapshotPublicationKind,
 };
-use crate::backend::models::{
-    L2ProjectMemoryView, L3MemoryItemView, MemoryItemCategory,
-};
+use crate::backend::models::{L2ProjectMemoryView, L3MemoryItemView, MemoryItemCategory};
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
@@ -149,8 +147,10 @@ pub(crate) fn render_memory_summary_markdown(snapshot: &RecentMemorySnapshotView
     // 2. 同日项目按 project_title, project_key 排序
     // 3. 项目摘要和建议只出现一次，在 latest_activity_at 对应日期
     // 4. 普通 Item 在 occurred_at 对应日期
-    let mut items_by_date_and_project: BTreeMap<String, BTreeMap<(String, String), Vec<&RecentMemoryItemView>>> =
-        BTreeMap::new();
+    let mut items_by_date_and_project: BTreeMap<
+        String,
+        BTreeMap<(String, String), Vec<&RecentMemoryItemView>>,
+    > = BTreeMap::new();
 
     let mut project_meta_by_date: BTreeMap<String, Vec<&RecentProjectView>> = BTreeMap::new();
 
@@ -161,7 +161,10 @@ pub(crate) fn render_memory_summary_markdown(snapshot: &RecentMemorySnapshotView
             .next()
             .unwrap_or("unknown")
             .to_string();
-        project_meta_by_date.entry(proj_date).or_default().push(proj);
+        project_meta_by_date
+            .entry(proj_date)
+            .or_default()
+            .push(proj);
 
         for item in &proj.items {
             let item_date = item
@@ -205,7 +208,9 @@ pub(crate) fn render_memory_summary_markdown(snapshot: &RecentMemorySnapshotView
 
         if let Some(item_projects) = items_by_date_and_project.get(&date) {
             for key in item_projects.keys() {
-                rendered_projects_for_date.entry(key.clone()).or_insert(None);
+                rendered_projects_for_date
+                    .entry(key.clone())
+                    .or_insert(None);
             }
         }
 
@@ -273,10 +278,7 @@ pub(crate) fn render_memory_summary_markdown(snapshot: &RecentMemorySnapshotView
                             .collect();
 
                         if !session_titles.is_empty() {
-                            out.push_str(&format!(
-                                "  - Sessions: {}\n",
-                                session_titles.join(", ")
-                            ));
+                            out.push_str(&format!("  - Sessions: {}\n", session_titles.join(", ")));
                         }
                     }
                     out.push('\n');
@@ -442,12 +444,11 @@ pub(crate) async fn rebuild_markdown_projections(
     .map_err(AppError::external)?;
 
     if let Some(snap_id) = latest_snapshot_id {
-        let snapshot_view = crate::backend::store::recent_snapshot_repo::load_recent_snapshot_by_id_sqlx(
-            pool,
-            tenant_id,
-            &snap_id,
-        )
-        .await?;
+        let snapshot_view =
+            crate::backend::store::recent_snapshot_repo::load_recent_snapshot_by_id_sqlx(
+                pool, tenant_id, &snap_id,
+            )
+            .await?;
 
         if let Some(view) = snapshot_view {
             let markdown = render_memory_summary_markdown(&view);
@@ -478,11 +479,11 @@ pub(crate) async fn rebuild_markdown_projections(
         }
     }
 
-    let l3_view = crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
-        pool,
-        tenant_id,
-    )
-    .await?;
+    let l3_view =
+        crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
+            pool, tenant_id,
+        )
+        .await?;
 
     let l3_items = l3_view.map(|v| v.items).unwrap_or_default();
 
@@ -495,12 +496,8 @@ pub(crate) async fn rebuild_markdown_projections(
     }
     let revision_hash = format!("{:x}", hasher.finalize());
 
-    let long_term_markdown = render_memory_long_term_markdown(
-        &l2_projects,
-        &l3_items,
-        &published_at,
-        &revision_hash,
-    );
+    let long_term_markdown =
+        render_memory_long_term_markdown(&l2_projects, &l3_items, &published_at, &revision_hash);
     publish_atomic(&memory_file, &long_term_markdown)?;
 
     Ok(MemoryProjectionPaths {
@@ -571,7 +568,8 @@ pub(crate) mod tests {
     use chrono::TimeZone;
 
     async fn setup_test_service() -> (AppService, SqlitePool, PathBuf) {
-        let root = std::env::temp_dir().join(format!("test-memory-projection-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("test-memory-projection-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
         let db_path = root.join("app.db");
         let service = AppService::open_with_db_path(db_path)
@@ -613,7 +611,8 @@ pub(crate) mod tests {
                     rationale: "ADR-0009 mandate".to_string(),
                     occurred_at: "2026-09-15T09:00:00Z".to_string(),
                     recommendation_rank: Some(1),
-                    source_availability: crate::backend::dto::recent_snapshot::SourceAvailability::Available,
+                    source_availability:
+                        crate::backend::dto::recent_snapshot::SourceAvailability::Available,
                     session_references: vec![RecentSessionReferenceView {
                         source_id: "src-1".to_string(),
                         session_id: "sess-1".to_string(),
@@ -662,7 +661,8 @@ pub(crate) mod tests {
                 summary: "Source of truth".to_string(),
                 rationale: "Local-first ADR".to_string(),
                 lifecycle: "current".to_string(),
-                source_availability: crate::backend::dto::recent_snapshot::SourceAvailability::Available,
+                source_availability:
+                    crate::backend::dto::recent_snapshot::SourceAvailability::Available,
                 source_references: vec![L2SourceReferenceView {
                     source_id: "src-1".to_string(),
                     session_id: "sess-1".to_string(),
@@ -686,7 +686,8 @@ pub(crate) mod tests {
             summary: "Pure integration tests only".to_string(),
             rationale: "Prevent regressions".to_string(),
             lifecycle: "current".to_string(),
-            source_availability: crate::backend::dto::recent_snapshot::SourceAvailability::Available,
+            source_availability:
+                crate::backend::dto::recent_snapshot::SourceAvailability::Available,
             source_references: vec![],
             updated_at: "2026-09-15T00:00:00Z".to_string(),
         }];
@@ -714,13 +715,17 @@ pub(crate) mod tests {
     /// 测试 3: M35-PROJ-03 原子替换失败保留旧文件
     #[test]
     fn test_m35_proj_03_atomic_publish_failure_preserves_old_file() {
-        let temp_dir = std::env::temp_dir().join(format!("test-atomic-fail-{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("test-atomic-fail-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&temp_dir).unwrap();
         let file_path = temp_dir.join("memory_summary.md");
 
         // 先成功发布一次
         publish_atomic(&file_path, "# Initial Valid Content").unwrap();
-        assert_eq!(fs::read_to_string(&file_path).unwrap(), "# Initial Valid Content");
+        assert_eq!(
+            fs::read_to_string(&file_path).unwrap(),
+            "# Initial Valid Content"
+        );
 
         // 验证文件存在
         assert!(file_path.exists());
@@ -805,7 +810,9 @@ pub(crate) mod tests {
 
         assert!(paths2.summary_path.exists());
         assert!(paths2.memory_path.exists());
-        assert!(fs::read_to_string(&paths2.summary_path).unwrap().contains("Alpha Project"));
+        assert!(fs::read_to_string(&paths2.summary_path)
+            .unwrap()
+            .contains("Alpha Project"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -817,8 +824,14 @@ pub(crate) mod tests {
         let tenant_id = service.tenant_id();
 
         // 1. 插入一个 40 天前的旧快照和一个 5 天前的新快照
-        let forty_days_ago = Utc.with_ymd_and_hms(2026, 8, 5, 0, 0, 0).unwrap().to_rfc3339();
-        let five_days_ago = Utc.with_ymd_and_hms(2026, 9, 10, 0, 0, 0).unwrap().to_rfc3339();
+        let forty_days_ago = Utc
+            .with_ymd_and_hms(2026, 8, 5, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339();
+        let five_days_ago = Utc
+            .with_ymd_and_hms(2026, 9, 10, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339();
 
         sqlx::query(
             "INSERT INTO recent_memory_snapshots (\
@@ -872,20 +885,20 @@ pub(crate) mod tests {
 
         // 3. 执行清理：cutoff 为 30 天前 (2026-08-16)
         let thirty_days_cutoff = Utc.with_ymd_and_hms(2026, 8, 16, 0, 0, 0).unwrap();
-        let purged_count = purge_stale_recent_memory_snapshots(&pool, tenant_id, thirty_days_cutoff)
-            .await
-            .unwrap();
+        let purged_count =
+            purge_stale_recent_memory_snapshots(&pool, tenant_id, thirty_days_cutoff)
+                .await
+                .unwrap();
 
         // snap-old 应该被清理，snap-new 应该保留
         assert_eq!(purged_count, 1);
 
-        let remaining_snapshots: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM recent_memory_snapshots WHERE tenant_id = ?1",
-        )
-        .bind(tenant_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
+        let remaining_snapshots: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM recent_memory_snapshots WHERE tenant_id = ?1")
+                .bind(tenant_id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(remaining_snapshots, vec!["snap-new".to_string()]);
 
