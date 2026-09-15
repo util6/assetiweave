@@ -12,6 +12,7 @@ mod conversation_script_catalog;
 mod conversation_search;
 mod conversation_usage;
 mod generation_skill;
+mod global_consolidation_pipeline;
 mod global_memory;
 pub(crate) mod memory_agent_session;
 mod memory_public;

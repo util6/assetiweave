@@ -102,11 +102,11 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] 两个真实 project key 独立支持才形成 cross-project candidate。
-- [ ] Global 按周/8 候选低频触发，无候选不调用 Agent。
-- [ ] 删除/缺失/排除只更新 reference availability。
-- [ ] unavailable reference 不跳转也不支持新晋升。
-- [ ] revise/supersede 保留完整历史，Context 只读 current。
+- [x] 两个真实 project key 独立支持才形成 cross-project candidate。
+- [x] Global 按周/8 候选低频触发，无候选不调用 Agent。
+- [x] 删除/缺失/排除只更新 reference availability。
+- [x] unavailable reference 不跳转也不支持新晋升。
+- [x] revise/supersede 保留完整历史，Context 只读 current。
 
 ## N08：统一 Markdown 与保留策略垂直切片
 

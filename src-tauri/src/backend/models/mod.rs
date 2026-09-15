@@ -1,5 +1,6 @@
 mod assets;
 mod conversation;
+mod global_consolidation_v2;
 mod global_memory;
 mod memory;
 mod memory_generation_v2;
@@ -12,6 +13,7 @@ mod tenant;
 
 pub(crate) use assets::*;
 pub(crate) use conversation::*;
+pub(crate) use global_consolidation_v2::*;
 pub(crate) use global_memory::*;
 pub(crate) use memory::*;
 pub(crate) use memory_generation_v2::*;

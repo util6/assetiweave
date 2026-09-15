@@ -72,6 +72,54 @@ impl AppService {
         .await
     }
 
+    /// 获取当前 Tenant 的 L3 全局长期记忆视图 (M35-L3-01 ~ M35-L3-06)
+    pub(crate) async fn get_global_memory_l3(
+        &self,
+    ) -> AppResult<Option<crate::backend::models::L3GlobalMemoryView>> {
+        crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
+            self.db.pool(),
+            self.tenant_id(),
+        )
+        .await
+    }
+
+    /// 协调并执行当前 Tenant 的 Global Consolidation (M35-L3-01 ~ M35-L3-06)
+    pub(crate) async fn reconcile_global_consolidation(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+        is_manual_rebuild: bool,
+    ) -> AppResult<Option<crate::backend::models::L3GlobalMemoryView>> {
+        crate::backend::application::global_consolidation_pipeline::reconcile_global_consolidation(
+            self.db.pool(),
+            self.tenant_id(),
+            now,
+            is_manual_rebuild,
+            None,
+        )
+        .await
+    }
+
+    /// 协调长期记忆来源失效 (M35-L3-04)
+    pub(crate) async fn reconcile_memory_source_invalidation(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<usize> {
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|v| serde_json::from_value::<crate::backend::app_settings::MemorySettings>(v.clone()).ok())
+            .unwrap_or_default();
+
+        crate::backend::application::global_consolidation_pipeline::reconcile_source_invalidation(
+            self.db.pool(),
+            self.tenant_id(),
+            now,
+            &memory_settings.excluded_source_ids,
+            &memory_settings.excluded_session_ids,
+        )
+        .await
+    }
+
     pub(crate) async fn rebuild_memory_scope(
         &self,
         params: MemoryScopeRebuildParams,

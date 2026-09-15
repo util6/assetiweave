@@ -715,6 +715,13 @@ impl AppService {
             }
             None => Vec::new(),
         };
+        let l3_items = crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
+            &pool,
+            &tenant_id,
+        )
+        .await?
+        .map(|v| v.items)
+        .unwrap_or_default();
         let l2_items = if let Some(path) = project_path.as_deref() {
             crate::backend::application::project_consolidation_pipeline::load_l2_items(
                 &pool,
@@ -735,6 +742,7 @@ impl AppService {
             project_version.as_ref(),
             &project_sources,
             &sessions,
+            &l3_items,
             &l2_items,
         );
         if self.backend_settings()?.is_memory_usage_enabled() {
@@ -788,10 +796,23 @@ fn compile_memory_context(
     project_version: Option<&crate::backend::models::ProjectMemoryVersion>,
     project_sources: &[crate::backend::models::ProjectMemorySource],
     sessions: &[crate::backend::models::SessionMemory],
+    l3_items: &[crate::backend::models::L3MemoryItemView],
     l2_items: &[crate::backend::models::L2MemoryItemView],
 ) -> MemoryContextResult {
     let mut sections = Vec::new();
-    if let Some(version) = global_version {
+    if !l3_items.is_empty() {
+        for item in l3_items {
+            sections.push(ContextSection {
+                kind: "global_memory_l3".to_string(),
+                id: item.revision_id.clone(),
+                source_revision: Some(item.revision_number),
+                content: format!(
+                    "## [Global] {}\n{}\n{}",
+                    item.title, item.summary, item.rationale
+                ),
+            });
+        }
+    } else if let Some(version) = global_version {
         let summary = version.summary_markdown.as_deref().unwrap_or_default();
         let memory = version.memory_markdown.as_deref().unwrap_or_default();
         if !summary.is_empty() || !memory.is_empty() {
@@ -904,14 +925,17 @@ fn compile_memory_context(
     MemoryContextResult {
         text,
         revision,
-        generated_at: global_version
-            .map(|version| version.updated_at.clone())
+        generated_at: l3_items
+            .iter()
+            .map(|i| i.updated_at.clone())
+            .max()
             .or_else(|| {
                 l2_items
                     .iter()
                     .map(|i| i.updated_at.clone())
                     .max()
             })
+            .or_else(|| global_version.map(|version| version.updated_at.clone()))
             .or_else(|| project_version.map(|version| version.updated_at.clone())),
         estimated_tokens,
         token_budget,
@@ -1210,6 +1234,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &[],
         );
         let second = compile_memory_context(
             "tenant",
@@ -1218,6 +1243,7 @@ mod tests {
             global_only_budget,
             Some(&global),
             Some(&project),
+            &[],
             &[],
             &[],
             &[],
