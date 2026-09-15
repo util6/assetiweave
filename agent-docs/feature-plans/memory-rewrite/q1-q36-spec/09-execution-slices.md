@@ -18,11 +18,11 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 
 验收：
 
-- [ ] 新 migration 只追加，旧 schema 升级成功。
-- [ ] tenant/unique/CHECK/source non-cascade 约束有数据库测试。
-- [ ] `memory.recent.snapshot.get` 返回 empty state 或包含完整 fixture last-success 的 state。
-- [ ] 旧 `memory.recent.list` 在 expand 阶段仍通过。
-- [ ] 路由、合同和验证矩阵引用 Issue #35，无旧语义冲突。
+- [x] 新 migration 只追加，旧 schema 升级成功。
+- [x] tenant/unique/CHECK/source non-cascade 约束有数据库测试。
+- [x] `memory.recent.snapshot.get` 返回 empty state 或包含完整 fixture last-success 的 state。
+- [x] 旧 `memory.recent.list` 在 expand 阶段仍通过。
+- [x] 路由、合同和验证矩阵引用 Issue #35，无旧语义冲突。
 
 ## N02：用户可编辑 Generation Skill 垂直切片
 
