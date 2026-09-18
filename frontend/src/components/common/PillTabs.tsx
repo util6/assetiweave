@@ -39,6 +39,7 @@ export function PillTabs<T extends string = string>({
 }: PillTabsProps<T>) {
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const tabsViewportRef = useRef<HTMLDivElement | null>(null);
+  const tabsListRef = useRef<HTMLDivElement | null>(null);
   const [indicator, setIndicator] = useState({
     height: 0,
     left: 0,
@@ -49,19 +50,24 @@ export function PillTabs<T extends string = string>({
 
   const updateIndicator = useCallback(() => {
     const activeTab = tabRefs.current[activeId];
-    const viewport = tabsViewportRef.current;
-    if (!activeTab || !viewport) {
+    const list = tabsListRef.current;
+    if (!activeTab || !list) {
       setIndicator((current) => ({ ...current, opacity: 0 }));
       return;
     }
 
     const activeRect = activeTab.getBoundingClientRect();
-    const viewportRect = viewport.getBoundingClientRect();
+    const listRect = list.getBoundingClientRect();
+
+    if (activeRect.width === 0 && activeRect.height === 0) {
+      return;
+    }
+
     setIndicator({
       height: activeRect.height,
-      left: activeRect.left - viewportRect.left + viewport.scrollLeft,
+      left: activeRect.left - listRect.left,
       opacity: 1,
-      top: activeRect.top - viewportRect.top + viewport.scrollTop,
+      top: activeRect.top - listRect.top,
       width: activeRect.width,
     });
   }, [activeId]);
@@ -69,18 +75,18 @@ export function PillTabs<T extends string = string>({
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(updateIndicator);
     return () => window.cancelAnimationFrame(frame);
-  }, [items.length, updateIndicator]);
+  }, [items, size, fullWidth, updateIndicator]);
 
   useLayoutEffect(() => {
-    const viewport = tabsViewportRef.current;
-    if (!viewport) return;
+    const list = tabsListRef.current;
+    if (!list) return;
 
     window.addEventListener("resize", updateIndicator);
     const observer =
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(updateIndicator);
-    observer?.observe(viewport);
+    observer?.observe(list);
     return () => {
       window.removeEventListener("resize", updateIndicator);
       observer?.disconnect();
@@ -91,7 +97,7 @@ export function PillTabs<T extends string = string>({
     height: indicator.height > 0 ? indicator.height : undefined,
     left: indicator.left,
     opacity: indicator.opacity,
-    top: indicator.top > 0 ? indicator.top : undefined,
+    top: indicator.opacity > 0 ? indicator.top : undefined,
     width: indicator.width,
   } satisfies CSSProperties;
 
@@ -112,10 +118,11 @@ export function PillTabs<T extends string = string>({
           fullWidth ? "w-full" : "min-w-max",
           className,
         )}
+        ref={tabsListRef}
       >
         <span
           aria-hidden="true"
-          className="aurora-pill-indicator"
+          className={clsx("aurora-pill-indicator", isSm ? "h-7" : "h-8")}
           style={indicatorStyle}
         />
         {items.map((item) => {

@@ -758,13 +758,18 @@ async fn test_context_resolver_reads_current_l2_project_memory() {
     let item_id = "item-l2-ctx";
     let rev_id = "rev-l2-ctx";
 
+    let project_key =
+        crate::backend::application::recent::resolve_project_directory("/workspace/app", &[])
+            .unwrap_or_else(|| "/workspace/app".to_string());
+
     sqlx::query(
         "INSERT INTO memory_items (\
                 tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
                 first_seen_at, last_seen_at, created_at, updated_at\
-             ) VALUES ('default', ?1, 'l2', '/workspace/app', ?2, 'current', ?3, ?3, ?3, ?3)",
+             ) VALUES ('default', ?1, 'l2', ?2, ?3, 'current', ?4, ?4, ?4, ?4)",
     )
     .bind(item_id)
+    .bind(&project_key)
     .bind(rev_id)
     .bind(&now)
     .execute(pool)
@@ -789,7 +794,7 @@ async fn test_context_resolver_reads_current_l2_project_memory() {
 
     let res = service
         .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
-            project_path: Some("/workspace/app".to_string()),
+            project_path: Some(project_key),
             query: None,
             token_budget: Some(2000),
         })

@@ -1567,21 +1567,6 @@ fn validated_persist_input(
             source_revision: job.source_revision,
         });
     }
-    if references.is_empty() && !evidence.is_empty() {
-        let fallback = &evidence[0];
-        references.push(SessionMemoryReferenceInput {
-            source_id: job.source_id.clone(),
-            session_id: job.session_id.clone(),
-            question_id: Some(fallback.locator.question_id.clone()),
-            turn_id: Some(fallback.locator.turn_id.clone()),
-            part_id: (!fallback.locator.part_id.is_empty())
-                .then(|| fallback.locator.part_id.clone()),
-            node_id: fallback.node_id.clone(),
-            node_order: Some(fallback.locator.node_order),
-            reference_key: fallback.key.clone(),
-            source_revision: job.source_revision,
-        });
-    }
     let is_empty_session = output.source_references.is_empty()
         && output
             .events

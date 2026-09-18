@@ -16,7 +16,9 @@ export function useTeamViewMode(teamId: string): {
       if (stored === "parallel" || stored === "single") {
         return stored;
       }
-    } catch {}
+    } catch {
+      // ignore localStorage read error
+    }
     return "parallel";
   });
 
@@ -40,7 +42,9 @@ export function useTeamViewMode(teamId: string): {
     setPreferredModeState(mode);
     try {
       localStorage.setItem(`${VIEW_MODE_KEY_PREFIX}${teamId}`, mode);
-    } catch {}
+    } catch {
+      // ignore localStorage write error
+    }
   };
 
   // If on compact screen, force single view without modifying preferredMode

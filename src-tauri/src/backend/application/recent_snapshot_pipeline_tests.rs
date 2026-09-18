@@ -30,11 +30,12 @@ fn memory_generation_output_repairs_truncated_json() {
 fn memory_generation_output_accepts_status_and_category_aliases() {
     let json_with_aliases = r#"{"schemaVersion":2,"projects":[{"projectKey":"p1","summary":"P1 summary","sourceSessions":["s1"],"items":[{"title":"Item 1","category":"todo","status":"working","summary":"ok","rationale":"ok","occurredAt":"2026-09-15T12:00:00Z","sourceRefs":["s1.r1"],"recommendationRank":1,"promotionNomination":"none"}],"noMaterialChange":false}],"coverage":{"coveredSessions":["s1"],"noMemorySessions":[]},"unknowns":[]}"#;
     let res = parse_memory_generation_output(json_with_aliases).unwrap();
-    assert_eq!(res.projects[0].items[0].category, MemoryItemCategory::FollowUp);
+    assert_eq!(
+        res.projects[0].items[0].category,
+        MemoryItemCategory::FollowUp
+    );
     assert_eq!(res.projects[0].items[0].status, MemoryItemStatus::Active);
 }
-
-
 
 #[test]
 fn recent_generation_prompt_embeds_schema_and_a_bounded_tool_contract() {
@@ -427,10 +428,12 @@ async fn test_recent_snapshot_pipeline_candidate_selection() {
         .iter()
         .find(|c| c.session_id == "session-in-alpha")
         .expect("find alpha candidate");
-    assert_eq!(alpha_candidate.project_key, "/tmp/alpha-project");
+    let expected_alpha_key = resolve_project_directory("/tmp/alpha-project", &[])
+        .unwrap_or_else(|| "/tmp/alpha-project".to_string());
+    assert_eq!(alpha_candidate.project_key, expected_alpha_key);
     assert_eq!(
         alpha_candidate.project_path.as_deref(),
-        Some("/tmp/alpha-project")
+        Some(expected_alpha_key.as_str())
     );
     assert!(!alpha_candidate.short_ref.is_empty());
 
@@ -594,12 +597,13 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
         .unwrap_err();
     assert!(err.to_string().contains("Duplicate recommendation rank"));
 
-    // Gate 5: M35-L1-12 Unassigned project cannot nominate promotion
+    let expected_alpha_key = resolve_project_directory("/tmp/alpha-project", &[])
+        .unwrap_or_else(|| "/tmp/alpha-project".to_string());
     let unassigned_nomination_result = MemoryGenerationResultV2 {
         schema_version: 2,
         projects: vec![
             MemoryGenerationProjectV2 {
-                project_key: "/tmp/alpha-project".to_string(),
+                project_key: expected_alpha_key.clone(),
                 summary: "Alpha summary".to_string(),
                 no_material_change: false,
                 source_sessions: vec![ref1.clone()],
@@ -652,9 +656,11 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
         .expect("collect candidates");
     assert_eq!(candidates.len(), 2);
 
+    let expected_alpha_key = resolve_project_directory("/tmp/alpha-project", &[])
+        .unwrap_or_else(|| "/tmp/alpha-project".to_string());
     let alpha_candidate = candidates
         .iter()
-        .find(|c| c.project_key == "/tmp/alpha-project")
+        .find(|c| c.project_key == expected_alpha_key)
         .unwrap();
     let unassigned_candidate = candidates
         .iter()
@@ -665,7 +671,7 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
         schema_version: 2,
         projects: vec![
             MemoryGenerationProjectV2 {
-                project_key: "/tmp/alpha-project".to_string(),
+                project_key: expected_alpha_key.clone(),
                 summary: "Alpha project updates and next steps.".to_string(),
                 no_material_change: false,
                 source_sessions: vec![alpha_candidate.short_ref.clone()],
@@ -739,7 +745,7 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
     let alpha_proj = snapshot_view
         .projects
         .iter()
-        .find(|p| p.project_key == "/tmp/alpha-project")
+        .find(|p| p.project_key == expected_alpha_key)
         .unwrap();
     assert_eq!(alpha_proj.items.len(), 2);
     let rec_item = alpha_proj
@@ -1757,4 +1763,3 @@ async fn test_work_order_evidence_pack_is_structured_facts_without_markdown() {
     assert!(!json_str.contains(".md"));
     assert!(!json_str.contains("memory_summary"));
 }
-

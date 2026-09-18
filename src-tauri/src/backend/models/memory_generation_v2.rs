@@ -34,13 +34,24 @@ impl MemoryItemCategory {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryItemStatus {
-    #[serde(alias = "working", alias = "in_progress", alias = "ongoing", alias = "progress", alias = "open")]
+    #[serde(
+        alias = "working",
+        alias = "in_progress",
+        alias = "ongoing",
+        alias = "progress",
+        alias = "open"
+    )]
     Active,
     #[serde(alias = "block", alias = "blocking")]
     Blocked,
     #[serde(alias = "wait", alias = "pending")]
     Waiting,
-    #[serde(alias = "complete", alias = "done", alias = "finished", alias = "resolved")]
+    #[serde(
+        alias = "complete",
+        alias = "done",
+        alias = "finished",
+        alias = "resolved"
+    )]
     Completed,
     #[serde(alias = "verify", alias = "tested", alias = "confirmed")]
     Verified,

@@ -315,7 +315,8 @@ fn memory_generation_evt_04_namespaced_tool_with_args_is_allowed() {
         aggregator.apply(AcpRuntimeEvent::ToolCall {
             session_id: session.clone(),
             tool_call_id: "call-1".to_string(),
-            title: "assetiweave_memory_generation_get_session_outline(sessionId: \"abc\")".to_string(),
+            title: "assetiweave_memory_generation_get_session_outline(sessionId: \"abc\")"
+                .to_string(),
             status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
             raw_input: None,
             raw_output: None,
@@ -335,4 +336,3 @@ fn memory_generation_evt_04_namespaced_tool_with_args_is_allowed() {
         AggregatorAction::Continue
     ));
 }
-

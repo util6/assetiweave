@@ -258,7 +258,8 @@ fn normalize_agent_memory_generation_result(
             }
 
             if let Some(rank) = item.recommendation_rank {
-                if (1..=3).contains(&rank) && !item.source_refs.is_empty() && rank_set.insert(rank) {
+                if (1..=3).contains(&rank) && !item.source_refs.is_empty() && rank_set.insert(rank)
+                {
                     // 保留有效建议
                 } else {
                     item.recommendation_rank = None;
@@ -301,7 +302,6 @@ fn normalize_agent_memory_generation_result(
         }
     }
 }
-
 
 fn memory_generation_tools_for_job(
     job: &store::RecentMemoryJob,
@@ -2086,14 +2086,12 @@ impl AppService {
             .await
             .map_err(AppError::external)?;
 
-            sqlx::query(
-                "DELETE FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2",
-            )
-            .bind(tenant_id)
-            .bind(old_id)
-            .execute(&mut *conn)
-            .await
-            .map_err(AppError::external)?;
+            sqlx::query("DELETE FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2")
+                .bind(tenant_id)
+                .bind(old_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(AppError::external)?;
         }
 
         Ok(())
@@ -3057,7 +3055,9 @@ pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGener
         Err(orig_err) => {
             if let Some(repaired) = attempt_repair_truncated_json(json_text) {
                 if let Ok(result) = serde_json::from_str::<MemoryGenerationResultV2>(&repaired) {
-                    tracing::warn!("Successfully repaired truncated JSON in memory generation output");
+                    tracing::warn!(
+                        "Successfully repaired truncated JSON in memory generation output"
+                    );
                     return Ok(result);
                 }
             }

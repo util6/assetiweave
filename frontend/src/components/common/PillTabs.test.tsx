@@ -31,4 +31,27 @@ describe("PillTabs", () => {
     fireEvent.click(runningTab);
     expect(handleSelect).toHaveBeenCalledWith("running", items[1]);
   });
+
+  it("applies sm compact styling to tabs and indicator", () => {
+    const items = [
+      { id: "time", label: "按时间" },
+      { id: "project", label: "按项目" },
+    ];
+
+    const { container } = render(
+      <PillTabs
+        activeId="time"
+        items={items}
+        onSelect={vi.fn()}
+        size="sm"
+      />,
+    );
+
+    const timeTab = screen.getByRole("button", { name: "按时间" });
+    expect(timeTab.className).toContain("h-7");
+
+    const indicator = container.querySelector(".aurora-pill-indicator");
+    expect(indicator).not.toBeNull();
+    expect(indicator?.className).toContain("h-7");
+  });
 });

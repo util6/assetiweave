@@ -227,7 +227,9 @@ describe("TeamPage", () => {
         "assetiweave:team-view-mode:team-1",
         "single",
       );
-    } catch {}
+    } catch {
+      // ignore localStorage error in tests
+    }
   });
 
   afterEach(() => {
