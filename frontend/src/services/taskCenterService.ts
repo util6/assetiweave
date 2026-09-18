@@ -23,17 +23,13 @@ export async function listPublicTasks(
   return invoke<TaskView[]>("list_public_tasks", { params });
 }
 
-export async function getPublicTask(
-  taskId: string,
-): Promise<TaskView | null> {
+export async function getPublicTask(taskId: string): Promise<TaskView | null> {
   if (!isTauriRuntime()) return null;
   const params: TaskGetParams = { task_id: taskId };
   return invoke<TaskView | null>("get_public_task", { params });
 }
 
-export async function cancelPublicTask(
-  taskId: string,
-): Promise<TaskView> {
+export async function cancelPublicTask(taskId: string): Promise<TaskView> {
   if (!isTauriRuntime()) {
     throw new Error("Task cancellation requires desktop runtime");
   }
@@ -41,9 +37,7 @@ export async function cancelPublicTask(
   return invoke<TaskView>("cancel_public_task", { params });
 }
 
-export async function retryPublicTask(
-  taskId: string,
-): Promise<TaskView> {
+export async function retryPublicTask(taskId: string): Promise<TaskView> {
   if (!isTauriRuntime()) {
     throw new Error("Task retry requires desktop runtime");
   }

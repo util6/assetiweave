@@ -185,7 +185,8 @@ export const UsageToolbar: React.FC<UsageToolbarProps> = ({
       <div className="flex items-center gap-2.5 rounded-xl border border-theme-border/50 bg-theme-control/30 px-3.5 py-2.5 text-caption text-on-surface-variant">
         <AlertTriangle className="h-4 w-4 shrink-0 text-status-conflict" />
         <span>
-          本地多源用量统计：当前已接入并统计 Codex、Antigravity、Claude Code、OpenCode、ZCode 等本地会话数据。费用根据模型定价推算生成。
+          本地多源用量统计：当前已接入并统计 Codex、Antigravity、Claude
+          Code、OpenCode、ZCode 等本地会话数据。费用根据模型定价推算生成。
         </span>
       </div>
     </div>

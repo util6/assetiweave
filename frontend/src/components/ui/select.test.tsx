@@ -96,9 +96,9 @@ describe("SimpleSelect component (built with @radix-ui/react-select)", () => {
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "选择字体" }).textContent).toContain(
-      "系统字体",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "选择字体" }).textContent,
+    ).toContain("系统字体");
 
     rerender(
       <SimpleSelect
@@ -109,9 +109,9 @@ describe("SimpleSelect component (built with @radix-ui/react-select)", () => {
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "选择字体" }).textContent).toContain(
-      "衬线字体",
-    );
+    expect(
+      screen.getByRole("combobox", { name: "选择字体" }).textContent,
+    ).toContain("衬线字体");
   });
 
   it("automatically closes other open selects when a new select is opened", () => {

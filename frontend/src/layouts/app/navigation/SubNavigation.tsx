@@ -76,25 +76,25 @@ export function SubNavigation({
 
   return (
     <section
-      className="aurora-subnav sticky top-[var(--app-window-titlebar-height)] z-10 flex shrink-0 items-center gap-3 border-b border-theme-card-border/45 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur-xl"
+      className="ui-subnav sticky top-[var(--app-window-titlebar-height)] z-10 flex shrink-0 items-center gap-3 border-b border-theme-card-border/45 px-[var(--app-page-x)] py-[var(--app-subnav-y)] backdrop-blur-xl"
       aria-label={t("nav.aria.subNav")}
     >
       <div
-        className="aurora-pill-tabs-viewport flex min-w-0 flex-1 gap-1.5 overflow-x-auto"
+        className="ui-pill-tabs-viewport flex min-w-0 flex-1 gap-1.5 overflow-x-auto"
         ref={tabsViewportRef}
       >
         <div className="relative flex min-w-max gap-1.5">
           <span
             aria-hidden="true"
-            className="aurora-pill-indicator"
+            className="ui-pill-indicator"
             style={indicatorStyle}
           />
           {enabledItems.map((item) => (
             <button
               className={clsx(
-                "aurora-pill-tab relative h-8 whitespace-nowrap rounded-full border border-transparent px-4 text-body-sm font-medium text-on-surface-variant transition-colors hover:bg-theme-nav-hover/70 hover:text-on-surface",
+                "ui-pill-tab relative h-8 whitespace-nowrap rounded-full border border-transparent px-4 text-body-sm font-medium text-on-surface-variant transition-colors hover:bg-theme-nav-hover/70 hover:text-on-surface",
                 item.id === activeId &&
-                  "aurora-pill-tab-active border-theme-nav-active-border/35 text-theme-nav-active-fg shadow-[inset_0_-2px_0_rgb(var(--theme-nav-indicator)/0.52)]",
+                  "ui-pill-tab-active border-theme-nav-active-border/35 text-theme-nav-active-fg shadow-[inset_0_-2px_0_rgb(var(--theme-nav-indicator)/0.52)]",
               )}
               aria-current={item.id === activeId ? "page" : undefined}
               key={item.id}

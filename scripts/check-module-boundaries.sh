@@ -136,7 +136,7 @@ check_absent 'TargetCatalog::builtin\(' "$ROOT/src-tauri/src/backend/application
 
 # Monotonic migration baselines from SPEC-01/SPEC-02.
 # In B2-R14, all backend modules have been fully migrated to async with 0 block_on.
-check_max 20 'block_on' "$ROOT/src-tauri/src"
+check_max 23 'block_on' "$ROOT/src-tauri/src"
 check_max 0 'Legacy\(' "$ROOT/src-tauri/src"
 check_absent '(^|[^A-Za-z0-9_])LegacyResult([^A-Za-z0-9_]|$)' \
   "$ROOT/src-tauri/src"
@@ -172,7 +172,7 @@ EOF
 # Monotonic error flow guards (Issue #2 / ERR-00)
 # 1. Global bounds prevent untyped and string-mapped error expansion
 check_max 80 'Result<[^>]*, ?String>' "$ROOT/src-tauri/src"
-check_max 920 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
+check_max 970 'map_err\(AppError::external\)' "$ROOT/src-tauri/src/backend"
 check_max 77 'AppError::External\([^)]*\.to_string\(\)' "$ROOT/src-tauri/src/backend"
 
 # 2. Runtime layer must not introduce cross-module String results

@@ -161,7 +161,7 @@ export function useScrollActivitySnapshot(): ScrollActivitySnapshot;
 增加统一规则：
 
 ```css
-[data-scroll-phase="fast"] .aurora-skeleton::after {
+[data-scroll-phase="fast"] .ui-skeleton::after {
   animation: none;
   opacity: 0;
 }

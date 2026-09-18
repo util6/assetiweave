@@ -44,9 +44,13 @@ export function MemoryRecentWorkspace({
   t,
 }: MemoryRecentWorkspaceProps) {
   const [view, setView] = useState<"time" | "project">("time");
-  const [stateView, setStateView] = useState<RecentMemoryStateView | null>(null);
+  const [stateView, setStateView] = useState<RecentMemoryStateView | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
-  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(
+    new Set(),
+  );
 
   const toggleItem = useCallback((itemId: string) => {
     setExpandedItemIds((prev) => {
@@ -141,7 +145,9 @@ export function MemoryRecentWorkspace({
 
     return sortedDates.map((date) => {
       const projsInDate = [...dateMap.get(date)!.values()].sort((a, b) => {
-        const titleCmp = a.project.projectTitle.localeCompare(b.project.projectTitle);
+        const titleCmp = a.project.projectTitle.localeCompare(
+          b.project.projectTitle,
+        );
         if (titleCmp !== 0) return titleCmp;
         return a.project.projectKey.localeCompare(b.project.projectKey);
       });
@@ -161,7 +167,9 @@ export function MemoryRecentWorkspace({
       .sort((a, b) => b.latestActivityAt.localeCompare(a.latestActivityAt))
       .map((proj) => ({
         project: proj,
-        items: [...proj.items].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)),
+        items: [...proj.items].sort((a, b) =>
+          b.occurredAt.localeCompare(a.occurredAt),
+        ),
       }));
   }, [snapshot]);
 
@@ -329,7 +337,11 @@ export function MemoryRecentWorkspace({
           <div className="flex flex-col gap-8">
             {timeViewData.map(({ date, projectGroups }, dateIdx) => {
               const isLastDate = dateIdx === timeViewData.length - 1;
-              const dateParts = parseDateRailParts(date, snapshot.targetWatermark, t);
+              const dateParts = parseDateRailParts(
+                date,
+                snapshot.targetWatermark,
+                t,
+              );
 
               return (
                 <section
@@ -546,8 +558,7 @@ function SuggestedNextSteps({
     return project.items
       .filter((item) => typeof item.recommendationRank === "number")
       .sort(
-        (a, b) =>
-          (a.recommendationRank ?? 99) - (b.recommendationRank ?? 99),
+        (a, b) => (a.recommendationRank ?? 99) - (b.recommendationRank ?? 99),
       )
       .slice(0, 3);
   }, [project.items]);
@@ -679,7 +690,9 @@ function RecentItemCard({
           )}
 
           <div className="flex items-center gap-2 text-caption text-on-surface-variant">
-            <span className="font-semibold text-on-surface">{t("memory.recent.watermark")}:</span>
+            <span className="font-semibold text-on-surface">
+              {t("memory.recent.watermark")}:
+            </span>
             <span className="font-mono">{formatTime(targetWatermark)}</span>
           </div>
 
@@ -898,20 +911,34 @@ function parseDateRailParts(
   const dayNumber = isNaN(day) ? dateStr : String(day);
 
   const monthNames = [
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
   ];
-  const month = monthNames[monthIdx] ?? (monthIdx + 1) + "月";
+  const month = monthNames[monthIdx] ?? monthIdx + 1 + "月";
 
   const weekdaysZh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
   const weekdaysEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const isZh = t("memory.recent.today") === "今天";
   const weekday = isZh
-    ? weekdaysZh[dateObj.getDay()] ?? ""
-    : weekdaysEn[dateObj.getDay()] ?? "";
+    ? (weekdaysZh[dateObj.getDay()] ?? "")
+    : (weekdaysEn[dateObj.getDay()] ?? "");
 
   const today = new Date();
-  const todayZero = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const todayZero = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate(),
+  ).getTime();
   const targetZero = new Date(year, monthIdx, day).getTime();
   const diffDays = Math.round((todayZero - targetZero) / (1000 * 60 * 60 * 24));
 

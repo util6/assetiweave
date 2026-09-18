@@ -58,7 +58,7 @@ export function AssetRow({
   return (
     <article
       className={clsx(
-        "aurora-list-row group cursor-pointer",
+        "ui-list-row group cursor-pointer",
         expanded && "asset-expanded",
       )}
       data-asset-id={asset.id}

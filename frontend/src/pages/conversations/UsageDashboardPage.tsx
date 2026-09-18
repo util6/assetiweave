@@ -53,7 +53,8 @@ export const UsageDashboardPage: React.FC = () => {
           setScanStatus((prev) => ({
             ...prev,
             ...data.scanStatus,
-            activeScanTaskId: prev.activeScanTaskId || data.scanStatus.activeScanTaskId,
+            activeScanTaskId:
+              prev.activeScanTaskId || data.scanStatus.activeScanTaskId,
           }));
         }
       } catch (err) {

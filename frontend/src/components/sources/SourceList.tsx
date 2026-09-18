@@ -79,7 +79,7 @@ export function SourceList({
 
   if (sources.length === 0) {
     return (
-      <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
+      <div className="ui-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
         {t("source.empty")}
       </div>
     );
@@ -112,7 +112,7 @@ export function SourceList({
   }
 
   return (
-    <div className="aurora-list-surface" aria-label={t("source.page.title")}>
+    <div className="ui-list-surface" aria-label={t("source.page.title")}>
       {sources.map((source) => (
         <SourceRow
           appShortcuts={appShortcuts}

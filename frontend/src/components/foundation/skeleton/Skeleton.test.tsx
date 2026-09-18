@@ -19,13 +19,13 @@ describe("skeleton primitives", () => {
 
   it("renders three text lines by default and normalizes zero lines", () => {
     expect(
-      (renderToStaticMarkup(<SkeletonText />).match(/aurora-skeleton/g) ?? [])
+      (renderToStaticMarkup(<SkeletonText />).match(/ui-skeleton/g) ?? [])
         .length,
     ).toBe(3);
     expect(
       (
         renderToStaticMarkup(<SkeletonText lines={0} />).match(
-          /aurora-skeleton/g,
+          /ui-skeleton/g,
         ) ?? []
       ).length,
     ).toBe(1);
@@ -39,10 +39,8 @@ describe("skeleton recipes", () => {
       const Recipe = definition.component;
       const html = renderToStaticMarkup(<Recipe {...definition.defaults} />);
 
-      expect(html).toContain("aurora-skeleton");
-      expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(
-        80,
-      );
+      expect(html).toContain("ui-skeleton");
+      expect((html.match(/ui-skeleton/g) ?? []).length).toBeLessThanOrEqual(80);
     },
   );
 });
@@ -59,9 +57,7 @@ describe("AppSkeleton", () => {
       expect(html).toContain('role="status"');
       expect(html).toContain("Loading");
       expect((html.match(/role="status"/g) ?? []).length).toBe(1);
-      expect((html.match(/aurora-skeleton/g) ?? []).length).toBeLessThanOrEqual(
-        80,
-      );
+      expect((html.match(/ui-skeleton/g) ?? []).length).toBeLessThanOrEqual(80);
     },
   );
 

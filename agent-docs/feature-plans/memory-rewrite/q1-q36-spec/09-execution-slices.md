@@ -132,7 +132,7 @@ N01 -> N02 -> N03 ┬-> N04 ─┐
 验收：
 
 - [x] 默认按时间，日期内按项目；项目视图 identity 集合相同。
-- [x] 使用 PillTabs 和 Auroraqua-UI 分层组件。
+- [x] 使用 PillTabs 和 AssetIWeave UI 分层组件。
 - [x] 条目展开显示 rationale/watermark/Session。
 - [x] available Session 进入对话记录详情；unavailable 不导航。
 - [x] DOM 无刷新、窗口、生成、编辑、反馈或深度回忆输入。

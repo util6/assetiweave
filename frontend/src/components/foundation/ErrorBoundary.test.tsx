@@ -7,7 +7,11 @@ import { ErrorBoundary } from "./ErrorBoundary";
 
 afterEach(cleanup);
 
-function ThrowingComponent({ message = "Boom" }: { message?: string }): ReactElement {
+function ThrowingComponent({
+  message = "Boom",
+}: {
+  message?: string;
+}): ReactElement {
   throw new Error(message);
 }
 

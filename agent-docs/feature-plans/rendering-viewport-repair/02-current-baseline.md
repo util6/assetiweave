@@ -43,7 +43,7 @@ TanStack Virtual 在滚动范围变化后可以先更新滚动位置，再等待
 - `frontend/src/pages/catalog/CatalogPage.tsx` 直接在页面文档流中渲染 AssetList。
 - `frontend/src/components/assets/AssetList.tsx` 在 list 模式直接执行 `assets.map(...)`。
 - `frontend/src/components/assets/AssetRow.tsx` 的每行操作区使用 `backdrop-blur-md`。
-- `frontend/src/styles/index.css` 的 `.asset-list-surface` 与 `.aurora-list-surface` 都包含背景模糊，后者还包含 saturate。
+- `frontend/src/styles/index.css` 的 `.asset-list-surface` 与 `.ui-list-surface` 都包含背景模糊，后者还包含 saturate。
 - AssetToolbar 虽配置 sticky，但页面没有为资产内容声明唯一、有界的内部纵向滚动元素。
 
 ## 2. 已确认实验

@@ -325,12 +325,8 @@ describe("TeamWorkspaceShell Parallel & Single Workspace (T07)", () => {
 
     // In single mode, only the active member lane is rendered
     expect(screen.getByTestId("team-member-lane-member-leader")).toBeTruthy();
-    expect(
-      screen.queryByTestId("team-member-lane-member-a"),
-    ).toBeNull();
-    expect(
-      screen.queryByTestId("team-member-lane-member-z"),
-    ).toBeNull();
+    expect(screen.queryByTestId("team-member-lane-member-a")).toBeNull();
+    expect(screen.queryByTestId("team-member-lane-member-z")).toBeNull();
 
     // Click member-a tab in single mode
     fireEvent.click(screen.getByTestId("team-member-member-a"));

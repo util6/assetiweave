@@ -342,4 +342,3 @@ export async function scanConversationUsage(
     activeScanTaskId: snapshot?.id || status.activeScanTaskId,
   };
 }
-

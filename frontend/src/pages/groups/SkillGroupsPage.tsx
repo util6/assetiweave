@@ -727,7 +727,7 @@ export function SkillGroupsPage({
           scope="content"
         />
       ) : filteredGroups.length === 0 ? (
-        <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
+        <div className="ui-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
           {t("group.empty")}
         </div>
       ) : viewMode === "columns" && selectedColumnGroup ? (
@@ -760,7 +760,7 @@ export function SkillGroupsPage({
           sourceById={sourceById}
         />
       ) : (
-        <div aria-label={t("group.page.title")} className="aurora-list-surface">
+        <div aria-label={t("group.page.title")} className="ui-list-surface">
           {filteredGroups.map((detail) => {
             const groupAssets = resolveGroupAssets(detail, skillAssetsById);
             return (
@@ -902,7 +902,7 @@ function GroupColumnView({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="aurora-workbench-surface min-h-[560px]"
+      className="ui-workbench-surface min-h-[560px]"
       columns={[
         { defaultWeight: 0.72 },
         { defaultWeight: 0.9, minWidthScale: 1.1 },
@@ -916,7 +916,7 @@ function GroupColumnView({
       scrollRightLabel={t("layout.scrollColumnsRight")}
       storageKey="assetiweave.groupColumns.v2"
     >
-      <section className="aurora-workbench-column flex min-h-0 flex-col">
+      <section className="ui-workbench-column flex min-h-0 flex-col">
         <GroupColumnHeader
           title={t("group.column.groups")}
           meta={t("group.metric.groupsWithCount", { count: groups.length })}
@@ -934,7 +934,7 @@ function GroupColumnView({
               <div
                 aria-selected={active}
                 className={clsx(
-                  "aurora-workbench-item grid min-h-[72px] w-[calc(100%-0.7rem)] grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-3 text-left",
+                  "ui-workbench-item grid min-h-[72px] w-[calc(100%-0.7rem)] grid-cols-[auto_minmax(0,1fr)] items-start gap-3 px-3 py-3 text-left",
                   active ? "text-on-surface" : "text-on-surface-variant",
                 )}
                 data-selected={active}
@@ -983,7 +983,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="aurora-workbench-column flex min-h-0 flex-col">
+      <section className="ui-workbench-column flex min-h-0 flex-col">
         <GroupColumnHeader
           title={selectedGroup.group.name}
           meta={t("group.memberCount", { count: selectedGroupAssets.length })}
@@ -1002,7 +1002,7 @@ function GroupColumnView({
                 : undefined;
               return (
                 <article
-                  className="aurora-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
+                  className="ui-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -1042,7 +1042,7 @@ function GroupColumnView({
         </div>
       </section>
 
-      <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
+      <section className="ui-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
         <GroupColumnHeader
           title={t("group.column.details")}
           meta={
@@ -1091,7 +1091,7 @@ function GroupColumnView({
             />
           </div>
 
-          <div className="aurora-detail-surface mt-4 space-y-3 p-3">
+          <div className="ui-detail-surface mt-4 space-y-3 p-3">
             <GroupDetailRow
               label={t("group.field.description")}
               value={
@@ -1140,7 +1140,7 @@ function GroupColumnView({
 
 function GroupColumnHeader({ meta, title }: { meta: string; title: string }) {
   return (
-    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
+    <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
           {title}
@@ -1323,7 +1323,7 @@ function GroupRow({
   const ruleSummary = summarizeRules(detail, sourceById, t);
 
   return (
-    <article className="aurora-list-row" data-expanded={expanded}>
+    <article className="ui-list-row" data-expanded={expanded}>
       <div className="grid min-h-20 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[760px]:grid-cols-[auto_minmax(0,1fr)]">
         <input
           aria-label={t("group.exclusive.selectGroup", {
@@ -1405,14 +1405,14 @@ function GroupRow({
       </div>
 
       {expanded && (
-        <div className="aurora-list-row-detail py-2 pl-4 pr-3">
+        <div className="ui-list-row-detail py-2 pl-4 pr-3">
           <div className="pl-3">
             {assets.length === 0 ? (
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">
                 {t("group.emptyMembers")}
               </div>
             ) : (
-              <div className="aurora-list-surface !gap-2 !p-2">
+              <div className="ui-list-surface !gap-2 !p-2">
                 {assets.map((asset) => (
                   <AssetRow
                     appShortcuts={appShortcuts}

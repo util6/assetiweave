@@ -16,10 +16,7 @@ export interface TeamMemberTabsProps {
     icon: React.ReactNode;
     className: string;
   };
-  roleLabel: (
-    member: TeamMember,
-    t: ReturnType<typeof useI18n>["t"],
-  ) => string;
+  roleLabel: (member: TeamMember, t: ReturnType<typeof useI18n>["t"]) => string;
 }
 
 export function TeamMemberTabs({
@@ -64,7 +61,9 @@ export function TeamMemberTabs({
 
   return (
     <div
-      aria-label={t("team.chat.memberNavigation") || "Member Session navigation"}
+      aria-label={
+        t("team.chat.memberNavigation") || "Member Session navigation"
+      }
       className="flex min-w-0 gap-2 overflow-x-auto pb-1"
       role="tablist"
     >

@@ -135,7 +135,10 @@ describe("taskCenterService", () => {
     const callback = vi.fn();
     const unlisten = await subscribeTaskUpdated(callback);
 
-    expect(listenMock).toHaveBeenCalledWith("task-updated", expect.any(Function));
+    expect(listenMock).toHaveBeenCalledWith(
+      "task-updated",
+      expect.any(Function),
+    );
     const eventHandler = listenMock.mock.calls[0][1];
     const taskPayload: TaskView = {
       id: "task-event-1",

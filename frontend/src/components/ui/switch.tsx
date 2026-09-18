@@ -9,12 +9,12 @@ const Switch = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>
 >(({ className, ...props }, ref) => (
   <SwitchPrimitives.Root
-    className={cn("aurora-switch", switchRecipe(), className)}
+    className={cn("ui-switch", switchRecipe(), className)}
     {...props}
     ref={ref}
   >
     <SwitchPrimitives.Thumb
-      className={cn("aurora-switch-thumb", switchThumbRecipe())}
+      className={cn("ui-switch-thumb", switchThumbRecipe())}
     />
   </SwitchPrimitives.Root>
 ));

@@ -775,11 +775,137 @@ pub fn run_memory_recall_mcp_stdio() {
 /// background Memory Generation Agent.
 pub fn run_memory_generation_mcp_stdio() {
     let _logging_guard = init_app_logging();
-    if let Err(error) = backend::memory_generation_mcp::run_memory_generation_mcp_stdio() {
+    let tokio_runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(error) => {
+            eprintln!("failed to initialize Memory Generation MCP async runtime: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let db_path = backend::path_utils::app_db_path();
+    let runtime = match db_path {
+        Ok(path) => match tokio_runtime.block_on(backend::runtime::AppRuntime::bootstrap(
+            path,
+            backend::runtime::RuntimeRole::OneShot,
+        )) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                eprintln!("failed to initialize Memory Generation MCP runtime: {error}");
+                drop(_logging_guard);
+                std::process::exit(1);
+            }
+        },
+        Err(error) => {
+            eprintln!("failed to resolve Memory Generation MCP db path: {error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let tenant_id = match backend::memory_generation_mcp::required_env(
+        "ASSETIWEAVE_MEMORY_GENERATION_TENANT_ID",
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            eprintln!("{error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let job_id = match backend::memory_generation_mcp::required_env(
+        "ASSETIWEAVE_MEMORY_GENERATION_JOB_ID",
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            eprintln!("{error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    let ownership_token = match backend::memory_generation_mcp::required_env(
+        "ASSETIWEAVE_MEMORY_GENERATION_OWNERSHIP_TOKEN",
+    ) {
+        Ok(token) => token,
+        Err(error) => {
+            eprintln!("{error}");
+            drop(_logging_guard);
+            std::process::exit(1);
+        }
+    };
+    if let Err(error) = tokio_runtime.block_on(runtime.activate_tenant(&tenant_id)) {
+        eprintln!("failed to activate Memory Generation MCP tenant: {error}");
+        drop(_logging_guard);
+        std::process::exit(1);
+    }
+    let service = backend::application::AppService::from_runtime(&runtime);
+    if let Err(error) =
+        run_memory_generation_mcp_loop(&tokio_runtime, &service, &job_id, &ownership_token)
+    {
         eprintln!("Memory Generation MCP bridge stopped: {error}");
         drop(_logging_guard);
         std::process::exit(1);
     }
+}
+
+fn run_memory_generation_mcp_loop(
+    tokio_runtime: &tokio::runtime::Runtime,
+    service: &backend::application::AppService,
+    job_id: &str,
+    ownership_token: &str,
+) -> Result<(), String> {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    let mut budget = backend::memory_generation_mcp::ToolBudget::default();
+    for line in stdin.lock().lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: serde_json::Value =
+            serde_json::from_str(&line).map_err(|error| error.to_string())?;
+        let id = request.get("id").cloned();
+        let method = request
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if method.starts_with("notifications/") {
+            continue;
+        }
+        let result = match method {
+            "initialize" => Ok(backend::memory_generation_mcp::initialize_result()),
+            "tools/list" => Ok(backend::memory_generation_mcp::tools_result()),
+            "tools/call" => budget.begin_call().and_then(|()| {
+                let value = tokio_runtime.block_on(backend::memory_generation_mcp::call_tool(
+                    service,
+                    job_id,
+                    ownership_token,
+                    request.get("params").unwrap_or(&serde_json::Value::Null),
+                ))?;
+                budget.record_response(&value)?;
+                Ok(value)
+            }),
+            _ => Err("unsupported Memory Generation MCP method".to_string()),
+        };
+        let response = match (id, result) {
+            (Some(id), Ok(result)) => {
+                serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": result })
+            }
+            (Some(id), Err(error)) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": { "code": -32001, "message": error }
+            }),
+            (None, _) => continue,
+        };
+        serde_json::to_writer(&mut stdout, &response).map_err(|error| error.to_string())?;
+        stdout.write_all(b"\n").map_err(|error| error.to_string())?;
+        stdout.flush().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 fn run_memory_recall_mcp_loop(

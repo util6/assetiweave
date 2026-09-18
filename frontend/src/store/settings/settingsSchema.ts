@@ -805,19 +805,24 @@ function normalizeAiRuntimeSettings(
 function normalizeMemorySettings(value: unknown): MemorySettings {
   const stored = isRecord(value) ? value : {};
   const recentWindowHours =
-    stored.recentWindowHours === 24 || stored.recentWindowHours === 48 || stored.recentWindowHours === 72
+    stored.recentWindowHours === 24 ||
+    stored.recentWindowHours === 48 ||
+    stored.recentWindowHours === 72
       ? stored.recentWindowHours
       : defaultSettings.memory.recentWindowHours;
   const watermarkTime1 =
-    typeof stored.watermarkTime1 === "string" && /^\d{2}:\d{2}$/.test(stored.watermarkTime1)
+    typeof stored.watermarkTime1 === "string" &&
+    /^\d{2}:\d{2}$/.test(stored.watermarkTime1)
       ? stored.watermarkTime1
       : defaultSettings.memory.watermarkTime1;
   const watermarkTime2 =
-    typeof stored.watermarkTime2 === "string" && /^\d{2}:\d{2}$/.test(stored.watermarkTime2)
+    typeof stored.watermarkTime2 === "string" &&
+    /^\d{2}:\d{2}$/.test(stored.watermarkTime2)
       ? stored.watermarkTime2
       : defaultSettings.memory.watermarkTime2;
   const generationSkillAssetId =
-    typeof stored.generationSkillAssetId === "string" && stored.generationSkillAssetId.trim().length > 0
+    typeof stored.generationSkillAssetId === "string" &&
+    stored.generationSkillAssetId.trim().length > 0
       ? stored.generationSkillAssetId.trim()
       : null;
 

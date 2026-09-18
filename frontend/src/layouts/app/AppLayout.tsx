@@ -126,8 +126,7 @@ export function AppLayout({
   const handleCloseSettings = onSettingsClose ?? storeCloseSettings;
   const handleOpenLogViewer =
     onLogViewerOpen ?? (() => storeSetLogViewerOpen(true));
-  const handleOpenTasks =
-    onTasksOpen ?? (() => storeSetTaskCenterOpen(true));
+  const handleOpenTasks = onTasksOpen ?? (() => storeSetTaskCenterOpen(true));
 
   const { t } = useI18n();
   const { openDialog: openUpdateDialog, state: updateState } = useAppUpdater();

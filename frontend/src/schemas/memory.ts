@@ -212,64 +212,69 @@ export const memoryTaskViewSchema: z.ZodType<MemoryTaskView> = z.object({
   detail: z.record(z.string(), z.unknown()),
 });
 
-export const recentMemoryStateViewSchema: z.ZodType<RecentMemoryStateView> = z.object({
-  status: z.enum(["empty", "generating", "ready", "update_failed"]),
-  snapshot: z
-    .object({
-      snapshotId: z.string(),
-      sequence: z.number().int(),
-      targetWatermark: z.string(),
-      windowStart: z.string(),
-      windowEnd: z.string(),
-      windowHours: z.number().int(),
-      publicationKind: z.enum(["generated", "reused"]),
-      reusedFromSnapshotId: z.string().nullable(),
-      contentGeneratedAt: z.string(),
-      publishedAt: z.string(),
-      projects: z.array(
-        z.object({
-          projectKey: z.string(),
-          projectTitle: z.string(),
-          projectPath: z.string().nullable(),
-          summary: z.string(),
-          noMaterialChange: z.boolean(),
-          latestActivityAt: z.string(),
-          sourceSessionCount: z.number().int(),
-          items: z.array(
-            z.object({
-              itemId: z.string(),
-              revisionId: z.string(),
-              category: z.string(),
-              status: z.string(),
-              title: z.string(),
-              summary: z.string(),
-              rationale: z.string(),
-              occurredAt: z.string(),
-              recommendationRank: z.number().int().nullable(),
-              sourceAvailability: z.enum(["available", "partially_unavailable", "unavailable"]),
-              sessionReferences: z.array(
-                z.object({
-                  sourceId: z.string(),
-                  sessionId: z.string(),
-                  sessionTitle: z.string(),
-                  sourceAgent: z.string(),
-                  lastActivityAt: z.string(),
-                  available: z.boolean(),
-                  unavailableReason: z.string().nullable(),
-                }),
-              ),
-            }),
-          ),
-        }),
-      ),
-    })
-    .nullable(),
-  latestAttemptTaskId: z.string().nullable(),
-  latestAttemptError: z
-    .object({
-      code: z.string(),
-      message: z.string(),
-      retryable: z.boolean(),
-    })
-    .nullable(),
-});
+export const recentMemoryStateViewSchema: z.ZodType<RecentMemoryStateView> =
+  z.object({
+    status: z.enum(["empty", "generating", "ready", "update_failed"]),
+    snapshot: z
+      .object({
+        snapshotId: z.string(),
+        sequence: z.number().int(),
+        targetWatermark: z.string(),
+        windowStart: z.string(),
+        windowEnd: z.string(),
+        windowHours: z.number().int(),
+        publicationKind: z.enum(["generated", "reused"]),
+        reusedFromSnapshotId: z.string().nullable(),
+        contentGeneratedAt: z.string(),
+        publishedAt: z.string(),
+        projects: z.array(
+          z.object({
+            projectKey: z.string(),
+            projectTitle: z.string(),
+            projectPath: z.string().nullable(),
+            summary: z.string(),
+            noMaterialChange: z.boolean(),
+            latestActivityAt: z.string(),
+            sourceSessionCount: z.number().int(),
+            items: z.array(
+              z.object({
+                itemId: z.string(),
+                revisionId: z.string(),
+                category: z.string(),
+                status: z.string(),
+                title: z.string(),
+                summary: z.string(),
+                rationale: z.string(),
+                occurredAt: z.string(),
+                recommendationRank: z.number().int().nullable(),
+                sourceAvailability: z.enum([
+                  "available",
+                  "partially_unavailable",
+                  "unavailable",
+                ]),
+                sessionReferences: z.array(
+                  z.object({
+                    sourceId: z.string(),
+                    sessionId: z.string(),
+                    sessionTitle: z.string(),
+                    sourceAgent: z.string(),
+                    lastActivityAt: z.string(),
+                    available: z.boolean(),
+                    unavailableReason: z.string().nullable(),
+                  }),
+                ),
+              }),
+            ),
+          }),
+        ),
+      })
+      .nullable(),
+    latestAttemptTaskId: z.string().nullable(),
+    latestAttemptError: z
+      .object({
+        code: z.string(),
+        message: z.string(),
+        retryable: z.boolean(),
+      })
+      .nullable(),
+  });

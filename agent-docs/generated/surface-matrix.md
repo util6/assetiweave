@@ -99,7 +99,7 @@
 | `logs_write_operation` | `logs_write_operation` | — | `logs_write_operation` | `write` | `false` |
 | `memory.context.resolve` | `memory.context.resolve`<br>`resolve_memory_context` | `assetiweave-cli memory context resolve` | `resolve_memory_context` | `read` | `false` |
 | `memory.project.get` | `get_memory_project`<br>`memory.project.get` | `assetiweave-cli memory project get <project-path>` | `get_memory_project` | `read` | `false` |
-| `memory.rebuild` | `memory.rebuild`<br>`rebuild_memory_scope` | `assetiweave-cli memory rebuild` | `rebuild_memory_scope` | `write` | `false` |
+| `memory.rebuild` | `memory.rebuild`<br>`rebuild_memory_scope` | `assetiweave-cli memory rebuild --target <target>` | `rebuild_memory_scope` | `write` | `false` |
 | `memory.recall.search` | `memory.recall.search`<br>`search_memory_recall` | `assetiweave-cli memory recall search --query <query>` | `search_memory_recall` | `read` | `false` |
 | `memory.recall.session.create` | `create_memory_recall_session`<br>`memory.recall.session.create` | `assetiweave-cli memory recall session create` | `create_memory_recall_session` | `write` | `false` |
 | `memory.recall.session.get` | `get_memory_recall_session`<br>`memory.recall.session.get` | `assetiweave-cli memory recall session get <session-id>` | `get_memory_recall_session` | `read` | `false` |

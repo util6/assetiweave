@@ -63,7 +63,7 @@ export function AgentSessionWorkspace({
 
   const isSendAllowed = Boolean(
     capabilities.send &&
-      (canSend !== undefined ? canSend : draft.trim().length > 0 && !disabled),
+    (canSend !== undefined ? canSend : draft.trim().length > 0 && !disabled),
   );
 
   const handleSend = () => {
@@ -99,8 +99,7 @@ export function AgentSessionWorkspace({
         >
           <EmptyState
             description={
-              unavailableDescription ||
-              t("agentSession.unavailableDescription")
+              unavailableDescription || t("agentSession.unavailableDescription")
             }
             icon={<CircleAlert size={28} className="text-status-warning" />}
             title={t("agentSession.unavailableTitle")}

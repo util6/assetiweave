@@ -549,4 +549,4 @@ Memory 设置至少包含：
 3. 修订 Issue #20/#30 中的 72h、逐项目 Markdown、删除传播和 Recipe 表述。
 4. 为新增生成 Skill、设置、Snapshot、长期条目、统一投影和迁移拆分执行卡。
 5. 将 M01–M29 映射到 `04-verification-matrix.md` 的自动化与桌面验证门禁。
-6. 将用户最终确认的前端稿转化为 Auroraqua-UI 组件契约；在此之前不把外部 HTML 直接复制进生产页面。
+6. 将用户最终确认的前端稿转化为 AssetIWeave UI 组件契约；在此之前不把外部 HTML 直接复制进生产页面。

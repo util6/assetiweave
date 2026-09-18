@@ -107,7 +107,7 @@ export function PillTabs<T extends string = string>({
     <div
       aria-label={ariaLabel}
       className={clsx(
-        "aurora-pill-tabs-viewport relative flex min-w-0 max-w-full items-center overflow-x-auto overflow-y-hidden rounded-full border border-theme-control-border/70 bg-theme-control/55 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md",
+        "ui-pill-tabs-viewport relative flex min-w-0 max-w-full items-center overflow-x-auto overflow-y-hidden rounded-full border border-theme-control-border/70 bg-theme-control/55 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md",
         containerClassName,
       )}
       ref={tabsViewportRef}
@@ -122,7 +122,7 @@ export function PillTabs<T extends string = string>({
       >
         <span
           aria-hidden="true"
-          className={clsx("aurora-pill-indicator", isSm ? "h-7" : "h-8")}
+          className={clsx("ui-pill-indicator", isSm ? "h-7" : "h-8")}
           style={indicatorStyle}
         />
         {items.map((item) => {
@@ -132,11 +132,11 @@ export function PillTabs<T extends string = string>({
               aria-current={isActive ? "page" : undefined}
               aria-pressed={isActive}
               className={clsx(
-                "aurora-pill-tab relative z-[1] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-transparent text-center font-medium transition-colors cursor-pointer",
+                "ui-pill-tab relative z-[1] inline-flex items-center justify-center whitespace-nowrap rounded-full border border-transparent text-center font-medium transition-colors cursor-pointer",
                 isSm ? "h-7 px-2.5 text-caption" : "h-8 px-3.5 text-body-sm",
                 fullWidth && "flex-1",
                 isActive
-                  ? "aurora-pill-tab-active border-theme-nav-active-border/35 text-theme-nav-active-fg shadow-[inset_0_-2px_0_rgb(var(--theme-nav-indicator)/0.52)] font-semibold"
+                  ? "ui-pill-tab-active border-theme-nav-active-border/35 text-theme-nav-active-fg shadow-[inset_0_-2px_0_rgb(var(--theme-nav-indicator)/0.52)] font-semibold"
                   : "text-on-surface-variant hover:bg-theme-nav-hover/70 hover:text-on-surface",
               )}
               disabled={item.disabled}

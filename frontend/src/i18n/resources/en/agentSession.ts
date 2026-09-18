@@ -1,7 +1,8 @@
 export const agentSessionEn = {
   "agentSession.timeline": "Agent session timeline",
   "agentSession.emptyTitle": "No activity yet",
-  "agentSession.emptyDescription": "This session has not recorded any activity.",
+  "agentSession.emptyDescription":
+    "This session has not recorded any activity.",
   "agentSession.newActivity": "New activity",
   "agentSession.recipient": "Recipient",
   "agentSession.composerLabel": "Message composer",
@@ -38,5 +39,6 @@ export const agentSessionEn = {
   "agentSession.readOnly": "Read-only Execution",
   "agentSession.model": "Model",
   "agentSession.unavailableTitle": "Execution Unavailable",
-  "agentSession.unavailableDescription": "No execution context is available in the current process.",
+  "agentSession.unavailableDescription":
+    "No execution context is available in the current process.",
 };

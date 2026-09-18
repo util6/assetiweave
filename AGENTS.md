@@ -7,7 +7,7 @@
 - **持久化真相源**：SQLite 是应用状态、配置与挂载意图（`asset_mounts`）的唯一真相源。数据库变更必须通过 `src-tauri/migrations/`。源资产目录默认只读，严禁向第三方仓库写入应用状态。
 - **单层直接软链接**：默认采用从目标 App 目录直连真实源资产的单层直接软链接，禁止私自引入中间软链接池。
 - **长任务与并发安全**：目录扫描、大批量挂载、远程拉取、会话同步等 I/O 密集操作必须后台化，禁止在耗时任务期间持有全局应用锁阻塞 UI 或核心读写。
-- **前端视觉规范红线**：所有页面与组件必须严格遵循 ADR-0009 与 `agent-docs/governance/frontend-design-system.md` (Auroraqua-UI)。严禁自由发挥、严禁在交互控件上使用 `rounded-sm`/`rounded-md` 等生硬方角破坏流体质感、严禁 Ad-hoc 拼凑未经设计系统收口的按钮与输入框。新 UI 必须以“对话记录”与“Skill 目录总览”为黄金参考系。
+- **前端视觉规范红线**：所有页面与组件必须严格遵循 ADR-0009 与 `agent-docs/governance/frontend-design-system.md` (AssetIWeave UI)。严禁自由发挥、严禁在交互控件上使用 `rounded-sm`/`rounded-md` 等生硬方角破坏流体质感、严禁 Ad-hoc 拼凑未经设计系统收口的按钮与输入框。新 UI 必须以“对话记录”与“Skill 目录总览”为黄金参考系。
 
 ## 2. 模块职责与运行时数据流 (Architecture & Data Flow)
 
@@ -35,10 +35,10 @@
   - TypeScript 采用 2 空格、分号、双引号；组件/类型使用 `PascalCase`，函数/变量/hooks 使用 `camelCase`（hook 加 `use` 前缀）。
   - Rust 遵守 `rustfmt`，Go 遵守 `gofmt`。
   - **组件分层架构与引入**：严格遵守 Foundation (`components/foundation/` 与 `components/ui/`) -> Common (`components/common/`) -> Domain (`components/{domain}/`) 三层架构。业务层严禁手写裸 HTML 按钮、输入框与自定义遮罩弹窗。
-  - **设计系统与视觉规范 (Auroraqua-UI)**：
+  - **设计系统与视觉规范 (AssetIWeave UI)**：
     - 统一采用温润象牙/暗色玻璃拟态、微光辉与内阴影高光（Theme Tokens & Recipes）。严禁硬编码原始 Hex/RGB/HSL 色值或使用 Tailwind 默认调色盘类名。
     - **圆角标尺**：坚决杜绝方角硬边。卡片与面板使用 `rounded-xl`/`rounded-2xl`，按钮与工具栏使用 `rounded-xl`/`rounded-2xl`，徽章与分段切换器强制使用胶囊 `rounded-full`。严禁在控件上使用 `rounded-sm`/`rounded-md`。
-    - **分段切换与标签栏**：一律使用 `PillTabs` (`components/common/PillTabs`) 或 `aurora-pill-tab` 规范，享受流体滑动的 `aurora-pill-indicator` 与温润微光；严禁对 Tab 激活项误用按钮级突兀渐变 (`theme-primary-gradient`)。
+    - **分段切换与标签栏**：一律使用 `PillTabs` (`components/common/PillTabs`) 或 `ui-pill-tab` 规范，享受流体滑动的 `ui-pill-indicator` 与温润微光；严禁对 Tab 激活项误用按钮级突兀渐变 (`theme-primary-gradient`)。
     - **弹窗与底栏**：弹窗必须使用 `DialogFrame`；底栏按钮默认保持标准 `h-10` 饱满高度（主按钮 `variant="default"`，次按钮 `variant="outline"`），严禁缩减为干瘪的小方块。
   - 参考 Cockpit-tools、VS Code、Finder 的高密度工作区设计（侧边栏、工具栏、可调列宽、操作预览同屏呈现），避免多级弹窗阻断操作。
 - **Rust 测试代码组织与业务文件瘦身规范（测试拆分是主线）**：
@@ -84,7 +84,7 @@
 
 ### 前端设计系统 (Frontend Design System)
 
-前端界面统一采用 Auroraqua-UI 设计体系与组件三层架构，以“对话记录”与“Skill 目录总览”为黄金参考系。详见 `agent-docs/governance/frontend-design-system.md`。
+前端界面统一采用 AssetIWeave UI 设计体系与组件三层架构，以“对话记录”与“Skill 目录总览”为黄金参考系。详见 `agent-docs/governance/frontend-design-system.md`。
 
 ### 活跃专项执行路由 (Active Feature Routers)
 

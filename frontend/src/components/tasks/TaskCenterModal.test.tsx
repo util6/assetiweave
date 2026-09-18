@@ -28,7 +28,10 @@ vi.mock("../../app/backgroundTasks/TaskCenterProvider", () => ({
     tasks: mockTasks,
     activeTasks: mockTasks.filter((t) => t.state === "running"),
     terminalTasks: mockTasks.filter(
-      (t) => t.state === "succeeded" || t.state === "failed" || t.state === "canceled",
+      (t) =>
+        t.state === "succeeded" ||
+        t.state === "failed" ||
+        t.state === "canceled",
     ),
     selectedTaskId: mockSelectedTaskId,
     setSelectedTaskId: mockSetSelectedTaskId,
@@ -94,9 +97,7 @@ describe("TaskCenterModal", () => {
             skipped: [],
           },
         ],
-        metrics: [
-          { code: "synced_count", value: 5 },
-        ],
+        metrics: [{ code: "synced_count", value: 5 }],
         failures: [],
         capabilities: { cancellable: true, retryable: false, clearable: false },
         revision: 2,
@@ -311,7 +312,9 @@ describe("TaskCenterModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("驼峰数据任务").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("驼峰数据任务").length).toBeGreaterThanOrEqual(
+        1,
+      );
       expect(screen.getByText("活跃 Workers (1)")).toBeTruthy();
       expect(screen.getByText("[worker-camel-99]")).toBeTruthy();
       expect(screen.getByText("耗时: 1.5s")).toBeTruthy();
@@ -341,7 +344,9 @@ describe("TaskCenterModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("极端异常字段任务").length).toBeGreaterThanOrEqual(1);
+      expect(
+        screen.getAllByText("极端异常字段任务").length,
+      ).toBeGreaterThanOrEqual(1);
       expect(screen.getByText("该任务尚未上报阶段划分")).toBeTruthy();
     });
   });
@@ -356,18 +361,24 @@ describe("TaskCenterModal", () => {
 
     await waitFor(() => {
       const taskList = screen.getByTestId("task-list");
-      expect(taskList.className).toContain("aurora-view-transition");
+      expect(taskList.className).toContain("ui-view-transition");
 
-      const selectedItem = within(taskList).getByRole("button", { pressed: true });
+      const selectedItem = within(taskList).getByRole("button", {
+        pressed: true,
+      });
       expect(selectedItem.className).toContain("conversation-row");
       expect(selectedItem.getAttribute("data-selected")).toBe("true");
 
-      const unselectedItem = within(taskList).getByRole("button", { pressed: false });
+      const unselectedItem = within(taskList).getByRole("button", {
+        pressed: false,
+      });
       expect(unselectedItem.className).toContain("conversation-row");
       expect(unselectedItem.getAttribute("data-selected")).toBe("false");
 
-      // 验证右侧详情具有 aurora-view-transition 平滑过渡类
-      const detailContainer = document.querySelector("main .aurora-view-transition");
+      // 验证右侧详情具有 ui-view-transition 平滑过渡类
+      const detailContainer = document.querySelector(
+        "main .ui-view-transition",
+      );
       expect(detailContainer).toBeTruthy();
     });
   });

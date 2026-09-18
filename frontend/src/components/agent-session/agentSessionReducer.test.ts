@@ -171,7 +171,9 @@ describe("agentSessionReducer", () => {
   });
 
   it("calculates step group status priority: failed > running > cancelled > succeeded > pending", () => {
-    const makeItem = (state: AgentSessionItemView["state"]): AgentSessionItemView => ({
+    const makeItem = (
+      state: AgentSessionItemView["state"],
+    ): AgentSessionItemView => ({
       id: "item",
       kind: "tool",
       sequence: 1,
@@ -179,10 +181,18 @@ describe("agentSessionReducer", () => {
       state,
     });
 
-    expect(calculateStepGroupStatus([makeItem("succeeded"), makeItem("failed")])).toBe("failed");
-    expect(calculateStepGroupStatus([makeItem("succeeded"), makeItem("streaming")])).toBe("running");
-    expect(calculateStepGroupStatus([makeItem("succeeded"), makeItem("cancelled")])).toBe("cancelled");
-    expect(calculateStepGroupStatus([makeItem("succeeded"), makeItem("completed")])).toBe("succeeded");
+    expect(
+      calculateStepGroupStatus([makeItem("succeeded"), makeItem("failed")]),
+    ).toBe("failed");
+    expect(
+      calculateStepGroupStatus([makeItem("succeeded"), makeItem("streaming")]),
+    ).toBe("running");
+    expect(
+      calculateStepGroupStatus([makeItem("succeeded"), makeItem("cancelled")]),
+    ).toBe("cancelled");
+    expect(
+      calculateStepGroupStatus([makeItem("succeeded"), makeItem("completed")]),
+    ).toBe("succeeded");
     expect(calculateStepGroupStatus([makeItem("pending")])).toBe("running");
   });
 });

@@ -12,7 +12,7 @@ describe("foundation skeleton public entry", () => {
     );
 
     expect(html).toContain('aria-hidden="true"');
-    expect((html.match(/aurora-skeleton/g) ?? []).length).toBe(3);
+    expect((html.match(/ui-skeleton/g) ?? []).length).toBe(3);
   });
 
   it.each(["list", "cards", "columns"] as const)(

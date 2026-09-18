@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
-import type {
-  AgentSessionTurnView,
-} from "../../types/agentSession";
+import type { AgentSessionTurnView } from "../../types/agentSession";
 import { isGroupDefaultExpanded } from "./agentSessionReducer";
 import { AgentSessionAssistantText } from "./AgentSessionAssistantText";
 import { AgentSessionItem } from "./AgentSessionItem";
@@ -49,7 +47,8 @@ export function AgentSessionTurn({
           case "processing": {
             const isLive = block.item.delivery === "live";
             const isRunning =
-              block.item.state === "streaming" || block.item.state === "pending";
+              block.item.state === "streaming" ||
+              block.item.state === "pending";
             const defaultThinkingExpanded = isLive && isRunning;
             const expanded = expansion.isExpanded(
               `thinking-${block.item.id}`,
@@ -99,10 +98,7 @@ export function AgentSessionTurn({
           case "terminal":
           case "error":
             content = (
-              <AgentSessionItem
-                item={block.item}
-                testIdPrefix={testIdPrefix}
-              />
+              <AgentSessionItem item={block.item} testIdPrefix={testIdPrefix} />
             );
             break;
         }

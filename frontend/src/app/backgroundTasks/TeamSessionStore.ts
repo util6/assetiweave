@@ -338,9 +338,7 @@ function mergeSessionItems(
   current: SessionItemSnapshot[],
   incoming: SessionItemSnapshot[],
 ): SessionItemSnapshot[] {
-  const byIdentity = new Map(
-    current.map((item) => [itemIdentity(item), item]),
-  );
+  const byIdentity = new Map(current.map((item) => [itemIdentity(item), item]));
   for (const item of incoming) {
     const key = itemIdentity(item);
     const previous = byIdentity.get(key);

@@ -76,7 +76,7 @@ export function SourceRow({
 
   return (
     <article
-      className={clsx("aurora-list-row group", expanded && "source-expanded")}
+      className={clsx("ui-list-row group", expanded && "source-expanded")}
       data-expanded={expanded}
     >
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-theme-card-header/55">
@@ -185,14 +185,14 @@ export function SourceRow({
       </div>
 
       {expanded && (
-        <div className="aurora-list-row-detail py-2 pl-4 pr-3">
+        <div className="ui-list-row-detail py-2 pl-4 pr-3">
           <div className="pl-3">
             {assets.length === 0 ? (
               <div className="px-4 py-4 text-body-sm text-on-surface-variant">
                 {t("source.emptySkills")}
               </div>
             ) : (
-              <div className="aurora-list-surface !gap-2 !p-2">
+              <div className="ui-list-surface !gap-2 !p-2">
                 {assets.map((asset) => {
                   const mountStatuses =
                     mountStatusesByAssetId.get(asset.id) ?? [];

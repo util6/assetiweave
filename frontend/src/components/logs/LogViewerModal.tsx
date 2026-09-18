@@ -376,9 +376,7 @@ export function LogViewerModal({ open, onClose }: LogViewerModalProps) {
             <div className="w-28">
               <SimpleSelect
                 ariaLabel={t("logViewer.levelLabel")}
-                onChange={(level) =>
-                  setLevelFilter(level as LogLevelFilter)
-                }
+                onChange={(level) => setLevelFilter(level as LogLevelFilter)}
                 options={levelOptions}
                 size="sm"
                 value={levelFilter}

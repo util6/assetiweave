@@ -25,9 +25,24 @@ describe("memory navigation labels", () => {
   );
 
   it.each([
-    ["sessions", "Sessions", "conversations.sessions", "nav.sub.conversations.sessions"],
-    ["web-records", "Web Records", "conversations.web-records", "nav.sub.conversations.webRecords"],
-    ["usage", "Token Usage", "conversations.usage", "nav.sub.conversations.usage"],
+    [
+      "sessions",
+      "Sessions",
+      "conversations.sessions",
+      "nav.sub.conversations.sessions",
+    ],
+    [
+      "web-records",
+      "Web Records",
+      "conversations.web-records",
+      "nav.sub.conversations.webRecords",
+    ],
+    [
+      "usage",
+      "Token Usage",
+      "conversations.usage",
+      "nav.sub.conversations.usage",
+    ],
   ])(
     "uses a stable localized label for Conversations %s",
     (id, label, routeKey, expected) => {

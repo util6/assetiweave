@@ -9,10 +9,7 @@ import {
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  TaskCenterProvider,
-  useTaskCenter,
-} from "./TaskCenterProvider";
+import { TaskCenterProvider, useTaskCenter } from "./TaskCenterProvider";
 import type { TaskView } from "../../types/taskCenter";
 
 const listMock = vi.hoisted(() => vi.fn());
@@ -87,7 +84,11 @@ describe("TaskCenterProvider", () => {
     const failedTask = createTask("task-failed", "failed");
     listMock.mockResolvedValueOnce([failedTask]);
     cancelMock.mockResolvedValueOnce({ ...failedTask, state: "cancelling" });
-    retryMock.mockResolvedValueOnce({ ...failedTask, id: "task-failed-retry", state: "pending" });
+    retryMock.mockResolvedValueOnce({
+      ...failedTask,
+      id: "task-failed-retry",
+      state: "pending",
+    });
     clearMock.mockResolvedValueOnce(1);
 
     render(
@@ -146,13 +147,19 @@ describe("TaskCenterProvider", () => {
     expect(screen.getByTestId("notification").textContent).toBe("none");
 
     // Task transitions to succeeded
-    const succeeded = { ...running, state: "succeeded" as const, outcome: "success" as const };
+    const succeeded = {
+      ...running,
+      state: "succeeded" as const,
+      outcome: "success" as const,
+    };
     await act(async () => {
       notifyCallback?.(succeeded);
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByTestId("notification").textContent).toContain("task-notify");
+    expect(screen.getByTestId("notification").textContent).toContain(
+      "task-notify",
+    );
   });
 });
 
@@ -204,15 +211,26 @@ function NotificationHarness() {
   );
 }
 
-function createTask(id: string, state: "running" | "succeeded" | "failed" | "pending"): TaskView {
+function createTask(
+  id: string,
+  state: "running" | "succeeded" | "failed" | "pending",
+): TaskView {
   return {
     id,
     kind: "conversation_sync",
     title: `Task ${id}`,
     state,
-    outcome: state === "succeeded" ? "success" : state === "failed" ? "failure" : undefined,
+    outcome:
+      state === "succeeded"
+        ? "success"
+        : state === "failed"
+          ? "failure"
+          : undefined,
     started_at: "2026-09-10T12:00:00Z",
-    finished_at: state === "succeeded" || state === "failed" ? "2026-09-10T12:01:00Z" : undefined,
+    finished_at:
+      state === "succeeded" || state === "failed"
+        ? "2026-09-10T12:01:00Z"
+        : undefined,
     stages: [],
     metrics: [],
     failures: [],

@@ -683,7 +683,9 @@ describe("GlobalSettingsDialog", () => {
       />,
     );
 
-    expect(screen.getByText("settings.memory.manualGenerateTitle")).toBeTruthy();
+    expect(
+      screen.getByText("settings.memory.manualGenerateTitle"),
+    ).toBeTruthy();
     expect(
       screen.getByText("settings.memory.manualGenerateDescription"),
     ).toBeTruthy();

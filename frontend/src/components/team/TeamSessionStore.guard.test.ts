@@ -28,7 +28,7 @@ describe("T11 Legacy 收缩与 Tool Detail 保留守卫 (Guard Tests)", () => {
         limit: 100,
       },
       tool_output: {
-        content: "fn main() { println!(\"hello\"); }",
+        content: 'fn main() { println!("hello"); }',
         bytes_read: 32,
       },
       truncation: {
@@ -52,7 +52,7 @@ describe("T11 Legacy 收缩与 Tool Detail 保留守卫 (Guard Tests)", () => {
       limit: 100,
     });
     expect(viewItem.toolOutput).toEqual({
-      content: "fn main() { println!(\"hello\"); }",
+      content: 'fn main() { println!("hello"); }',
       bytes_read: 32,
     });
     expect(viewItem.truncation).toEqual({

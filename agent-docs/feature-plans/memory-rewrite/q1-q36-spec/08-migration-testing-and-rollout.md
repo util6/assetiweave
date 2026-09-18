@@ -148,7 +148,7 @@ AppService
 
 ### Desktop smoke
 
-验证 Auroraqua-UI、日期轨道、项目卡片、窄窗口、键盘、Session 导航、任务中心、Skill 打开/恢复和 Markdown 文件只读表现。
+验证 AssetIWeave UI、日期轨道、项目卡片、窄窗口、键盘、Session 导航、任务中心、Skill 打开/恢复和 Markdown 文件只读表现。
 
 ## 6. Gate
 

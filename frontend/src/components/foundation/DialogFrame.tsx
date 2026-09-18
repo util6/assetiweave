@@ -156,7 +156,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
             <section
               className={cn(
                 panelRecipe({ padding: "none", variant: "default" }),
-                "aurora-dialog flex max-h-[92vh] w-full flex-col overflow-hidden shadow-[var(--theme-shadow-dialog)]",
+                "ui-dialog flex max-h-[92vh] w-full flex-col overflow-hidden shadow-[var(--theme-shadow-dialog)]",
                 dialogSizeClasses[size],
                 className,
               )}
@@ -166,7 +166,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
               {hasHeader && (
                 <header
                   className={cn(
-                    "aurora-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3",
+                    "ui-dialog-header flex min-h-14 shrink-0 items-center gap-3 border-b border-theme-card-border/55 bg-theme-card-header/55 px-5 py-3",
                     headerClassName,
                   )}
                 >
@@ -239,7 +239,7 @@ const DialogFrame = React.forwardRef<HTMLElement, DialogFrameProps>(
               {footer && (
                 <footer
                   className={cn(
-                    "aurora-dialog-footer flex shrink-0 items-center justify-end gap-2 border-t border-theme-card-border/55 bg-theme-card/55 px-5 py-4",
+                    "ui-dialog-footer flex shrink-0 items-center justify-end gap-2 border-t border-theme-card-border/55 bg-theme-card/55 px-5 py-4",
                     footerClassName,
                   )}
                 >

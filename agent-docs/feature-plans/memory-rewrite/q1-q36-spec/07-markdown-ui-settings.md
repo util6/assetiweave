@@ -196,7 +196,7 @@ Skill 操作：选择、创建可编辑副本、打开当前 Skill、恢复默�
 
 ## 9. 视觉与组件约束
 
-- 遵守 Auroraqua-UI 与 Foundation → Common → Domain 分层。
+- 遵守 AssetIWeave UI 与 Foundation → Common → Domain 分层。
 - 视图切换使用 `PillTabs`；业务组件不手写裸 Tab 按钮。
 - 卡片与面板使用温润圆角和主题 token，不硬编码颜色。
 - 对话记录和 Skill 目录总览是密度与交互基准；视觉方向结合对象化手账卡片与线性时间轨。

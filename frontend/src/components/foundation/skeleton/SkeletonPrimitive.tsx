@@ -15,7 +15,7 @@ export function Skeleton({
     <div
       {...props}
       aria-hidden="true"
-      className={cn("aurora-skeleton rounded-xl", className)}
+      className={cn("ui-skeleton rounded-xl", className)}
     />
   );
 }

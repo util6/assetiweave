@@ -178,7 +178,9 @@ export function TeamPlanCard({
                           }))}
                           size="sm"
                           value={
-                            task.owner_member_id ?? task.recommended_member_id ?? ""
+                            task.owner_member_id ??
+                            task.recommended_member_id ??
+                            ""
                           }
                         />
                       </div>

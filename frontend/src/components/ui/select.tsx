@@ -20,8 +20,9 @@ function notifySelectClose(id: string) {
   }
 }
 
-export interface SelectProps
-  extends React.ComponentPropsWithoutRef<typeof SelectPrimitive.Root> {
+export interface SelectProps extends React.ComponentPropsWithoutRef<
+  typeof SelectPrimitive.Root
+> {
   id?: string;
 }
 
@@ -154,7 +155,7 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Content
         className={cn(
-          "aurora-menu relative z-[100] max-h-96 min-w-[8rem] overflow-hidden rounded-2xl border border-theme-card-border/75 bg-theme-card/95 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl",
+          "ui-menu relative z-[100] max-h-96 min-w-[8rem] overflow-hidden rounded-2xl border border-theme-card-border/75 bg-theme-card/95 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl",
           position === "popper" && "my-1",
           className,
         )}

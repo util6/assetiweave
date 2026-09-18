@@ -25,10 +25,7 @@ export function MemoryPage({
       {isRecall ? (
         <MemoryRecallWorkspace onNavigate={onNavigate} t={t} />
       ) : (
-        <MemoryRecentWorkspace
-          onNavigateSession={onNavigate}
-          t={t}
-        />
+        <MemoryRecentWorkspace onNavigateSession={onNavigate} t={t} />
       )}
     </MemoryWorkspacePage>
   );

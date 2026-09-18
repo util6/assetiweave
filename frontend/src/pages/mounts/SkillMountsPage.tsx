@@ -586,7 +586,7 @@ export function SkillMountsPage({
           scope="content"
         />
       ) : filteredProfiles.length === 0 ? (
-        <EmptyState className="aurora-empty-surface">
+        <EmptyState className="ui-empty-surface">
           {t("appMount.empty")}
         </EmptyState>
       ) : viewMode === "columns" && selectedProfile && selectedScope ? (
@@ -615,7 +615,7 @@ export function SkillMountsPage({
         />
       ) : (
         <FoundationPanel
-          className="aurora-list-surface !gap-2 !p-2"
+          className="ui-list-surface !gap-2 !p-2"
           padding="none"
           aria-label={t("appMount.page.title")}
         >
@@ -799,7 +799,7 @@ function AppMountRow({
 
   return (
     <article
-      className={clsx("aurora-list-row", expanded && "mount-expanded")}
+      className={clsx("ui-list-row", expanded && "mount-expanded")}
       data-expanded={expanded}
     >
       <div className="grid min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-3.5 hover:bg-theme-card-header/70 max-[860px]:grid-cols-1">
@@ -894,7 +894,7 @@ function AppMountRow({
       </div>
 
       {expanded && (
-        <div className="aurora-list-row-detail p-4">
+        <div className="ui-list-row-detail p-4">
           <AppMountWorkbench
             appShortcuts={appShortcuts}
             backupTask={backupTask}
@@ -968,12 +968,12 @@ function AppMountColumnView({
 
   return (
     <FoundationPanel
-      className="aurora-workbench-surface overflow-visible"
+      className="ui-workbench-surface overflow-visible"
       padding="none"
     >
       <ResizableColumns
         ariaLabel={t("layout.resizeColumns")}
-        className="aurora-workbench-surface min-h-[560px]"
+        className="ui-workbench-surface min-h-[560px]"
         columns={[
           { defaultWeight: 0.7 },
           { defaultWeight: 0.85, minWidthScale: 1.1 },
@@ -987,7 +987,7 @@ function AppMountColumnView({
         scrollRightLabel={t("layout.scrollColumnsRight")}
         storageKey="assetiweave.mountColumns.v2"
       >
-        <section className="aurora-workbench-column flex min-h-0 flex-col">
+        <section className="ui-workbench-column flex min-h-0 flex-col">
           <ColumnHeader
             meta={t("appMount.metric.appsWithCount", {
               count: profiles.length,
@@ -1009,7 +1009,7 @@ function AppMountColumnView({
                   })}
                   aria-selected={active}
                   className={clsx(
-                    "aurora-workbench-item flex min-h-[72px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
+                    "ui-workbench-item flex min-h-[72px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
                     active ? "text-on-surface" : "text-on-surface-variant",
                   )}
                   data-selected={active}
@@ -1048,7 +1048,7 @@ function AppMountColumnView({
           </div>
         </section>
 
-        <section className="aurora-workbench-column flex min-h-0 flex-col">
+        <section className="ui-workbench-column flex min-h-0 flex-col">
           <ColumnHeader
             actionIcon={<Pencil size={16} />}
             actionLabel={t("appMount.action.edit")}
@@ -1070,7 +1070,7 @@ function AppMountColumnView({
           />
         </section>
 
-        <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
+        <section className="ui-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
           <ColumnHeader
             actionLabel={t("appMount.action.reveal")}
             actionIcon={<FolderOpen size={16} />}
@@ -1152,7 +1152,7 @@ function AppMountWorkbench({
 
   return (
     <FoundationPanel
-      className="aurora-workbench-surface overflow-visible"
+      className="ui-workbench-surface overflow-visible"
       padding="none"
       variant="muted"
     >
@@ -1171,7 +1171,7 @@ function AppMountWorkbench({
         scrollRightLabel={t("layout.scrollColumnsRight")}
         storageKey="assetiweave.mountWorkbenchColumns.v2"
       >
-        <section className="aurora-workbench-column flex min-h-0 flex-col">
+        <section className="ui-workbench-column flex min-h-0 flex-col">
           <ColumnHeader
             meta={t("appMount.scope.count", { count: scopes.length })}
             title={t("appMount.column.scopes")}
@@ -1390,7 +1390,7 @@ function SkillScopeAssetList({
   }
 
   return (
-    <div className="aurora-list-surface min-h-0 overflow-y-auto !gap-2 !p-2">
+    <div className="ui-list-surface min-h-0 overflow-y-auto !gap-2 !p-2">
       {skillAssets.map((asset) => {
         const source = sourceById.get(asset.source_id);
         const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
@@ -1403,7 +1403,7 @@ function SkillScopeAssetList({
           : undefined;
         return (
           <article
-            className="aurora-workbench-item m-0 grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
+            className="ui-workbench-item m-0 grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 max-[760px]:grid-cols-1"
             key={asset.id}
           >
             <div className="min-w-0">
@@ -1922,7 +1922,7 @@ function ColumnHeader({
   title: string;
 }) {
   return (
-    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
+    <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
           {title}

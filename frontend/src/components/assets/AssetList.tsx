@@ -61,7 +61,7 @@ export function AssetList({
 
   return (
     <div
-      className="asset-list-surface aurora-list-surface"
+      className="asset-list-surface ui-list-surface"
       aria-label={t("asset.list.aria")}
     >
       {assets.map((asset) => {

@@ -17,7 +17,7 @@ const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
   ({ actions, className, description, icon, title, ...props }, ref) => (
     <Panel
       className={cn(
-        "aurora-empty-state flex min-h-44 flex-col items-center justify-center text-center",
+        "ui-empty-state flex min-h-44 flex-col items-center justify-center text-center",
         className,
       )}
       padding="lg"

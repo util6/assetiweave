@@ -53,7 +53,11 @@ export function AgentSessionAssistantText({
             onClick={handleCopy}
             type="button"
           >
-            {copied ? <Check size={13} className="text-status-create" /> : <Copy size={13} />}
+            {copied ? (
+              <Check size={13} className="text-status-create" />
+            ) : (
+              <Copy size={13} />
+            )}
           </button>
         ) : null}
       </div>
@@ -78,7 +82,8 @@ export function AgentSessionAssistantText({
             {t("agentSession.truncatedDetail", {
               retained: String(item.truncation.retainedBytes),
               original: String(item.truncation.originalBytes),
-            }) || `保留 ${item.truncation.retainedBytes} / 原始 ${item.truncation.originalBytes} 字节`}
+            }) ||
+              `保留 ${item.truncation.retainedBytes} / 原始 ${item.truncation.originalBytes} 字节`}
           </span>
         </div>
       ) : null}

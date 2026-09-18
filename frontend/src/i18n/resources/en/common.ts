@@ -455,7 +455,8 @@ export const commonEn = {
   "logViewer.levels.error": "ERROR",
   "tasks.page.eyebrow": "System",
   "tasks.page.title": "Task Center",
-  "tasks.page.description": "Monitor background tasks, stage execution pipelines, and failure audits in one place.",
+  "tasks.page.description":
+    "Monitor background tasks, stage execution pipelines, and failure audits in one place.",
   "tasks.filter.all": "All",
   "tasks.filter.running": "Running",
   "tasks.filter.completed": "Completed",
@@ -465,8 +466,10 @@ export const commonEn = {
   "tasks.action.retry": "Retry Task",
   "tasks.action.clear": "Clear Record",
   "tasks.empty.title": "No Background Tasks",
-  "tasks.empty.description": "There are no running or archived background tasks",
-  "tasks.empty.select": "Select a task from the list to view its pipeline and execution status",
+  "tasks.empty.description":
+    "There are no running or archived background tasks",
+  "tasks.empty.select":
+    "Select a task from the list to view its pipeline and execution status",
   "tasks.section.stages": "Stage Pipeline",
   "tasks.section.activities": "Active Workers",
   "tasks.section.metrics": "Metrics",

@@ -106,7 +106,7 @@ function mockSnapshot(): RecentMemorySnapshotView {
             revisionId: "rev-3",
             category: "research",
             status: "resolved",
-            title: "Auroraqua Fluid Design Benchmark",
+            title: "AssetIWeave Design Benchmark",
             summary: "Examined pill tab interactions",
             rationale: "High standard aesthetic",
             occurredAt: "2026-09-14T08:00:00Z",
@@ -170,10 +170,18 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     // 1. 验证默认按时间
     expect(await screen.findByText("2026-09-15")).toBeTruthy();
     expect(screen.getByText("2026-09-14")).toBeTruthy();
-    expect(screen.getAllByText("Alpha Project").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Adopt Single Layer Symlink").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Pass E2E Test Suite").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Auroraqua Fluid Design Benchmark").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Alpha Project").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(
+      screen.getAllByText("Adopt Single Layer Symlink").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Pass E2E Test Suite").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("AssetIWeave Design Benchmark").length,
+    ).toBeGreaterThanOrEqual(1);
 
     // 初始只调用了一次 snapshot 加载
     expect(memoryService.getRecentMemorySnapshot).toHaveBeenCalledTimes(1);
@@ -188,9 +196,15 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     // 验证项目视图下依然包含相同的全部 items
     expect(screen.getByText("Alpha Project")).toBeTruthy();
     expect(screen.getByText("Beta Project")).toBeTruthy();
-    expect(screen.getAllByText("Adopt Single Layer Symlink").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Pass E2E Test Suite").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Auroraqua Fluid Design Benchmark").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Adopt Single Layer Symlink").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Pass E2E Test Suite").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("AssetIWeave Design Benchmark").length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("allows item expansion, preserves expanded state across view toggles (M35-UI-03)", async () => {
@@ -206,7 +220,9 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     await screen.findAllByText("Adopt Single Layer Symlink");
 
     // 初始状态下 rationale 未展开
-    expect(screen.queryByText("Prevent complexity of middle link pool")).toBeNull();
+    expect(
+      screen.queryByText("Prevent complexity of middle link pool"),
+    ).toBeNull();
 
     // 点击展开 item-1
     const expandButton = screen.getByRole("button", {
@@ -215,14 +231,18 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     fireEvent.click(expandButton);
 
     // 展开后显示 rationale、水位以及关联会话
-    expect(screen.getByText("Prevent complexity of middle link pool")).toBeTruthy();
+    expect(
+      screen.getByText("Prevent complexity of middle link pool"),
+    ).toBeTruthy();
     expect(screen.getByText("关联会话 (2)")).toBeTruthy();
 
     // 切换至项目视图
     fireEvent.click(screen.getByRole("button", { name: "按项目" }));
 
     // 验证切换视图后，同一个 itemId 的展开状态依然保留！
-    expect(screen.getByText("Prevent complexity of middle link pool")).toBeTruthy();
+    expect(
+      screen.getByText("Prevent complexity of middle link pool"),
+    ).toBeTruthy();
     expect(screen.getByText("关联会话 (2)")).toBeTruthy();
   });
 
@@ -246,7 +266,9 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     );
 
     // 验证两张 Session 卡片均渲染
-    const availableSession = screen.getByText("Symlink Architecture Discussion");
+    const availableSession = screen.getByText(
+      "Symlink Architecture Discussion",
+    );
     const unavailableSession = screen.getByText("Old Deleted Session");
 
     expect(availableSession).toBeTruthy();
@@ -344,9 +366,15 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     renderWorkspace();
 
     // Alpha Project 有建议下一步 1 和 2
-    expect((await screen.findAllByText("建议下一步")).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Adopt Single Layer Symlink").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Pass E2E Test Suite").length).toBeGreaterThanOrEqual(1);
+    expect(
+      (await screen.findAllByText("建议下一步")).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Adopt Single Layer Symlink").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Pass E2E Test Suite").length,
+    ).toBeGreaterThanOrEqual(1);
 
     // Beta Project 没有建议，显示固定次要文案 (Section 5.5)
     expect(screen.getByText("本窗口没有形成明确下一步")).toBeTruthy();
@@ -375,14 +403,17 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
   });
 });
 
-function renderWorkspace(props: Partial<Parameters<typeof MemoryRecentWorkspace>[0]> = {}) {
+function renderWorkspace(
+  props: Partial<Parameters<typeof MemoryRecentWorkspace>[0]> = {},
+) {
   const dummyT = (key: string) => {
     const dict: Record<string, string> = {
       "common.loading": "加载中...",
       "memory.recent.timeView": "按时间",
       "memory.recent.projectView": "按项目",
       "memory.recent.emptyTitle": "最近 72 小时没有工作记录",
-      "memory.recent.emptyDescription": "Conversation 同步后，近期工作会在这里按项目或时间展示。",
+      "memory.recent.emptyDescription":
+        "Conversation 同步后，近期工作会在这里按项目或时间展示。",
       "memory.recent.generating": "近期记忆生成中...",
       "memory.recent.items": "条目",
       "memory.recent.whatChanged": "工作进展",

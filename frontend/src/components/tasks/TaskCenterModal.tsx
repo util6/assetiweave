@@ -307,7 +307,7 @@ function TaskCenterModalContent({
               </div>
             ) : (
               <div
-                className="aurora-view-transition flex flex-col gap-2"
+                className="ui-view-transition flex flex-col gap-2"
                 data-testid="task-list"
                 key={filterStatus}
               >
@@ -407,7 +407,7 @@ function TaskCenterModalContent({
         {/* 右栏：选中任务详情面板（带平滑视图切换动效与流动微光进度条） */}
         <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-surface-base p-6">
           {activeCount > 0 || actionBusy ? (
-            <div className="aurora-route-progress" />
+            <div className="ui-route-progress" />
           ) : null}
 
           {selectedTask ? (
@@ -419,7 +419,7 @@ function TaskCenterModalContent({
               />
             ) : (
               <div
-                className="aurora-view-transition flex flex-col gap-6"
+                className="ui-view-transition flex flex-col gap-6"
                 key={selectedTask.id}
               >
                 {/* 头部摘要与操作 */}

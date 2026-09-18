@@ -17,11 +17,11 @@ export function SkillBackupBackgroundTaskIndicator({
   return (
     <section
       aria-live="polite"
-      className="aurora-task-indicator pointer-events-auto w-[min(24rem,calc(100vw-2.5rem))] rounded-xl border px-4 py-3 text-on-surface"
+      className="ui-task-indicator pointer-events-auto w-[min(24rem,calc(100vw-2.5rem))] rounded-xl border px-4 py-3 text-on-surface"
       role="status"
     >
       <div className="flex items-center gap-3">
-        <span className="aurora-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-xl text-status-update">
+        <span className="ui-task-indicator-icon grid size-9 shrink-0 place-items-center rounded-xl text-status-update">
           <RefreshCw className="animate-spin" size={17} />
         </span>
         <span className="min-w-0 flex-1">

@@ -47,7 +47,7 @@ export function AssetGridView({
 
   if (assets.length === 0) {
     return (
-      <div className="aurora-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
+      <div className="ui-empty-surface px-4 py-10 text-center text-body-md text-on-surface-variant">
         {t("asset.empty")}
       </div>
     );
@@ -71,7 +71,7 @@ export function AssetGridView({
 
         return (
           <article
-            className="aurora-list-row group flex min-h-[236px] flex-col p-4"
+            className="ui-list-row group flex min-h-[236px] flex-col p-4"
             key={asset.id}
           >
             <div className="flex min-w-0 items-start justify-between gap-3">

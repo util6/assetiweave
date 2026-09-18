@@ -23,7 +23,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "aurora-page-header flex min-w-0 flex-nowrap items-start justify-between gap-4 overflow-hidden",
+        "ui-page-header flex min-w-0 flex-nowrap items-start justify-between gap-4 overflow-hidden",
         className,
       )}
     >

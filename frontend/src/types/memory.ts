@@ -198,9 +198,11 @@ export interface MemoryTaskView {
   detail: Record<string, unknown>;
 }
 
-export type RecentMemoryStatus = "empty" | "generating" | "ready" | "update_failed";
+export type RecentMemoryStatus =
+  "empty" | "generating" | "ready" | "update_failed";
 export type RecentSnapshotPublicationKind = "generated" | "reused";
-export type SourceAvailability = "available" | "partially_unavailable" | "unavailable";
+export type SourceAvailability =
+  "available" | "partially_unavailable" | "unavailable";
 
 export interface RecentMemoryErrorView {
   code: string;

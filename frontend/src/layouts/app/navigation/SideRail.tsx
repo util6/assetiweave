@@ -60,7 +60,7 @@ export function SideRail({
   return (
     <aside
       className={clsx(
-        "aurora-rail fixed bottom-0 left-0 top-[var(--app-window-titlebar-height)] z-30 flex w-[var(--app-sidebar-width)] flex-col justify-between border-r border-theme-nav-active-border/35 px-2 py-4 backdrop-blur-xl transition-[width] duration-200",
+        "ui-rail fixed bottom-0 left-0 top-[var(--app-window-titlebar-height)] z-30 flex w-[var(--app-sidebar-width)] flex-col justify-between border-r border-theme-nav-active-border/35 px-2 py-4 backdrop-blur-xl transition-[width] duration-200",
         expanded ? "items-stretch" : "items-center",
       )}
       aria-label={t("nav.aria.main")}
@@ -129,7 +129,7 @@ function BrandIdentity({
 }) {
   const toneClassName = getBrandActionToneClassName(action?.tone);
   const brandClassName = clsx(
-    "aurora-brand flex h-10 items-center rounded-xl border border-theme-nav-active-border/55 bg-theme-nav-active text-theme-nav-active-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.26)]",
+    "ui-brand flex h-10 items-center rounded-xl border border-theme-nav-active-border/55 bg-theme-nav-active text-theme-nav-active-fg shadow-[inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.26)]",
     expanded ? "min-w-0 flex-1 gap-3 px-3" : "size-10 justify-center",
     action && !expanded && toneClassName,
   );
@@ -338,10 +338,10 @@ function RailButton({
   return (
     <button
       className={clsx(
-        "aurora-nav-item flex h-10 min-w-0 items-center rounded-xl border transition-all active:scale-95",
+        "ui-nav-item flex h-10 min-w-0 items-center rounded-xl border transition-all active:scale-95",
         expanded ? "w-full justify-start gap-3 px-3" : "size-10 justify-center",
         active
-          ? "aurora-nav-item-active border-theme-nav-active-border/65 bg-theme-nav-active text-theme-nav-active-fg"
+          ? "ui-nav-item-active border-theme-nav-active-border/65 bg-theme-nav-active text-theme-nav-active-fg"
           : "border-transparent text-on-surface-variant/75 hover:border-theme-nav-active-border/45 hover:bg-theme-nav-hover hover:text-theme-nav-active-fg",
       )}
       aria-label={label}

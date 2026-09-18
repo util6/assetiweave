@@ -29,9 +29,7 @@ describe("RouteTransitionOverlay", () => {
     const overlay = document.querySelector("[data-route-transition]");
     expect(overlay?.getAttribute("data-route-transition")).toBe("enter");
     expect(screen.getByText("正在加载分组管理")).toBeTruthy();
-    expect(
-      document.querySelectorAll(".aurora-skeleton").length,
-    ).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".ui-skeleton").length).toBeGreaterThan(0);
   });
 
   it("adds exit class during exit phase", () => {
@@ -48,8 +46,6 @@ describe("RouteTransitionOverlay", () => {
 
     const overlay = document.querySelector("[data-route-transition]");
     expect(overlay?.getAttribute("data-route-transition")).toBe("exit");
-    expect(overlay?.classList.contains("aurora-route-transition-exit")).toBe(
-      true,
-    );
+    expect(overlay?.classList.contains("ui-route-transition-exit")).toBe(true);
   });
 });

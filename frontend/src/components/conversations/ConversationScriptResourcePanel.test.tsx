@@ -8,7 +8,15 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { ConversationAdapterPackageCatalogEntry } from "../../services/conversations";
 import { ConversationScriptResourcePanel } from "./ConversationScriptResourcePanel";

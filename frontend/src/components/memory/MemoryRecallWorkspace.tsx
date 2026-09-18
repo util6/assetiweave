@@ -148,7 +148,10 @@ export function MemoryRecallWorkspace({
   return (
     <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(20rem,0.75fr)_minmax(32rem,1.65fr)]">
       {/* 左栏：会话范围控制面板 */}
-      <Panel className="flex min-h-0 flex-col overflow-y-auto p-4" variant="default">
+      <Panel
+        className="flex min-h-0 flex-col overflow-y-auto p-4"
+        variant="default"
+      >
         <div className="flex items-center gap-2 border-b border-theme-control-border/60 pb-3 text-title-sm font-semibold text-on-surface">
           <Brain className="size-4 text-primary" />
           <span>{t("memory.recall.session")}</span>
@@ -193,18 +196,26 @@ export function MemoryRecallWorkspace({
 
           <div className="flex flex-col gap-2 rounded-xl border border-theme-control-border/60 bg-theme-control/25 p-3.5 text-body-sm">
             <div className="flex items-center justify-between text-caption">
-              <span className="text-on-surface-variant">{t("memory.recall.turnCount")}:</span>
-              <strong className="font-mono text-on-surface">{session.turnCount}</strong>
+              <span className="text-on-surface-variant">
+                {t("memory.recall.turnCount")}:
+              </span>
+              <strong className="font-mono text-on-surface">
+                {session.turnCount}
+              </strong>
             </div>
             <div className="flex items-center justify-between text-caption">
-              <span className="text-on-surface-variant">{t("memory.recall.agent")}:</span>
+              <span className="text-on-surface-variant">
+                {t("memory.recall.agent")}:
+              </span>
               <span className="font-mono text-on-surface">
                 {session.agentId}
                 {session.model ? ` · ${session.model}` : ""}
               </span>
             </div>
             <div className="flex items-center justify-between text-caption">
-              <span className="text-on-surface-variant">{t("memory.recall.status")}:</span>
+              <span className="text-on-surface-variant">
+                {t("memory.recall.status")}:
+              </span>
               <span className="font-medium text-primary">
                 {turnStatusLabel(session, t)}
               </span>
@@ -220,7 +231,10 @@ export function MemoryRecallWorkspace({
       </Panel>
 
       {/* 右栏：对话回溯工作区 */}
-      <Panel className="flex min-h-0 flex-1 flex-col overflow-hidden p-4" variant="default">
+      <Panel
+        className="flex min-h-0 flex-1 flex-col overflow-hidden p-4"
+        variant="default"
+      >
         <div className="flex items-center gap-2 border-b border-theme-control-border/60 pb-3 text-title-sm font-semibold text-on-surface">
           <MessageCircle className="size-4 text-primary" />
           <span>{t("memory.recall.conversation")}</span>
@@ -275,7 +289,9 @@ export function MemoryRecallWorkspace({
                 {t("memory.recall.sendHint")}
               </span>
               <Button
-                disabled={busy || Boolean(session.activeTurnId) || !query.trim()}
+                disabled={
+                  busy || Boolean(session.activeTurnId) || !query.trim()
+                }
                 onClick={() => void sendTurn()}
                 size="sm"
               >
@@ -334,16 +350,18 @@ function RecallTurn({
           </div>
           {turn.structuredOutput.contentReferences.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {turn.structuredOutput.contentReferences.map((reference, index) => (
-                <Button
-                  key={`${reference.blockId}:${index}`}
-                  onClick={() => onNavigate(reference)}
-                  size="sm"
-                  variant="outline"
-                >
-                  {t("memory.recall.openReference")} {index + 1}
-                </Button>
-              ))}
+              {turn.structuredOutput.contentReferences.map(
+                (reference, index) => (
+                  <Button
+                    key={`${reference.blockId}:${index}`}
+                    onClick={() => onNavigate(reference)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {t("memory.recall.openReference")} {index + 1}
+                  </Button>
+                ),
+              )}
             </div>
           ) : null}
           {turn.structuredOutput.followUpSuggestions.length > 0 ? (

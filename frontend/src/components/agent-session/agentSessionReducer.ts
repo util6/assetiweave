@@ -11,13 +11,20 @@ export function calculateStepGroupStatus(
   if (items.some((item) => item.state === "failed")) {
     return "failed";
   }
-  if (items.some((item) => item.state === "streaming" || item.state === "pending")) {
+  if (
+    items.some((item) => item.state === "streaming" || item.state === "pending")
+  ) {
     return "running";
   }
   if (items.some((item) => item.state === "cancelled")) {
     return "cancelled";
   }
-  if (items.length > 0 && items.every((item) => item.state === "succeeded" || item.state === "completed")) {
+  if (
+    items.length > 0 &&
+    items.every(
+      (item) => item.state === "succeeded" || item.state === "completed",
+    )
+  ) {
     return "succeeded";
   }
   return "pending";

@@ -8,12 +8,7 @@ import {
   MessageSquare,
   Sparkles,
 } from "lucide-react";
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState } from "../foundation/EmptyState";
 import { Panel } from "../foundation/Panel";
 import { Button } from "../ui/button";
@@ -252,13 +247,15 @@ export function TeamWorkspaceShell({
       (isMemberLeader && composerMode === "task" && taskModeBusy);
     const memberCanSend = Boolean(
       memberDraft.trim() &&
-        !memberBusy &&
-        !memberSending &&
-        !(isMemberLeader && composerMode === "task" && taskModeBusy),
+      !memberBusy &&
+      !memberSending &&
+      !(isMemberLeader && composerMode === "task" && taskModeBusy),
     );
 
     const memberRun =
-      isMemberLeader && runSnapshot?.run.team_id === team.id ? runSnapshot : null;
+      isMemberLeader && runSnapshot?.run.team_id === team.id
+        ? runSnapshot
+        : null;
 
     const projectedTasks: TeamTask[] =
       !isMemberLeader &&
@@ -539,8 +536,14 @@ function sessionItemKey(item: SessionItemSnapshot): string {
   return `${item.identity.execution_id ?? "exec"}:${item.identity.item_id}`;
 }
 
-function isActiveTask(task: TeamMemberSessionProjection["task"] | undefined): boolean {
-  return task?.state === "Running" || task?.state === "Pending" || task?.state === "Cancelling";
+function isActiveTask(
+  task: TeamMemberSessionProjection["task"] | undefined,
+): boolean {
+  return (
+    task?.state === "Running" ||
+    task?.state === "Pending" ||
+    task?.state === "Cancelling"
+  );
 }
 
 function getMemberStatus(

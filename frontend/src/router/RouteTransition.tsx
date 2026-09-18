@@ -25,13 +25,13 @@ export function RouteTransitionOverlay({
   return (
     <div
       className={cn(
-        "aurora-route-transition pointer-events-none absolute inset-0 z-20 overflow-auto",
-        transition.phase === "exit" && "aurora-route-transition-exit",
+        "ui-route-transition pointer-events-none absolute inset-0 z-20 overflow-auto",
+        transition.phase === "exit" && "ui-route-transition-exit",
       )}
       data-route-transition={transition.phase}
       data-route-transition-id={transition.id}
     >
-      <div className="aurora-route-progress" />
+      <div className="ui-route-progress" />
       <AppSkeleton label={transition.label} layout={transition.layout} />
     </div>
   );

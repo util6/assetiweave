@@ -164,9 +164,7 @@ describe("AgentSessionTimeline with Turn and StepGroup (T03)", () => {
 
     renderWithI18n(<AgentSessionTimeline items={itemWithTruncation} />);
     expect(
-      screen.getByTestId(
-        "agent-session-assistant-text-truncation-asst-trunc",
-      ),
+      screen.getByTestId("agent-session-assistant-text-truncation-asst-trunc"),
     ).toBeTruthy();
     expect(screen.getByText(/(?:Truncated|已截断)/)).toBeTruthy();
   });

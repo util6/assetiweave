@@ -649,7 +649,7 @@ function ToolbarDropdownContent({ children }: { children: ReactNode }) {
   return (
     <DropdownMenuPrimitive.Content
       align="start"
-      className="aurora-menu z-30 w-64 rounded-2xl border border-theme-card-border/75 bg-theme-card/84 p-2 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl"
+      className="ui-menu z-30 w-64 rounded-2xl border border-theme-card-border/75 bg-theme-card/84 p-2 text-theme-control-fg shadow-[var(--theme-shadow-panel)] backdrop-blur-xl"
       collisionPadding={12}
       sideOffset={8}
     >

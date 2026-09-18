@@ -15,7 +15,7 @@
 2. **L2 项目长期记忆**：严格按照“用户明确决定（1 次观察）”或“blocker/todo/research（2 次新证据观察）”晋升规则，由同项目串行 Consolidation 管道管理，无候选零 Agent 消耗。
 3. **L3 全局记忆与修订**：由低频维护管道（>=8 候选或周级）驱动，支持跨多项目证据识别、不可变 revision 链条、`supersede` 关系追溯与来源 Session 失效级联更新（标记 `unavailable` 但保留已形成认知）。
 4. **用户可编辑 Generation Skill**：引入沙箱化 `assetiweave-memory-generation` Skill，支持用户在 Skill Library 中创建自定义副本并绑定，严格限制 ACP 权限（零网络、零外部 Agent、零文件写入）。
-5. **统一投影文档与 UI**：淘汰逐项目 Markdown 写入，统一投影到应用根目录下原子发布的 `memory_summary.md` (L1) 与 `MEMORY.md` (L2/L3)；Recent UI 采用 Auroraqua-UI 规范，支持日期轨道与按项目切换视图。
+5. **统一投影文档与 UI**：淘汰逐项目 Markdown 写入，统一投影到应用根目录下原子发布的 `memory_summary.md` (L1) 与 `MEMORY.md` (L2/L3)；Recent UI 采用 AssetIWeave UI 规范，支持日期轨道与按项目切换视图。
 6. **公共表面与 Contract 收缩**：移除已废弃的 `memory.recent.list` 与 `memory.recent.event.target`，CLI `aiwc memory recent get` 对齐 `memory.recent.snapshot.get`，Go/TS/Rust DTO 完全同构，两次独立连续 contract 生成零 diff。
 
 ---
@@ -32,7 +32,7 @@
 | **N06** | L2 项目长期记忆垂直切片 | 明确决定 1 次晋升，blocker 2 次晋升，同项目串行锁，Context Resolver 读取。 | `5f29a5aa` [x] |
 | **N07** | L3、长期来源与 supersede 垂直切片 | 跨项目双证据晋升，来源失效置 `unavailable`，revise/supersede 历史与 current 读取。 | `acf0e35a` [x] |
 | **N08** | 统一 Markdown 与保留策略垂直切片 | 租户级 `memory_summary.md` 与 `MEMORY.md` 原子替换与免 Agent 重建，30 天快照保留策略。 | `490a8608` [x] |
-| **N09** | 时间优先 Recent UI 垂直切片 | Auroraqua-UI 规范，PillTabs 切换视图，日期轨道与项目卡片，展开 details 与 Session 导航。 | `8e2110ea` [x] |
+| **N09** | 时间优先 Recent UI 垂直切片 | AssetIWeave UI 规范，PillTabs 切换视图，日期轨道与项目卡片，展开 details 与 Session 导航。 | `8e2110ea` [x] |
 | **N10** | 公共表面迁移与 contract 收缩 | 移除旧 `memory.recent.list`，CLI/Tauri/Skill 统一使用 Snapshot API，逐项目 writer 清除。 | `924ff1fc` [x] |
 | **N11** | Q1–Q36 综合验收与发布证据 | 全仓 Gate 绿灯，40 项行为矩阵（M35-V01–V40）验证，回滚与迁移演练完成。 | `a7ccba5f`, `a8d82959` [x] |
 

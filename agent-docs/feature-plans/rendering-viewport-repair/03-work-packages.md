@@ -116,7 +116,7 @@ Gate A 失败时停留在 Conversation 问题链，禁止用 Skill 样式改动�
 1. Catalog 页面使用与应用布局一致的可用高度契约；PageHeader 与 AssetToolbar 位于滚动区外，内容区 `min-h-0 flex-1`。
 2. DeploymentPlanPanel 与 AssetList/AssetGrid 的放置必须避免第二条页面纵向滚动；如果 plan 需要随内容滚动，应与列表位于同一个 scroll surface。
 3. list/grid 模式共用同一个 scroll owner，切换时不新增嵌套滚动条。
-4. 为 `.asset-list-surface.aurora-list-surface` 提供无背景模糊的明确覆盖规则，或将 AssetList 改用无 blur 的语义表面；不要全局删除其他有限尺寸组件的玻璃效果。
+4. 为 `.asset-list-surface.ui-list-surface` 提供无背景模糊的明确覆盖规则，或将 AssetList 改用无 blur 的语义表面；不要全局删除其他有限尺寸组件的玻璃效果。
 5. 从 AssetRow 操作区移除 `backdrop-blur-md`，用 `bg-theme-control`、边框、阴影和现有语义 token 保留层次。
 6. 禁止硬编码原始色值；禁止使用 `translateZ(0)`、`will-change` 或新 containment 作为同阶段补丁。
 7. 本阶段保持 `assets.map(...)`，以便独立测量“仅绘制减负”的效果。

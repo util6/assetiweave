@@ -153,7 +153,7 @@
 ```bash
 rg -n "addEventListener\(.*scroll" frontend/src --glob '*.{ts,tsx}'
 rg -n "requestAnimationFrame|setTimeout" frontend/src/components/common/rendering
-rg -n "aurora-skeleton" frontend/src --glob '*.tsx'
+rg -n "ui-skeleton" frontend/src --glob '*.tsx'
 rg -n "conversation-loading|conversation-preview-loading" frontend/src
 rg -n "backdrop-filter" frontend/src/styles/index.css
 ```
@@ -162,7 +162,7 @@ rg -n "backdrop-filter" frontend/src/styles/index.css
 
 - 每个 RenderSafeScrollSurface 只有 Controller 的一个 scroll listener。
 - 每个 Provider 只有一个 Scheduler RAF 循环。
-- 业务组件不直接输出 `.aurora-skeleton`。
+- 业务组件不直接输出 `.ui-skeleton`。
 - Conversations 没有第二套 Skeleton animation。
 - 预览纵向 scroll element 没有 backdrop-filter。
 - 非 Skeleton 的业务 timer、状态 pulse 不误删。

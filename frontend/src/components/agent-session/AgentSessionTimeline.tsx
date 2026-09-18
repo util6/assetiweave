@@ -49,7 +49,9 @@ export function AgentSessionTimeline({
   return (
     <div
       aria-atomic="false"
-      aria-label={ariaLabel || t("agentSession.timeline") || t("team.chat.sessionArea")}
+      aria-label={
+        ariaLabel || t("agentSession.timeline") || t("team.chat.sessionArea")
+      }
       aria-live="polite"
       className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5"
       data-testid={`${testIdPrefix}-timeline`}
@@ -88,7 +90,9 @@ export function AgentSessionTimeline({
         >
           {restoreState.icon}
           <span className="font-semibold">{restoreState.label}</span>
-          {restoreState.errorCode ? <code>{restoreState.errorCode}</code> : null}
+          {restoreState.errorCode ? (
+            <code>{restoreState.errorCode}</code>
+          ) : null}
         </div>
       ) : null}
 

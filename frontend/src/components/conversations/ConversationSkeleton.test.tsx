@@ -36,7 +36,7 @@ describe("ConversationSkeleton", () => {
   it("composes a turn-level skeleton with stable content geometry", () => {
     const html = renderToStaticMarkup(<ConversationTurnSkeleton />);
     expect(html).toContain("conversation-turn-skeleton");
-    expect(html).toContain("aurora-skeleton");
+    expect(html).toContain("ui-skeleton");
     expect(
       (html.match(/aria-hidden="true"/g) ?? []).length,
     ).toBeGreaterThanOrEqual(1);

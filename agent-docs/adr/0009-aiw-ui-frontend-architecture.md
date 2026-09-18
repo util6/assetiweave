@@ -1,8 +1,8 @@
-# 0009: 参照 Auroraqua-UI 进行前端整体视觉重构与组件分层体系
+# 0009: 确立 AssetIWeave 自有设计系统 (AIW-UI) 与组件分层体系
 
 > **重要等级**：核心级（P1）  
 > **状态**：已接受  
-> **参考项目**：[micromimo/Auroraqua-UI](https://github.com/micromimo/Auroraqua-UI)  
+> **设计起源**：早期借鉴现代化流体玻璃态设计语言，现已全面演化确立为 AssetIWeave 自有 UI 规范（AIW-UI）  
 > **决策日期**：2026-08-12  
 > **决策证据**：`3999cbe`, `52e8ffb`, `f4dc-ca8`  
 > **记录日期**：2026-08-25  
@@ -15,7 +15,7 @@
 
 ## 决策
 
-1. **设计系统升级**：参考开源设计体系 [micromimo/Auroraqua-UI](https://github.com/micromimo/Auroraqua-UI)，全面落地现代化暗色主题设计系统，引入玻璃拟物（Glassmorphism）、语义化 Theme Tokens、微妙微动效与 Mac Dock 风格圆角图标体系。
+1. **确立自有设计系统 (AssetIWeave UI)**：全面落地现代化暗色/象牙主题设计系统，引入玻璃拟物（Glassmorphism）、语义化 Theme Tokens、微妙微动效与超椭圆流体控件体系（`.ui-*` 类名前缀）。
 2. **严谨的组件三层架构**：
    - `components/foundation`：原子级设计系统基石（如 `DialogFrame`、`Button`、`Portal` 等基础容器）。
    - `components/common`：跨业务通用的复合组件（如 `DataToolbar`、`PathPickerInput`、虚拟化表面）。

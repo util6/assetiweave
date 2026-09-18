@@ -46,7 +46,7 @@ export function CatalogTaskIndicator() {
   return (
     <section
       aria-live="polite"
-      className="aurora-task-indicator pointer-events-auto fixed bottom-20 right-5 z-40 flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-2xl border px-4 py-3 text-on-surface"
+      className="ui-task-indicator pointer-events-auto fixed bottom-20 right-5 z-40 flex w-[min(24rem,calc(100vw-2.5rem))] items-center gap-3 rounded-2xl border px-4 py-3 text-on-surface"
       role="status"
     >
       <span className="grid size-9 shrink-0 place-items-center rounded-xl text-status-update">

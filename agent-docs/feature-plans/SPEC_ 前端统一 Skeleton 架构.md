@@ -44,7 +44,7 @@
   - `WorkbenchContentSkeleton`
   - Memory 相关页面骨架
 - `frontend/src/styles/index.css`
-  - `.aurora-skeleton`
+  - `.ui-skeleton`
   - shimmer 动画
   - `prefers-reduced-motion` 处理
 - `frontend/src/router/AppRouter.tsx`
@@ -722,7 +722,7 @@ Responsive Columns Surface
 </AppSkeleton>
 ```
 
-禁止在业务模块直接使用 `.aurora-skeleton` 字符串。业务模块必须导入 `Skeleton` 等 Foundation 组件。
+禁止在业务模块直接使用 `.ui-skeleton` 字符串。业务模块必须导入 `Skeleton` 等 Foundation 组件。
 
 ## 12. Conversations feature specification
 
@@ -772,7 +772,7 @@ export function ConversationsPageSkeleton({ label }: { label: string }) {
 
 现有 `ConversationLoadingState` 和 `ConversationPreviewLoadingState` 可以保留导出名称以降低调用方迁移成本，但实现必须改为组合 Foundation：
 
-- 不再直接创建带 `.aurora-skeleton` class 的 `span`。
+- 不再直接创建带 `.ui-skeleton` class 的 `span`。
 - 不再定义新的 shimmer。
 - 不再定义自己的 `role="status"`，如果它已经位于 `AppSkeleton` 内。
 - 独立作为局部 loading fallback 时，可以使用 `AppSkeleton scope="content"` 建立唯一状态根。
@@ -935,7 +935,7 @@ backdrop-filter: ...;
 
 默认页面 Skeleton 应满足：
 
-- 单个默认页面不超过 80 个 `.aurora-skeleton` Primitive。
+- 单个默认页面不超过 80 个 `.ui-skeleton` Primitive。
 - 默认 List 最多 12 行。
 - 默认 Cards 最多 12 张。
 - 默认 Columns 最多 3 栏。
@@ -1019,7 +1019,7 @@ export function CardsSkeletonRecipe({
 | `ManualPageSkeleton` | list Recipe | Quick Default |
 | `ConversationLoadingState` | Foundation list/content 组合 | Customized |
 | `ConversationPreviewLoadingState` | Foundation cards/content 组合 | Customized |
-| 手写 `.aurora-skeleton` span | `Skeleton` Primitive | Foundation |
+| 手写 `.ui-skeleton` span | `Skeleton` Primitive | Foundation |
 
 迁移兼容规则：
 
@@ -1092,7 +1092,7 @@ Conversations 必须覆盖：
 - 页面 Feature Skeleton 使用 columns 布局。
 - 包含会话列表、问题列表和预览区三个结构区域。
 - 最多一个 status root。
-- 不直接输出手写 `.aurora-skeleton` class；所有 Primitive 来自 Foundation。
+- 不直接输出手写 `.ui-skeleton` class；所有 Primitive 来自 Foundation。
 - 局部 Conversation loading state 使用 `scope="content"`。
 
 ### 18.6 Router tests
@@ -1243,7 +1243,7 @@ Tauri WebKit 手工检查：
 ### Phase 5: Cleanup and enforcement
 
 - [ ] Task 5.1：迁移剩余手写 Skeleton
-  - Acceptance：局部手写 `.aurora-skeleton` 替换为 Primitive；非 Skeleton 的状态 pulse 不误删。
+  - Acceptance：局部手写 `.ui-skeleton` 替换为 Primitive；非 Skeleton 的状态 pulse 不误删。
   - Verify：全局 `rg` 审计及相关组件测试。
   - Files：按审计结果拆成每次不超过 5 个文件的小任务。
   - Dependencies：Checkpoint D。
@@ -1295,14 +1295,14 @@ pnpm typecheck && pnpm test && pnpm build
 审计命令：
 
 ```bash
-rg -n "aurora-skeleton" frontend/src --glob '*.tsx'
+rg -n "ui-skeleton" frontend/src --glob '*.tsx'
 rg -n "PageSkeletonKind|kind=\"(catalog|sources|groups|mounts|conversations)\"" frontend/src
 rg -n "conversation-loading|conversation-preview-loading" frontend/src
 ```
 
 审计预期：
 
-- `.aurora-skeleton` 的直接 class 输出只存在于 Foundation Primitive 实现。
+- `.ui-skeleton` 的直接 class 输出只存在于 Foundation Primitive 实现。
 - `PageSkeletonKind` 不再存在。
 - Conversations 中不再存在重复 Skeleton 动画或基础颜色定义。
 
@@ -1345,7 +1345,7 @@ rg -n "conversation-loading|conversation-preview-loading" frontend/src
 | 单一 `AppSkeleton` 参数持续膨胀 | 公共 API 难以理解 | 公共参数只保留 scope、density 和布局必要参数；业务差异通过 children 组合 |
 | Feature Skeleton 再次复制基础 CSS | 架构重新分叉 | Foundation 导出 Structural components；测试和 `rg` 审计禁止直接 class 输出 |
 | 一次性迁移导致大 diff | 难审查、难回滚 | 按 Foundation、Recipe、Router、简单页、Feature 页、清理分阶段提交 |
-| 根表面不透明改变 Aurora 玻璃感 | 加载态视觉略有变化 | 只要求 Skeleton 根层不透明，内部 Surface 仍可使用语义层次，但不使用 backdrop-filter |
+| 根表面不透明改变流体玻璃感 | 加载态视觉略有变化 | 只要求 Skeleton 根层不透明，内部 Surface 仍可使用语义层次，但不使用 backdrop-filter |
 | `children` 定制导致默认内容意外出现 | 页面显示错误骨架 | 使用 `React.Children.count`；Feature Skeleton 测试必须验证结构区域 |
 | Router 和数据 loading 重复渲染 Chrome | 视觉跳跃 | Route 使用 page scope，页面内部数据 loading 使用 content scope |
 | 过多 shimmer 增加 WebKit 合成压力 | 滚动或过渡掉帧 | 默认 DOM 预算、统一动画、reduced-motion、不透明根、禁止业务重复动画 |

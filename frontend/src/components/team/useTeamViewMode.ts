@@ -48,7 +48,9 @@ export function useTeamViewMode(teamId: string): {
   };
 
   // If on compact screen, force single view without modifying preferredMode
-  const effectiveMode: TeamViewMode = isCompactScreen ? "single" : preferredMode;
+  const effectiveMode: TeamViewMode = isCompactScreen
+    ? "single"
+    : preferredMode;
 
   return {
     preferredMode,

@@ -363,7 +363,9 @@ describe("TaskCenterModal - Agent Session Observer (T09)", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Project Memory Agent")).toBeTruthy();
-      expect(screen.getByText("正在提取项目架构决策与模块边界...")).toBeTruthy();
+      expect(
+        screen.getByText("正在提取项目架构决策与模块边界..."),
+      ).toBeTruthy();
     });
   });
 

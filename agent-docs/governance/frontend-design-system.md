@@ -1,6 +1,6 @@
-# 前端设计系统与视觉规范 (Auroraqua-UI)
+# 前端设计系统与视觉规范 (AssetIWeave UI)
 
-> **核心依据**：[ADR-0009: 参照 Auroraqua-UI 进行前端整体视觉重构与组件分层体系](file:///Users/util6/code-space/assetiweave/agent-docs/adr/0009-auroraqua-ui-frontend-architecture.md)  
+> **核心依据**：[ADR-0009: 前端整体视觉重构与组件分层体系](file:///Users/util6/code-space/assetiweave/agent-docs/adr/0009-aiw-ui-frontend-architecture.md)  
 > **适用范围**：`frontend/src/` 下所有页面、组件、弹窗、表单与样式开发。  
 > **治理效力**：项目级强制规范，所有 AI Agent 与开发者严禁违背。
 
@@ -49,7 +49,7 @@ frontend/src/
 
 > [!CAUTION]
 > **绝对禁止方角硬边！**  
-> 严禁在按钮、输入框、标签、卡片上使用 `rounded-sm` (2px) 或 `rounded-md` (6px)！这类生硬方角会彻底摧毁 Auroraqua 的超椭圆与流体质感，产生粗糙的廉价后台感。
+> 严禁在按钮、输入框、标签、卡片上使用 `rounded-sm` (2px) 或 `rounded-md` (6px)！这类生硬方角会彻底摧毁整体界面的超椭圆与流体质感，产生粗糙的廉价后台感。
 
 ### 强制圆角标尺
 
@@ -60,7 +60,7 @@ frontend/src/
 | **工具栏与搜索容器** | 16px | `rounded-2xl` | `toolbarSurfaceRecipe`、搜索输入外框 |
 | **标准交互按钮** | 12px ~ 16px 或 胶囊 | `rounded-xl` / `rounded-2xl` | `surfaceButtonRecipe`，高度通常为 `h-10`（或紧凑 `h-9`） |
 | **标签 (Badge) 与 Tag** | 全胶囊 (Pill) | `rounded-full` | [Badge.tsx](file:///Users/util6/code-space/assetiweave/frontend/src/components/foundation/Badge.tsx)、状态指示器 |
-| **分段选择器 (Segmented Tabs)** | 全胶囊 (Pill) | `rounded-full` | `aurora-pill-tab`、任务过滤 Tab 切换 |
+| **分段选择器 (Segmented Tabs)** | 全胶囊 (Pill) | `rounded-full` | `ui-pill-tab`、任务过滤 Tab 切换 |
 
 ---
 
@@ -112,7 +112,7 @@ frontend/src/
 ### 统一使用 `PillTabs`
 
 所有列表过滤、视图切换、状态分段一律使用统一组件 [PillTabs](file:///Users/util6/code-space/assetiweave/frontend/src/components/common/PillTabs.tsx)（`components/common/PillTabs`）：
-1. **流体滑动指示器**：内置 `aurora-pill-indicator`，利用物理曲线（`cubic-bezier(0.22, 1, 0.36, 1)`）在选项之间平滑滑动，拥有温润象牙微光背景与极细内阴影。
+1. **流体滑动指示器**：内置 `ui-pill-indicator`，利用物理曲线（`cubic-bezier(0.22, 1, 0.36, 1)`）在选项之间平滑滑动，拥有温润象牙微光背景与极细内阴影。
 2. **文字高对比度**：激活态文字使用 `text-theme-nav-active-fg`（自然深暖色文字），杜绝反色冲突。
 3. **全宽与紧凑支持**：支持 `fullWidth`（等宽拉伸填充侧栏或弹窗）与 `size="sm"`（紧凑型 `h-7`）/ `size="md"`（标准 `h-8`）。
 
@@ -134,6 +134,6 @@ frontend/src/
    ✅ 正确：直接使用全局定义经过调优的 `.theme-primary-gradient` 或 `.theme-danger-gradient`。
 5. **反模式 5：Tab 切换误用 Action 按钮渐变**  
    ❌ 错误：在分段切换或 Tab 栏中给 active tab 设置 `theme-primary-gradient` 或随意使用纯色方块。  
-   ✅ 正确：统一使用 `<PillTabs>` 组件，享受自带平滑滑动的 `aurora-pill-indicator` 与温润象牙色微光。
+   ✅ 正确：统一使用 `<PillTabs>` 组件，享受自带平滑滑动的 `ui-pill-indicator` 与温润象牙色微光。
 6. **反模式 6：丢失交互动效**  
    可点击控件必须具备平滑微动效：Hover 阶段轻微位移（`hover:-translate-y-px`）与发光扩散，点击阶段复位（`active:translate-y-0`），过渡时长 `duration-200`。

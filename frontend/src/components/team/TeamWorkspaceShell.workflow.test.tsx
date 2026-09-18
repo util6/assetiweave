@@ -192,12 +192,16 @@ describe("TeamWorkspaceShell Workflow & Migration (T08)", () => {
 
     // Leader lane has composer mode toggle with Normal and Task mode
     const leaderLane = screen.getByTestId("team-member-lane-leader");
-    expect(leaderLane.querySelector("[aria-label='Message mode']")).toBeTruthy();
+    expect(
+      leaderLane.querySelector("[aria-label='Message mode']"),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: /Team task/i })).toBeTruthy();
 
     // Teammate lane does NOT have composer mode toggle
     const teammateLane = screen.getByTestId("team-member-lane-teammate");
-    expect(teammateLane.querySelector("[aria-label='Message mode']")).toBeNull();
+    expect(
+      teammateLane.querySelector("[aria-label='Message mode']"),
+    ).toBeNull();
   });
 
   it("starts a team draft when submitting in Leader task mode", () => {
@@ -230,10 +234,14 @@ describe("TeamWorkspaceShell Workflow & Migration (T08)", () => {
     // Enter draft prompt in Leader composer
     const composers = screen.getAllByLabelText("Message content");
     const leaderComposer = composers[0];
-    fireEvent.change(leaderComposer, { target: { value: "Draft team plan for v2" } });
+    fireEvent.change(leaderComposer, {
+      target: { value: "Draft team plan for v2" },
+    });
 
     // Click submit (Generate draft)
-    const draftSubmitBtn = screen.getByRole("button", { name: /Generate draft|Draft/i });
+    const draftSubmitBtn = screen.getByRole("button", {
+      name: /Generate draft|Draft/i,
+    });
     fireEvent.click(draftSubmitBtn);
 
     expect(startTeamDraftMock).toHaveBeenCalledWith("Draft team plan for v2");
@@ -299,8 +307,12 @@ describe("TeamWorkspaceShell Workflow & Migration (T08)", () => {
     const leaderLane = screen.getByTestId("team-member-lane-leader");
     const teammateLane = screen.getByTestId("team-member-lane-teammate");
 
-    expect(leaderLane.querySelector("[data-testid='team-plan-card']")).toBeTruthy();
-    expect(teammateLane.querySelector("[data-testid='team-plan-card']")).toBeNull();
+    expect(
+      leaderLane.querySelector("[data-testid='team-plan-card']"),
+    ).toBeTruthy();
+    expect(
+      teammateLane.querySelector("[data-testid='team-plan-card']"),
+    ).toBeNull();
   });
 
   it("projects confirmed tasks only to their respective owner's lane", () => {
@@ -364,8 +376,12 @@ describe("TeamWorkspaceShell Workflow & Migration (T08)", () => {
     const teammateLane = screen.getByTestId("team-member-lane-teammate");
 
     // Task card is in teammate lane, NOT leader lane
-    expect(teammateLane.querySelector("[data-testid='team-task-card-task-worker']")).toBeTruthy();
-    expect(leaderLane.querySelector("[data-testid='team-task-card-task-worker']")).toBeNull();
+    expect(
+      teammateLane.querySelector("[data-testid='team-task-card-task-worker']"),
+    ).toBeTruthy();
+    expect(
+      leaderLane.querySelector("[data-testid='team-task-card-task-worker']"),
+    ).toBeNull();
   });
 
   it("cancelling or stopping an executing member only targets that specific member", async () => {
@@ -420,16 +436,24 @@ describe("TeamWorkspaceShell Workflow & Migration (T08)", () => {
 
     // Teammate lane has a Stop button
     const teammateLane = screen.getByTestId("team-member-lane-teammate");
-    const stopBtn = teammateLane.querySelector("[data-testid='team-teammate-stop']");
+    const stopBtn = teammateLane.querySelector(
+      "[data-testid='team-teammate-stop']",
+    );
     expect(stopBtn).toBeTruthy();
 
     fireEvent.click(stopBtn!);
 
     await waitFor(() => {
-      expect(cancelTurnMock).toHaveBeenCalledWith("teammate", "exec-worker-running");
+      expect(cancelTurnMock).toHaveBeenCalledWith(
+        "teammate",
+        "exec-worker-running",
+      );
     });
     // Ensure leader turn was NOT cancelled
-    expect(cancelTurnMock).not.toHaveBeenCalledWith("leader", expect.anything());
+    expect(cancelTurnMock).not.toHaveBeenCalledWith(
+      "leader",
+      expect.anything(),
+    );
   });
 
   it("preserves historical messages when member is unavailable or restore failed", () => {

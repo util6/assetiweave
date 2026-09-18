@@ -47,7 +47,7 @@ export function NotificationBanner({
 
   return (
     <section
-      className="aurora-notification-shell pointer-events-none absolute inset-x-0 top-[calc(var(--app-toolbar-top)-var(--app-window-titlebar-height))] z-30 flex justify-end px-[var(--app-page-x)] py-3"
+      className="ui-notification-shell pointer-events-none absolute inset-x-0 top-[calc(var(--app-toolbar-top)-var(--app-window-titlebar-height))] z-30 flex justify-end px-[var(--app-page-x)] py-3"
       aria-live={
         notification.tone === "error" || notification.tone === "warning"
           ? "assertive"
@@ -57,7 +57,7 @@ export function NotificationBanner({
     >
       <div
         aria-atomic="true"
-        className={`aurora-notification pointer-events-auto flex w-full max-w-[min(42rem,100%)] items-start gap-3 rounded-2xl border px-3.5 py-2.5 ${toneClass[notification.tone]}`}
+        className={`ui-notification pointer-events-auto flex w-full max-w-[min(42rem,100%)] items-start gap-3 rounded-2xl border px-3.5 py-2.5 ${toneClass[notification.tone]}`}
         data-tone={notification.tone}
         role={
           notification.tone === "error" || notification.tone === "warning"

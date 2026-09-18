@@ -80,7 +80,8 @@ export const settingsEn = {
   "settings.memory.generateRecentNow": "Generate Recent Memory Now",
   "settings.memory.generatingRecent": "Generating...",
   "settings.memory.statusIdle": "Ready",
-  "settings.memory.statusRunning": "Extracting recent sessions and generating snapshot...",
+  "settings.memory.statusRunning":
+    "Extracting recent sessions and generating snapshot...",
   "settings.memory.statusQueued": "Recent memory task queued...",
   "settings.memory.statusCompleted": "Recent memory snapshot generated",
   "settings.memory.statusFailed": "Generation failed: {{message}}",

@@ -3066,7 +3066,7 @@ function RangeSettingControl({
       <input
         aria-label={label}
         aria-valuetext={`${value}${unit}`}
-        className="aurora-range h-2 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
+        className="ui-range h-2 min-w-0 flex-1 cursor-pointer appearance-none rounded-full"
         max={max}
         min={min}
         onChange={(event) => onChange(Number(event.target.value))}
@@ -3710,7 +3710,7 @@ function SegmentedControl({
 }) {
   return (
     <div
-      className="aurora-segmented-control flex h-9 items-center gap-1 rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md"
+      className="ui-segmented-control flex h-9 items-center gap-1 rounded-2xl border border-theme-control-border/70 bg-theme-control/68 p-1 shadow-[var(--theme-shadow-control-inset)] backdrop-blur-md"
       aria-label={label}
       role="group"
     >

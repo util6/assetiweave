@@ -12,8 +12,8 @@ export function DeploymentPlanPanel({ plan }: { plan: DeploymentPlan | null }) {
   }
 
   return (
-    <div className="aurora-detail-surface overflow-hidden">
-      <div className="aurora-workbench-header flex items-center justify-between px-4 py-3">
+    <div className="ui-detail-surface overflow-hidden">
+      <div className="ui-workbench-header flex items-center justify-between px-4 py-3">
         <span className="text-label-caps uppercase text-outline">
           {t("plan.title")}
         </span>
@@ -24,7 +24,7 @@ export function DeploymentPlanPanel({ plan }: { plan: DeploymentPlan | null }) {
       <div className="max-h-56 overflow-y-auto">
         {plan.actions.slice(0, 16).map((action) => (
           <div
-            className="aurora-workbench-item m-0 grid grid-cols-[96px_120px_1fr] gap-3 px-4 py-2.5"
+            className="ui-workbench-item m-0 grid grid-cols-[96px_120px_1fr] gap-3 px-4 py-2.5"
             key={action.id}
           >
             <span className={planActionClass(action.action_type)}>

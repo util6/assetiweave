@@ -25,7 +25,7 @@ export function PageMetrics({
     >
       {metrics.map((metric) => (
         <div
-          className="aurora-metric inline-flex h-10 min-w-[5.75rem] max-w-[10rem] shrink items-center justify-between gap-2 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/65 px-3 text-body-sm shadow-[var(--theme-shadow-card),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)] backdrop-blur-md"
+          className="ui-metric inline-flex h-10 min-w-[5.75rem] max-w-[10rem] shrink items-center justify-between gap-2 whitespace-nowrap rounded-2xl border border-theme-control-border/70 bg-theme-control/65 px-3 text-body-sm shadow-[var(--theme-shadow-card),inset_0_1px_0_rgb(var(--theme-inset-highlight)/0.18)] backdrop-blur-md"
           data-page-metric=""
           key={metric.label}
         >

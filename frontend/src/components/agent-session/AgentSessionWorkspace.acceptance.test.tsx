@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import {
@@ -397,8 +392,12 @@ describe("T12: G-12 全量验收与 AionUi 20 个视觉场景矩阵 (Final Accep
       </I18nProvider>,
     );
 
-    expect(screen.getAllByText("Member Leader").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Member Researcher").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Member Leader").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(
+      screen.getAllByText("Member Researcher").length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   // 场景 13: Team 三成员横向 overflow

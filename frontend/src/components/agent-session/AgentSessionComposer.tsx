@@ -94,7 +94,9 @@ export function AgentSessionComposer({
 
   return (
     <section
-      aria-label={t("agentSession.composerLabel") || t("team.chat.composerLabel")}
+      aria-label={
+        t("agentSession.composerLabel") || t("team.chat.composerLabel")
+      }
       className="sticky bottom-0 shrink-0 border-t border-theme-card-border/65 bg-theme-card-header/90 px-4 py-3 shadow-[0_-10px_24px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur sm:px-5"
       data-testid={`${testIdPrefix}-composer`}
     >

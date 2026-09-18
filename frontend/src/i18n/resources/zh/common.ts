@@ -440,7 +440,8 @@ export const commonZh = {
   "logViewer.levels.error": "ERROR",
   "tasks.page.eyebrow": "系统",
   "tasks.page.title": "任务中心",
-  "tasks.page.description": "统一查看与管理后台任务执行进度、Stage 阶段流水线与错误审计",
+  "tasks.page.description":
+    "统一查看与管理后台任务执行进度、Stage 阶段流水线与错误审计",
   "tasks.filter.all": "全部",
   "tasks.filter.running": "进行中",
   "tasks.filter.completed": "已完成",

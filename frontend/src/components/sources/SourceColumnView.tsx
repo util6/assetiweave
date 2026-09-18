@@ -77,7 +77,7 @@ export function SourceColumnView({
   return (
     <ResizableColumns
       ariaLabel={t("layout.resizeColumns")}
-      className="aurora-workbench-surface min-h-[560px]"
+      className="ui-workbench-surface min-h-[560px]"
       columns={[
         { defaultWeight: 0.72 },
         { defaultWeight: 0.9, minWidthScale: 1.1 },
@@ -91,7 +91,7 @@ export function SourceColumnView({
       scrollRightLabel={t("layout.scrollColumnsRight")}
       storageKey="assetiweave.sourceColumns.v2"
     >
-      <section className="aurora-workbench-column flex min-h-0 flex-col">
+      <section className="ui-workbench-column flex min-h-0 flex-col">
         <ColumnHeader
           title={t("source.column.sources")}
           meta={t("source.column.sourceCount", { count: sources.length })}
@@ -111,7 +111,7 @@ export function SourceColumnView({
                 })}
                 aria-selected={active}
                 className={clsx(
-                  "aurora-workbench-item flex min-h-[68px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
+                  "ui-workbench-item flex min-h-[68px] w-[calc(100%-0.7rem)] items-start gap-3 px-3 py-3 text-left",
                   active ? "text-on-surface" : "text-on-surface-variant",
                 )}
                 data-selected={active}
@@ -144,7 +144,7 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="aurora-workbench-column flex min-h-0 flex-col">
+      <section className="ui-workbench-column flex min-h-0 flex-col">
         <ColumnHeader
           title={selectedSource.name}
           meta={t("source.assetCount", { count: selectedAssets.length })}
@@ -161,7 +161,7 @@ export function SourceColumnView({
               const mountStatuses = mountStatusesByAssetId.get(asset.id) ?? [];
               return (
                 <article
-                  className="aurora-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
+                  className="ui-workbench-item grid min-h-[88px] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-4 py-3"
                   key={asset.id}
                 >
                   <div className="min-w-0">
@@ -225,7 +225,7 @@ export function SourceColumnView({
         </div>
       </section>
 
-      <section className="aurora-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
+      <section className="ui-workbench-column flex min-h-0 flex-col max-[1120px]:col-span-2">
         <ColumnHeader
           title={t("source.column.mountTargets")}
           meta={translateScanStatus(selectedSource.last_scan_status, t)}
@@ -269,7 +269,7 @@ export function SourceColumnView({
             variant="panel"
           />
 
-          <div className="aurora-detail-surface mt-4 space-y-3 p-3">
+          <div className="ui-detail-surface mt-4 space-y-3 p-3">
             <SourceDetailRow
               label={t("source.field.kind")}
               value={sourceKindLabel(selectedSource.kind, t)}
@@ -341,7 +341,7 @@ function ColumnHeader({
   title: string;
 }) {
   return (
-    <header className="aurora-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
+    <header className="ui-workbench-header flex min-h-14 items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <h3 className="overflow-hidden text-ellipsis whitespace-nowrap text-body-md font-semibold text-on-surface">
           {title}

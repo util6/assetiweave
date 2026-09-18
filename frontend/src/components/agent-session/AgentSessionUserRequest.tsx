@@ -13,7 +13,9 @@ export function AgentSessionUserRequest({
 }: AgentSessionUserRequestProps) {
   const { t } = useI18n();
 
-  const isMemoryJob = item.id.includes("memory") || (item.text && item.text.startsWith("[Memory]"));
+  const isMemoryJob =
+    item.id.includes("memory") ||
+    (item.text && item.text.startsWith("[Memory]"));
   const sourceBadge = isMemoryJob ? (
     <span className="rounded bg-theme-control/60 px-1.5 py-0.5 text-label-caps uppercase text-primary">
       {t("agentSession.source.memory") || "Memory Agent 输入"}
@@ -51,7 +53,8 @@ export function AgentSessionUserRequest({
               {t("agentSession.truncatedDetail", {
                 retained: String(item.truncation.retainedBytes),
                 original: String(item.truncation.originalBytes),
-              }) || `保留 ${item.truncation.retainedBytes} / 原始 ${item.truncation.originalBytes} 字节`}
+              }) ||
+                `保留 ${item.truncation.retainedBytes} / 原始 ${item.truncation.originalBytes} 字节`}
             </span>
           </div>
         ) : null}
