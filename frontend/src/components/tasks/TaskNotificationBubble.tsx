@@ -123,7 +123,7 @@ function NotificationItem({
         </div>
         <button
           aria-label="关闭通知"
-          className="grid size-5 shrink-0 place-items-center rounded-md text-on-surface-variant/70 hover:bg-surface-variant/40 hover:text-on-surface transition-colors"
+          className="grid size-5 shrink-0 place-items-center rounded-full text-on-surface-variant/70 hover:bg-theme-control-hover hover:text-on-surface transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             onDismiss();

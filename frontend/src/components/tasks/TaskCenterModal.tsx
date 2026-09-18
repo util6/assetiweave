@@ -28,6 +28,8 @@ import { DialogFrame } from "../foundation/DialogFrame";
 import { EmptyState } from "../foundation/EmptyState";
 import { ErrorBoundary } from "../foundation/ErrorBoundary";
 import { Button } from "../ui/button";
+import { PillTabs } from "../common/PillTabs";
+import { ToolbarSearch } from "../common/DataToolbar";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTaskCenter } from "../../app/backgroundTasks/TaskCenterProvider";
 import { AgentSessionWorkspace } from "../agent-session";
@@ -237,14 +239,19 @@ function TaskCenterModalContent({
                 tasks.every((t) => t.state === "running")
               }
               onClick={() => void handleClearTerminal()}
-              size="sm"
+              size="default"
               type="button"
               variant="outline"
             >
-              <Trash2 className="mr-1.5 size-3.5" />
+              <Trash2 className="mr-1.5 size-4" />
               {t("tasks.action.clearCompleted")}
             </Button>
-            <Button onClick={onClose} size="sm" type="button" variant="default">
+            <Button
+              onClick={onClose}
+              size="default"
+              type="button"
+              variant="default"
+            >
               {t("common.close")}
             </Button>
           </div>
@@ -260,41 +267,28 @@ function TaskCenterModalContent({
         <aside className="flex w-[360px] shrink-0 flex-col border-r border-theme-control-border bg-surface-elevated/40">
           {/* 搜索与过滤工具区 */}
           <div className="flex flex-col gap-2.5 border-b border-theme-control-border p-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-on-surface-variant" />
-              <input
-                className="h-8 w-full rounded-md border border-theme-control-border bg-theme-control/60 pl-8 pr-3 text-code-sm text-on-surface placeholder:text-outline focus:border-primary/60 focus:outline-none"
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder={t("tasks.search.placeholder")}
-                value={searchQuery}
-              />
-            </div>
+            <ToolbarSearch
+              ariaLabel={t("tasks.search.placeholder")}
+              className="w-full !min-w-0"
+              onChange={(val) => setSearchQuery(val)}
+              placeholder={t("tasks.search.placeholder")}
+              value={searchQuery}
+            />
 
             {/* 状态过滤切换 */}
-            <div className="flex rounded-lg border border-theme-control-border bg-theme-control/40 p-0.5">
-              {(
-                [
-                  ["all", t("tasks.filter.all")],
-                  ["running", t("tasks.filter.running")],
-                  ["completed", t("tasks.filter.completed")],
-                  ["failed", t("tasks.filter.failed")],
-                ] as const
-              ).map(([status, label]) => (
-                <button
-                  className={clsx(
-                    "flex-1 rounded-md py-1.5 text-center text-caption font-medium transition-all duration-200 cursor-pointer",
-                    filterStatus === status
-                      ? "bg-surface-elevated text-on-surface shadow-sm font-semibold border border-theme-control-border/50"
-                      : "text-on-surface-variant hover:text-on-surface hover:bg-theme-control/40",
-                  )}
-                  key={status}
-                  onClick={() => setFilterStatus(status)}
-                  type="button"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <PillTabs<FilterStatus>
+              activeId={filterStatus}
+              ariaLabel={t("tasks.filter.all")}
+              fullWidth
+              items={[
+                { id: "all", label: t("tasks.filter.all") },
+                { id: "running", label: t("tasks.filter.running") },
+                { id: "completed", label: t("tasks.filter.completed") },
+                { id: "failed", label: t("tasks.filter.failed") },
+              ]}
+              onSelect={(status) => setFilterStatus(status)}
+              size="sm"
+            />
           </div>
 
           {/* 任务列表条目 */}
@@ -782,7 +776,7 @@ function StageCard({
         <div className="flex flex-wrap gap-2 pt-1">
           {metrics.map((m) => (
             <span
-              className="inline-flex items-center gap-1 rounded-md border border-theme-control-border/60 bg-theme-control/30 px-2 py-0.5 text-caption text-on-surface-variant"
+              className="inline-flex items-center gap-1 rounded-full border border-theme-control-border/60 bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant"
               key={m.code}
             >
               <span>{m.code}:</span>
@@ -851,7 +845,7 @@ function TaskStateBadge({
 }) {
   if (state === "running" || state === "pending" || state === "cancelling") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+      <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
         <Loader2 className="size-3 animate-spin" />
         {state === "cancelling" ? "取消中" : "运行中"}
       </span>
@@ -860,7 +854,7 @@ function TaskStateBadge({
 
   if (outcome === "partial_success") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-status-warning/30 bg-status-warning/10 px-2 py-0.5 text-caption font-medium text-status-warning">
+      <span className="inline-flex items-center gap-1 rounded-full border border-status-warning/30 bg-status-warning/10 px-2.5 py-0.5 text-caption font-medium text-status-warning">
         <AlertTriangle className="size-3" />
         部分成功
       </span>
@@ -869,7 +863,7 @@ function TaskStateBadge({
 
   if (state === "succeeded" || outcome === "success") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-status-create/30 bg-status-create/10 px-2 py-0.5 text-caption font-medium text-status-create">
+      <span className="inline-flex items-center gap-1 rounded-full border border-status-create/30 bg-status-create/10 px-2.5 py-0.5 text-caption font-medium text-status-create">
         <Check className="size-3" />
         成功
       </span>
@@ -878,7 +872,7 @@ function TaskStateBadge({
 
   if (state === "canceled" || outcome === "canceled") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-theme-control-border bg-theme-control/40 px-2 py-0.5 text-caption text-on-surface-variant">
+      <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2.5 py-0.5 text-caption text-on-surface-variant">
         <Ban className="size-3" />
         已取消
       </span>
@@ -886,7 +880,7 @@ function TaskStateBadge({
   }
 
   return (
-    <span className="inline-flex items-center gap-1 rounded-md border border-status-conflict/30 bg-status-conflict/10 px-2 py-0.5 text-caption font-medium text-status-conflict">
+    <span className="inline-flex items-center gap-1 rounded-full border border-status-conflict/30 bg-status-conflict/10 px-2.5 py-0.5 text-caption font-medium text-status-conflict">
       <AlertCircle className="size-3" />
       失败
     </span>
@@ -1036,7 +1030,7 @@ function TaskAgentSessionObserver({
           <span className="text-body-sm font-semibold text-on-surface">
             {taskTitle ? `${taskTitle} · ` : ""}执行现场
           </span>
-          <span className="rounded-md border border-primary/20 bg-primary/10 px-2 py-0.5 text-caption font-medium text-primary">
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-0.5 text-caption font-medium text-primary">
             只读观察模式
           </span>
         </div>

@@ -117,10 +117,10 @@ export const surfaceButtonRecipe = cva(
       },
       size: {
         default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-lg px-3",
+        sm: "h-9 rounded-xl px-3.5",
         lg: "h-11 rounded-xl px-5",
         icon: "size-9",
-        "icon-sm": "size-8 rounded-lg",
+        "icon-sm": "size-8 rounded-xl",
       },
     },
     defaultVariants: {
