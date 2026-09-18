@@ -35,6 +35,10 @@ pub(crate) struct L2CandidateReferenceView {
     pub(crate) reference_key: String,
     pub(crate) role: Option<String>,
     pub(crate) question_id: Option<String>,
+    pub(crate) turn_id: Option<String>,
+    pub(crate) part_id: Option<String>,
+    pub(crate) node_id: Option<String>,
+    pub(crate) source_revision: i64,
     pub(crate) available: bool,
 }
 

@@ -354,7 +354,7 @@ function handlePrompt(message) {
       update({
         sessionUpdate: "tool_call",
         toolCallId: "fixture-tool",
-        title: "read fixture",
+        title: "memory_recall_search",
         kind: "read",
         status: "pending",
       });

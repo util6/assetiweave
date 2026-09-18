@@ -31,6 +31,15 @@ pub(crate) struct L3CandidateReferenceView {
     pub(crate) session_id: String,
     pub(crate) reference_key: String,
     pub(crate) role: Option<String>,
+    #[serde(default)]
+    pub(crate) question_id: Option<String>,
+    #[serde(default)]
+    pub(crate) turn_id: Option<String>,
+    #[serde(default)]
+    pub(crate) part_id: Option<String>,
+    #[serde(default)]
+    pub(crate) node_id: Option<String>,
+    pub(crate) source_revision: i64,
     pub(crate) available: bool,
     pub(crate) unavailable_reason: Option<String>,
 }
@@ -126,6 +135,14 @@ pub(crate) struct L3SourceReferenceView {
     pub(crate) session_id: String,
     pub(crate) reference_key: String,
     pub(crate) project_key: Option<String>,
+    #[serde(default)]
+    pub(crate) question_id: Option<String>,
+    #[serde(default)]
+    pub(crate) turn_id: Option<String>,
+    #[serde(default)]
+    pub(crate) part_id: Option<String>,
+    #[serde(default)]
+    pub(crate) node_id: Option<String>,
     pub(crate) available: bool,
     pub(crate) unavailable_reason: Option<String>,
 }

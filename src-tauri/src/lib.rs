@@ -89,6 +89,10 @@ pub fn has_memory_recall_mcp_stdio_arg() -> bool {
     std::env::args().any(|argument| argument == "--memory-recall-mcp-stdio")
 }
 
+pub fn has_memory_generation_mcp_stdio_arg() -> bool {
+    std::env::args().any(|argument| argument == "--memory-generation-mcp-stdio")
+}
+
 fn run_startup_self_check(_context: tauri::Context<tauri::Wry>) -> Result<(), String> {
     backend::builtin_skills::install_builtin_skills()
         .map_err(|error| format!("内置 Skill 校验或安装失败: {error}"))?;
@@ -767,6 +771,17 @@ pub fn run_memory_recall_mcp_stdio() {
     }
 }
 
+/// Runs the Work Order- and lease-scoped read-only MCP bridge used by the
+/// background Memory Generation Agent.
+pub fn run_memory_generation_mcp_stdio() {
+    let _logging_guard = init_app_logging();
+    if let Err(error) = backend::memory_generation_mcp::run_memory_generation_mcp_stdio() {
+        eprintln!("Memory Generation MCP bridge stopped: {error}");
+        drop(_logging_guard);
+        std::process::exit(1);
+    }
+}
+
 fn run_memory_recall_mcp_loop(
     tokio_runtime: &tokio::runtime::Runtime,
     service: &backend::application::AppService,
@@ -1184,18 +1199,5 @@ fn install_engine_termination_handlers(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::has_startup_self_check_arg;
-
-    #[test]
-    fn recognizes_startup_self_check_argument_without_matching_similar_values() {
-        assert!(has_startup_self_check_arg([
-            "assetiweave",
-            "--startup-self-check"
-        ]));
-        assert!(!has_startup_self_check_arg([
-            "assetiweave",
-            "--startup-self-check=true"
-        ]));
-    }
-}
+#[path = "lib_tests.rs"]
+mod tests;

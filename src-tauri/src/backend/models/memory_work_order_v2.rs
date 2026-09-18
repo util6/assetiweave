@@ -148,6 +148,10 @@ impl MemoryWorkOrderV2 {
     }
 }
 
+use super::{
+    GlobalConsolidationInput, L2ProjectMemoryView, L3MemoryItemView, ProjectConsolidationInput,
+    RecentMemoryEvent, SessionMemorySourceReference,
+};
 use crate::backend::models::memory_generation_v2::{MemoryItemCategory, MemoryItemStatus};
 
 /// M35-L1-08 / M35-L1-10: 上一轮结构化可续接条目，严禁使用旧 Markdown
@@ -181,6 +185,28 @@ pub struct CandidateSessionSummary {
     pub title: String,
     pub last_activity_at: String,
     pub source_id: String,
+    pub source_agent: String,
+    pub source_revision: i64,
+}
+
+/// M35-L1-11: 固定在 Work Order 中的单个 Session 结构化事实。
+/// `memory` 为空表示 Phase 1 尚未为该 Session 生成有效摘要；这仍然是
+/// 可审计的事实，不允许 Worker 在执行时偷偷读取更新后的 Session Memory。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentSnapshotSessionEvidence {
+    pub candidate: CandidateSessionSummary,
+    pub memory_source_revision: Option<i64>,
+    pub summary: Option<String>,
+    pub goal: Option<String>,
+    pub result: Option<String>,
+    pub decisions: Vec<String>,
+    pub verification: Vec<String>,
+    pub blockers: Vec<String>,
+    pub follow_up: Vec<String>,
+    pub topics: Vec<String>,
+    pub source_references: Vec<SessionMemorySourceReference>,
+    pub recent_events: Vec<RecentMemoryEvent>,
 }
 
 /// M35-L1-10 / M35-L1-11: 证据首包数据，纯结构化事实，绝无旧 Markdown
@@ -193,7 +219,49 @@ pub struct RecentSnapshotWorkOrderEvidencePack {
     pub window_hours: u32,
     pub project_keys: Vec<String>,
     pub candidate_sessions: Vec<CandidateSessionSummary>,
+    #[serde(default)]
+    pub session_evidence: Vec<RecentSnapshotSessionEvidence>,
     pub continuable_items: Vec<ContinuableMemoryItemView>,
+    /// Current effective long-term context at enqueue time. These are views,
+    /// not write authority; commit still revalidates against SQLite.
+    #[serde(default)]
+    pub current_l2_projects: Vec<L2ProjectMemoryView>,
+    #[serde(default)]
+    pub current_l3_items: Vec<L3MemoryItemView>,
     pub allowed_tools: Vec<String>,
     pub output_schema_version: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentSnapshotWorkOrderPayload {
+    pub target_watermark_utc: String,
+    pub local_watermark_date: String,
+    pub local_watermark_time: String,
+    pub timezone_offset_minutes: i64,
+    pub window_hours: i64,
+    pub window_start_utc: String,
+    pub window_end_utc: String,
+    pub target_fingerprint: String,
+    pub content_fingerprint: String,
+    pub skill: MemorySkillBinding,
+    pub skill_text: String,
+    pub evidence: RecentSnapshotWorkOrderEvidencePack,
+}
+
+/// Project/Global maintenance carries the complete structured evidence used by
+/// the Agent. SQLite remains the authority for the commit phase, but a worker
+/// never silently replaces the queued evidence with a newer read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryMaintenanceWorkOrderPayload {
+    pub work_order: MemoryWorkOrderV2,
+    pub project_path: Option<String>,
+    pub skill_text: String,
+    /// `default` keeps historical queued rows deserializable; the worker
+    /// rejects a new execution without the typed frozen input.
+    #[serde(default)]
+    pub project_input: Option<ProjectConsolidationInput>,
+    #[serde(default)]
+    pub global_input: Option<GlobalConsolidationInput>,
 }

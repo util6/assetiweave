@@ -28,6 +28,11 @@ export const memoryZh = {
   "memory.recent.expandItem": "展开条目",
   "memory.recent.collapseItem": "收起条目",
   "memory.recent.items": "条目",
+  "memory.recent.latestUpdate": "最近更新",
+  "memory.recent.today": "今天",
+  "memory.recent.yesterday": "昨天",
+  "memory.recent.beforeYesterday": "前天",
+  "memory.recent.daysAgo": "{days}天前",
   "memory.task.running": "Memory 后台任务运行中",
   "memory.recall.title": "深度回忆",
   "memory.recall.description":

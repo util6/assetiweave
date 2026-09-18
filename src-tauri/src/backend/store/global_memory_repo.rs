@@ -392,15 +392,18 @@ pub(crate) async fn recover_expired_global_memory_leases_sqlx(
     now: &str,
 ) -> AppResult<u64> {
     let result = sqlx::query(
-        "UPDATE global_memory_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = ?1, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
+        "UPDATE global_memory_jobs SET status = CASE WHEN retry_count + 1 >= ?3 THEN 'failed' ELSE 'queued' END, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = CASE WHEN retry_count + 1 >= ?3 THEN NULL ELSE ?1 END, finished_at = CASE WHEN retry_count + 1 >= ?3 THEN ?1 ELSE NULL END, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
     )
     .bind(now)
     .bind(tenant_id)
+    .bind(MAX_GLOBAL_MEMORY_JOB_RETRIES)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
     Ok(result.rows_affected())
 }
+
+pub(crate) const MAX_GLOBAL_MEMORY_JOB_RETRIES: i64 = 5;
 
 pub(crate) async fn mark_global_memory_job_failed_with_lease_sqlx(
     pool: &SqlitePool,
@@ -409,6 +412,7 @@ pub(crate) async fn mark_global_memory_job_failed_with_lease_sqlx(
     ownership_token: &str,
     error_message: &str,
     now: &str,
+    retryable: bool,
 ) -> AppResult<bool> {
     let retry_count: Option<i64> = sqlx::query_scalar(
         "SELECT retry_count FROM global_memory_jobs WHERE tenant_id = ?1 AND id = ?2 AND status = 'running' AND ownership_token = ?3",
@@ -422,13 +426,19 @@ pub(crate) async fn mark_global_memory_job_failed_with_lease_sqlx(
     let Some(retry_count) = retry_count else {
         return Ok(false);
     };
-    let delay = 5_i64.saturating_mul(2_i64.saturating_pow(retry_count.min(6) as u32));
-    let retry_at = (parse_utc(now) + Duration::seconds(delay)).to_rfc3339();
+    let next_retry_count = retry_count + 1;
+    let retry_at = if retryable && next_retry_count < MAX_GLOBAL_MEMORY_JOB_RETRIES {
+        let delay = 5_i64.saturating_mul(2_i64.saturating_pow(next_retry_count.min(6) as u32));
+        Some((parse_utc(now) + Duration::seconds(delay)).to_rfc3339())
+    } else {
+        None
+    };
     let result = sqlx::query(
-        "UPDATE global_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = retry_count + 1, retry_at = ?3, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?4 AND id = ?5 AND status = 'running' AND ownership_token = ?6",
+        "UPDATE global_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = ?3, retry_at = ?4, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?5 AND id = ?6 AND status = 'running' AND ownership_token = ?7",
     )
     .bind(error_message)
     .bind(now)
+    .bind(next_retry_count)
     .bind(retry_at)
     .bind(tenant_id)
     .bind(job_id)
@@ -760,33 +770,5 @@ fn digest(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn project(id: &str, path: &str, version: i64) -> GlobalMemoryProjectInput {
-        GlobalMemoryProjectInput {
-            project_id: id.into(),
-            project_path: path.into(),
-            project_version_id: format!("version-{id}"),
-            project_version_number: 1,
-            project_watermark: version,
-            project_input_fingerprint: format!("fingerprint-{id}"),
-            memory_markdown: format!("# {id}"),
-        }
-    }
-
-    #[test]
-    fn global_input_fingerprint_is_order_independent_and_watermarked() {
-        let left =
-            global_input_set_from_projects(vec![project("b", "/b", 7), project("a", "/a", 3)]);
-        let right =
-            global_input_set_from_projects(vec![project("a", "/a", 3), project("b", "/b", 7)]);
-        assert_eq!(left.fingerprint, right.fingerprint);
-        assert_eq!(left.watermark, 7);
-    }
-
-    #[test]
-    fn global_ids_are_tenant_scoped() {
-        assert_ne!(global_memory_id("tenant-a"), global_memory_id("tenant-b"));
-    }
-}
+#[path = "global_memory_repo_tests.rs"]
+mod tests;

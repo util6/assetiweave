@@ -16,9 +16,12 @@ import type {
   MemoryContextResult,
   MemoryProjectView,
   MemoryRebuildResult,
+  MemoryRebuildReason,
+  MemoryRebuildTarget,
   MemoryTaskView,
   RecentMemoryStateView,
 } from "../types/memory";
+import type { Asset } from "../types";
 
 const DESKTOP_REQUIRED =
   "Memory writes are available only in the AssetIWeave desktop application.";
@@ -73,11 +76,33 @@ export async function getMemoryProject(
 
 export async function rebuildMemoryScope(
   scope: MemoryScope = emptyMemoryScope(),
+  options: {
+    target?: MemoryRebuildTarget;
+    projectPath?: string | null;
+    reason?: MemoryRebuildReason;
+  } = {},
 ): Promise<MemoryRebuildResult> {
   requireDesktop();
   return memoryRebuildResultSchema.parse(
-    await invoke("rebuild_memory_scope", { params: { scope } }),
+    await invoke("rebuild_memory_scope", {
+      params: {
+        scope,
+        target: options.target,
+        project_path: options.projectPath ?? null,
+        reason: options.reason,
+      },
+    }),
   );
+}
+
+export async function duplicateMemoryGenerationSkill(): Promise<Asset> {
+  requireDesktop();
+  return await invoke<Asset>("duplicate_memory_generation_skill");
+}
+
+export async function resetMemoryGenerationSkillToDefault(): Promise<void> {
+  requireDesktop();
+  await invoke<void>("reset_memory_generation_skill_to_default");
 }
 
 export async function listMemoryPublicTasks(

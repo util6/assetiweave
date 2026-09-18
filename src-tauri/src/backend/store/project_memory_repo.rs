@@ -351,15 +351,18 @@ pub(crate) async fn recover_expired_project_memory_leases_sqlx(
     now: &str,
 ) -> AppResult<u64> {
     let result = sqlx::query(
-        "UPDATE project_memory_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = ?1, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
+        "UPDATE project_memory_jobs SET status = CASE WHEN retry_count + 1 >= ?3 THEN 'failed' ELSE 'queued' END, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = CASE WHEN retry_count + 1 >= ?3 THEN NULL ELSE ?1 END, finished_at = CASE WHEN retry_count + 1 >= ?3 THEN ?1 ELSE NULL END, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
     )
     .bind(now)
     .bind(tenant_id)
+    .bind(MAX_PROJECT_MEMORY_JOB_RETRIES)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
     Ok(result.rows_affected())
 }
+
+pub(crate) const MAX_PROJECT_MEMORY_JOB_RETRIES: i64 = 5;
 
 pub(crate) async fn mark_project_memory_job_failed_with_lease_sqlx(
     pool: &SqlitePool,
@@ -368,6 +371,7 @@ pub(crate) async fn mark_project_memory_job_failed_with_lease_sqlx(
     ownership_token: &str,
     error_message: &str,
     now: &str,
+    retryable: bool,
 ) -> AppResult<bool> {
     let retry_count: Option<i64> = sqlx::query_scalar(
         "SELECT retry_count FROM project_memory_jobs WHERE tenant_id = ?1 AND id = ?2 AND status = 'running' AND ownership_token = ?3",
@@ -381,17 +385,25 @@ pub(crate) async fn mark_project_memory_job_failed_with_lease_sqlx(
     let Some(retry_count) = retry_count else {
         return Ok(false);
     };
-    let delay = 5_i64.saturating_mul(2_i64.saturating_pow(retry_count.min(6) as u32));
-    let retry_at = (DateTime::parse_from_rfc3339(now)
-        .map(|value| value.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
-        + Duration::seconds(delay))
-    .to_rfc3339();
+    let next_retry_count = retry_count + 1;
+    let retry_at = if retryable && next_retry_count < MAX_PROJECT_MEMORY_JOB_RETRIES {
+        let delay = 5_i64.saturating_mul(2_i64.saturating_pow(next_retry_count.min(6) as u32));
+        Some(
+            (DateTime::parse_from_rfc3339(now)
+                .map(|value| value.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now())
+                + Duration::seconds(delay))
+            .to_rfc3339(),
+        )
+    } else {
+        None
+    };
     let result = sqlx::query(
-        "UPDATE project_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = retry_count + 1, retry_at = ?3, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?4 AND id = ?5 AND status = 'running' AND ownership_token = ?6",
+        "UPDATE project_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = ?3, retry_at = ?4, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?5 AND id = ?6 AND status = 'running' AND ownership_token = ?7",
     )
     .bind(error_message)
     .bind(now)
+    .bind(next_retry_count)
     .bind(retry_at)
     .bind(tenant_id)
     .bind(job_id)
@@ -520,7 +532,6 @@ pub(crate) async fn persist_project_memory_success_sqlx(
     .execute(&mut *tx)
     .await
     .map_err(AppError::Db)?;
-    super::global_memory_repo::enqueue_global_memory_job_tx(&mut tx, &input.tenant_id, now).await?;
     tx.commit().await.map_err(AppError::Db)?;
     Ok(ProjectMemoryVersion {
         tenant_id: input.tenant_id.clone(),
@@ -711,54 +722,5 @@ fn digest(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn memory(id: &str, revision: i64) -> SessionMemory {
-        SessionMemory {
-            tenant_id: "tenant".into(),
-            id: id.into(),
-            session_id: format!("session-{id}"),
-            source_id: "source".into(),
-            source_revision: revision,
-            source_fingerprint: format!("fingerprint-{id}"),
-            contract_version: "session-memory.v1".into(),
-            prompt_version: "prompt.v1".into(),
-            status: crate::backend::models::SessionMemoryStatus::Active,
-            project_path: Some("/project".into()),
-            summary: format!("summary-{id}"),
-            goal: String::new(),
-            result: String::new(),
-            decisions: vec![],
-            verification: vec![],
-            blockers: vec![],
-            follow_up: vec![],
-            topics: vec![],
-            generated_at: "2026-08-31T00:00:00Z".into(),
-            created_at: "2026-08-31T00:00:00Z".into(),
-            updated_at: "2026-08-31T00:00:00Z".into(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn project_input_fingerprint_is_order_independent_and_watermarked() {
-        let left = input_set_from_memories(vec![memory("b", 7), memory("a", 3)]);
-        let right = input_set_from_memories(vec![memory("a", 3), memory("b", 7)]);
-        assert_eq!(left.fingerprint, right.fingerprint);
-        assert_eq!(left.watermark, 7);
-        assert_eq!(left.memories[0].id, "a");
-    }
-
-    #[test]
-    fn project_and_job_ids_are_scope_stable() {
-        assert_eq!(
-            project_memory_id("tenant", "/project"),
-            project_memory_id("tenant", "/project")
-        );
-        assert_ne!(
-            project_memory_job_id("tenant", "/project"),
-            project_memory_job_id("tenant", "/other")
-        );
-    }
-}
+#[path = "project_memory_repo_tests.rs"]
+mod tests;

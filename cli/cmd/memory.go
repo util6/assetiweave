@@ -62,14 +62,31 @@ func newCmdMemoryProject(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdMemoryRebuild(f *cmdutil.Factory) *cobra.Command {
 	var scope memoryScopeFlags
+	var target, reason string
 	cmd := &cobra.Command{Use: "rebuild", Short: "Queue a Memory rebuild", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		resolved, err := scope.params()
 		if err != nil {
 			return err
 		}
-		return callAndPrint(cmd, f, schema.MethodMemoryRebuild, map[string]any{"scope": resolved})
+		if target == "" {
+			target = "recent"
+			if resolved["project_path"] != nil {
+				target = "project"
+			}
+		}
+		params := map[string]any{
+			"scope":  resolved,
+			"target": target,
+			"reason": reason,
+		}
+		if target == "project" {
+			params["project_path"] = resolved["project_path"]
+		}
+		return callAndPrint(cmd, f, schema.MethodMemoryRebuild, params)
 	}}
 	addMemoryRebuildScopeFlags(cmd, &scope)
+	cmd.Flags().StringVar(&target, "target", "", "rebuild target: recent, project, global, or all")
+	cmd.Flags().StringVar(&reason, "reason", "manual", "rebuild reason: manual, migration, or projection_repair")
 	return cmd
 }
 

@@ -1,6 +1,6 @@
 use crate::backend::models::{
     RecentMemoryEvent, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
-    SessionMemoryJobStatus, SessionMemoryStatus,
+    SessionMemoryJobStatus, SessionMemorySourceReference, SessionMemoryStatus,
 };
 use crate::backend::runtime::{AppError, AppResult};
 use chrono::{DateTime, Duration, Utc};
@@ -147,6 +147,36 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     excluded_project_root: &str,
     now: &str,
 ) -> AppResult<usize> {
+    ensure_recent_session_memory_jobs_sqlx(pool, tenant_id, excluded_project_root, now, false).await
+}
+
+/// Re-establishes the Phase-1 prerequisites for an explicit Recent Memory
+/// rebuild. Unlike automatic backfill, this may reopen a matching terminal
+/// failure/cancellation and starts a fresh, still-bounded retry budget.
+pub(crate) async fn rebuild_recent_session_memory_jobs_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    excluded_project_root: &str,
+    now: &str,
+) -> AppResult<usize> {
+    ensure_recent_session_memory_jobs_sqlx(pool, tenant_id, excluded_project_root, now, true).await
+}
+
+/// Ensures Phase-1 work for the exact candidate set frozen by the Recent
+/// watermark window. This deliberately accepts session identities instead of
+/// deriving another rolling `now - 48h` window, which can differ from the
+/// selected watermark by as much as one scheduling interval.
+pub(crate) async fn ensure_session_memory_jobs_for_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    session_ids: &[String],
+    excluded_project_root: &str,
+    now: &str,
+    restart_terminal: bool,
+) -> AppResult<usize> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
     let policy = load_memory_generation_policy_sqlx(pool).await?;
     if !policy.enabled {
         return Ok(0);
@@ -160,15 +190,117 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
     .map_err(AppError::Db)?
     .flatten()
     .unwrap_or(0);
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ",
+    );
+    query.push_bind(tenant_id);
+    query.push(" AND missing = 0 AND execution_origin = 'user' AND user_visible = 1 AND (");
+    query.push_bind(excluded_project_root);
+    query.push(" = '' OR project_path IS NULL OR (project_path <> ");
+    query.push_bind(excluded_project_root);
+    query.push(" AND instr(project_path, ");
+    query.push_bind(excluded_project_root);
+    query.push(" || '/') <> 1)) AND id IN (");
+    {
+        let mut separated = query.separated(", ");
+        for session_id in session_ids {
+            separated.push_bind(session_id);
+        }
+    }
+    query.push(") ORDER BY id ASC");
+    let candidates = query
+        .build_query_as::<SessionMemorySourceCandidateRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::Db)?;
+
+    let mut prepared = 0usize;
+    for row in candidates {
+        let candidate: SessionMemorySourceCandidate = row.into();
+        if policy.excluded_session_ids.contains(&candidate.id)
+            || policy.excluded_source_ids.contains(&candidate.source_id)
+        {
+            continue;
+        }
+        let job_candidate = candidate_with_not_before(&candidate, source_revision, now);
+        let inserted = insert_job_candidate_sqlx(
+            pool,
+            tenant_id,
+            &job_candidate,
+            "recent-watermark:session-memory",
+            "recent-watermark:session-memory",
+            now,
+        )
+        .await?;
+        prepared += inserted;
+        if restart_terminal && inserted == 0 {
+            let job_id = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM session_memory_jobs WHERE tenant_id = ?1 AND session_id = ?2 AND source_revision = ?3 AND source_fingerprint = ?4 AND contract_version = ?5 AND prompt_version = ?6 LIMIT 1",
+            )
+            .bind(tenant_id)
+            .bind(&job_candidate.session_id)
+            .bind(job_candidate.source_revision)
+            .bind(&job_candidate.source_fingerprint)
+            .bind(SESSION_MEMORY_CONTRACT_VERSION)
+            .bind(SESSION_MEMORY_PROMPT_VERSION)
+            .fetch_optional(pool)
+            .await
+            .map_err(AppError::Db)?;
+            if let Some(job_id) = job_id {
+                prepared += usize::from(
+                    restart_session_memory_job_sqlx(pool, tenant_id, &job_id, now).await?,
+                );
+            }
+        }
+    }
+    Ok(prepared)
+}
+
+async fn ensure_recent_session_memory_jobs_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    excluded_project_root: &str,
+    now: &str,
+    restart_terminal: bool,
+) -> AppResult<usize> {
+    let policy = load_memory_generation_policy_sqlx(pool).await?;
+    if !policy.enabled {
+        return Ok(0);
+    }
+    let now_dt = DateTime::parse_from_rfc3339(now)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let cutoff = (now_dt - Duration::hours(48)).to_rfc3339();
+
+    let source_revision = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT source_revision FROM conversation_search_index_state WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(AppError::Db)?
+    .flatten()
+    .unwrap_or(0);
     let sources = sqlx::query_as::<_, SessionMemorySourceCandidateRow>(
-        "SELECT id, source_id, source_fingerprint, updated_at FROM conversation_sessions WHERE tenant_id = ?1 AND missing = 0 AND execution_origin = 'user' AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1)) ORDER BY id ASC",
+        r#"
+        SELECT id, source_id, source_fingerprint, updated_at
+        FROM conversation_sessions
+        WHERE tenant_id = ?1
+          AND missing = 0
+          AND execution_origin = 'user'
+          AND (?2 = '' OR project_path IS NULL OR (project_path <> ?2 AND instr(project_path, ?2 || '/') <> 1))
+          AND updated_at >= ?3
+        ORDER BY updated_at DESC
+        LIMIT 50
+        "#,
     )
     .bind(tenant_id)
     .bind(excluded_project_root)
+    .bind(&cutoff)
     .fetch_all(pool)
     .await
     .map_err(AppError::Db)?;
-    let mut inserted = 0usize;
+    let mut prepared = 0usize;
     for row in sources {
         let candidate: SessionMemorySourceCandidate = row.into();
         if policy.excluded_session_ids.contains(&candidate.id)
@@ -176,18 +308,38 @@ pub(crate) async fn backfill_session_memory_jobs_sqlx(
         {
             continue;
         }
-        inserted += insert_job_sqlx(
+        let job_candidate = candidate_with_not_before(&candidate, source_revision, now);
+        let inserted = insert_job_candidate_sqlx(
             pool,
             tenant_id,
-            &candidate,
-            source_revision,
+            &job_candidate,
             "backfill:session-memory",
             "backfill:session-memory",
             now,
         )
         .await?;
+        prepared += inserted;
+        if restart_terminal && inserted == 0 {
+            let job_id = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM session_memory_jobs WHERE tenant_id = ?1 AND session_id = ?2 AND source_revision = ?3 AND source_fingerprint = ?4 AND contract_version = ?5 AND prompt_version = ?6 LIMIT 1",
+            )
+            .bind(tenant_id)
+            .bind(&job_candidate.session_id)
+            .bind(job_candidate.source_revision)
+            .bind(&job_candidate.source_fingerprint)
+            .bind(SESSION_MEMORY_CONTRACT_VERSION)
+            .bind(SESSION_MEMORY_PROMPT_VERSION)
+            .fetch_optional(pool)
+            .await
+            .map_err(AppError::Db)?;
+            if let Some(job_id) = job_id {
+                prepared += usize::from(
+                    restart_session_memory_job_sqlx(pool, tenant_id, &job_id, now).await?,
+                );
+            }
+        }
     }
-    Ok(inserted)
+    Ok(prepared)
 }
 
 struct MemoryGenerationPolicy {
@@ -369,6 +521,23 @@ pub(crate) async fn insert_job_candidate_sqlx(
         .as_deref()
         .unwrap_or(crate::backend::models::DEFAULT_BUDGET_POLICY_VERSION);
 
+    let has_reusable_projection = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM session_memories WHERE tenant_id = ?1 AND session_id = ?2 AND source_id = ?3 AND status = 'active' AND source_fingerprint = ?4 AND contract_version = ?5 AND prompt_version = ?6 AND COALESCE(recipe_content_hash, '') = COALESCE(?7, ''))",
+    )
+    .bind(tenant_id)
+    .bind(&candidate.session_id)
+    .bind(&candidate.source_id)
+    .bind(&candidate.source_fingerprint)
+    .bind(SESSION_MEMORY_CONTRACT_VERSION)
+    .bind(SESSION_MEMORY_PROMPT_VERSION)
+    .bind(&candidate.recipe_content_hash)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::Db)?;
+    if has_reusable_projection {
+        return Ok(0);
+    }
+
     sqlx::query(
         "UPDATE session_memories SET status = 'invalid', updated_at = ?1 WHERE tenant_id = ?2 AND session_id = ?3 AND status = 'active' AND (source_revision < ?4 OR source_fingerprint <> ?5 OR contract_version <> ?6 OR prompt_version <> ?7 OR (recipe_content_hash IS NOT NULL AND recipe_content_hash <> ?8))",
     )
@@ -530,15 +699,18 @@ pub(crate) async fn recover_expired_session_memory_leases_sqlx(
     now: &str,
 ) -> AppResult<usize> {
     let result = sqlx::query(
-        "UPDATE session_memory_jobs SET status = 'queued', ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = ?1, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
+        "UPDATE session_memory_jobs SET status = CASE WHEN retry_count + 1 >= ?3 THEN 'failed' ELSE 'queued' END, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, retry_count = retry_count + 1, retry_at = CASE WHEN retry_count + 1 >= ?3 THEN NULL ELSE ?1 END, finished_at = CASE WHEN retry_count + 1 >= ?3 THEN ?1 ELSE NULL END, last_error = 'lease_expired', updated_at = ?1 WHERE tenant_id = ?2 AND status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at <= ?1)",
     )
     .bind(now)
     .bind(tenant_id)
+    .bind(MAX_SESSION_MEMORY_JOB_RETRIES)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
     Ok(result.rows_affected() as usize)
 }
+
+pub(crate) const MAX_SESSION_MEMORY_JOB_RETRIES: i64 = 5;
 
 pub(crate) async fn mark_session_memory_job_failed_with_lease_sqlx(
     pool: &SqlitePool,
@@ -547,6 +719,7 @@ pub(crate) async fn mark_session_memory_job_failed_with_lease_sqlx(
     ownership_token: &str,
     error_code: &str,
     now: &str,
+    retryable: bool,
 ) -> AppResult<bool> {
     let retry_count = sqlx::query_scalar::<_, i64>(
         "SELECT retry_count FROM session_memory_jobs WHERE tenant_id = ?1 AND id = ?2 AND status = 'running' AND ownership_token = ?3",
@@ -560,12 +733,18 @@ pub(crate) async fn mark_session_memory_job_failed_with_lease_sqlx(
     let Some(retry_count) = retry_count else {
         return Ok(false);
     };
-    let retry_at = next_retry_at(now, retry_count + 1)?;
+    let next_retry_count = retry_count + 1;
+    let retry_at = if retryable && next_retry_count < MAX_SESSION_MEMORY_JOB_RETRIES {
+        Some(next_retry_at(now, next_retry_count)?)
+    } else {
+        None
+    };
     let result = sqlx::query(
-        "UPDATE session_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = retry_count + 1, retry_at = ?3, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?4 AND id = ?5 AND status = 'running' AND ownership_token = ?6",
+        "UPDATE session_memory_jobs SET status = 'failed', last_error = ?1, finished_at = ?2, updated_at = ?2, retry_count = ?3, retry_at = ?4, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL WHERE tenant_id = ?5 AND id = ?6 AND status = 'running' AND ownership_token = ?7",
     )
     .bind(error_code)
     .bind(now)
+    .bind(next_retry_count)
     .bind(retry_at)
     .bind(tenant_id)
     .bind(job_id)
@@ -599,34 +778,25 @@ pub(crate) async fn retry_session_memory_job_sqlx(
     tenant_id: &str,
     job_id: &str,
 ) -> AppResult<bool> {
+    restart_session_memory_job_sqlx(pool, tenant_id, job_id, &Utc::now().to_rfc3339()).await
+}
+
+async fn restart_session_memory_job_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    job_id: &str,
+    now: &str,
+) -> AppResult<bool> {
     let result = sqlx::query(
-        "UPDATE session_memory_jobs SET status = 'queued', last_error = NULL, retry_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status IN ('failed', 'canceled')",
+        "UPDATE session_memory_jobs SET status = 'queued', retry_count = 0, retry_at = NULL, last_error = NULL, not_before = ?1, started_at = NULL, finished_at = NULL, ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 WHERE tenant_id = ?2 AND id = ?3 AND status IN ('failed', 'canceled')",
     )
-    .bind(Utc::now().to_rfc3339())
+    .bind(now)
     .bind(tenant_id)
     .bind(job_id)
     .execute(pool)
     .await
     .map_err(AppError::Db)?;
     Ok(result.rows_affected() == 1)
-}
-
-#[cfg(test)]
-pub(crate) async fn list_due_session_memory_job_ids_sqlx(
-    pool: &SqlitePool,
-    tenant_id: &str,
-    now: &str,
-    limit: i64,
-) -> AppResult<Vec<String>> {
-    sqlx::query_scalar(
-        "SELECT id FROM session_memory_jobs WHERE tenant_id = ?1 AND ((status = 'queued' AND not_before <= ?2) OR (status = 'failed' AND retry_at IS NOT NULL AND retry_at <= ?2)) ORDER BY created_at ASC, id ASC LIMIT ?3",
-    )
-    .bind(tenant_id)
-    .bind(now)
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::Db)
 }
 
 pub(crate) async fn list_session_memory_job_ids_for_scheduler_sqlx(
@@ -802,15 +972,9 @@ pub(crate) async fn persist_session_memory_sqlx(
         .await
         .map_err(AppError::Db)?;
     }
-    if let Some(project_path) = input.project_path.as_deref() {
-        super::project_memory_repo::enqueue_project_memory_job_tx(
-            &mut tx,
-            &input.tenant_id,
-            project_path,
-            &input.generated_at,
-        )
-        .await?;
-    }
+    // Issue #35 cutover: Session Phase 1 only publishes SQLite source facts.
+    // Project/Global promotion is triggered by the v2 Recent Snapshot worker,
+    // never by the legacy project_memory_jobs chain.
     tx.commit().await.map_err(AppError::Db)
 }
 
@@ -879,6 +1043,85 @@ pub(crate) async fn list_session_memories_for_project_sqlx(
     .await
     .map_err(AppError::Db)?;
     rows.into_iter().map(|r| r.try_into_memory()).collect()
+}
+
+/// Load the latest active Phase-1 memory for each requested Session. The
+/// result is used to freeze Recent Snapshot evidence; the worker must not
+/// substitute a later SQLite read into an already queued Work Order.
+pub(crate) async fn list_active_session_memories_for_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    session_ids: &[String],
+) -> AppResult<BTreeMap<String, SessionMemory>> {
+    if session_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT m.tenant_id, m.id, m.session_id, m.source_id, m.source_revision, m.source_fingerprint, m.contract_version, m.prompt_version, m.status, m.project_path, m.summary, m.goal, m.result, m.decisions_json, m.verification_json, m.blockers_json, m.follow_up_json, m.topics_json, m.generated_at, m.created_at, m.updated_at, m.recipe_id, m.recipe_content_hash, m.work_order_json FROM session_memories m WHERE m.tenant_id = ",
+    );
+    query.push_bind(tenant_id);
+    query.push(" AND m.status = 'active' AND m.session_id IN (");
+    {
+        let mut separated = query.separated(", ");
+        for session_id in session_ids {
+            separated.push_bind(session_id);
+        }
+    }
+    query.push(") AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) ORDER BY m.session_id ASC, m.source_revision DESC, m.id DESC");
+
+    let rows = query
+        .build_query_as::<SessionMemoryRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::Db)?;
+    let mut memories = BTreeMap::new();
+    for row in rows {
+        let memory = row.try_into_memory()?;
+        memories.insert(memory.session_id.clone(), memory);
+    }
+    Ok(memories)
+}
+
+/// Load canonical content locators belonging to the latest active Session
+/// Memory. Recent Snapshot reference validation uses these locators instead
+/// of inferring user ownership from a free-form reference key.
+pub(crate) async fn list_session_memory_source_references_for_sessions_sqlx(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    session_ids: &[String],
+) -> AppResult<BTreeMap<String, Vec<SessionMemorySourceReference>>> {
+    if session_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let mut query = QueryBuilder::<Sqlite>::new(
+        "SELECT r.tenant_id, r.id, r.memory_id, r.source_id, r.session_id, r.question_id, r.turn_id, r.part_id, r.node_id, r.node_order, r.reference_key, r.source_revision, r.created_at FROM session_memory_source_references r JOIN session_memories m ON m.tenant_id = r.tenant_id AND m.id = r.memory_id WHERE r.tenant_id = ",
+    );
+    query.push_bind(tenant_id);
+    query.push(" AND m.status = 'active' AND r.session_id IN (");
+    {
+        let mut separated = query.separated(", ");
+        for session_id in session_ids {
+            separated.push_bind(session_id);
+        }
+    }
+    query.push(") AND NOT EXISTS (SELECT 1 FROM session_memories newer WHERE newer.tenant_id = m.tenant_id AND newer.session_id = m.session_id AND newer.status = 'active' AND (newer.source_revision > m.source_revision OR (newer.source_revision = m.source_revision AND newer.id > m.id))) ORDER BY r.session_id ASC, CASE WHEN r.question_id IS NOT NULL OR r.turn_id IS NOT NULL OR r.node_id IS NOT NULL THEN 0 ELSE 1 END ASC, r.node_order ASC, r.id ASC");
+
+    let rows = query
+        .build_query_as::<SessionMemorySourceReferenceRow>()
+        .fetch_all(pool)
+        .await
+        .map_err(AppError::Db)?;
+    let mut references = BTreeMap::new();
+    for row in rows {
+        let reference = row.into_reference();
+        references
+            .entry(reference.session_id.clone())
+            .or_insert_with(Vec::new)
+            .push(reference);
+    }
+    Ok(references)
 }
 
 pub(crate) async fn load_session_memory_for_job_sqlx(
@@ -1148,6 +1391,45 @@ impl SessionMemoryRow {
 }
 
 #[derive(Debug, FromRow)]
+struct SessionMemorySourceReferenceRow {
+    tenant_id: String,
+    id: String,
+    memory_id: String,
+    source_id: String,
+    session_id: String,
+    question_id: Option<String>,
+    turn_id: Option<String>,
+    part_id: Option<String>,
+    node_id: Option<String>,
+    node_order: Option<i64>,
+    reference_key: String,
+    source_revision: i64,
+    created_at: String,
+}
+
+impl SessionMemorySourceReferenceRow {
+    fn into_reference(self) -> SessionMemorySourceReference {
+        SessionMemorySourceReference {
+            tenant_id: self.tenant_id,
+            id: self.id,
+            memory_id: self.memory_id,
+            source_id: self.source_id,
+            session_id: self.session_id,
+            question_id: self.question_id,
+            turn_id: self.turn_id,
+            part_id: self.part_id,
+            node_id: self.node_id,
+            node_order: self
+                .node_order
+                .and_then(|value| usize::try_from(value).ok()),
+            reference_key: self.reference_key,
+            source_revision: self.source_revision,
+            created_at: self.created_at,
+        }
+    }
+}
+
+#[derive(Debug, FromRow)]
 struct RecentMemoryEventRow {
     tenant_id: String,
     id: String,
@@ -1207,387 +1489,5 @@ fn parse_memory_status(value: &str) -> AppResult<SessionMemoryStatus> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn session_memory_identity_is_stable_and_revision_bound() {
-        let first = digest(
-            "tenant\0session\0source\01\0fingerprint\0session-memory.v1\0session-memory-prompt.v1",
-        );
-        let second = digest(
-            "tenant\0session\0source\02\0fingerprint\0session-memory.v1\0session-memory-prompt.v1",
-        );
-        assert_ne!(first, second);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_new_source_watermark_invalidates_old_projection_and_is_idempotent() {
-        let path = std::env::temp_dir().join(format!(
-            "assetiweave-session-memory-invalidation-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let database = crate::backend::store::Database::open_initialized_async(&path)
-            .await
-            .expect("open invalidation fixture");
-        sqlx::query(
-            "INSERT INTO session_memories (tenant_id,id,session_id,source_id,source_revision,source_fingerprint,contract_version,prompt_version,status,project_path,summary,goal,result,decisions_json,verification_json,blockers_json,follow_up_json,topics_json,raw_output_json,generated_at,created_at,updated_at) VALUES ('default','memory-old','session-invalidation','source-invalidation',1,'fingerprint-old','session-memory.v1','session-memory-prompt.v1','active','/project','old summary','','','[]','[]','[]','[]','[]','{}','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z','2026-08-31T00:00:00Z')",
-        ).execute(database.pool()).await.expect("insert active projection");
-        let old = SessionMemoryJobCandidate {
-            session_id: "session-invalidation".to_string(),
-            source_id: "source-invalidation".to_string(),
-            source_revision: 1,
-            source_fingerprint: "fingerprint-old".to_string(),
-            not_before: "2026-08-31T00:00:00Z".to_string(),
-            ..Default::default()
-        };
-        let new = SessionMemoryJobCandidate {
-            source_revision: 2,
-            source_fingerprint: "fingerprint-new".to_string(),
-            not_before: "2026-08-31T00:01:00Z".to_string(),
-            ..old.clone()
-        };
-        assert_eq!(
-            insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &old,
-                "event-old",
-                "sync-old",
-                "2026-08-31T00:00:00Z",
-            )
-            .await
-            .expect("insert old job"),
-            1
-        );
-        assert_eq!(
-            insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &new,
-                "event-new",
-                "sync-new",
-                "2026-08-31T00:01:00Z",
-            )
-            .await
-            .expect("insert new job"),
-            1
-        );
-        let projection_state: (String, String) = sqlx::query_as(
-            "SELECT status, source_fingerprint FROM session_memories WHERE tenant_id = 'default' AND id = 'memory-old'",
-        )
-        .fetch_one(database.pool())
-        .await
-        .expect("read invalidated projection");
-        assert_eq!(
-            projection_state,
-            ("invalid".to_string(), "fingerprint-old".to_string())
-        );
-        let old_job_status: String = sqlx::query_scalar(
-            "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND source_revision = 1",
-        )
-        .fetch_one(database.pool())
-        .await
-        .expect("read superseded job");
-        assert_eq!(old_job_status, "skipped");
-        assert_eq!(
-            insert_job_candidate_sqlx(
-                database.pool(),
-                "default",
-                &new,
-                "event-new-repeat",
-                "sync-new-repeat",
-                "2026-08-31T00:02:00Z",
-            )
-            .await
-            .expect("repeat new job"),
-            0
-        );
-        let active_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM session_memories WHERE tenant_id = 'default' AND session_id = 'session-invalidation' AND status = 'active'",
-        )
-        .fetch_one(database.pool())
-        .await
-        .expect("count active projections");
-        assert_eq!(active_count, 0);
-        drop(database);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn every_recent_event_category_has_a_wire_name() {
-        assert_eq!(
-            RecentMemoryEventCategory::ALL
-                .into_iter()
-                .map(RecentMemoryEventCategory::as_str)
-                .collect::<Vec<_>>(),
-            vec![
-                "progress",
-                "decision",
-                "research",
-                "verification",
-                "blocker",
-                "follow_up"
-            ]
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn scheduler_prioritizes_the_most_recent_ready_session() {
-        let path = std::env::temp_dir().join(format!(
-            "assetiweave-session-memory-scheduler-priority-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let database = crate::backend::store::Database::open_initialized_async(&path)
-            .await
-            .expect("open scheduler priority fixture");
-        let old = SessionMemoryJobCandidate {
-            session_id: "old-session".to_string(),
-            source_id: "source".to_string(),
-            source_revision: 1,
-            source_fingerprint: "old-fingerprint".to_string(),
-            not_before: "2026-08-01T00:30:00Z".to_string(),
-            ..Default::default()
-        };
-        let recent = SessionMemoryJobCandidate {
-            session_id: "recent-session".to_string(),
-            source_fingerprint: "recent-fingerprint".to_string(),
-            not_before: "2026-08-31T23:30:00Z".to_string(),
-            ..old.clone()
-        };
-        insert_job_candidate_sqlx(
-            database.pool(),
-            "default",
-            &old,
-            "event-old",
-            "sync-old",
-            "2026-08-01T00:00:00Z",
-        )
-        .await
-        .expect("insert old job");
-        insert_job_candidate_sqlx(
-            database.pool(),
-            "default",
-            &recent,
-            "event-recent",
-            "sync-recent",
-            "2026-08-31T23:00:00Z",
-        )
-        .await
-        .expect("insert recent job");
-
-        let jobs = list_session_memory_job_ids_for_scheduler_sqlx(
-            database.pool(),
-            "default",
-            "2026-09-01T00:00:00Z",
-            2,
-        )
-        .await
-        .expect("list scheduler jobs");
-        let mut sessions = Vec::new();
-        for job_id in &jobs {
-            let job = load_session_memory_job_sqlx(database.pool(), "default", job_id)
-                .await
-                .expect("load scheduler job")
-                .expect("scheduler job exists");
-            sessions.push(job.session_id);
-        }
-        assert_eq!(sessions, vec!["recent-session", "old-session"]);
-
-        drop(database);
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn durable_job_lease_recovery_retry_and_cancellation_are_token_bound() {
-        let path = std::env::temp_dir().join(format!(
-            "assetiweave-session-memory-durable-red-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let database = crate::backend::store::Database::open_initialized_async(&path)
-            .await
-            .expect("open durable job fixture");
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title,
-                project_path, started_at, updated_at, source_locator,
-                source_fingerprint, missing, created_at, imported_at
-            ) VALUES (
-                'default', 'durable-session', 'durable-source', 'durable-adapter',
-                'durable-external', 'Durable fixture', NULL,
-                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z',
-                'fixture://durable-session', 'durable-revision', 0,
-                '2026-08-30T00:00:00Z', '2026-08-30T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(database.pool())
-        .await
-        .expect("insert durable session");
-        let now = "2026-08-31T00:00:00Z";
-        assert_eq!(
-            enqueue_session_memory_jobs_sqlx(
-                database.pool(),
-                "default",
-                "durable-source",
-                "durable-sync",
-                1,
-                "durable-event",
-                Some(&["durable-session".to_string()]),
-                "",
-                now,
-            )
-            .await
-            .expect("enqueue durable job"),
-            1
-        );
-        let job_id: String = sqlx::query_scalar(
-            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = 'durable-session'",
-        )
-        .fetch_one(database.pool())
-        .await
-        .expect("load durable job");
-        let first = claim_session_memory_job_with_lease_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            now,
-            false,
-            "owner-a",
-            Duration::seconds(30),
-        )
-        .await
-        .expect("claim first owner")
-        .expect("first owner claim");
-        assert_eq!(first.ownership_token.as_deref(), Some("owner-a"));
-        assert_eq!(
-            heartbeat_session_memory_job_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "owner-old",
-                "2026-08-31T00:00:10Z",
-                Duration::seconds(30),
-            )
-            .await
-            .expect("reject stale heartbeat"),
-            false
-        );
-        assert_eq!(
-            recover_expired_session_memory_leases_sqlx(
-                database.pool(),
-                "default",
-                "2026-08-31T00:00:31Z",
-            )
-            .await
-            .expect("recover expired lease"),
-            1
-        );
-        let second = claim_session_memory_job_with_lease_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            "2026-08-31T00:00:31Z",
-            false,
-            "owner-b",
-            Duration::seconds(30),
-        )
-        .await
-        .expect("claim recovered owner")
-        .expect("recovered owner claim");
-        assert_eq!(second.ownership_token.as_deref(), Some("owner-b"));
-        assert_eq!(
-            mark_session_memory_job_failed_with_lease_sqlx(
-                database.pool(),
-                "default",
-                &job_id,
-                "owner-a",
-                "phase1_failed",
-                "2026-08-31T00:00:32Z",
-            )
-            .await
-            .expect("reject stale failure"),
-            false
-        );
-        assert!(mark_session_memory_job_failed_with_lease_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            "owner-b",
-            "phase1_failed",
-            "2026-08-31T00:00:32Z",
-        )
-        .await
-        .expect("record retryable failure"));
-        assert!(list_due_session_memory_job_ids_sqlx(
-            database.pool(),
-            "default",
-            "2026-08-31T00:00:33Z",
-            10,
-        )
-        .await
-        .expect("list before retry")
-        .is_empty());
-        assert_eq!(
-            list_due_session_memory_job_ids_sqlx(
-                database.pool(),
-                "default",
-                "2026-08-31T00:00:47Z",
-                10,
-            )
-            .await
-            .expect("list after retry backoff"),
-            vec![job_id.clone()]
-        );
-        let third = claim_session_memory_job_with_lease_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            "2026-08-31T00:00:47Z",
-            false,
-            "owner-c",
-            Duration::seconds(30),
-        )
-        .await
-        .expect("claim retry owner")
-        .expect("retry owner claim");
-        assert_eq!(third.retry_count, 2);
-        assert!(cancel_session_memory_job_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            "2026-08-31T00:00:34Z",
-        )
-        .await
-        .expect("cancel retry job"));
-        assert!(!cancel_session_memory_job_sqlx(
-            database.pool(),
-            "default",
-            &job_id,
-            "2026-08-31T00:00:35Z",
-        )
-        .await
-        .expect("cancel retry job idempotently"));
-        let status: String = sqlx::query_scalar(
-            "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&job_id)
-        .fetch_one(database.pool())
-        .await
-        .expect("read cancelled job");
-        assert_eq!(status, "canceled");
-        assert_eq!(
-            recover_expired_session_memory_leases_sqlx(
-                database.pool(),
-                "default",
-                "2026-08-31T00:48:00Z",
-            )
-            .await
-            .expect("do not recover cancelled job"),
-            0
-        );
-        drop(database);
-        let _ = std::fs::remove_file(&path);
-    }
-}
+#[path = "session_memory_repo_tests.rs"]
+mod tests;

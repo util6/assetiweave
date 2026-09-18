@@ -399,7 +399,19 @@ impl AppRuntime {
                         store::list_tenants_for_principal_sqlx(runtime.pool(), &principal_id)
                             .await?;
                     for tenant in tenants {
-                        if let Err(error) = service
+                        let tenant_service = match service.for_tenant(&tenant.id).await {
+                            Ok(bound) => bound,
+                            Err(error) => {
+                                tracing::warn!(
+                                    action = "memory_v2.coordinator.tenant_binding",
+                                    tenant_id = %tenant.id,
+                                    error = %error,
+                                    "Memory v2 tenant binding failed"
+                                );
+                                continue;
+                            }
+                        };
+                        if let Err(error) = tenant_service
                             .reconcile_session_memory_jobs_for_tenant_at(
                                 &tenant.id,
                                 chrono::Utc::now(),
@@ -413,35 +425,35 @@ impl AppRuntime {
                                 "Session Memory durable coordinator reconciliation failed"
                             );
                         }
-                        if let Err(error) = service
-                            .reconcile_project_memory_jobs_for_tenant_at(
+                        if let Err(error) = tenant_service
+                            .reconcile_recent_memory_jobs_for_tenant_at(
                                 &tenant.id,
                                 chrono::Utc::now(),
                             )
                             .await
                         {
                             tracing::warn!(
-                                action = "project_memory.coordinator.recovery",
+                                action = "memory_v2.coordinator.recovery",
                                 tenant_id = %tenant.id,
                                 error = %error,
-                                "Project Memory durable coordinator reconciliation failed"
+                                "Memory v2 Recent Snapshot durable coordinator reconciliation failed"
                             );
                         }
-                        if let Err(error) = service
-                            .reconcile_global_memory_jobs_for_tenant_at(
+                        if let Err(error) = tenant_service
+                            .reconcile_memory_v2_maintenance_jobs_for_tenant_at(
                                 &tenant.id,
                                 chrono::Utc::now(),
                             )
                             .await
                         {
                             tracing::warn!(
-                                action = "global_memory.coordinator.recovery",
+                                action = "memory_v2.maintenance.recovery",
                                 tenant_id = %tenant.id,
                                 error = %error,
-                                "Global Memory durable coordinator reconciliation failed"
+                                "Memory v2 Project/Global maintenance reconciliation failed"
                             );
                         }
-                        if let Err(error) = service
+                        if let Err(error) = tenant_service
                             .recover_memory_recall_turns_for_tenant(&tenant.id)
                             .await
                         {

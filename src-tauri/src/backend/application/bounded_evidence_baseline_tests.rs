@@ -57,6 +57,7 @@ mod tests {
                     elapsed_ms: 1,
                     persistent_binding: None,
                     replay_text: None,
+                    session_cleanup: crate::backend::ai_execution::SessionCleanupStatus::Deleted,
                 })
             })
         }
@@ -1776,15 +1777,8 @@ mod tests {
                 project_path: "/workspace/my-project".to_string(),
             })
             .await
-            .expect("get memory project")
-            .expect("project view exists");
-        assert_eq!(
-            project_view
-                .version
-                .and_then(|v| v.content_markdown)
-                .as_deref(),
-            Some(expected_project_md)
-        );
+            .expect("get memory project");
+        assert!(project_view.is_none());
 
         // 6. 触发重建恢复
         service

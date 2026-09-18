@@ -351,6 +351,28 @@ describe("MemoryRecentWorkspace (M35-UI-01 through M35-UI-07)", () => {
     // Beta Project 没有建议，显示固定次要文案 (Section 5.5)
     expect(screen.getByText("本窗口没有形成明确下一步")).toBeTruthy();
   });
+
+  it("renders Craft Date Rail layout with serif day numbers and month abbreviations", async () => {
+    memoryService.getRecentMemorySnapshot.mockResolvedValue({
+      status: "ready",
+      snapshot: mockSnapshot(),
+      latestAttemptTaskId: null,
+      latestAttemptError: null,
+    } satisfies RecentMemoryStateView);
+
+    renderWorkspace();
+
+    // 验证左侧 Date Rail 渲染大号衬线日期数字
+    expect(await screen.findByText("15")).toBeTruthy();
+    expect(screen.getByText("14")).toBeTruthy();
+
+    // 验证大写月份缩写（如 SEP）
+    expect(screen.getAllByText("SEP").length).toBeGreaterThanOrEqual(2);
+
+    // 验证完整日期标识依然存在
+    expect(screen.getByText("2026-09-15")).toBeTruthy();
+    expect(screen.getByText("2026-09-14")).toBeTruthy();
+  });
 });
 
 function renderWorkspace(props: Partial<Parameters<typeof MemoryRecentWorkspace>[0]> = {}) {
@@ -377,6 +399,10 @@ function renderWorkspace(props: Partial<Parameters<typeof MemoryRecentWorkspace>
       "memory.recent.updated": "已更新",
       "memory.recent.reused": "内容复用",
       "memory.recent.updateIncomplete": "更新未完成",
+      "memory.recent.latestUpdate": "最近更新",
+      "memory.recent.today": "今天",
+      "memory.recent.yesterday": "昨天",
+      "memory.recent.beforeYesterday": "前天",
     };
     return dict[key] ?? key;
   };

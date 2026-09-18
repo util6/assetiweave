@@ -51,11 +51,15 @@ aiwc memory context resolve --current-project --query "<主题>" --token-budget 
 
 上下文是有界投影。回答时区分返回的直接内容与基于内容作出的推断，并保留 `revision`。
 
-### 项目投影与重建
+### 项目投影与维护重建
 
 ```bash
 aiwc memory project get "<PROJECT_PATH>"
-aiwc memory rebuild --project "<PROJECT_PATH>"
+aiwc memory rebuild --target project --project "<PROJECT_PATH>"
+aiwc memory rebuild --target global
+aiwc memory rebuild --target recent
+aiwc memory rebuild --target all
+aiwc memory rebuild --target all --reason projection_repair
 aiwc memory task list --active-only
 ```
 

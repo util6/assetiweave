@@ -1,3 +1,11 @@
 fn main() {
-    assetiweave_lib::run_engine_stdio();
+    if assetiweave_lib::has_memory_generation_mcp_stdio_arg() {
+        assetiweave_lib::run_memory_generation_mcp_stdio();
+    } else if assetiweave_lib::has_memory_recall_mcp_stdio_arg() {
+        assetiweave_lib::run_memory_recall_mcp_stdio();
+    } else if assetiweave_lib::has_team_mcp_stdio_arg() {
+        assetiweave_lib::run_team_mcp_stdio();
+    } else {
+        assetiweave_lib::run_engine_stdio();
+    }
 }

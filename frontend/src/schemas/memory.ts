@@ -73,16 +73,19 @@ export const memoryContextResultSchema: z.ZodType<MemoryContextResult> =
   });
 
 export const memoryProjectViewSchema: z.ZodType<MemoryProjectView> = z.object({
-  project: z.record(z.string(), z.unknown()),
-  version: z.record(z.string(), z.unknown()).nullable(),
-  sources: z.array(z.record(z.string(), z.unknown())),
+  projectKey: z.string().min(1),
+  projectPath: z.string().nullable(),
+  items: z.array(z.record(z.string(), z.unknown())),
+  lastSuccessfulConsolidationAt: z.string().nullable(),
+  revisionHash: z.string(),
 });
 
 export const memoryRebuildResultSchema: z.ZodType<MemoryRebuildResult> =
   z.object({
-    scope: memoryScopeSchema,
-    queued: z.boolean(),
-    scheduled_tasks: z.number().int().nonnegative(),
+    accepted: z.boolean(),
+    scheduledTaskIds: z.string().array(),
+    targetWatermark: z.string().nullable(),
+    reused: z.boolean(),
   });
 
 const memoryRecallSearchHitSchema = z.object({

@@ -28,6 +28,11 @@ export const memoryEn = {
   "memory.recent.expandItem": "Expand item",
   "memory.recent.collapseItem": "Collapse item",
   "memory.recent.items": "items",
+  "memory.recent.latestUpdate": "Latest update",
+  "memory.recent.today": "Today",
+  "memory.recent.yesterday": "Yesterday",
+  "memory.recent.beforeYesterday": "2 days ago",
+  "memory.recent.daysAgo": "{days} days ago",
   "memory.task.running": "Memory background task running",
   "memory.recall.title": "Recall",
   "memory.recall.description":

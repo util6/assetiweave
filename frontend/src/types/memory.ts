@@ -158,16 +158,22 @@ export interface MemoryContextResult {
 }
 
 export interface MemoryProjectView {
-  project: Record<string, unknown>;
-  version: Record<string, unknown> | null;
-  sources: Record<string, unknown>[];
+  projectKey: string;
+  projectPath: string | null;
+  items: Record<string, unknown>[];
+  lastSuccessfulConsolidationAt: string | null;
+  revisionHash: string;
 }
 
 export interface MemoryRebuildResult {
-  scope: MemoryScope;
-  queued: boolean;
-  scheduled_tasks: number;
+  accepted: boolean;
+  scheduledTaskIds: string[];
+  targetWatermark: string | null;
+  reused: boolean;
 }
+
+export type MemoryRebuildTarget = "recent" | "project" | "global" | "all";
+export type MemoryRebuildReason = "manual" | "migration" | "projection_repair";
 
 export interface MemoryTaskProgress {
   current: number;

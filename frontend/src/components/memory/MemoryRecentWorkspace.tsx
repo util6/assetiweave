@@ -181,7 +181,7 @@ export function MemoryRecentWorkspace({
     [t],
   );
 
-  if (loading && !snapshot) {
+  if (loading && !stateView) {
     return <AppSkeleton label={t("common.loading")} layout="list" />;
   }
 
@@ -189,18 +189,120 @@ export function MemoryRecentWorkspace({
     return <AppSkeleton label={t("memory.recent.generating")} layout="list" />;
   }
 
+  const todayStr = new Date().toISOString().split("T")[0];
+  const windowInfo = snapshot
+    ? `${snapshot.windowHours}h · ${formatWatermark(snapshot.targetWatermark)}`
+    : `48h · ${formatWatermark(new Date().toISOString())}`;
+
   if (!snapshot || snapshot.projects.length === 0) {
     return (
-      <EmptyState
-        className="min-h-0 flex-1"
-        description={t("memory.recent.emptyDescription")}
-        icon={<Clock3 size={20} />}
-        title={t("memory.recent.emptyTitle")}
-      />
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        {/* 顶部控制栏 (M35-UI-05: 仅投影切换与状态展示，DOM 绝对无刷新/生成/窗口输入) */}
+        <div className="flex shrink-0 items-center justify-between gap-3 px-1">
+          <div className="flex items-center gap-3">
+            <PillTabs<"time" | "project">
+              activeId={view}
+              items={pillItems}
+              onSelect={(id) => setView(id)}
+              size="sm"
+            />
+            <span className="text-caption font-medium text-on-surface-variant">
+              {windowInfo}
+            </span>
+          </div>
+
+          <div>{renderStatusBadge(stateView, t)}</div>
+        </div>
+
+        {/* 视图内容区 (空状态手账 Date Rail 导轨) */}
+        <div className="min-h-0 flex-1 overflow-auto pr-2 pb-8">
+          {view === "time" ? (
+            <div className="flex flex-col gap-8">
+              {(() => {
+                const dateParts = parseDateRailParts(todayStr, undefined, t);
+                return (
+                  <section className="relative min-w-0 pl-[84px] sm:pl-[98px] mt-2">
+                    {/* 左侧垂直时间轴导轨 Date Rail */}
+                    <div
+                      aria-label={`${todayStr}, ${dateParts.relative}`}
+                      className="absolute inset-y-0 left-0 w-[72px] sm:w-[84px] select-none"
+                    >
+                      {/* 时间轴节点圆点 */}
+                      <div className="absolute left-[32px] sm:left-[38px] top-[130px] z-10 size-2 rounded-full border-2 border-surface bg-primary shadow-xs ring-4 ring-primary/15" />
+
+                      {/* 粘性吸顶日期头 */}
+                      <div className="sticky top-2 z-10 flex w-full flex-col items-center py-1 text-center">
+                        <span className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-on-surface leading-none">
+                          {dateParts.dayNumber}
+                        </span>
+                        <span className="mt-1 text-[10px] font-bold tracking-widest text-primary uppercase">
+                          {dateParts.month}
+                        </span>
+                        <div className="mt-2 flex flex-col items-center gap-0.5 text-[11px] leading-tight text-on-surface-variant font-medium">
+                          <span className="font-semibold text-on-surface">
+                            {dateParts.relative}
+                          </span>
+                          <span className="text-[10px] text-outline">
+                            {dateParts.weekday}
+                          </span>
+                        </div>
+                        <span className="mt-1.5 font-mono text-[9px] text-outline/85 tracking-tight">
+                          {todayStr}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 右侧主体内容 */}
+                    <div className="mb-4 h-[1px] bg-gradient-to-r from-theme-control-border/80 via-theme-control-border/30 to-transparent" />
+
+                    <Panel
+                      className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
+                      variant="default"
+                    >
+                      <div className="grid size-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+                        <Clock3 size={22} />
+                      </div>
+                      <div className="flex flex-col gap-1 max-w-[420px]">
+                        <h3 className="text-body-md font-bold text-on-surface">
+                          {t("memory.recent.emptyTitle")}
+                        </h3>
+                        <p className="text-body-sm text-on-surface-variant leading-relaxed">
+                          {t("memory.recent.emptyDescription")}
+                        </p>
+                      </div>
+                      {stateView?.latestAttemptError && (
+                        <div className="mt-2 inline-flex items-center gap-2 rounded-xl border border-status-issue/30 bg-status-issue/10 px-3 py-1.5 text-[12px] text-status-issue">
+                          <AlertCircle size={14} />
+                          <span>{stateView.latestAttemptError.message}</span>
+                        </div>
+                      )}
+                    </Panel>
+                  </section>
+                );
+              })()}
+            </div>
+          ) : (
+            <Panel
+              className="flex flex-col items-center justify-center gap-3 p-8 text-center rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
+              variant="default"
+            >
+              <div className="grid size-12 place-items-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+                <FolderOpen size={22} />
+              </div>
+              <div className="flex flex-col gap-1 max-w-[420px]">
+                <h3 className="text-body-md font-bold text-on-surface">
+                  {t("memory.recent.emptyTitle")}
+                </h3>
+                <p className="text-body-sm text-on-surface-variant leading-relaxed">
+                  {t("memory.recent.emptyDescription")}
+                </p>
+              </div>
+            </Panel>
+          )}
+        </div>
+      </div>
     );
   }
-
-  const windowInfo = `${snapshot.windowHours}h · ${formatWatermark(snapshot.targetWatermark)}`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
@@ -222,107 +324,174 @@ export function MemoryRecentWorkspace({
       </div>
 
       {/* 视图内容区 */}
-      <div className="min-h-0 flex-1 overflow-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-auto pr-2 pb-8">
         {view === "time" ? (
-          <div className="flex flex-col gap-6">
-            {timeViewData.map(({ date, projectGroups }) => (
-              <section className="flex flex-col gap-3" key={date}>
-                {/* 日期轨道锚点 */}
-                <div className="sticky top-0 z-10 flex items-center gap-2 rounded-xl border border-theme-control-border/70 bg-surface/90 px-3 py-1.5 backdrop-blur-md shadow-xs">
-                  <Calendar size={14} className="text-primary" />
-                  <span className="text-body-sm font-semibold text-on-surface">
-                    {date}
-                  </span>
-                </div>
+          <div className="flex flex-col gap-8">
+            {timeViewData.map(({ date, projectGroups }, dateIdx) => {
+              const isLastDate = dateIdx === timeViewData.length - 1;
+              const dateParts = parseDateRailParts(date, snapshot.targetWatermark, t);
 
-                <div className="flex flex-col gap-4 pl-1">
-                  {projectGroups.map(
-                    ({ project, showWindowSummaryAndSuggestions, items }) => (
-                      <Panel
-                        className="flex flex-col gap-3 p-4"
-                        key={project.projectKey}
-                        variant="default"
-                      >
-                        {/* 项目标题栏 */}
-                        <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-                          <div className="flex items-center gap-2">
-                            <span className="grid size-6 place-items-center rounded-lg border border-theme-control-border bg-theme-control/60 text-primary">
-                              <FolderOpen size={13} />
-                            </span>
-                            <span className="text-body-md font-semibold text-on-surface">
-                              {project.projectTitle}
-                            </span>
-                          </div>
-                          <span className="text-caption text-on-surface-variant">
-                            {items.length} {t("memory.recent.items")}
+              return (
+                <section
+                  className="relative min-w-0 pl-[84px] sm:pl-[98px]"
+                  key={date}
+                >
+                  {/* 左侧垂直时间轴导轨 Date Rail */}
+                  <div
+                    aria-label={`${date}, ${dateParts.relative}`}
+                    className="absolute inset-y-0 left-0 w-[72px] sm:w-[84px] select-none"
+                  >
+                    {/* 纵向时间连接线 */}
+                    <div
+                      className={clsx(
+                        "absolute left-[35px] sm:left-[41px] top-[140px] w-[2px] bg-gradient-to-b from-primary/40 via-theme-control-border/60 to-theme-control-border/15",
+                        isLastDate ? "bottom-4 mask-gradient" : "-bottom-8",
+                      )}
+                    />
+
+                    {/* 时间轴节点圆点 */}
+                    <div className="absolute left-[32px] sm:left-[38px] top-[130px] z-10 size-2 rounded-full border-2 border-surface bg-primary shadow-xs ring-4 ring-primary/15" />
+
+                    {/* 粘性吸顶日期头 */}
+                    <div className="sticky top-2 z-10 flex w-full flex-col items-center py-1 text-center">
+                      {/* 大号衬线日期数字 */}
+                      <span className="font-serif text-3xl sm:text-4xl font-bold tracking-tight text-on-surface leading-none">
+                        {dateParts.dayNumber}
+                      </span>
+
+                      {/* 大写月份缩写 */}
+                      <span className="mt-1 text-[10px] font-bold tracking-widest text-primary uppercase">
+                        {dateParts.month}
+                      </span>
+
+                      {/* 相对时间与星期 */}
+                      <div className="mt-2 flex flex-col items-center gap-0.5 text-[11px] leading-tight text-on-surface-variant font-medium">
+                        <span className="font-semibold text-on-surface">
+                          {dateParts.relative}
+                        </span>
+                        <span className="text-[10px] text-outline">
+                          {dateParts.weekday}
+                        </span>
+                      </div>
+
+                      {/* 完整日期标识 (满足机器测试与精确审计) */}
+                      <span className="mt-1.5 font-mono text-[9px] text-outline/85 tracking-tight">
+                        {date}
+                      </span>
+
+                      {/* 水位更新标记 */}
+                      {dateParts.latestWatermark && (
+                        <div className="mt-2 flex flex-col items-center border-t border-theme-control-border/60 pt-1.5 text-[10px] text-on-surface-variant">
+                          <span className="font-mono font-semibold text-on-surface">
+                            {dateParts.latestWatermark}
+                          </span>
+                          <span className="text-[9px] text-outline">
+                            {t("memory.recent.latestUpdate") || "最近更新"}
                           </span>
                         </div>
+                      )}
+                    </div>
+                  </div>
 
-                        {/* 工作摘要与下一步 (M35-PROJ-02: 仅在 latestActivityAt 当日渲染一次) */}
-                        {showWindowSummaryAndSuggestions && (
-                          <>
-                            {project.summary && (
-                              <div className="flex flex-col gap-1.5">
-                                <span className="text-caption font-semibold uppercase tracking-wide text-on-surface-variant">
-                                  {t("memory.recent.whatChanged")}
+                  {/* 右侧主体内容 */}
+                  {/* 顶部微细的水平连接线 */}
+                  <div className="mb-4 h-[1px] bg-gradient-to-r from-theme-control-border/80 via-theme-control-border/30 to-transparent" />
+
+                  {/* 该日期下的各个项目卡片 */}
+                  <div className="flex flex-col gap-4">
+                    {projectGroups.map(
+                      ({ project, showWindowSummaryAndSuggestions, items }) => (
+                        <Panel
+                          className="flex flex-col gap-3.5 p-4 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
+                          key={project.projectKey}
+                          variant="default"
+                        >
+                          {/* 项目标题栏 */}
+                          <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+                                <FolderOpen size={14} />
+                              </span>
+                              <span className="truncate text-body-md font-bold text-on-surface">
+                                {project.projectTitle}
+                              </span>
+                              {project.projectPath && (
+                                <span className="hidden sm:inline-block max-w-[240px] truncate rounded-md border border-theme-control-border/60 bg-theme-control/30 px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
+                                  {project.projectPath}
                                 </span>
-                                <div className="text-body-sm text-on-surface-variant">
-                                  <MarkdownContent value={project.summary} />
-                                </div>
-                              </div>
-                            )}
-
-                            <SuggestedNextSteps project={project} t={t} />
-                          </>
-                        )}
-
-                        {/* 当日条目列表 */}
-                        {items.length > 0 && (
-                          <div className="flex flex-col gap-2.5">
-                            {items.map((item) => (
-                              <RecentItemCard
-                                isExpanded={expandedItemIds.has(item.itemId)}
-                                item={item}
-                                key={item.itemId}
-                                onNavigateSession={onNavigateSession}
-                                onToggle={() => toggleItem(item.itemId)}
-                                t={t}
-                                targetWatermark={snapshot.targetWatermark}
-                              />
-                            ))}
+                              )}
+                            </div>
+                            <span className="shrink-0 text-caption font-medium text-on-surface-variant">
+                              {items.length} {t("memory.recent.items")}
+                            </span>
                           </div>
-                        )}
-                      </Panel>
-                    ),
-                  )}
-                </div>
-              </section>
-            ))}
+
+                          {/* 工作摘要与下一步 (M35-PROJ-02: 仅在 latestActivityAt 当日渲染一次) */}
+                          {showWindowSummaryAndSuggestions && (
+                            <>
+                              {project.summary && (
+                                <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/15 p-3">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                                    {t("memory.recent.whatChanged")}
+                                  </span>
+                                  <div className="text-body-sm text-on-surface leading-relaxed">
+                                    <MarkdownContent value={project.summary} />
+                                  </div>
+                                </div>
+                              )}
+
+                              <SuggestedNextSteps project={project} t={t} />
+                            </>
+                          )}
+
+                          {/* 当日条目列表 */}
+                          {items.length > 0 && (
+                            <div className="flex flex-col gap-2.5">
+                              {items.map((item) => (
+                                <RecentItemCard
+                                  isExpanded={expandedItemIds.has(item.itemId)}
+                                  item={item}
+                                  key={item.itemId}
+                                  onNavigateSession={onNavigateSession}
+                                  onToggle={() => toggleItem(item.itemId)}
+                                  t={t}
+                                  targetWatermark={snapshot.targetWatermark}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </Panel>
+                      ),
+                    )}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         ) : (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-5">
             {projectViewData.map(({ project, items }) => (
               <Panel
-                className="flex flex-col gap-3 p-4"
+                className="flex flex-col gap-3.5 p-4.5 rounded-2xl border border-theme-control-border/70 bg-surface/85 backdrop-blur-md shadow-xs"
                 key={project.projectKey}
                 variant="default"
               >
                 {/* 项目标题与元数据 */}
                 <div className="flex items-center justify-between gap-3 border-b border-theme-control-border/60 pb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="grid size-6 place-items-center rounded-lg border border-theme-control-border bg-theme-control/60 text-primary">
-                      <FolderOpen size={13} />
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="grid size-7 shrink-0 place-items-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+                      <FolderOpen size={14} />
                     </span>
-                    <span className="text-body-md font-semibold text-on-surface">
+                    <span className="truncate text-body-md font-bold text-on-surface">
                       {project.projectTitle}
                     </span>
                     {project.projectPath && (
-                      <span className="rounded-md border border-theme-control-border/60 bg-theme-control/30 px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
+                      <span className="hidden sm:inline-block max-w-[260px] truncate rounded-md border border-theme-control-border/60 bg-theme-control/30 px-1.5 py-0.5 font-mono text-[11px] text-on-surface-variant">
                         {project.projectPath}
                       </span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 text-caption text-on-surface-variant">
+                  <div className="flex shrink-0 items-center gap-2 text-caption text-on-surface-variant">
                     <span>{formatTime(project.latestActivityAt)}</span>
                     <span>·</span>
                     <span>
@@ -332,11 +501,11 @@ export function MemoryRecentWorkspace({
                 </div>
 
                 {project.summary && (
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-caption font-semibold uppercase tracking-wide text-on-surface-variant">
+                  <div className="flex flex-col gap-1.5 rounded-xl border border-theme-control-border/50 bg-theme-control/15 p-3">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
                       {t("memory.recent.whatChanged")}
                     </span>
-                    <div className="text-body-sm text-on-surface-variant">
+                    <div className="text-body-sm text-on-surface leading-relaxed">
                       <MarkdownContent value={project.summary} />
                     </div>
                   </div>
@@ -384,7 +553,7 @@ function SuggestedNextSteps({
   }, [project.items]);
 
   return (
-    <div className="flex flex-col gap-2 rounded-xl border border-theme-control-border/60 bg-theme-control/25 p-3">
+    <div className="flex flex-col gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
       <div className="flex items-center gap-1.5 text-caption font-semibold text-on-surface">
         <Sparkles size={13} className="text-primary" />
         <span>{t("memory.recent.suggestedNext")}</span>
@@ -394,18 +563,18 @@ function SuggestedNextSteps({
           {t("memory.recent.noSuggestions")}
         </p>
       ) : (
-        <ol className="flex flex-col gap-1.5 text-body-sm text-on-surface">
+        <ol className="flex flex-col gap-2 text-body-sm text-on-surface">
           {suggestions.map((item, idx) => (
-            <li className="flex items-start gap-2" key={item.itemId}>
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-theme-control/80 text-[11px] font-bold text-primary">
+            <li className="flex items-start gap-2.5" key={item.itemId}>
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/20 text-[11px] font-bold text-primary shadow-xs">
                 {idx + 1}
               </span>
               <div className="flex flex-col">
-                <span className="font-medium text-on-surface">
+                <span className="font-semibold text-on-surface">
                   {item.title}
                 </span>
                 {item.summary && (
-                  <span className="text-caption text-on-surface-variant">
+                  <span className="text-caption text-on-surface-variant mt-0.5">
                     {item.summary}
                   </span>
                 )}
@@ -434,9 +603,10 @@ function RecentItemCard({
   t: Translator;
 }) {
   const categoryBadgeClass = matchCategory(item.category);
+  const dotColorClass = matchCategoryDot(item.category);
 
   return (
-    <div className="flex flex-col rounded-xl border border-theme-control-border/60 bg-theme-control/20 transition-all hover:border-theme-control-border/90 hover:bg-theme-control/30">
+    <div className="flex flex-col rounded-xl border border-theme-control-border/60 bg-theme-control/20 transition-all duration-150 hover:border-theme-control-border/90 hover:bg-theme-control/30 shadow-xs">
       {/* 头部摘要栏 (可点击展开/收起) */}
       <button
         aria-expanded={isExpanded}
@@ -445,38 +615,48 @@ function RecentItemCard({
             ? `${t("memory.recent.collapseItem")}: ${item.title}`
             : `${t("memory.recent.expandItem")}: ${item.title}`
         }
-        className="flex w-full items-start justify-between gap-3 p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 cursor-pointer rounded-xl"
+        className="flex w-full items-start justify-between gap-3 p-3.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 cursor-pointer rounded-xl"
         onClick={onToggle}
         type="button"
       >
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              className={clsx(
-                "rounded-full border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
-                categoryBadgeClass,
-              )}
-            >
-              {item.category}
-            </span>
-            <span className="rounded-full border border-theme-control-border/70 bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
-              {item.status}
-            </span>
-            <span className="text-caption text-on-surface-variant">
-              {formatTime(item.occurredAt)}
-            </span>
-            <AvailabilityBadge availability={item.sourceAvailability} t={t} />
-          </div>
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          {/* 类别圆点指示 */}
+          <span
+            className={clsx(
+              "mt-1.5 size-2 shrink-0 rounded-full ring-4 shadow-xs",
+              dotColorClass,
+            )}
+          />
 
-          <h4 className="text-body-md font-semibold text-on-surface">
-            {item.title}
-          </h4>
-
-          {item.summary && (
-            <div className="text-body-sm text-on-surface-variant">
-              <MarkdownContent value={item.summary} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={clsx(
+                  "rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider",
+                  categoryBadgeClass,
+                )}
+              >
+                {item.category}
+              </span>
+              <span className="rounded-full border border-theme-control-border/70 bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
+                {item.status}
+              </span>
+              <span className="text-caption text-on-surface-variant">
+                {formatTime(item.occurredAt)}
+              </span>
+              <AvailabilityBadge availability={item.sourceAvailability} t={t} />
             </div>
-          )}
+
+            <h4 className="text-body-md font-semibold text-on-surface leading-snug">
+              {item.title}
+            </h4>
+
+            {item.summary && (
+              <div className="text-body-sm text-on-surface-variant leading-relaxed">
+                <MarkdownContent value={item.summary} />
+              </div>
+            )}
+          </div>
         </div>
 
         <span className="mt-1 grid size-7 shrink-0 place-items-center rounded-full border border-theme-control-border/70 bg-theme-control/50 text-on-surface-variant transition-colors hover:text-on-surface">
@@ -486,29 +666,29 @@ function RecentItemCard({
 
       {/* 展开详细信息 (M35-UI-03: rationale, watermark, sessions) */}
       {isExpanded && (
-        <div className="flex flex-col gap-3 border-t border-theme-control-border/50 bg-theme-control/10 p-3.5">
+        <div className="flex flex-col gap-3.5 border-t border-theme-control-border/50 bg-theme-control/10 p-4">
           {item.rationale && (
-            <div className="flex flex-col gap-1">
-              <span className="text-caption font-semibold uppercase tracking-wide text-on-surface-variant">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
                 {t("memory.recent.why")}
               </span>
-              <div className="rounded-lg border border-theme-control-border/50 bg-surface-elevated/40 p-2.5 text-body-sm text-on-surface">
+              <div className="rounded-xl border border-theme-control-border/60 bg-surface-elevated/70 p-3 text-body-sm text-on-surface leading-relaxed shadow-xs">
                 {item.rationale}
               </div>
             </div>
           )}
 
           <div className="flex items-center gap-2 text-caption text-on-surface-variant">
-            <span className="font-medium">{t("memory.recent.watermark")}:</span>
+            <span className="font-semibold text-on-surface">{t("memory.recent.watermark")}:</span>
             <span className="font-mono">{formatTime(targetWatermark)}</span>
           </div>
 
           {item.sessionReferences.length > 0 && (
             <div className="flex flex-col gap-2">
-              <span className="text-caption font-semibold uppercase tracking-wide text-on-surface-variant">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
                 {t("memory.recent.sessions")} ({item.sessionReferences.length})
               </span>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                 {item.sessionReferences.map((ref) => (
                   <SessionReferenceCard
                     key={`${ref.sourceId}:${ref.sessionId}`}
@@ -554,9 +734,9 @@ function SessionReferenceCard({
     <div
       aria-disabled={!isAvailable}
       className={clsx(
-        "flex flex-col gap-1.5 rounded-xl border p-2.5 transition-all text-left",
+        "flex flex-col gap-1.5 rounded-xl border p-3 transition-all text-left",
         isAvailable
-          ? "cursor-pointer border-theme-control-border/70 bg-surface-elevated/50 hover:border-primary/50 hover:bg-surface-elevated/80 shadow-xs"
+          ? "cursor-pointer border-theme-control-border/70 bg-surface-elevated/60 hover:border-primary/50 hover:bg-surface-elevated/90 shadow-xs"
           : "cursor-not-allowed border-theme-control-border/40 bg-theme-control/15 opacity-65",
       )}
       onClick={handleClick}
@@ -570,12 +750,12 @@ function SessionReferenceCard({
       tabIndex={isAvailable ? 0 : undefined}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="rounded-md border border-theme-control-border/80 bg-theme-control/50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-primary">
+        <span className="rounded-md border border-primary/25 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary">
           {reference.sourceAgent}
         </span>
         <div className="flex items-center gap-1">
           {isAvailable ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-status-add">
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-status-add">
               <span className="size-1.5 rounded-full bg-status-add" />
               <span>{t("memory.recent.sourceAvailable")}</span>
               <ExternalLink size={11} />
@@ -592,7 +772,7 @@ function SessionReferenceCard({
         </div>
       </div>
 
-      <div className="line-clamp-2 text-body-sm font-medium text-on-surface">
+      <div className="line-clamp-2 text-body-sm font-semibold text-on-surface">
         {reference.sessionTitle}
       </div>
 
@@ -667,7 +847,7 @@ function renderStatusBadge(
 function matchCategory(cat: string): string {
   switch (cat.toLowerCase()) {
     case "decision":
-      return "border-theme-tag-border bg-primary/10 text-primary";
+      return "border-primary/40 bg-primary/10 text-primary";
     case "research":
       return "border-theme-control-border bg-theme-control/50 text-theme-nav-active-fg";
     case "verification":
@@ -679,6 +859,95 @@ function matchCategory(cat: string): string {
     default:
       return "border-theme-control-border bg-theme-control/30 text-on-surface-variant";
   }
+}
+
+function matchCategoryDot(cat: string): string {
+  switch (cat.toLowerCase()) {
+    case "decision":
+      return "bg-primary ring-primary/20";
+    case "research":
+      return "bg-status-update ring-status-update/20";
+    case "verification":
+      return "bg-status-add ring-status-add/20";
+    case "blocker":
+      return "bg-status-remove ring-status-remove/20";
+    default:
+      return "bg-on-surface-variant ring-on-surface-variant/20";
+  }
+}
+
+interface DateRailParts {
+  dayNumber: string;
+  month: string;
+  weekday: string;
+  relative: string;
+  latestWatermark?: string;
+}
+
+function parseDateRailParts(
+  dateStr: string,
+  targetWatermark: string | undefined,
+  t: Translator,
+): DateRailParts {
+  const parts = dateStr.split("-");
+  const year = parseInt(parts[0], 10);
+  const monthIdx = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+
+  const dateObj = new Date(year, monthIdx, day);
+  const dayNumber = isNaN(day) ? dateStr : String(day);
+
+  const monthNames = [
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+  ];
+  const month = monthNames[monthIdx] ?? (monthIdx + 1) + "月";
+
+  const weekdaysZh = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  const weekdaysEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const isZh = t("memory.recent.today") === "今天";
+  const weekday = isZh
+    ? weekdaysZh[dateObj.getDay()] ?? ""
+    : weekdaysEn[dateObj.getDay()] ?? "";
+
+  const today = new Date();
+  const todayZero = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const targetZero = new Date(year, monthIdx, day).getTime();
+  const diffDays = Math.round((todayZero - targetZero) / (1000 * 60 * 60 * 24));
+
+  let relative = "";
+  if (diffDays === 0) {
+    relative = t("memory.recent.today");
+  } else if (diffDays === 1) {
+    relative = t("memory.recent.yesterday");
+  } else if (diffDays === 2) {
+    relative = t("memory.recent.beforeYesterday");
+  } else if (diffDays > 2 && diffDays < 30) {
+    relative = t("memory.recent.daysAgo", { days: diffDays });
+  } else {
+    relative = `${monthIdx + 1}/${day}`;
+  }
+
+  let latestWatermark: string | undefined;
+  if (targetWatermark) {
+    const wmDate = targetWatermark.split("T")[0];
+    if (wmDate === dateStr) {
+      const wDateObj = new Date(targetWatermark);
+      if (!isNaN(wDateObj.valueOf())) {
+        const hh = String(wDateObj.getHours()).padStart(2, "0");
+        const mm = String(wDateObj.getMinutes()).padStart(2, "0");
+        latestWatermark = `${hh}:${mm}`;
+      }
+    }
+  }
+
+  return {
+    dayNumber,
+    month,
+    weekday,
+    relative,
+    latestWatermark,
+  };
 }
 
 function formatWatermark(value: string) {
