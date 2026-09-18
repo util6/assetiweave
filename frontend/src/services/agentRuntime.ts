@@ -21,7 +21,6 @@ export interface AgentRuntimeCatalogEntry {
     history_replay: boolean;
     live_events: boolean;
     rich_history_replay: boolean;
-    team_tools: boolean;
     resume_args: string[] | null;
   };
 }
@@ -90,7 +89,6 @@ export interface AgentInstallationView {
     historyReplay: boolean;
     liveEvents: boolean;
     richHistoryReplay: boolean;
-    teamTools: boolean;
     resumeArgs: string[] | null;
   };
   displayInstallPath: string | null;
@@ -137,7 +135,6 @@ export interface AgentMarketItem {
     historyReplay?: boolean;
     liveEvents?: boolean;
     richHistoryReplay?: boolean;
-    teamTools?: boolean;
     resumeArgs?: string[] | null;
   };
   verification: {

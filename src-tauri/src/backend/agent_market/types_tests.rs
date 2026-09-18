@@ -66,7 +66,6 @@ fn catalog_capabilities_project_to_runtime_without_losing_richness() {
         history_replay: true,
         live_events: true,
         rich_history_replay: true,
-        team_tools: true,
         resume_args: Some(vec![
             "--conversation".to_string(),
             "{session_id}".to_string(),
@@ -215,8 +214,7 @@ fn package_manifest_projects_agent_invocation_and_probe_contracts() {
                 "resume": true,
                 "historyReplay": true,
                 "liveEvents": true,
-                "richHistoryReplay": true,
-                "teamTools": true
+                "richHistoryReplay": true
             }
         }),
         integrity_json: Some(serde_json::json!({ "sha256": "fixture" })),

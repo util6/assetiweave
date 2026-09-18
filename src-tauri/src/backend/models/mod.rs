@@ -8,7 +8,6 @@ mod memory_work_order_v2;
 mod project_consolidation_v2;
 mod project_memory;
 mod session_memory;
-mod team;
 mod tenant;
 
 pub(crate) use assets::*;
@@ -21,5 +20,4 @@ pub(crate) use memory_work_order_v2::*;
 pub(crate) use project_consolidation_v2::*;
 pub(crate) use project_memory::*;
 pub(crate) use session_memory::*;
-pub(crate) use team::*;
 pub(crate) use tenant::*;

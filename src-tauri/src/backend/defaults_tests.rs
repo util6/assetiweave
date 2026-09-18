@@ -30,25 +30,6 @@ fn memory_is_an_independent_default_navigation_module() {
 }
 
 #[test]
-fn team_is_an_independent_default_navigation_module() {
-    let navigation = default_navigation_model();
-    let team = navigation
-        .header_tabs
-        .iter()
-        .find(|tab| tab.id == "team")
-        .expect("team header tab");
-
-    assert_eq!(team.asset_kind, None);
-    assert_eq!(
-        navigation.sub_nav_items["team"]
-            .iter()
-            .map(|item| item.route_key.as_str())
-            .collect::<Vec<_>>(),
-        vec!["team.overview"]
-    );
-}
-
-#[test]
 fn opencode_default_profile_uses_config_skills_path() {
     let profile = default_profiles()
         .into_iter()

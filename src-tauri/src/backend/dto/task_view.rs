@@ -164,7 +164,6 @@ impl TaskView {
                 crate::backend::runtime::tasks::TaskKind::Scan => "数据源扫描".to_string(),
                 crate::backend::runtime::tasks::TaskKind::Backup => "备份维护".to_string(),
                 crate::backend::runtime::tasks::TaskKind::BatchMount => "批量挂载".to_string(),
-                crate::backend::runtime::tasks::TaskKind::TeamRun => "Team 执行".to_string(),
                 crate::backend::runtime::tasks::TaskKind::Other => "后台任务".to_string(),
             });
 

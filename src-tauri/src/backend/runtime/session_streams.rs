@@ -9,17 +9,11 @@ use std::{
 };
 use tokio::sync::broadcast;
 
-/// The identity used to address a process-local member Session projection.
-///
-/// The Team and tenant are part of the key even though the execution id is
-/// currently globally generated. This keeps the read boundary explicit and
-/// prevents a future caller from accidentally treating an execution id as a
-/// cross-tenant capability.
+/// The identity used to address a process-local Session projection.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SessionStreamKey {
     pub(crate) tenant_id: String,
-    pub(crate) team_id: String,
-    pub(crate) member_id: String,
+    pub(crate) scope_id: String,
     pub(crate) execution_id: String,
 }
 
@@ -98,18 +92,22 @@ impl AgentSessionEntrySnapshot {
 struct SessionStreamEntry {
     projection: Arc<SessionEventProjection>,
     active: bool,
+    replay: bool,
     metadata: Option<AgentSessionMetadata>,
     terminal_info: Option<AgentSessionTerminalView>,
+    cancellation: Option<tokio_util::sync::CancellationToken>,
 }
 
 /// Bounded process-local storage for active and recently completed member
 /// Session projections. It intentionally has no persistence or serialization
 /// path; application shutdown clears the registry explicitly.
+#[derive(Clone)]
 pub(crate) struct SessionStreamRegistry {
-    entries: Mutex<HashMap<SessionStreamKey, SessionStreamEntry>>,
-    by_ref: Mutex<HashMap<String, SessionStreamKey>>,
-    order: Mutex<VecDeque<SessionStreamKey>>,
+    entries: Arc<Mutex<HashMap<SessionStreamKey, SessionStreamEntry>>>,
+    by_ref: Arc<Mutex<HashMap<String, SessionStreamKey>>>,
+    order: Arc<Mutex<VecDeque<SessionStreamKey>>>,
     capacity: usize,
+    updates: broadcast::Sender<SessionStreamKey>,
 }
 
 impl Default for SessionStreamRegistry {
@@ -120,15 +118,90 @@ impl Default for SessionStreamRegistry {
 
 impl SessionStreamRegistry {
     pub(crate) fn new(capacity: usize) -> Self {
+        let (updates, _) = broadcast::channel(2048);
         Self {
-            entries: Mutex::new(HashMap::new()),
-            by_ref: Mutex::new(HashMap::new()),
-            order: Mutex::new(VecDeque::new()),
+            entries: Arc::new(Mutex::new(HashMap::new())),
+            by_ref: Arc::new(Mutex::new(HashMap::new())),
+            order: Arc::new(Mutex::new(VecDeque::new())),
             capacity: capacity.max(1),
+            updates,
+        }
+    }
+
+    pub(crate) fn notify_updated(&self, key: &SessionStreamKey) {
+        let _ = self.updates.send(key.clone());
+    }
+
+    pub(crate) fn subscribe_updates(&self) -> broadcast::Receiver<SessionStreamKey> {
+        self.updates.subscribe()
+    }
+
+    pub(crate) fn register_cancellation(
+        &self,
+        key: &SessionStreamKey,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) {
+        if let Ok(mut entries) = self.entries.lock() {
+            if let Some(entry) = entries.get_mut(key) {
+                entry.cancellation = Some(cancellation);
+            }
+        }
+    }
+
+    pub(crate) fn cancel(&self, key: &SessionStreamKey) -> bool {
+        if let Ok(mut entries) = self.entries.lock() {
+            if let Some(entry) = entries.get_mut(key) {
+                entry.active = false;
+                if let Some(cancel) = entry.cancellation.take() {
+                    cancel.cancel();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub(crate) fn is_active(&self, key: &SessionStreamKey) -> bool {
+        self.entries
+            .lock()
+            .ok()
+            .and_then(|entries| entries.get(key).map(|e| e.active))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn is_replay(&self, key: &SessionStreamKey) -> bool {
+        self.entries
+            .lock()
+            .ok()
+            .and_then(|entries| entries.get(key).map(|e| e.replay))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn list_keys_by_scope(
+        &self,
+        tenant_id: &str,
+        scope_id: &str,
+    ) -> Vec<SessionStreamKey> {
+        if let Ok(entries) = self.entries.lock() {
+            entries
+                .keys()
+                .filter(|k| k.tenant_id == tenant_id && k.scope_id == scope_id)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
         }
     }
 
     pub(crate) fn register(&self, key: SessionStreamKey) -> Arc<SessionEventProjection> {
+        self.register_with_options(key, false)
+    }
+
+    pub(crate) fn register_with_options(
+        &self,
+        key: SessionStreamKey,
+        replay: bool,
+    ) -> Arc<SessionEventProjection> {
         if let Ok(entries) = self.entries.lock() {
             if let Some(entry) = entries.get(&key) {
                 return entry.projection.clone();
@@ -148,8 +221,10 @@ impl SessionStreamRegistry {
             SessionStreamEntry {
                 projection: projection.clone(),
                 active: true,
+                replay,
                 metadata: None,
                 terminal_info: None,
+                cancellation: None,
             },
         );
         order.push_back(key);
@@ -179,8 +254,10 @@ impl SessionStreamRegistry {
             SessionStreamEntry {
                 projection: projection.clone(),
                 active: true,
+                replay: false,
                 metadata: Some(metadata),
                 terminal_info: None,
+                cancellation: None,
             },
         );
         by_ref.insert(ref_value, key.clone());
@@ -237,6 +314,7 @@ impl SessionStreamRegistry {
         if let Ok(mut entries) = self.entries.lock() {
             if let Some(entry) = entries.get_mut(key) {
                 entry.active = false;
+                entry.cancellation = None;
             }
         }
     }

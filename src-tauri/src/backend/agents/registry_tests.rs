@@ -171,7 +171,6 @@ fn builtin_registry_contains_the_requested_acp_agent_definitions() {
     assert_eq!(antigravity_def.protocol, AgentProtocol::Acp);
     assert_eq!(antigravity_def.command, "antigravity-acp");
     assert!(antigravity_def.model_discovery.is_none());
-    assert!(!antigravity_def.declared_capabilities.team_tools);
     assert!(antigravity_def.declared_capabilities.history_replay);
     assert!(antigravity_def.declared_capabilities.resume);
     assert!(antigravity_def.declared_capabilities.text_prompt);

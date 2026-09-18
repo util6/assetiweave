@@ -30,8 +30,6 @@ pub struct AgentInfoView {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionContextView {
-    pub team_id: Option<String>,
-    pub member_id: Option<String>,
     pub memory_scope: Option<String>,
     pub memory_job_id: Option<String>,
     pub task_id: Option<String>,

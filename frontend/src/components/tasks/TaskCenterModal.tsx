@@ -32,8 +32,10 @@ import { PillTabs } from "../common/PillTabs";
 import { ToolbarSearch } from "../common/DataToolbar";
 import { useI18n } from "../../i18n/I18nProvider";
 import { useTaskCenter } from "../../app/backgroundTasks/TaskCenterProvider";
-import { AgentSessionWorkspace } from "../agent-session";
-import { mapSessionItemSnapshotToView } from "../team/teamSessionAdapter";
+import {
+  AgentSessionWorkspace,
+  mapSessionItemSnapshotToView,
+} from "../agent-session";
 import {
   getAgentSession,
   subscribeAgentSessionUpdated,

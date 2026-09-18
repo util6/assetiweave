@@ -139,8 +139,7 @@ impl ActiveMemoryAgentSession {
         };
         let key = SessionStreamKey {
             tenant_id: params.tenant_id.to_string(),
-            team_id: "memory".to_string(),
-            member_id: format!("{}_memory", params.scope),
+            scope_id: format!("{}_memory", params.scope),
             execution_id: execution_id.clone(),
         };
         let purpose = format!("{}_memory", params.scope);
@@ -161,8 +160,6 @@ impl ActiveMemoryAgentSession {
                 protocol: "builtin".to_string(),
             },
             context: AgentSessionContextView {
-                team_id: None,
-                member_id: None,
                 memory_scope: Some(params.scope.to_string()),
                 memory_job_id: Some(params.job_id.to_string()),
                 task_id: params.task_id.map(str::to_string),

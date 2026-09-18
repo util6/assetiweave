@@ -17,10 +17,7 @@ fn explicit_db_override_does_not_relocate_log_dir() {
             "ASSETIWEAVE_DB_PATH".into(),
             OsString::from("/fixture/test.db"),
         ),
-        (
-            "ASSETIWEAVE_TEAM_TOOL_CREDENTIAL".into(),
-            OsString::from("secret"),
-        ),
+        ("ASSETIWEAVE_CUSTOM_VAR".into(), OsString::from("secret")),
     ]);
     let value = RuntimeConfig::from_env_map(&env, &defaults).unwrap();
     assert_eq!(value.db_path, PathBuf::from("/fixture/test.db"));

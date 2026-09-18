@@ -359,7 +359,6 @@ fn fixture_catalog(version: &str, url: &str, bytes: &[u8]) -> Catalog {
                 history_replay: true,
                 live_events: true,
                 rich_history_replay: true,
-                team_tools: true,
                 ..CatalogCapabilities::default()
             },
             verification: Verification {

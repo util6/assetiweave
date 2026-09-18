@@ -17,7 +17,6 @@ describe("app route resolution", () => {
     expect(routePaths).toContain("/prompts/overview");
     expect(routePaths).toContain("/memory/recent");
     expect(routePaths).toContain("/memory/recall");
-    expect(routePaths).toContain("/team/overview");
     expect(routePaths).toContain("/under-construction");
   });
 

@@ -364,7 +364,6 @@ impl AppRuntime {
 
     async fn start_resident_services(self: &Arc<Self>) {
         self.start_agent_health_refresh();
-        self.start_team_coordinator();
         self.start_session_memory_coordinator();
         let dispatcher = Arc::new(EventDispatcher::new(self.db.clone(), self.db_path.clone()));
         if let Err(error) = dispatcher.initialize_all_tenants().await {
@@ -489,43 +488,6 @@ impl AppRuntime {
                 join: Some(join),
             });
         }
-    }
-
-    /// Reconcile durable Team facts independently of the UI and provider
-    /// process. Confirm writes the run and wake-up event first; this resident
-    /// loop then makes startup, duplicate delivery, and mid-run interruption
-    /// converge through the same AppService scheduling path.
-    fn start_team_coordinator(self: &Arc<Self>) {
-        let runtime = self.clone();
-        let mut spec = super::tasks::TaskSpec::global(
-            super::tasks::TaskKind::Other,
-            Some("team-coordinator".to_string()),
-        );
-        spec.detail = serde_json::json!({
-            "domain": "team",
-            "operation": "coordinator_reconciliation",
-        });
-        let _ = self
-            .task_runtime
-            .spawn_async(spec, move |context| async move {
-                while !context.is_cancelled() {
-                    if let Err(error) = AppService::from_runtime(&runtime).recover_team_runs().await
-                    {
-                        tracing::warn!(
-                            action = "team.coordinator.recovery",
-                            error = %error,
-                            "Team durable coordinator reconciliation failed"
-                        );
-                    }
-                    for _ in 0..10 {
-                        if context.is_cancelled() {
-                            return Ok(serde_json::json!({ "status": "stopped" }));
-                        }
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-                Ok(serde_json::json!({ "status": "stopped" }))
-            });
     }
 
     fn start_agent_health_refresh(&self) {

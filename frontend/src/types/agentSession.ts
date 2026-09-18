@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import type { SessionItemSnapshot } from "./team";
 
 // ==========================================
 // DTO & Backend Execution Scene Projections
@@ -18,8 +17,6 @@ export interface AgentInfoView {
 }
 
 export interface AgentSessionContextView {
-  teamId?: string | null;
-  memberId?: string | null;
   memoryScope?: string | null;
   memoryJobId?: string | null;
   taskId?: string | null;
@@ -165,7 +162,13 @@ export type AgentSessionItemKind =
   | "error";
 
 export type AgentSessionItemState =
-  "pending" | "streaming" | "completed" | "succeeded" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "streaming"
+  | "completed"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 
 export interface TruncationInfoView {
   originalBytes: number;
@@ -290,4 +293,77 @@ export interface AgentSessionWorkspaceProps {
   unavailable?: boolean;
   unavailableDescription?: string;
   isReadOnly?: boolean;
+}
+
+export type SessionItemKind =
+  | "user_message"
+  | "assistant_text"
+  | "processing"
+  | "thinking"
+  | "tool"
+  | "task"
+  | "notice"
+  | "final_result"
+  | "cancelled"
+  | "error";
+
+export type SessionEventDelivery = "live" | "replay";
+export type SessionItemState = "running" | "completed" | "failed" | "cancelled";
+export type SessionTaskStatus = "pending" | "in_progress" | "completed" | "failed";
+
+export interface SessionItemIdentity {
+  session_id?: string;
+  member_id?: string;
+  execution_id?: string;
+  turn_id: string;
+  item_id: string;
+}
+
+export interface SessionItemSnapshot {
+  identity: SessionItemIdentity;
+  kind: SessionItemKind;
+  sequence: number;
+  delivery: SessionEventDelivery;
+  state: SessionItemState;
+  text: string | null;
+  status: SessionTaskStatus | null;
+  code: string | null;
+  partial?: boolean;
+  truncation?: {
+    original_bytes: number;
+    retained_bytes: number;
+    strategy: string;
+  } | null;
+  tool_call_id?: string | null;
+  tool_name?: string | null;
+  tool_input?: unknown;
+  tool_output?: unknown;
+}
+
+export function mapSessionItemSnapshotToView(
+  item: SessionItemSnapshot,
+): AgentSessionItemView {
+  return {
+    id: item.identity.item_id,
+    kind: item.kind,
+    sequence: item.sequence,
+    delivery: item.delivery,
+    state: item.state,
+    text: item.text,
+    status: item.status,
+    code: item.code,
+    partial: item.partial,
+    truncation: item.truncation
+      ? {
+          originalBytes: item.truncation.original_bytes,
+          retainedBytes: item.truncation.retained_bytes,
+          strategy: item.truncation.strategy,
+        }
+      : null,
+    turnId: item.identity.turn_id,
+    toolCallId: item.tool_call_id,
+    toolName: item.tool_name,
+    toolInput: item.tool_input,
+    toolOutput: item.tool_output,
+  };
 }

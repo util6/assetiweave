@@ -164,6 +164,16 @@ impl AcpProtocol {
             .is_some()
     }
 
+    pub(crate) fn supports_stdio_mcp(
+        &self,
+        agent_id: &crate::backend::agents::types::AgentId,
+    ) -> bool {
+        if agent_id.as_str() == "opencode" {
+            return false;
+        }
+        true
+    }
+
     pub(crate) async fn load_session(
         &self,
         session_id: SessionId,

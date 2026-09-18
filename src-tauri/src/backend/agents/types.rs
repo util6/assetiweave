@@ -131,7 +131,6 @@ pub(crate) struct DeclaredAgentCapabilities {
     pub(crate) live_events: bool,
     /// The Agent can replay thought/tool history with provider fidelity.
     pub(crate) rich_history_replay: bool,
-    pub(crate) team_tools: bool,
     pub(crate) resume_args: Option<Vec<String>>,
 }
 
@@ -143,7 +142,6 @@ impl DeclaredAgentCapabilities {
             history_replay: true,
             live_events: true,
             rich_history_replay: false,
-            team_tools: false,
             resume_args: None,
         }
     }
@@ -155,20 +153,8 @@ impl DeclaredAgentCapabilities {
             history_replay: false,
             live_events: false,
             rich_history_replay: false,
-            team_tools: false,
             resume_args: Some(resume_args),
         }
-    }
-
-    pub(crate) fn missing_team_capabilities(&self) -> Vec<&'static str> {
-        [
-            ("resume", self.resume),
-            ("history_replay", self.history_replay),
-            ("live_events", self.live_events),
-        ]
-        .into_iter()
-        .filter_map(|(name, available)| (!available).then_some(name))
-        .collect()
     }
 }
 

@@ -60,7 +60,7 @@ vi.mock("../../services/agentSessionService", () => ({
 describe("TaskCenterModal - Agent Session Observer (T09)", () => {
   const sampleSessionRef: AgentSessionRef = {
     schemaVersion: 1,
-    value: "agent-session://team-1/memory-job-1/turn-1",
+    value: "agent-session://session-1/memory-job-1/turn-1",
   };
 
   const sampleSessionView: AgentSessionView = {

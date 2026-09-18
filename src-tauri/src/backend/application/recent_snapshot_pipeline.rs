@@ -8,9 +8,9 @@ use crate::backend::{
     dto::RecentMemorySnapshotView,
     models::{
         CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView, L2ProjectMemoryView,
-        L3MemoryItemView, MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus,
-        MemoryJobPurpose, MemoryPromotionNomination, MemoryScopeV2, MemorySkillBinding,
-        MemoryWindowV2, MemoryWorkOrderV2, RecentSnapshotSessionEvidence,
+        L3MemoryItemView, MemoryGenerationProjectV2, MemoryGenerationResultV2, MemoryItemCategory,
+        MemoryItemStatus, MemoryJobPurpose, MemoryPromotionNomination, MemoryScopeV2,
+        MemorySkillBinding, MemoryWindowV2, MemoryWorkOrderV2, RecentSnapshotSessionEvidence,
         RecentSnapshotWorkOrderEvidencePack, RecentSnapshotWorkOrderPayload, ResolvedEvidenceRef,
         SessionMemory, SessionMemorySourceReference, ALLOWED_MEMORY_GENERATION_TOOLS,
     },
@@ -53,7 +53,7 @@ fn build_recent_generation_prompt(
     let evidence = model_visible_recent_snapshot_evidence(&payload.evidence)?;
     serde_json::to_string(&serde_json::json!({
         "contract": "memory.contract.v2",
-        "instruction": "Return exactly one JSON object matching the supplied output_schema. Do not return Markdown, prose, or code fences. Consume the frozen evidence first. Never inspect the workspace or execute shell commands. coverage.coveredSessions, coverage.noMemorySessions, and every project.sourceSessions must use candidate.sessionRef values such as s1. Every item.sourceRefs entry must use only sourceReferences[].reference_key or MCP nodeRef values such as s1.r1; never emit internal IDs or session-memory-ref-* values. Each project must use a valid candidate projectKey; project.sourceSessions and item.sourceRefs must strictly belong to that exact projectKey (do not mix sessions across projects). Keep descriptions concise and focused on high-signal items: at most 3 to 5 most important items per project; keep summary and rationale concise (1-2 sentences) to ensure the JSON completes cleanly within token limits. For each project with actionable items, assign recommendationRank (1, 2, or 3) to the top next action items. For projectKey=unassigned, every promotionNomination must be none. All evidence required for this generation is fully provided in the frozen evidence pack; do NOT invoke any shell, workspace, filesystem, external tools, or MCP commands. Generate the JSON output directly.",
+        "instruction": "Return exactly one JSON object matching the supplied output_schema. Do not return Markdown, prose, or code fences. Consume the frozen evidence first. Never inspect the workspace or execute shell commands. coverage.coveredSessions, coverage.noMemorySessions, and every project.sourceSessions must use candidate.sessionRef values such as s1. Every item.sourceRefs entry must use only sourceReferences[].reference_key or MCP nodeRef values such as s1.r1; never emit internal IDs or session-memory-ref-* values. You must include an entry in projects for EVERY projectKey in candidateSessions; if a project has no new material changes, set noMaterialChange: true, items: [], and a brief summary. Each project must use a valid candidate projectKey; project.sourceSessions and item.sourceRefs must strictly belong to that exact projectKey (do not mix sessions across projects). Keep descriptions concise and focused on high-signal items: at most 3 to 5 most important items per project; keep summary and rationale concise (1-2 sentences) to ensure the JSON completes cleanly within token limits. For each project with actionable items, assign recommendationRank (1, 2, or 3) to the top next action items. For projectKey=unassigned, every promotionNomination must be none. All evidence required for this generation is fully provided in the frozen evidence pack; do NOT invoke any shell, workspace, filesystem, external tools, or MCP commands. Generate the JSON output directly.",
         "execution_policy": {
             "tool_mode": "allowlisted_read_only_mcp",
             "allowed_tools": ALLOWED_MEMORY_GENERATION_TOOLS,
@@ -214,11 +214,29 @@ fn normalize_agent_memory_generation_result(
         if key.is_empty() {
             return false;
         }
-        if !candidates.is_empty() && key != "unassigned" && !candidate_project_keys.contains(key) {
+        if !candidates.is_empty() && !candidate_project_keys.contains(key) {
             return false;
         }
         seen_keys.insert(key.to_string())
     });
+
+    for project_key in &candidate_project_keys {
+        if !seen_keys.contains(*project_key) {
+            let project_sessions = candidates
+                .iter()
+                .filter(|c| c.project_key == *project_key)
+                .map(|c| c.short_ref.clone())
+                .collect::<Vec<_>>();
+            result.projects.push(MemoryGenerationProjectV2 {
+                project_key: (*project_key).to_string(),
+                summary: "No material change in this window.".to_string(),
+                no_material_change: true,
+                source_sessions: project_sessions,
+                items: Vec::new(),
+            });
+            seen_keys.insert((*project_key).to_string());
+        }
+    }
 
     for project in &mut result.projects {
         let project_key = project.project_key.trim().to_string();
@@ -299,6 +317,20 @@ fn normalize_agent_memory_generation_result(
                     break;
                 }
             }
+        }
+    }
+
+    let mut all_covered = HashSet::new();
+    for s in &result.coverage.covered_sessions {
+        all_covered.insert(s.clone());
+    }
+    for s in &result.coverage.no_memory_sessions {
+        all_covered.insert(s.clone());
+    }
+    for c in candidates {
+        if !all_covered.contains(&c.short_ref) {
+            result.coverage.covered_sessions.push(c.short_ref.clone());
+            all_covered.insert(c.short_ref.clone());
         }
     }
 }
@@ -1705,7 +1737,10 @@ impl AppService {
                 session_mode: AgentSessionMode::OneShot,
                 prompt,
                 model,
-                limits: AiExecutionLimits::default(),
+                limits: AiExecutionLimits {
+                    initialize_timeout: std::time::Duration::from_secs(30),
+                    ..AiExecutionLimits::default()
+                },
                 cancellation: AiExecutionCancellation::from_token(cancellation.clone()),
                 progress,
                 tenant_id: Some(job.tenant_id.clone()),
@@ -1713,7 +1748,6 @@ impl AppService {
                 binding: None,
                 replay: false,
                 restore_only: false,
-                team_tools: None,
                 recall_tools: None,
                 memory_generation_tools: Some(memory_generation_tools_for_job(job, &self.db_path)?),
             };
@@ -3034,17 +3068,31 @@ impl AppService {
     }
 }
 
-pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGenerationResultV2> {
+fn extract_json_payload(raw: &str) -> &str {
     let trimmed = raw.trim();
-    let json_text = if let Some(rest) = trimmed.strip_prefix("```") {
-        let rest = rest.strip_prefix("json").unwrap_or(rest);
-        let rest = rest.strip_prefix('\n').unwrap_or(rest);
-        rest.strip_suffix("```").map(str::trim).ok_or_else(|| {
-            AppError::Validation("MEMORY_OUTPUT_INVALID: unterminated JSON code fence".to_string())
-        })?
-    } else {
-        trimmed
-    };
+    if let Some(start) = trimmed.find("```json") {
+        let after_start = &trimmed[start + 7..];
+        if let Some(end) = after_start.rfind("```") {
+            return after_start[..end].trim();
+        }
+    } else if let Some(start) = trimmed.find("```") {
+        let after_start = &trimmed[start + 3..];
+        if let Some(end) = after_start.rfind("```") {
+            return after_start[..end].trim();
+        }
+    }
+    if let Some(first_brace) = trimmed.find('{') {
+        if let Some(last_brace) = trimmed.rfind('}') {
+            if last_brace > first_brace {
+                return trimmed[first_brace..=last_brace].trim();
+            }
+        }
+    }
+    trimmed
+}
+
+pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGenerationResultV2> {
+    let json_text = extract_json_payload(raw);
     if json_text.is_empty() {
         return Err(AppError::Validation(
             "MEMORY_OUTPUT_INVALID: empty Agent output".to_string(),

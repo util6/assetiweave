@@ -36,7 +36,6 @@ pub(crate) enum TaskKind {
     Scan,
     Backup,
     BatchMount,
-    TeamRun,
     Other,
 }
 

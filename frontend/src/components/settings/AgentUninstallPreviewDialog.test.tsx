@@ -25,7 +25,6 @@ const preview: AgentUninstallPreview = {
       historyReplay: true,
       liveEvents: true,
       richHistoryReplay: false,
-      teamTools: true,
       resumeArgs: null,
     },
     displayInstallPath: "/usr/local/bin/fixture-agent",

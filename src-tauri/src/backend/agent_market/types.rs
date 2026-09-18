@@ -131,9 +131,6 @@ pub(crate) struct CatalogCapabilities {
     /// The Agent can replay thought/tool history with provider fidelity.
     #[serde(default)]
     pub(crate) rich_history_replay: bool,
-    /// The Agent can receive the restricted Team tool surface.
-    #[serde(default)]
-    pub(crate) team_tools: bool,
     /// Native resume arguments. `{session_id}` is replaced without shell parsing.
     #[serde(default)]
     pub(crate) resume_args: Option<Vec<String>>,
@@ -163,7 +160,6 @@ impl CatalogCapabilities {
             history_replay: self.history_replay,
             live_events: self.live_events,
             rich_history_replay: self.rich_history_replay,
-            team_tools: self.team_tools,
             resume_args: matches!(protocol, AgentMarketProtocol::Native)
                 .then(|| self.resume_args.clone())
                 .flatten(),

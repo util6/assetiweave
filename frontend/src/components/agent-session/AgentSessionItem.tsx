@@ -72,8 +72,8 @@ export function AgentSessionItem({
             </span>
             <span className="text-caption text-outline">
               {item.delivery === "replay"
-                ? t("agentSession.replay") || t("team.chat.replay")
-                : t("agentSession.live") || t("team.chat.live")}
+                ? t("agentSession.replay")
+                : t("agentSession.live")}
             </span>
             <span className="ml-auto text-caption text-outline">
               {item.state}
@@ -149,27 +149,25 @@ function getItemLabel(
 ): string {
   switch (kind) {
     case "user_message":
-      return t("agentSession.item.user") || t("team.chat.item.user");
+      return t("agentSession.item.user");
     case "assistant_text":
-      return t("agentSession.item.assistant") || t("team.chat.item.assistant");
+      return t("agentSession.item.assistant");
     case "processing":
-      return (
-        t("agentSession.item.processing") || t("team.chat.item.processing")
-      );
+      return t("agentSession.item.processing");
     case "thinking":
-      return t("agentSession.item.thinking") || t("team.chat.item.thinking");
+      return t("agentSession.item.thinking");
     case "tool":
-      return t("agentSession.item.tool") || t("team.chat.item.tool");
+      return t("agentSession.item.tool");
     case "task":
-      return t("agentSession.item.task") || t("team.chat.item.task");
+      return t("agentSession.item.task");
     case "notice":
-      return t("agentSession.item.notice") || t("team.chat.item.notice");
+      return t("agentSession.item.notice");
     case "final_result":
-      return t("agentSession.item.result") || t("team.chat.item.result");
+      return t("agentSession.item.result");
     case "cancelled":
-      return t("agentSession.item.cancelled") || t("team.chat.item.cancelled");
+      return t("agentSession.item.cancelled");
     case "error":
-      return t("agentSession.item.error") || t("team.chat.item.error");
+      return t("agentSession.item.error");
   }
 }
 
@@ -178,27 +176,18 @@ function getItemStatusText(
   t: ReturnType<typeof useI18n>["t"],
 ): string {
   if (item.kind === "processing") {
-    return (
-      t("agentSession.item.processingActive") ||
-      t("team.chat.item.processingActive")
-    );
+    return t("agentSession.item.processingActive");
   }
   if (item.kind === "tool") {
-    return (
-      t("agentSession.item.toolActivity") || t("team.chat.item.toolActivity")
-    );
+    return t("agentSession.item.toolActivity");
   }
   if (item.kind === "task") {
-    return (
-      t("agentSession.item.taskActivity") || t("team.chat.item.taskActivity")
-    );
+    return t("agentSession.item.taskActivity");
   }
   if (item.kind === "error") {
-    return (
-      item.code || t("agentSession.item.error") || t("team.chat.item.error")
-    );
+    return item.code || t("agentSession.item.error");
   }
-  return t("agentSession.item.noText") || t("team.chat.item.noText");
+  return t("agentSession.item.noText");
 }
 
 function getItemIcon(kind: AgentSessionItemKind) {

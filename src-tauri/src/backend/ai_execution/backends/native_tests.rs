@@ -86,7 +86,7 @@ async fn persistent_native_resume_uses_declared_session_argument() {
     let request = |execution_id: &str| AiExecutionRequest {
         execution_id: execution_id.to_string(),
         agent_id: definition.id.clone(),
-        purpose: AiExecutionPurpose::TeamTask,
+        purpose: AiExecutionPurpose::PromptOptimization,
         session_mode: AgentSessionMode::Persistent,
         prompt: "fixture prompt".to_string(),
         model: Some("fixture-model".to_string()),
@@ -98,7 +98,6 @@ async fn persistent_native_resume_uses_declared_session_argument() {
         binding: None,
         replay: false,
         restore_only: false,
-        team_tools: None,
         recall_tools: None,
         memory_generation_tools: None,
     };

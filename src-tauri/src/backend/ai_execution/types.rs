@@ -99,21 +99,6 @@ pub(crate) enum AiExecutionPurpose {
     ProjectMemory,
     GlobalMemory,
     Recall,
-    TeamLeaderChat,
-    TeamMemberTurn,
-    TeamDraft,
-    TeamTask,
-    TeamSummary,
-}
-
-#[derive(Clone)]
-pub(crate) struct AiTeamTools {
-    pub(crate) tenant_id: String,
-    pub(crate) team_id: String,
-    pub(crate) run_id: String,
-    pub(crate) member_id: String,
-    pub(crate) credential: String,
-    pub(crate) database_path: String,
 }
 
 #[derive(Clone)]
@@ -150,20 +135,6 @@ impl fmt::Debug for AiRecallTools {
             .field("tenant_id", &self.tenant_id)
             .field("recall_session_id", &self.recall_session_id)
             .field("database_path", &"<redacted>")
-            .finish()
-    }
-}
-
-impl fmt::Debug for AiTeamTools {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AiTeamTools")
-            .field("tenant_id", &self.tenant_id)
-            .field("team_id", &self.team_id)
-            .field("run_id", &self.run_id)
-            .field("member_id", &self.member_id)
-            .field("credential", &"<redacted>")
-            .field("database_path", &self.database_path)
             .finish()
     }
 }
@@ -213,7 +184,6 @@ pub(crate) struct AiExecutionRequest {
     pub(crate) binding: Option<PersistentExecutionBinding>,
     pub(crate) replay: bool,
     pub(crate) restore_only: bool,
-    pub(crate) team_tools: Option<AiTeamTools>,
     pub(crate) recall_tools: Option<AiRecallTools>,
     pub(crate) memory_generation_tools: Option<AiMemoryGenerationTools>,
 }
@@ -295,7 +265,6 @@ impl fmt::Debug for AiExecutionRequest {
             .field("binding", &self.binding)
             .field("replay", &self.replay)
             .field("restore_only", &self.restore_only)
-            .field("team_tools", &self.team_tools)
             .field("recall_tools", &self.recall_tools)
             .field("memory_generation_tools", &self.memory_generation_tools)
             .finish()

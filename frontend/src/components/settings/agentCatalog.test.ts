@@ -25,7 +25,6 @@ describe("agentCatalog presentation and projection", () => {
         modelDiscovery: false,
         resume: false,
         historyReplay: false,
-        teamTools: false,
         liveEvents: false,
         richHistoryReplay: false,
       },

@@ -94,9 +94,7 @@ export function AgentSessionComposer({
 
   return (
     <section
-      aria-label={
-        t("agentSession.composerLabel") || t("team.chat.composerLabel")
-      }
+      aria-label={t("agentSession.composerLabel")}
       className="sticky bottom-0 shrink-0 border-t border-theme-card-border/65 bg-theme-card-header/90 px-4 py-3 shadow-[0_-10px_24px_rgb(var(--theme-panel-shadow)/0.18)] backdrop-blur sm:px-5"
       data-testid={`${testIdPrefix}-composer`}
     >
@@ -105,7 +103,7 @@ export function AgentSessionComposer({
           {recipientTitle ? (
             <>
               <span className="text-on-surface-variant">
-                {t("agentSession.recipient") || t("team.chat.recipient")}
+                {t("agentSession.recipient")}
               </span>
               <span className="font-semibold text-primary">
                 {recipientTitle}
@@ -124,17 +122,14 @@ export function AgentSessionComposer({
 
       <form className="flex items-end gap-2" onSubmit={handleSubmit}>
         <textarea
-          aria-label={
-            t("agentSession.composerInput") || t("team.chat.composerInput")
-          }
+          aria-label={t("agentSession.composerInput")}
           className="min-h-16 min-w-0 flex-1 resize-none rounded-xl border border-theme-control-border/80 bg-theme-control/70 px-3 py-2.5 text-body-sm text-on-surface shadow-[var(--theme-shadow-control-inset)] outline-none placeholder:text-outline focus:border-primary-strong/65 focus:ring-2 focus:ring-primary-strong/25 disabled:cursor-not-allowed disabled:opacity-70"
           disabled={disabled || (isExecuting && !capabilities?.queue)}
           onChange={(e) => onDraftChange?.(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
             placeholder ||
-            t("agentSession.composerPlaceholder") ||
-            t("team.chat.composerPlaceholderFallback")
+            t("agentSession.composerPlaceholder")
           }
           rows={2}
           value={draft}
@@ -182,7 +177,7 @@ export function AgentSessionComposer({
         ) : (
           <Button
             aria-label={
-              submitLabel || t("agentSession.send") || t("team.chat.send")
+              submitLabel || t("agentSession.send")
             }
             data-testid={`${testIdPrefix}-send`}
             disabled={!canSend || disabled || !draft.trim()}
@@ -190,7 +185,7 @@ export function AgentSessionComposer({
             type="submit"
           >
             <Send size={14} />
-            {submitLabel || t("agentSession.send") || t("team.chat.send")}
+            {submitLabel || t("agentSession.send")}
           </Button>
         )}
       </form>

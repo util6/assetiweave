@@ -46,13 +46,6 @@ describe("navigationPath", () => {
     expect(navigationPath(model, "recall")).toBe("/memory/recall");
   });
 
-  it("maps team tab to its route path", () => {
-    const model = {
-      ...fallbackNavigationModel,
-      activeHeaderTabId: "team",
-    };
-    expect(navigationPath(model, "overview")).toBe("/team/overview");
-  });
 
   it("routes retired conversation tabs and unimplemented tabs to /under-construction", () => {
     const model = {

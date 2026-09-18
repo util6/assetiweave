@@ -62,7 +62,6 @@ beforeEach(() => {
         history_replay: true,
         live_events: true,
         rich_history_replay: false,
-        team_tools: true,
         resume_args: null,
       },
     })),
@@ -820,7 +819,6 @@ function createMarketItem(
       historyReplay: true,
       liveEvents: true,
       richHistoryReplay: false,
-      teamTools: true,
       resumeArgs: null,
     },
     verification: {
@@ -861,7 +859,6 @@ function createMarketItem(
             historyReplay: true,
             liveEvents: true,
             richHistoryReplay: false,
-            teamTools: true,
             resumeArgs: null,
           },
           enabled: true,

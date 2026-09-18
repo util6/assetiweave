@@ -124,7 +124,6 @@ fn request(model: Option<&str>) -> AiExecutionRequest {
         binding: None,
         replay: false,
         restore_only: false,
-        team_tools: None,
         recall_tools: None,
         memory_generation_tools: None,
     }
@@ -706,7 +705,7 @@ async fn persistent_mode_creates_a_stable_binding_and_reuses_resume() {
     let mut first_request = request(None);
     first_request.session_mode = AgentSessionMode::Persistent;
     first_request.tenant_id = Some("tenant-fixture".to_string());
-    first_request.execution_context_key = Some("team-member-fixture".to_string());
+    first_request.execution_context_key = Some("persistent-context-fixture".to_string());
     let first = backend
         .execute(&definition, first_request)
         .await
@@ -720,7 +719,7 @@ async fn persistent_mode_creates_a_stable_binding_and_reuses_resume() {
     let mut second_request = request(None);
     second_request.session_mode = AgentSessionMode::Persistent;
     second_request.tenant_id = Some("tenant-fixture".to_string());
-    second_request.execution_context_key = Some("team-member-fixture".to_string());
+    second_request.execution_context_key = Some("persistent-context-fixture".to_string());
     second_request.binding = Some(binding.clone());
     backend
         .execute(&definition, second_request)
@@ -730,7 +729,7 @@ async fn persistent_mode_creates_a_stable_binding_and_reuses_resume() {
     let mut replay_request = request(None);
     replay_request.session_mode = AgentSessionMode::Persistent;
     replay_request.tenant_id = Some("tenant-fixture".to_string());
-    replay_request.execution_context_key = Some("team-member-fixture".to_string());
+    replay_request.execution_context_key = Some("persistent-context-fixture".to_string());
     replay_request.binding = Some(binding);
     replay_request.replay = true;
     let replay = backend

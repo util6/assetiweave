@@ -5,10 +5,8 @@ import {
   mergeTaskSnapshot,
 } from "./taskMergeUtils";
 import { mergeConversationTaskSnapshot } from "./ConversationSyncProvider";
-import { mergeTeamRunTasks } from "./TeamTaskProvider";
 import type { SourceScanTaskSnapshot } from "../../services/catalog";
 import type { ConversationSyncTaskSnapshot } from "../../services/conversations";
-import type { TeamRuntimeTaskSnapshot } from "../../types/team";
 
 describe("taskMergeUtils", () => {
   it("isTerminalStatus recognizes terminal statuses case-insensitively", () => {
@@ -125,41 +123,5 @@ describe("taskMergeUtils", () => {
     expect(merged.status).toBe("completed");
     expect(merged.finished_at).toBe("2026-09-04T00:01:00Z");
     expect(merged.result).toEqual({ count: 10 });
-  });
-
-  it("mergeTeamRunTasks preserves completed state when stale task array arrives", () => {
-    const completedTeamTask: TeamRuntimeTaskSnapshot = {
-      task_id: "team-1",
-      kind: "TeamRun",
-      dedup_key: "key-1",
-      state: "Succeeded",
-      progress: null,
-      error: null,
-      started_at: "2026-09-04T00:00:00Z",
-      finished_at: "2026-09-04T00:01:00Z",
-      result: null,
-      detail: null,
-    };
-
-    const staleRunningTeamTask: TeamRuntimeTaskSnapshot = {
-      task_id: "team-1",
-      kind: "TeamRun",
-      dedup_key: "key-1",
-      state: "Running",
-      progress: null,
-      error: null,
-      started_at: "2026-09-04T00:00:00Z",
-      finished_at: null,
-      result: null,
-      detail: null,
-    };
-
-    const merged = mergeTeamRunTasks(
-      [completedTeamTask],
-      [staleRunningTeamTask],
-    );
-    expect(merged).toHaveLength(1);
-    expect(merged[0].state).toBe("Succeeded");
-    expect(merged[0].finished_at).toBe("2026-09-04T00:01:00Z");
   });
 });

@@ -6,8 +6,7 @@ use crate::backend::ai_execution::{
 fn key(id: &str) -> SessionStreamKey {
     SessionStreamKey {
         tenant_id: "tenant".to_string(),
-        team_id: "team".to_string(),
-        member_id: "member".to_string(),
+        scope_id: "scope".to_string(),
         execution_id: id.to_string(),
     }
 }
@@ -58,8 +57,6 @@ fn metadata_and_by_ref_lookup_and_eviction_work() {
             protocol: "builtin".to_string(),
         },
         context: AgentSessionContextView {
-            team_id: None,
-            member_id: None,
             memory_scope: Some("session".to_string()),
             memory_job_id: Some("job-1".to_string()),
             task_id: Some("task-1".to_string()),
@@ -108,8 +105,6 @@ fn test_eviction_removes_ref_lookup() {
             protocol: "builtin".to_string(),
         },
         context: AgentSessionContextView {
-            team_id: None,
-            member_id: None,
             memory_scope: Some("project".to_string()),
             memory_job_id: Some("job-1".to_string()),
             task_id: Some(task_id.to_string()),
@@ -154,8 +149,6 @@ fn test_recall_multi_turn_reinitialization_and_accumulation() {
             protocol: "builtin".to_string(),
         },
         context: AgentSessionContextView {
-            team_id: None,
-            member_id: None,
             memory_scope: Some("recall".to_string()),
             memory_job_id: Some("session-123".to_string()),
             task_id: Some("task-turn-1".to_string()),
@@ -257,8 +250,6 @@ fn test_tenant_metadata_filtering() {
             protocol: "builtin".to_string(),
         },
         context: AgentSessionContextView {
-            team_id: None,
-            member_id: None,
             memory_scope: Some("global".to_string()),
             memory_job_id: Some("job-global".to_string()),
             task_id: Some("task-global".to_string()),
@@ -270,4 +261,16 @@ fn test_tenant_metadata_filtering() {
     let snap = registry.get_by_ref("ref-a").expect("must exist");
     assert_eq!(snap.metadata.tenant_id.as_deref(), Some("tenant-apple"));
     assert_ne!(snap.metadata.tenant_id.as_deref(), Some("tenant-banana"));
+}
+
+#[tokio::test]
+async fn notify_updated_delivers_key_to_subscribers() {
+    let registry = SessionStreamRegistry::new(2);
+    let mut rx = registry.subscribe_updates();
+    let test_key = key("test-exec");
+
+    registry.notify_updated(&test_key);
+
+    let received = rx.recv().await.expect("receive key");
+    assert_eq!(received, test_key);
 }

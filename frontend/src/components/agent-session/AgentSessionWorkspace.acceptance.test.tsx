@@ -369,8 +369,8 @@ describe("T12: G-12 全量验收与 AionUi 20 个视觉场景矩阵 (Final Accep
     expect(screen.getByText(/4096/)).toBeTruthy();
   });
 
-  // 场景 12: Team 两成员 parallel
-  it("场景 12: Team 两成员 parallel - 并行渲染两个工作区", () => {
+  // 场景 12: 并行两成员 parallel
+  it("场景 12: 并行两成员 parallel - 并行渲染两个工作区", () => {
     render(
       <I18nProvider>
         <div style={{ display: "flex", width: "1000px" }}>
@@ -400,8 +400,8 @@ describe("T12: G-12 全量验收与 AionUi 20 个视觉场景矩阵 (Final Accep
     ).toBeGreaterThanOrEqual(1);
   });
 
-  // 场景 13: Team 三成员横向 overflow
-  it("场景 13: Team 三成员横向 overflow - 每个 lane 拥有 400px floor 与独立容器", () => {
+  // 场景 13: 多成员横向 overflow
+  it("场景 13: 多成员横向 overflow - 每个 lane 拥有 400px floor 与独立容器", () => {
     render(
       <I18nProvider>
         <div style={{ display: "flex", overflowX: "auto", width: "800px" }}>
@@ -435,21 +435,21 @@ describe("T12: G-12 全量验收与 AionUi 20 个视觉场景矩阵 (Final Accep
     expect(screen.getAllByText("Member C").length).toBeGreaterThanOrEqual(1);
   });
 
-  // 场景 14: Team single
-  it("场景 14: Team single - 单列模式下独占全宽并保留活跃成员上下文", () => {
+  // 场景 14: 单成员 single
+  it("场景 14: 单成员 single - 单列模式下独占全宽并保留活跃成员上下文", () => {
     render(
       <I18nProvider>
         <AgentSessionWorkspace
           capabilities={DEFAULT_INTERACTIVE_CAPABILITIES}
           items={[]}
-          recipientTitle="Focused Teammate"
+          recipientTitle="Focused Member"
         />
       </I18nProvider>,
     );
 
     expect(
       screen.getByTestId("agent-session-active-recipient").textContent,
-    ).toContain("Focused Teammate");
+    ).toContain("Focused Member");
   });
 
   // 场景 15: Memory running observer

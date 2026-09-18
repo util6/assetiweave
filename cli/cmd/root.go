@@ -99,7 +99,6 @@ func buildInternalWithOptions(ctx context.Context, f *cmdutil.Factory, options b
 	root.AddCommand(newCmdSkill(f))
 	root.AddCommand(newCmdConversation(f))
 	root.AddCommand(newCmdMemory(f))
-	root.AddCommand(newCmdTeam(f))
 	root.AddCommand(newCmdHarvester(f))
 	root.AddCommand(newCmdSettings(f))
 	root.AddCommand(newCmdApp(f))

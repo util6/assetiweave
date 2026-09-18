@@ -672,7 +672,6 @@ impl AppService {
                 binding: None,
                 replay: false,
                 restore_only: false,
-                team_tools: None,
                 recall_tools: None,
                 memory_generation_tools: None,
             },

@@ -12,3 +12,4 @@ export type { AgentSessionHeaderProps } from "./AgentSessionHeader";
 export type { AgentSessionTimelineProps } from "./AgentSessionTimeline";
 export type { AgentSessionItemProps } from "./AgentSessionItem";
 export type { AgentSessionComposerProps } from "./AgentSessionComposer";
+export { mapSessionItemSnapshotToView } from "../../types/agentSession";

@@ -38,17 +38,8 @@ export const navigationModel: NavigationModel = {
     { id: "profiles", label: "Profiles", assetKind: "profile", enabled: true },
     { id: "conversations", label: "Conversations", enabled: true },
     { id: "memory", label: "Memory", enabled: true },
-    { id: "team", label: "Team", enabled: true },
   ],
   subNavItems: {
-    team: [
-      {
-        id: "overview",
-        label: "Teams & Rosters",
-        routeKey: "team.overview",
-        enabled: true,
-      },
-    ],
     skills: [
       {
         id: "overview",

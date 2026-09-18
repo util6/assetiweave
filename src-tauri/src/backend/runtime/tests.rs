@@ -244,36 +244,34 @@ fn task_runtime_broadcasts_registration_progress_and_terminal_snapshots() {
     let mut events = tasks.subscribe();
     tasks
         .register_external(
-            tasks::TaskSpec::new(tasks::TaskKind::TeamRun, Some("team-run-1".into()))
-                .with_task_id("team-task-1"),
+            tasks::TaskSpec::new(tasks::TaskKind::AiExecution, Some("ai-exec-1".into()))
+                .with_task_id("external-task-1"),
         )
-        .expect("register Team task");
+        .expect("register task");
+    tasks.start_external("external-task-1").expect("start task");
     tasks
-        .start_external("team-task-1")
-        .expect("start Team task");
+        .set_progress("external-task-1", 1, Some(2), Some("running"))
+        .expect("progress");
     tasks
-        .set_progress("team-task-1", 1, Some(2), Some("running"))
-        .expect("publish Team progress");
-    tasks
-        .complete_external("team-task-1", Ok(serde_json::json!({"ok": true})))
-        .expect("complete Team task");
+        .complete_external("external-task-1", Ok(serde_json::json!({"ok": true})))
+        .expect("complete");
 
     let mut snapshots = Vec::new();
     while let Ok(snapshot) = events.try_recv() {
         snapshots.push(snapshot);
     }
     assert!(snapshots.iter().any(|snapshot| {
-        snapshot.task_id == "team-task-1" && snapshot.state == tasks::TaskState::Pending
+        snapshot.task_id == "external-task-1" && snapshot.state == tasks::TaskState::Pending
     }));
     assert!(snapshots.iter().any(|snapshot| {
-        snapshot.task_id == "team-task-1"
-            && snapshot
-                .progress
-                .as_ref()
-                .is_some_and(|progress| progress.current == 1)
+        snapshot.task_id == "external-task-1"
+            && snapshot.state == tasks::TaskState::Running
+            && snapshot.progress.as_ref().map(|p| p.current) == Some(1)
+            && snapshot.progress.as_ref().and_then(|p| p.total) == Some(2)
+            && snapshot.progress.as_ref().and_then(|p| p.note.as_deref()) == Some("running")
     }));
     assert!(snapshots.iter().any(|snapshot| {
-        snapshot.task_id == "team-task-1" && snapshot.state == tasks::TaskState::Succeeded
+        snapshot.task_id == "external-task-1" && snapshot.state == tasks::TaskState::Succeeded
     }));
 }
 

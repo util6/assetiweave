@@ -10,7 +10,6 @@ export type AppRouteId =
   | "skill-groups"
   | "skill-mounts"
   | "memory"
-  | "team"
   | "under-construction";
 
 const retiredRouteKeys = new Set([

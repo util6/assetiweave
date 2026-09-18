@@ -51,7 +51,6 @@ const headerLabelKeys: Partial<Record<string, TranslationKey>> = {
   profiles: "nav.header.profiles",
   conversations: "nav.header.conversations",
   memory: "nav.header.memory",
-  team: "nav.header.team",
 };
 
 const headerDefaultLabels: Partial<Record<string, string[]>> = {
@@ -62,7 +61,6 @@ const headerDefaultLabels: Partial<Record<string, string[]>> = {
   profiles: ["Profiles", "目标配置"],
   conversations: ["Conversations", "对话记录"],
   memory: ["Memory", "记忆"],
-  team: ["Team", "团队与成员"],
 };
 
 const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
@@ -87,7 +85,6 @@ const subNavLabelKeys: Partial<Record<string, TranslationKey>> = {
   "conversations.usage": "nav.sub.conversations.usage",
   "memory.recent": "nav.sub.memory.recent",
   "memory.recall": "nav.sub.memory.recall",
-  "team.overview": "nav.sub.team.overview",
 };
 
 const subNavDefaultLabels: Partial<Record<string, string[]>> = {
@@ -112,7 +109,6 @@ const subNavDefaultLabels: Partial<Record<string, string[]>> = {
   "conversations.usage": ["Token Usage", "用量统计", "Token 用量"],
   "memory.recent": ["Recent", "近期"],
   "memory.recall": ["Recall", "深度回忆"],
-  "team.overview": ["Teams & Rosters", "团队与花名册"],
 };
 
 export function railLabel(item: RailMenuItem, t: Translator, locale: Locale) {

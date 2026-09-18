@@ -172,7 +172,6 @@ export const commonZh = {
   "nav.header.profiles": "目标配置",
   "nav.header.conversations": "对话记录",
   "nav.header.memory": "记忆",
-  "nav.header.team": "团队与成员",
   "nav.sub.skills.overview": "目录总览",
   "nav.sub.skills.groups": "分组管理",
   "nav.sub.skills.sources": "技能源管理",
@@ -194,7 +193,6 @@ export const commonZh = {
   "nav.sub.conversations.usage": "用量统计",
   "nav.sub.memory.recent": "近期",
   "nav.sub.memory.recall": "深度回忆",
-  "nav.sub.team.overview": "团队与花名册",
   "underConstruction.eyebrow": "功能建设中",
   "underConstruction.title": "{{feature}} 正在建设中",
   "underConstruction.description":

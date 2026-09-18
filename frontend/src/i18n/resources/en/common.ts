@@ -181,7 +181,6 @@ export const commonEn = {
   "nav.header.profiles": "Profiles",
   "nav.header.conversations": "Conversations",
   "nav.header.memory": "Memory",
-  "nav.header.team": "Team",
   "nav.sub.skills.overview": "Catalog Overview",
   "nav.sub.skills.groups": "Groups",
   "nav.sub.skills.sources": "Skill Sources",
@@ -203,7 +202,6 @@ export const commonEn = {
   "nav.sub.conversations.usage": "Token Usage",
   "nav.sub.memory.recent": "Recent",
   "nav.sub.memory.recall": "Recall",
-  "nav.sub.team.overview": "Teams & Rosters",
   "underConstruction.eyebrow": "Feature in progress",
   "underConstruction.title": "{{feature}} is under construction",
   "underConstruction.description":

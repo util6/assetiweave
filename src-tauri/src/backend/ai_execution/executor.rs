@@ -324,9 +324,6 @@ impl AgentExecutor {
             {
                 return Err(AiExecutionError::MemoryGenerationToolsUnavailable);
             }
-            if request.team_tools.is_some() && !definition.declared_capabilities.team_tools {
-                return Err(AiExecutionError::TeamToolsUnavailable);
-            }
             if let Ok(mut active) = self.active.lock() {
                 if let Some((_, installation_id, _)) = active.get_mut(&active_id) {
                     *installation_id = definition.installation_id.clone();

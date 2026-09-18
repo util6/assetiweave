@@ -357,24 +357,6 @@ async fn antigravity_routes_only_via_acp_and_rejects_missing_capabilities() {
     assert_eq!(acp_backend.calls.load(Ordering::SeqCst), 1);
     assert_eq!(native_backend.calls.load(Ordering::SeqCst), 0);
 
-    // 2. Team tools rejected with TeamToolsUnavailable because capability is false
-    let mut team_req = request("antigravity");
-    team_req.team_tools = Some(crate::backend::ai_execution::AiTeamTools {
-        tenant_id: "test-tenant".to_string(),
-        team_id: "test-team".to_string(),
-        run_id: "test-run".to_string(),
-        member_id: "test-member".to_string(),
-        credential: "test-cred".to_string(),
-        database_path: ":memory:".to_string(),
-    });
-    let team_res = executor.execute(team_req).await;
-    assert!(matches!(
-        team_res,
-        Err(AiExecutionError::TeamToolsUnavailable)
-    ));
-    assert_eq!(acp_backend.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(native_backend.calls.load(Ordering::SeqCst), 0);
-
     // 3. Replay rejected with ResumeUnavailable when history_replay capability is false
     let mut no_replay_def = antigravity_def.clone();
     no_replay_def.id = AgentId::parse("antigravity-no-replay").unwrap();
@@ -451,7 +433,6 @@ fn request(agent_id: &str) -> AiExecutionRequest {
         binding: None,
         replay: false,
         restore_only: false,
-        team_tools: None,
         recall_tools: None,
         memory_generation_tools: None,
     }

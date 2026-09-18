@@ -41,10 +41,6 @@ const MemoryPage = lazyRouteComponent(
   () => import("../pages/memory/MemoryPage"),
   "MemoryPage",
 );
-const TeamPage = lazyRouteComponent(
-  () => import("../pages/team/TeamPage"),
-  "TeamPage",
-);
 const UnderConstructionPage = lazyRouteComponent(
   () => import("../pages/under-construction/UnderConstructionPage"),
   "UnderConstructionPage",
@@ -253,9 +249,6 @@ function MemoryRecallView() {
   );
 }
 
-function TeamOverviewView() {
-  return <TeamPage />;
-}
 
 function UnderConstructionView() {
   const { onManualOpen } = useWorkspaceContext();
@@ -347,12 +340,6 @@ export const memoryRecallRoute = createRoute({
   pendingComponent: ColumnsPending,
 });
 
-export const teamOverviewRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/team/overview",
-  component: TeamOverviewView,
-  pendingComponent: ColumnsPending,
-});
 
 export const underConstructionRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -379,7 +366,6 @@ export const routeTree = rootRoute.addChildren([
   promptsOverviewRoute,
   memoryRecentRoute,
   memoryRecallRoute,
-  teamOverviewRoute,
   underConstructionRoute,
   wildcardRoute,
 ]);

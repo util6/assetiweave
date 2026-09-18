@@ -67,7 +67,6 @@ fn installation_definition_is_local_and_does_not_contain_package_manager_invocat
         "historyReplay": true,
         "liveEvents": true,
         "richHistoryReplay": true,
-        "teamTools": true,
     });
     resolved_definition["sessionCleanupArgs"] =
         serde_json::json!(["session", "delete", "{session_id}"]);
@@ -280,7 +279,6 @@ fn test_request(
         binding: None,
         replay: false,
         restore_only: false,
-        team_tools: None,
         recall_tools: None,
         memory_generation_tools: None,
     }

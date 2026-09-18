@@ -195,7 +195,7 @@ describe("useCatalogData navigation persistence", () => {
     // 租户切换到 tenant-b
     const tenantBModel = {
       ...fallbackNavigationModel,
-      activeSubNavId: "team",
+      activeSubNavId: "mcp.servers",
     };
     queryClient.setQueryData(
       catalogKeys.navigation({ tenantId: "tenant-b", epoch: 1 }),
@@ -215,7 +215,7 @@ describe("useCatalogData navigation persistence", () => {
       await vi.runAllTimersAsync();
     });
 
-    // 租户切换后，乐观导航应被清空，并正确呈现新租户 B 的导航缓存 "team"
-    expect(result.current.navigationModel.activeSubNavId).toBe("team");
+    // 租户切换后，乐观导航应被清空，并正确呈现新租户 B 的导航缓存 "mcp.servers"
+    expect(result.current.navigationModel.activeSubNavId).toBe("mcp.servers");
   });
 });

@@ -9,8 +9,6 @@ const names = [
   "MemoryTask",
   "SkillBackup",
   "CatalogTask",
-  "TeamTask",
-  "TeamSession",
 ];
 
 it.each(names)("%s 不再拥有自研请求运行时或poll interval", (name) => {

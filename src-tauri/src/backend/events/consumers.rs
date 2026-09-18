@@ -36,7 +36,6 @@ impl DomainEventConsumer for SearchIndexAdvanceConsumer {
                 DomainEvent::ConversationSourceCommitted { tenant_id, .. } => {
                     Some(tenant_id.clone())
                 }
-                DomainEvent::TeamRunConfirmed { .. } => None,
             })
             .collect::<BTreeSet<_>>();
         let database = self.database.clone();

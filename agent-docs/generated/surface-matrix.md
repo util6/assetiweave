@@ -160,35 +160,6 @@
 | `task.get` | `get_public_task` | — | `get_public_task` | `read` | `false` |
 | `task.list` | `list_public_tasks` | — | `list_public_tasks` | `read` | `false` |
 | `task.retry` | `retry_public_task` | — | `retry_public_task` | `write` | `false` |
-| `team.create` | `create_team`<br>`team.create` | `assetiweave-cli team create --name <name>` | `create_team` | `write` | `false` |
-| `team.delete` | `delete_team`<br>`team.delete` | `assetiweave-cli team delete <team-id> --yes` | `delete_team` | `high-risk-write` | `true` |
-| `team.get` | `get_team`<br>`team.get` | `assetiweave-cli team get <team-id>` | `get_team` | `read` | `false` |
-| `team.leader.chat` | `team.leader.chat`<br>`team_leader_chat` | `assetiweave-cli team leader chat <team-id> --message <message>` | `team_leader_chat` | `write` | `false` |
-| `team.list` | `list_teams`<br>`team.list` | `assetiweave-cli team list` | `list_teams` | `read` | `false` |
-| `team.mailbox.read` | `team_mailbox_read` | — | `team_mailbox_read` | `write` | `false` |
-| `team.mailbox.send` | `team_mailbox_send` | — | `team_mailbox_send` | `write` | `false` |
-| `team.member.replay.start` | `team_member_replay_start` | `assetiweave-cli team member replay <team-id> --member-id <member-id>` | `team_member_replay_start` | `read` | `false` |
-| `team.member.stream.snapshot` | `team_member_stream_snapshot` | `assetiweave-cli team member stream <team-id> --member-id <member-id> --execution-id <execution-id>` | `team_member_stream_snapshot` | `read` | `false` |
-| `team.member.task.get` | `team_member_task_get` | `assetiweave-cli team member task get <task-id>` | `team_member_task_get` | `read` | `false` |
-| `team.member.tasks.list` | `team_member_tasks_list` | `assetiweave-cli team member task list` | `team_member_tasks_list` | `read` | `false` |
-| `team.member.turn.cancel` | `team_member_turn_cancel` | `assetiweave-cli team member cancel <team-id> --member-id <member-id> --execution-id <execution-id>` | `team_member_turn_cancel` | `write` | `false` |
-| `team.member.turn.start` | `team_member_turn_start` | `assetiweave-cli team member turn <team-id> --member-id <member-id> --message <message>` | `team_member_turn_start` | `write` | `false` |
-| `team.run.cancel` | `team_run_cancel` | — | `team_run_cancel` | `write` | `false` |
-| `team.run.confirm` | `team.run.confirm`<br>`team_run_confirm` | `assetiweave-cli team run confirm <run-id> --revision <revision> --yes` | `team_run_confirm` | `high-risk-write` | `true` |
-| `team.run.draft` | `team.run.draft`<br>`team_run_draft` | `assetiweave-cli team run draft <team-id> --message <message>` | `team_run_draft` | `write` | `false` |
-| `team.run.get` | `team.run.get`<br>`team_run_get` | `assetiweave-cli team run get <run-id>` | `team_run_get` | `read` | `false` |
-| `team.run.latest` | `team_run_latest` | — | `team_run_latest` | `read` | `false` |
-| `team.run.restore` | `team.run.restore`<br>`team_run_restore` | `assetiweave-cli team run restore <run-id>` | `team_run_restore` | `read` | `false` |
-| `team.run.review` | `team.run.review`<br>`team_run_review` | `assetiweave-cli team run review <run-id> --tasks <json>` | `team_run_review` | `write` | `false` |
-| `team.run.task` | `team_run_task` | — | `team_run_task` | `read` | `false` |
-| `team.run.tasks` | `list_team_run_tasks` | — | `list_team_run_tasks` | `read` | `false` |
-| `team.task.update` | `team_task_update` | — | `team_task_update` | `write` | `false` |
-| `team.tool.credential.issue` | `team_tool_credential_issue` | — | `team_tool_credential_issue` | `write` | `false` |
-| `team.tool.mailbox.read` | `team.tool.mailbox.read`<br>`team_tool_mailbox_read` | `assetiweave-cli team mailbox read <run-id> --credential <credential>` | `team_tool_mailbox_read` | `write` | `false` |
-| `team.tool.mailbox.send` | `team.tool.mailbox.send`<br>`team_tool_mailbox_send` | `assetiweave-cli team mailbox send <run-id> --credential <credential>` | `team_tool_mailbox_send` | `write` | `false` |
-| `team.tool.task.update` | `team.tool.task.update`<br>`team_tool_task_update` | `assetiweave-cli team task update <task-id> --credential <credential>` | `team_tool_task_update` | `write` | `false` |
-| `team.tool.tasks` | `team.tool.tasks`<br>`team_tool_tasks` | `assetiweave-cli team tool tasks --credential <credential>` | `team_tool_tasks` | `read` | `false` |
-| `team.update` | `team.update`<br>`update_team` | `assetiweave-cli team update <team-id> --name <name>` | `update_team` | `write` | `false` |
 | `tenant.active` | `get_active_tenant`<br>`tenant.active` | `assetiweave-cli tenant active` | `get_active_tenant` | `read` | `false` |
 | `tenant.create` | `create_tenant`<br>`tenant.create` | `assetiweave-cli tenant create <name>` | `create_tenant` | `write` | `false` |
 | `tenant.list` | `list_tenants`<br>`tenant.list` | `assetiweave-cli tenant list` | `list_tenants` | `read` | `false` |

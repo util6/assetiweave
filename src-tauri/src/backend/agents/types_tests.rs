@@ -117,21 +117,6 @@ fn valid_acp_definition_passes_validation() {
     assert!(definition.declared_capabilities.text_prompt);
 }
 
-#[test]
-fn team_capability_gap_is_reported_in_stable_order() {
-    let capabilities = DeclaredAgentCapabilities {
-        resume: false,
-        history_replay: true,
-        live_events: false,
-        ..DeclaredAgentCapabilities::default()
-    };
-
-    assert_eq!(
-        capabilities.missing_team_capabilities(),
-        vec!["resume", "live_events"]
-    );
-}
-
 fn definition_with_command(command: &str) -> AgentDefinition {
     AgentDefinition {
         id: AgentId::parse("opencode").unwrap(),

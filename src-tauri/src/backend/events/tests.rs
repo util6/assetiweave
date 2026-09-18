@@ -552,7 +552,6 @@ async fn stop_waits_for_tracked_worker_without_dropping_handle() {
 fn event_id(event: &DomainEvent) -> &str {
     match event {
         DomainEvent::ConversationSourceCommitted { event_id, .. } => event_id,
-        DomainEvent::TeamRunConfirmed { event_id, .. } => event_id,
     }
 }
 

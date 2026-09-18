@@ -1148,7 +1148,10 @@ impl AppService {
             session_mode: AgentSessionMode::OneShot,
             prompt,
             model,
-            limits: AiExecutionLimits::default(),
+            limits: AiExecutionLimits {
+                initialize_timeout: std::time::Duration::from_secs(30),
+                ..AiExecutionLimits::default()
+            },
             cancellation: AiExecutionCancellation::from_token(cancellation),
             progress,
             tenant_id: Some(job.tenant_id.clone()),
@@ -1156,7 +1159,6 @@ impl AppService {
             binding: None,
             replay: false,
             restore_only: false,
-            team_tools: None,
             recall_tools: None,
             memory_generation_tools: None,
         };

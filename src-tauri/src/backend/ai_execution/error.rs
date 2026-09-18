@@ -17,8 +17,6 @@ pub(crate) enum AiExecutionError {
     InvalidReplayMode,
     #[error("the saved AI execution session is unavailable")]
     ResumeUnavailable,
-    #[error("the selected AI agent has no Team tool capability")]
-    TeamToolsUnavailable,
     #[error("Recall execution requires an ACP agent with read-only Recall tools")]
     RecallToolsUnavailable,
     #[error("Memory Generation tools require an ACP agent")]
@@ -82,11 +80,6 @@ impl AiExecutionError {
             Self::ResumeUnavailable => (
                 "resume_unavailable",
                 "The saved AI execution session is no longer available for resume.",
-                false,
-            ),
-            Self::TeamToolsUnavailable => (
-                "team_tools_unavailable",
-                "The selected AI agent has not declared the Team tool capability.",
                 false,
             ),
             Self::RecallToolsUnavailable => (

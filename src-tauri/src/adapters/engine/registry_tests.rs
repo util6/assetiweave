@@ -11,22 +11,6 @@ fn registry_methods_are_unique() {
 }
 
 #[test]
-fn team_member_transport_methods_are_registered_with_shared_app_authority() {
-    for (method, risk) in [
-        ("team.member.turn.start", CommandRisk::Write),
-        ("team.member.replay.start", CommandRisk::Read),
-        ("team.member.stream.snapshot", CommandRisk::Read),
-        ("team.member.task.get", CommandRisk::Read),
-        ("team.member.tasks.list", CommandRisk::Read),
-        ("team.member.turn.cancel", CommandRisk::Write),
-    ] {
-        let spec = find(method).unwrap_or_else(|| panic!("missing {method}"));
-        assert_eq!(spec.exposure, CommandExposure::App);
-        assert_eq!(spec.risk, risk);
-    }
-}
-
-#[test]
 fn system_version_is_registered_as_system_command() {
     let spec = find("system.version").expect("system.version spec");
     assert_eq!(spec.exposure, CommandExposure::System);

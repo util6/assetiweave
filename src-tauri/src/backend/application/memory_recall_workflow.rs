@@ -393,7 +393,6 @@ impl AppService {
             binding: None,
             replay: false,
             restore_only: false,
-            team_tools: None,
             recall_tools: Some(crate::backend::ai_execution::AiRecallTools {
                 tenant_id: tenant_id.to_string(),
                 recall_session_id: session.id.clone(),

@@ -867,7 +867,6 @@ fn connection_probe_request(definition: &AgentDefinition) -> AiExecutionRequest 
         binding: None,
         replay: false,
         restore_only: false,
-        team_tools: None,
         recall_tools: None,
         memory_generation_tools: None,
     }
@@ -1087,11 +1086,13 @@ async fn run_execution(
         .protocol
         .as_ref()
         .expect("protocol stored before session");
-    let mut mcp_servers = team_mcp_servers(request.team_tools.as_ref())?;
-    mcp_servers.extend(recall_mcp_servers(request.recall_tools.as_ref())?);
-    mcp_servers.extend(memory_generation_mcp_servers(
-        request.memory_generation_tools.as_ref(),
-    )?);
+    let mut mcp_servers = Vec::new();
+    if protocol.supports_stdio_mcp(&definition.id) {
+        mcp_servers.extend(recall_mcp_servers(request.recall_tools.as_ref())?);
+        mcp_servers.extend(memory_generation_mcp_servers(
+            request.memory_generation_tools.as_ref(),
+        )?);
+    }
     let session = if let Some(bound_session) = guard.bound_session.clone() {
         let session_id = SessionId::new(bound_session);
         if request.replay {
@@ -1229,36 +1230,6 @@ async fn run_execution(
         replay_text: None,
         session_cleanup: SessionCleanupStatus::Skipped,
     })
-}
-
-fn team_mcp_servers(
-    team_tools: Option<&crate::backend::ai_execution::AiTeamTools>,
-) -> Result<Vec<McpServer>, AiExecutionError> {
-    let Some(team_tools) = team_tools else {
-        return Ok(Vec::new());
-    };
-    let executable = std::env::current_exe().map_err(|_| AiExecutionError::Protocol {
-        operation: "team_mcp_executable",
-    })?;
-    Ok(vec![McpServer::Stdio(
-        McpServerStdio::new("assetiweave-team", executable)
-            .args(vec!["--team-mcp-stdio".to_string()])
-            .env(vec![
-                EnvVariable::new("ASSETIWEAVE_DB_PATH", team_tools.database_path.clone()),
-                EnvVariable::new(
-                    "ASSETIWEAVE_TEAM_TOOL_TENANT_ID",
-                    team_tools.tenant_id.clone(),
-                ),
-                EnvVariable::new(
-                    "ASSETIWEAVE_TEAM_TOOL_MEMBER_ID",
-                    team_tools.member_id.clone(),
-                ),
-                EnvVariable::new(
-                    "ASSETIWEAVE_TEAM_TOOL_CREDENTIAL",
-                    team_tools.credential.clone(),
-                ),
-            ]),
-    )])
 }
 
 fn recall_mcp_servers(

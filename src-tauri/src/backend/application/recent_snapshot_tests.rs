@@ -250,3 +250,68 @@ async fn test_memory_v2_schema_constraints() {
     drop(service);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn test_real_recent_generation() {
+    use crate::backend::store;
+
+    let db_path = crate::backend::path_utils::app_db_path().expect("db path");
+    let service = AppService::open_with_db_path(db_path)
+        .await
+        .expect("open service");
+    let now = chrono::Utc::now();
+    let prep = service
+        .prepare_recent_snapshot_generation_with_options(Some(now), true)
+        .await
+        .expect("prepare");
+    println!("Preparation is_some: {}", prep.is_some());
+    let prep = prep.expect("has preparation");
+    let job_id = service
+        .enqueue_recent_snapshot_generation(&prep, now)
+        .await
+        .expect("enqueue");
+    println!("Job ID: {}", job_id);
+    let _ = sqlx::query(
+        "UPDATE recent_memory_jobs SET status = 'queued', retry_count = 0, ownership_token = NULL, lease_expires_at = NULL WHERE id = ?1",
+    )
+    .bind(&job_id)
+    .execute(service.db.pool())
+    .await;
+    let token = format!("test-owner-{}", uuid::Uuid::new_v4());
+    let claimed = store::claim_recent_memory_job_with_lease_sqlx(
+        service.db.pool(),
+        service.tenant_id(),
+        &job_id,
+        &token,
+        &now.to_rfc3339(),
+    )
+    .await
+    .expect("claim job");
+    assert!(claimed);
+    let job = store::load_recent_memory_job_sqlx(service.db.pool(), service.tenant_id(), &job_id)
+        .await
+        .expect("load job")
+        .expect("job exists");
+    let result = service
+        .run_recent_snapshot_generation_job(
+            &job,
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            None,
+        )
+        .await;
+    match &result {
+        Ok(view) => {
+            println!(
+                "SUCCESS! snapshot_id={}, projects={}",
+                view.snapshot_id,
+                view.projects.len()
+            );
+        }
+        Err(err) => {
+            println!("ERROR: {:?}", err);
+        }
+    }
+    assert!(result.is_ok());
+}
