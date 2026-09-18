@@ -1,6 +1,6 @@
 # 前端设计系统与视觉规范 (AssetIWeave UI)
 
-> **核心依据**：[ADR-0009: 前端整体视觉重构与组件分层体系](file:///Users/util6/code-space/assetiweave/agent-docs/adr/0009-aiw-ui-frontend-architecture.md)  
+> **核心依据**：[ADR-0009: 参照 Auroraqua-UI 进行前端整体视觉重构与组件分层体系](file:///Users/util6/code-space/assetiweave/agent-docs/adr/0009-auroraqua-ui-frontend-architecture.md)  
 > **适用范围**：`frontend/src/` 下所有页面、组件、弹窗、表单与样式开发。  
 > **治理效力**：项目级强制规范，所有 AI Agent 与开发者严禁违背。
 
