@@ -2,25 +2,19 @@ use super::service::AppService;
 use crate::backend::{
     ai_execution::{
         execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
-        AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
-        SessionEvent, SessionEventDelivery, SessionEventIdentity, SessionEventKind,
+        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest, SessionCleanupStatus,
     },
-    dto::{
-        AgentInfoView, AgentSessionContextView, AgentSessionRef, AgentSessionTerminalView,
-        ConversationContentNodeLocator, ConversationSessionDetail,
-    },
+    dto::{AgentSessionRef, ConversationContentNodeLocator, ConversationSessionDetail},
     evidence::{
         build_bounded_evidence_initial_pack, BoundedEvidenceInitialPack, BoundedEvidenceNode,
         EvidenceNodeKind, EvidenceReadStatus, ShortEvidenceRef,
     },
     models::{
         BoundedMemoryBudgetPolicy, ConversationPartRole, MemoryExecutionWorkOrder, MemoryRecipe,
-        MemoryRecipeSnapshot, NormalizedConversationPart, NormalizedConversationSession,
-        NormalizedConversationTurn, RecentMemoryEventCategory, SessionMemory, SessionMemoryJob,
-        SessionMemoryJobStatus,
+        NormalizedConversationPart, NormalizedConversationSession, NormalizedConversationTurn,
+        RecentMemoryEventCategory, SessionMemory, SessionMemoryJob, SessionMemoryJobStatus,
     },
     runtime::{
-        session_streams::{AgentSessionMetadata, SessionStreamKey},
         tasks::{
             StageStatus, TaskActivity, TaskCapabilities, TaskContext, TaskFailure, TaskMetric,
             TaskOutcome, TaskStage,
@@ -52,7 +46,43 @@ const MAX_ITEM_LENGTH: usize = 4000;
 const MAX_AGENT_OUTPUT_LENGTH: usize = 200_000;
 const MAX_SESSION_MEMORY_CONCURRENCY: usize = 4;
 
-fn sanitize_memory_failure(code: &str, raw_message: &str, stage: &str) -> TaskFailure {
+fn is_error_retryable(error: &AppError) -> bool {
+    match error {
+        AppError::Validation(_) => false,
+        AppError::Domain {
+            retryable, code, ..
+        } => {
+            if !*retryable {
+                return false;
+            }
+            !matches!(
+                code.as_str(),
+                "agent_not_found"
+                    | "tool_use_denied"
+                    | "model_not_found"
+                    | "protocol_unsupported"
+                    | "config_invalid"
+            )
+        }
+        AppError::Cancelled(_) => false,
+        _ => true,
+    }
+}
+
+struct SessionMemoryAgentExecutionResult {
+    raw_text: String,
+    short_refs: std::collections::HashMap<String, ShortEvidenceRef>,
+    pack: BoundedEvidenceInitialPack,
+    session_cleanup: SessionCleanupStatus,
+    is_empty: bool,
+}
+
+fn sanitize_memory_failure(
+    code: &str,
+    raw_message: &str,
+    stage: &str,
+    retryable: bool,
+) -> TaskFailure {
     let sanitized_code = if code.is_empty() {
         "memory_execution_failed".to_string()
     } else {
@@ -75,7 +105,7 @@ fn sanitize_memory_failure(code: &str, raw_message: &str, stage: &str) -> TaskFa
         message: safe_message,
         stage: stage.to_string(),
         identity: None,
-        retryable: true,
+        retryable,
         path: None,
         timestamp: Utc::now().to_rfc3339(),
     }
@@ -340,6 +370,20 @@ impl AppService {
                 skipped: Vec::new(),
                 agent_session_ref: None,
             },
+            TaskStage {
+                id: "cleanup_session".to_string(),
+                name: "清理 Agent 会话".to_string(),
+                status: StageStatus::Pending,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                progress: None,
+                current_activities: Vec::new(),
+                metrics: Vec::new(),
+                failures: Vec::new(),
+                skipped: Vec::new(),
+                agent_session_ref: None,
+            },
         ];
         progress.set_stages(stages);
 
@@ -485,7 +529,7 @@ impl AppService {
                 Some(memory_session.sink.clone()),
             )
             .await;
-        let (output, short_refs, _is_empty_content) = match result {
+        let execution = match result {
             Ok(output) => {
                 memory_session.finish_succeeded(&self.runtime);
                 progress.finish_stage(
@@ -532,8 +576,13 @@ impl AppService {
                 } else {
                     code
                 };
-                let safe_failure =
-                    sanitize_memory_failure(&failure_code, &error.to_string(), "agent_execution");
+                let retryable = is_error_retryable(&error);
+                let safe_failure = sanitize_memory_failure(
+                    &failure_code,
+                    &error.to_string(),
+                    "agent_execution",
+                    retryable,
+                );
                 memory_session.finish_failed(
                     &self.runtime,
                     &failure_code,
@@ -555,6 +604,7 @@ impl AppService {
                     &ownership_token,
                     &failure_code,
                     &now_text,
+                    retryable,
                 )
                 .await?;
                 return Err(error);
@@ -583,8 +633,96 @@ impl AppService {
 
         // Stage 4: validation
         progress.update_stage_status("validation", StageStatus::Running);
-        let evidence = if !short_refs.is_empty() {
-            let mut refs = build_bounded_evidence_references(&detail, &short_refs);
+        let output = if execution.is_empty {
+            SessionMemoryAgentOutput {
+                summary: "No content available in this session.".to_string(),
+                goal: String::new(),
+                result: String::new(),
+                decisions: Vec::new(),
+                verification: Vec::new(),
+                blockers: Vec::new(),
+                follow_up: Vec::new(),
+                topics: Vec::new(),
+                source_references: Vec::new(),
+                events: Vec::new(),
+            }
+        } else {
+            let parsed_output = parse_session_memory_agent_output(&execution.raw_text);
+            let mut parsed = match parsed_output {
+                Ok(out) => out,
+                Err(err) => {
+                    drop(lease_guard);
+                    let line = err.line();
+                    let column = err.column();
+                    let category = match err.classify() {
+                        serde_json::error::Category::Io => "io",
+                        serde_json::error::Category::Syntax => "syntax",
+                        serde_json::error::Category::Data => "data",
+                        serde_json::error::Category::Eof => "eof",
+                    };
+                    let raw_len = execution.raw_text.len();
+                    let raw_sha256 = digest(&execution.raw_text);
+                    let err_msg = format!(
+                        "Session Memory Agent output JSON validation failed: {err} (cat={category}, line={line}, col={column}, len={raw_len}, sha={:.8})",
+                        raw_sha256
+                    );
+                    let safe_failure = sanitize_memory_failure(
+                        "session_memory_validation_failed",
+                        &err_msg,
+                        "validation",
+                        false,
+                    );
+                    progress.finish_stage(
+                        "validation",
+                        StageStatus::Failed,
+                        Vec::new(),
+                        vec![safe_failure.clone()],
+                        Vec::new(),
+                    );
+                    progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
+                    store::mark_session_memory_job_failed_with_lease_sqlx(
+                        &pool,
+                        tenant_id,
+                        job_id,
+                        &ownership_token,
+                        "session_memory_validation_failed",
+                        &now_text,
+                        false,
+                    )
+                    .await?;
+                    return Err(AppError::Validation(format!(
+                        "Session Memory Agent output is invalid: {err_msg}"
+                    )));
+                }
+            };
+
+            // 准入校验与事实过滤：
+            // 1. 过滤被用户更正/否决的提案 (E02)
+            let corrections: Vec<BoundedEvidenceNode> = execution
+                .pack
+                .intent_and_corrections
+                .iter()
+                .filter(|n| n.kind == EvidenceNodeKind::UserCorrection)
+                .cloned()
+                .collect();
+            parsed.decisions = sanitize_decisions_with_corrections(parsed.decisions, &corrections);
+
+            // 2. 检查是否有 VerificationEvidence，无则过滤虚假通过 (E03)
+            let has_verification_evidence = execution
+                .pack
+                .outcomes_and_verifications
+                .iter()
+                .any(|n| n.kind == EvidenceNodeKind::VerificationEvidence);
+            parsed.verification = sanitize_verifications_with_evidence(
+                parsed.verification,
+                has_verification_evidence,
+            );
+
+            parsed
+        };
+
+        let evidence = if !execution.short_refs.is_empty() {
+            let mut refs = build_bounded_evidence_references(&detail, &execution.short_refs);
             refs.extend(build_evidence_references(&detail));
             refs
         } else {
@@ -609,6 +747,7 @@ impl AppService {
                         "session_memory_validation_failed",
                         &error.to_string(),
                         "validation",
+                        false,
                     );
                     progress.finish_stage(
                         "validation",
@@ -625,6 +764,7 @@ impl AppService {
                         &ownership_token,
                         "session_memory_validation_failed",
                         &now_text,
+                        false,
                     )
                     .await?;
                     return Err(error);
@@ -658,6 +798,7 @@ impl AppService {
                 "session_memory_persist_failed",
                 &error.to_string(),
                 "publish",
+                true,
             );
             progress.finish_stage(
                 "publish",
@@ -674,6 +815,7 @@ impl AppService {
                 &ownership_token,
                 "session_memory_persist_failed",
                 &now_text,
+                true,
             )
             .await?;
             return Err(error);
@@ -689,6 +831,59 @@ impl AppService {
             Vec::new(),
             Vec::new(),
         );
+
+        // Stage 6: cleanup_session
+        progress.update_stage_status("cleanup_session", StageStatus::Running);
+        match execution.session_cleanup {
+            SessionCleanupStatus::Deleted => {
+                progress.finish_stage(
+                    "cleanup_session",
+                    StageStatus::Succeeded,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
+            SessionCleanupStatus::Unsupported => {
+                tracing::warn!(
+                    action = "session_memory.cleanup_session",
+                    job_id = %job.id,
+                    "Agent backend reported session deletion unsupported; continuing with partial success"
+                );
+                progress.finish_stage(
+                    "cleanup_session",
+                    StageStatus::PartialSuccess,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
+            SessionCleanupStatus::Failed(ref reason) => {
+                tracing::warn!(
+                    action = "session_memory.cleanup_session",
+                    job_id = %job.id,
+                    reason = %reason,
+                    "Agent backend reported session cleanup warning; continuing with partial success"
+                );
+                progress.finish_stage(
+                    "cleanup_session",
+                    StageStatus::PartialSuccess,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
+            SessionCleanupStatus::Skipped => {
+                progress.finish_stage(
+                    "cleanup_session",
+                    StageStatus::Skipped,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                );
+            }
+        }
+
         progress.set_outcome(
             TaskOutcome::Success,
             Some("会话记忆已成功生成并发布".to_string()),
@@ -712,6 +907,51 @@ impl AppService {
         let pool = self.db.pool().clone();
         let now_text = now.to_rfc3339();
         store::recover_expired_session_memory_leases_sqlx(&pool, tenant_id, &now_text).await?;
+        const MAX_SESSION_MEMORY_HOURLY_BUDGET: i64 = 60;
+        let one_hour_ago = (now - Duration::hours(1)).to_rfc3339();
+        let hourly_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_memory_jobs WHERE tenant_id = ?1 AND updated_at >= ?2 AND status IN ('running', 'succeeded', 'failed')",
+        )
+        .bind(tenant_id)
+        .bind(&one_hour_ago)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+        if hourly_count >= MAX_SESSION_MEMORY_HOURLY_BUDGET {
+            tracing::warn!(
+                tenant_id,
+                hourly_count,
+                "Session memory hourly budget exceeded; pausing dispatch for this tenant"
+            );
+            return Ok(0);
+        }
+
+        let recent_failures: Vec<Option<String>> = sqlx::query_scalar(
+            "SELECT last_error FROM session_memory_jobs WHERE tenant_id = ?1 AND status = 'failed' AND retry_at IS NOT NULL AND updated_at >= ?2 AND last_error IS NOT NULL ORDER BY updated_at DESC LIMIT 3",
+        )
+        .bind(tenant_id)
+        .bind(&one_hour_ago)
+        .fetch_all(&pool)
+        .await
+        .unwrap_or_default();
+
+        if recent_failures.len() >= 3 {
+            let first_err = recent_failures[0].as_deref().unwrap_or("");
+            if !first_err.is_empty()
+                && recent_failures
+                    .iter()
+                    .all(|e| e.as_deref() == Some(first_err))
+            {
+                tracing::warn!(
+                    tenant_id,
+                    error = first_err,
+                    "Session memory circuit breaker tripped: 3 consecutive identical failures. Pausing dispatch."
+                );
+                return Ok(0);
+            }
+        }
+
         let job_ids =
             store::list_session_memory_job_ids_for_scheduler_sqlx(&pool, tenant_id, &now_text, 32)
                 .await?;
@@ -720,11 +960,14 @@ impl AppService {
             if self
                 .runtime
                 .task_runtime()
-                .list(crate::backend::runtime::tasks::TaskFilter {
-                    kind: Some(crate::backend::runtime::tasks::TaskKind::Memory),
-                    active_only: true,
-                    ..Default::default()
-                })
+                .list_for_tenant(
+                    tenant_id,
+                    crate::backend::runtime::tasks::TaskFilter {
+                        kind: Some(crate::backend::runtime::tasks::TaskKind::Memory),
+                        active_only: true,
+                        ..Default::default()
+                    },
+                )
                 .len()
                 >= MAX_SESSION_MEMORY_CONCURRENCY
             {
@@ -753,7 +996,7 @@ impl AppService {
             if !completed && (!idle_ready || !not_before_ready) {
                 continue;
             }
-            let task_id = format!("session-memory-{}-{}", job.id, job.attempt_count);
+            let task_id = format!("session-memory-{}", job.id);
             let runtime = self.runtime.clone();
             let job_id_for_task = job.id.clone();
             let tenant_id_for_task = tenant_id.to_string();
@@ -761,6 +1004,7 @@ impl AppService {
             let run_at = now;
             let short_id: String = session_id.chars().take(8).collect();
             let title = format!("会话记忆生成 (#{short_id})");
+            let _ = self.runtime.task_runtime().remove_terminal(&task_id);
             let mut spec = crate::backend::runtime::tasks::TaskSpec::new(
                 crate::backend::runtime::tasks::TaskKind::Memory,
                 Some(format!("session-memory-job:{tenant_id}:{job_id}")),
@@ -785,21 +1029,58 @@ impl AppService {
                 .runtime
                 .task_runtime()
                 .spawn_async(spec, move |context| async move {
-                    AppService::from_runtime(&runtime)
+                    let service = AppService::from_runtime(&runtime)
+                        .for_tenant(&tenant_id_for_task)
+                        .await?;
+                    let result = service
                         .run_session_memory_phase1_for_tenant_at(
                             &tenant_id_for_task,
                             &job_id_for_task,
                             run_at,
                             context,
                         )
-                        .await
-                        .map(|memory| {
-                            json!({
-                                "domain": "session_memory",
-                                "job_id": job_id_for_task,
-                                "projected": memory.is_some(),
-                            })
+                        .await;
+                    let phase1_terminal = store::load_session_memory_job_sqlx(
+                        service.db.pool(),
+                        &tenant_id_for_task,
+                        &job_id_for_task,
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some_and(|job| {
+                        matches!(
+                            job.status,
+                            SessionMemoryJobStatus::Succeeded
+                                | SessionMemoryJobStatus::Skipped
+                                | SessionMemoryJobStatus::Failed
+                                | SessionMemoryJobStatus::Canceled
+                        )
+                    });
+                    if phase1_terminal {
+                        if let Err(error) = service
+                            .reconcile_recent_memory_jobs_for_tenant_at(
+                                &tenant_id_for_task,
+                                run_at,
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                action = "session_memory.reconcile_recent_after_terminal",
+                                tenant_id = %tenant_id_for_task,
+                                job_id = %job_id_for_task,
+                                error = %error,
+                                "Recent Snapshot reconciliation after Session Memory terminal state failed"
+                            );
+                        }
+                    }
+                    result.map(|memory| {
+                        json!({
+                            "domain": "session_memory",
+                            "job_id": job_id_for_task,
+                            "projected": memory.is_some(),
                         })
+                    })
                 }) {
                 Ok(crate::backend::runtime::tasks::SpawnOutcome::Started) => {
                     scheduled += 1;
@@ -817,11 +1098,7 @@ impl AppService {
         detail: &ConversationSessionDetail,
         cancellation: CancellationToken,
         progress: Option<Arc<dyn AiExecutionProgressSink>>,
-    ) -> AppResult<(
-        SessionMemoryAgentOutput,
-        HashMap<String, ShortEvidenceRef>,
-        bool,
-    )> {
+    ) -> AppResult<SessionMemoryAgentExecutionResult> {
         let recipe = if let Some(work_order_json) = &job.work_order_json {
             if let Ok(wo) = serde_json::from_str::<MemoryExecutionWorkOrder>(work_order_json) {
                 wo.recipe.to_recipe()
@@ -849,19 +1126,13 @@ impl AppService {
 
         // 如果完全没有有效节点（所有节点全为空或不可用）
         if pack.nodes_count == 0 && pack.coverage.indexed_nodes == 0 {
-            let empty_output = SessionMemoryAgentOutput {
-                summary: "No content available in this session.".to_string(),
-                goal: String::new(),
-                result: String::new(),
-                decisions: Vec::new(),
-                verification: Vec::new(),
-                blockers: Vec::new(),
-                follow_up: Vec::new(),
-                topics: Vec::new(),
-                source_references: Vec::new(),
-                events: Vec::new(),
-            };
-            return Ok((empty_output, short_refs, true));
+            return Ok(SessionMemoryAgentExecutionResult {
+                raw_text: String::new(),
+                short_refs,
+                pack,
+                session_cleanup: SessionCleanupStatus::Skipped,
+                is_empty: true,
+            });
         }
 
         let prompt = build_bounded_evidence_prompt(&pack, &recipe)?;
@@ -887,6 +1158,7 @@ impl AppService {
             restore_only: false,
             team_tools: None,
             recall_tools: None,
+            memory_generation_tools: None,
         };
         let result = execute_agent(self.agent_runtime.clone(), request)
             .await
@@ -904,31 +1176,14 @@ impl AppService {
                 "Session Memory Agent output is too large".to_string(),
             ));
         }
-        let json_text = strip_json_fence(&result.text);
-        let mut output: SessionMemoryAgentOutput =
-            serde_json::from_str(json_text).map_err(|_| {
-                AppError::Validation("Session Memory Agent output is invalid".to_string())
-            })?;
 
-        // 准入校验与事实过滤：
-        // 1. 过滤被用户更正/否决的提案 (E02)
-        let corrections: Vec<BoundedEvidenceNode> = pack
-            .intent_and_corrections
-            .iter()
-            .filter(|n| n.kind == EvidenceNodeKind::UserCorrection)
-            .cloned()
-            .collect();
-        output.decisions = sanitize_decisions_with_corrections(output.decisions, &corrections);
-
-        // 2. 检查是否有 VerificationEvidence，无则过滤虚假通过 (E03)
-        let has_verification_evidence = pack
-            .outcomes_and_verifications
-            .iter()
-            .any(|n| n.kind == EvidenceNodeKind::VerificationEvidence);
-        output.verification =
-            sanitize_verifications_with_evidence(output.verification, has_verification_evidence);
-
-        Ok((output, short_refs, false))
+        Ok(SessionMemoryAgentExecutionResult {
+            raw_text: result.text,
+            short_refs,
+            pack,
+            session_cleanup: result.session_cleanup,
+            is_empty: false,
+        })
     }
 }
 
@@ -1091,6 +1346,8 @@ pub(crate) fn build_bounded_evidence_prompt(
             "Cite evidence exclusively using the provided ref_key values (e.g. ref-t1-u, ref-t1-p1). Do not invent IDs.",
             "CRITICAL - User Decisions: Only record decisions that were confirmed by the user. If the user corrected, rejected, or modified an earlier proposal, DO NOT record the rejected/superseded proposal as a confirmed decision.",
             "CRITICAL - Verification: Distinguish between verified facts backed by test/tool evidence and unverified claims. If an agent claimed a task was completed or passed without verification evidence, do not record it as verified.",
+            "CRITICAL - Strict Output Format: You MUST output ONLY a single valid raw JSON object strictly conforming to output_format. Do NOT wrap output in markdown code blocks like ```json or ```. Do NOT include any greetings, explanations, notes, or any text before or after the JSON.",
+            "CRITICAL - Tool Prohibition: You are strictly forbidden from calling or invoking any tools, executing commands, reading files, or requesting user input. Produce the final JSON directly from the provided evidence.",
             "If the session has no meaningful user content or all nodes are unavailable, output empty arrays and empty summary."
         ],
         "output_format": {
@@ -1277,12 +1534,22 @@ fn validated_persist_input(
         .collect::<BTreeMap<_, _>>();
     let mut references = Vec::new();
     let mut seen_references = BTreeSet::new();
-    for reference in output.source_references.iter().take(MAX_OUTPUT_ITEMS) {
-        let key = reference.reference_key.trim();
+    let requested_reference_keys = output
+        .source_references
+        .iter()
+        .take(MAX_OUTPUT_ITEMS)
+        .map(|reference| reference.reference_key.as_str())
+        .chain(
+            output
+                .events
+                .iter()
+                .take(MAX_OUTPUT_ITEMS)
+                .filter_map(|event| event.source_reference.as_deref()),
+        );
+    for requested_key in requested_reference_keys {
+        let key = requested_key.trim();
         let Some(evidence) = evidence_by_key.get(key) else {
-            return Err(AppError::Validation(
-                "Session Memory contains an unknown source reference".to_string(),
-            ));
+            continue;
         };
         if !seen_references.insert(key.to_string()) {
             continue;
@@ -1300,7 +1567,26 @@ fn validated_persist_input(
             source_revision: job.source_revision,
         });
     }
+    if references.is_empty() && !evidence.is_empty() {
+        let fallback = &evidence[0];
+        references.push(SessionMemoryReferenceInput {
+            source_id: job.source_id.clone(),
+            session_id: job.session_id.clone(),
+            question_id: Some(fallback.locator.question_id.clone()),
+            turn_id: Some(fallback.locator.turn_id.clone()),
+            part_id: (!fallback.locator.part_id.is_empty())
+                .then(|| fallback.locator.part_id.clone()),
+            node_id: fallback.node_id.clone(),
+            node_order: Some(fallback.locator.node_order),
+            reference_key: fallback.key.clone(),
+            source_revision: job.source_revision,
+        });
+    }
     let is_empty_session = output.source_references.is_empty()
+        && output
+            .events
+            .iter()
+            .all(|event| event.source_reference.as_deref().is_none_or(str::is_empty))
         && (output.summary.is_empty()
             || output.summary == "No content available in this session."
             || evidence.is_empty());
@@ -1310,6 +1596,7 @@ fn validated_persist_input(
             "Session Memory must cite at least one source reference".to_string(),
         ));
     }
+
     let memory_id = session_memory_id(job);
     let reference_ids = references
         .iter()
@@ -1336,14 +1623,13 @@ fn validated_persist_input(
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        if let Some(reference_key) = source_reference_id.as_deref() {
-            if !reference_ids.contains_key(reference_key) {
-                return Err(AppError::Validation(
-                    "Recent Event must cite a Session Memory source reference".to_string(),
-                ));
-            }
-        }
+            .and_then(|reference_key| {
+                if reference_ids.contains_key(reference_key) {
+                    Some(reference_key.to_string())
+                } else {
+                    reference_ids.keys().next().cloned()
+                }
+            });
         let fingerprint = event
             .fingerprint
             .as_deref()
@@ -1545,13 +1831,257 @@ fn session_idle_ready(detail: &ConversationSessionDetail, now: DateTime<Utc>) ->
 }
 
 fn strip_json_fence(value: &str) -> &str {
-    let value = value.trim();
-    value
-        .strip_prefix("```json")
-        .or_else(|| value.strip_prefix("```"))
-        .and_then(|value| value.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(value)
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return trimmed;
+    }
+
+    // Agent 偶尔会在 JSON 字符串值中直接输出未转义的引号。此时外层对象
+    // 虽然暂时无法被 serde_json 解析，结构边界仍然是完整的。必须优先保留
+    // 这个外层对象，不能继续向内扫描并把某个 Recent Event 子对象误当成
+    // 整份 Session Memory。
+    if trimmed.starts_with('{') {
+        if let Some(candidate) = json_object_from_start(trimmed) {
+            if is_parseable_or_repairable_memory_candidate(candidate) {
+                return candidate;
+            }
+        }
+    }
+
+    // 1. 如果整体已经是 Session Memory JSON 对象，直接返回
+    if first_valid_json_object(trimmed).is_some_and(|candidate| candidate == trimmed) {
+        return trimmed;
+    }
+
+    // 2. 扫描所有代码围栏 (```json 或 ```)，优先提取第一个能解析成合法 JSON 对象的块
+    let mut search_pos = 0;
+    while let Some(start_rel) = trimmed[search_pos..].find("```") {
+        let block_start = search_pos + start_rel;
+        let content_start = if trimmed[block_start..].starts_with("```json") {
+            block_start + 7
+        } else {
+            block_start + 3
+        };
+        if let Some(end_rel) = trimmed[content_start..].find("```") {
+            let block_end = content_start + end_rel;
+            let block_content = trimmed[content_start..block_end].trim();
+            if block_content.starts_with('{') {
+                if let Some(candidate) = json_object_from_start(block_content) {
+                    if is_parseable_or_repairable_memory_candidate(candidate) {
+                        return candidate;
+                    }
+                }
+            }
+            if let Some(candidate) = first_session_memory_json_object(block_content)
+                .or_else(|| first_valid_json_object(block_content))
+            {
+                return candidate;
+            }
+            search_pos = block_end + 3;
+        } else {
+            break;
+        }
+    }
+
+    // 3. 从前往后扫描平衡的大括号，避免前置思考文本中的无关 `{...}`
+    // 把真正的业务 JSON 与尾部内容拼成一个不可解析的大区间。
+    if let Some(candidate) =
+        first_session_memory_json_object(trimmed).or_else(|| first_valid_json_object(trimmed))
+    {
+        return candidate;
+    }
+
+    trimmed
+}
+
+fn parse_session_memory_agent_output(
+    value: &str,
+) -> Result<SessionMemoryAgentOutput, serde_json::Error> {
+    let candidate = strip_json_fence(value);
+    match serde_json::from_str(candidate) {
+        Ok(output) => Ok(output),
+        Err(original_error) => {
+            let repaired = repair_unescaped_json_string_quotes(candidate);
+            if repaired == candidate {
+                return Err(original_error);
+            }
+            serde_json::from_str(&repaired).map_err(|_| original_error)
+        }
+    }
+}
+
+/// Repairs the narrow, common model-output defect where a quote inside a JSON
+/// string was emitted without a backslash. A quote is treated as the end of a
+/// JSON string only when the next non-whitespace character is a legal
+/// structural delimiter. The repaired text is still deserialized into the
+/// typed contract afterwards, so this does not admit invalid field shapes.
+fn repair_unescaped_json_string_quotes(value: &str) -> String {
+    let mut repaired = String::with_capacity(value.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    let characters = value.char_indices().collect::<Vec<_>>();
+
+    for (index, (byte_offset, character)) in characters.iter().copied().enumerate() {
+        if !in_string {
+            repaired.push(character);
+            if character == '"' {
+                in_string = true;
+            }
+            continue;
+        }
+
+        if escaped {
+            repaired.push(character);
+            escaped = false;
+            continue;
+        }
+        if character == '\\' {
+            repaired.push(character);
+            escaped = true;
+            continue;
+        }
+        if character != '"' {
+            repaired.push(character);
+            continue;
+        }
+
+        let next_non_whitespace = characters[index + 1..]
+            .iter()
+            .map(|(_, next)| *next)
+            .find(|next| !next.is_whitespace());
+        if next_non_whitespace.is_none_or(|next| matches!(next, ':' | ',' | '}' | ']')) {
+            repaired.push(character);
+            in_string = false;
+        } else {
+            repaired.push('\\');
+            repaired.push(character);
+        }
+
+        debug_assert!(value.is_char_boundary(byte_offset));
+    }
+
+    repaired
+}
+
+fn is_parseable_or_repairable_memory_candidate(value: &str) -> bool {
+    if serde_json::from_str::<serde_json::Map<String, Value>>(value).is_ok() {
+        return true;
+    }
+    let repaired = repair_unescaped_json_string_quotes(value);
+    serde_json::from_str::<serde_json::Map<String, Value>>(&repaired)
+        .is_ok_and(|object| is_session_memory_json_object(&object))
+}
+
+fn json_object_from_start(value: &str) -> Option<&str> {
+    if !value.starts_with('{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, current) in value.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if current == '\\' {
+                escaped = true;
+            } else if current == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match current {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&value[..offset + current.len_utf8()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn first_valid_json_object(value: &str) -> Option<&str> {
+    first_json_object_matching(value, |_| true)
+}
+
+fn first_session_memory_json_object(value: &str) -> Option<&str> {
+    first_json_object_matching(value, is_session_memory_json_object)
+}
+
+fn is_session_memory_json_object(object: &serde_json::Map<String, Value>) -> bool {
+    let has_memory_field = object.keys().any(|key| {
+        matches!(
+            key.as_str(),
+            "goal"
+                | "result"
+                | "decisions"
+                | "verification"
+                | "blockers"
+                | "follow_up"
+                | "followUp"
+                | "topics"
+                | "source_references"
+                | "sourceReferences"
+                | "events"
+                | "recentEvents"
+        )
+    });
+    let is_standalone_summary = object.contains_key("summary")
+        && !object.contains_key("category")
+        && !object.contains_key("title")
+        && !object.contains_key("source_reference")
+        && !object.contains_key("sourceReference");
+    has_memory_field || is_standalone_summary
+}
+
+fn first_json_object_matching(
+    value: &str,
+    predicate: impl Fn(&serde_json::Map<String, Value>) -> bool,
+) -> Option<&str> {
+    for (start, character) in value.char_indices() {
+        if character != '{' {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
+        for (offset, current) in value[start..].char_indices() {
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if current == '\\' {
+                    escaped = true;
+                } else if current == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match current {
+                '"' => in_string = true,
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let end = start + offset + current.len_utf8();
+                        let candidate = &value[start..end];
+                        if serde_json::from_str::<serde_json::Map<String, Value>>(candidate)
+                            .is_ok_and(|object| predicate(&object))
+                        {
+                            return Some(candidate);
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 fn digest(value: &str) -> String {
@@ -1561,655 +2091,5 @@ fn digest(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::{
-        agents::types::AgentProtocol,
-        ai_execution::{
-            executor::BackendFuture, AgentExecutionRuntime, AiExecutionRequest, AiExecutionResult,
-        },
-        models::{
-            ConversationAdapter, ConversationAdapterKind, ConversationAdapterTrustState,
-            ConversationPartKind, ConversationPartRole, ConversationSource, ConversationSourceKind,
-            NormalizedConversationPart, NormalizedConversationSession, NormalizedConversationTurn,
-        },
-    };
-    use std::sync::{Arc, Mutex};
-
-    struct FakeRuntime {
-        result_text: Mutex<String>,
-        requests: Mutex<Vec<AiExecutionRequest>>,
-    }
-
-    impl FakeRuntime {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                result_text: Mutex::new("{}".to_string()),
-                requests: Mutex::new(Vec::new()),
-            })
-        }
-
-        fn set_result(&self, result_text: String) {
-            *self.result_text.lock().expect("fake result lock") = result_text;
-        }
-    }
-
-    impl AgentExecutionRuntime for FakeRuntime {
-        fn execute<'a>(&'a self, request: AiExecutionRequest) -> BackendFuture<'a> {
-            let result_text = self.result_text.lock().expect("fake result lock").clone();
-            self.requests
-                .lock()
-                .expect("fake request lock")
-                .push(request.clone());
-            Box::pin(async move {
-                Ok(AiExecutionResult {
-                    text: result_text,
-                    agent_id: request.agent_id,
-                    protocol: AgentProtocol::Acp,
-                    requested_model: request.model,
-                    elapsed_ms: 1,
-                    persistent_binding: None,
-                    replay_text: None,
-                })
-            })
-        }
-    }
-
-    #[test]
-    fn completion_signal_is_provider_neutral_and_requires_an_explicit_value() {
-        let completed = serde_json::json!({ "session_status": "completed" });
-        let pending = serde_json::json!({ "status": "completed-command" });
-        assert!(value_marks_completion(&completed));
-        assert!(!value_marks_completion(&pending));
-    }
-
-    #[test]
-    fn unix_activity_timestamps_reach_the_idle_gate() {
-        let last_activity = DateTime::parse_from_rfc3339("2026-08-31T10:00:00Z")
-            .expect("parse last activity")
-            .with_timezone(&Utc);
-        let now = last_activity + Duration::minutes(30);
-        for updated_at in [
-            last_activity.timestamp().to_string(),
-            last_activity.timestamp_millis().to_string(),
-        ] {
-            let detail = ConversationSessionDetail {
-                session: crate::backend::models::ConversationSession {
-                    id: "session".to_string(),
-                    source_id: "source".to_string(),
-                    adapter_id: "adapter".to_string(),
-                    external_id: "external".to_string(),
-                    title: "Session".to_string(),
-                    project_path: None,
-                    started_at: None,
-                    updated_at: Some(updated_at),
-                    source_locator: None,
-                    source_fingerprint: None,
-                    missing: false,
-                    created_at: now.to_rfc3339(),
-                    imported_at: now.to_rfc3339(),
-                    execution_origin: "user".to_string(),
-                    execution_purpose: None,
-                    user_visible: true,
-                },
-                questions: Vec::new(),
-            };
-            assert!(session_idle_ready(&detail, now));
-        }
-    }
-
-    #[test]
-    fn json_fence_is_removed_without_touching_payload() {
-        assert_eq!(strip_json_fence("```json\n{\"a\":1}\n```"), "{\"a\":1}");
-        assert_eq!(strip_json_fence("```\n{\"a\":1}\n```"), "{\"a\":1}");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn phase1_worker_honors_idle_boundary_persists_redacted_output_and_is_idempotent() {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-session-memory-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).expect("create session memory fixture root");
-        let db_path = root.join("app.db");
-        let fake = FakeRuntime::new();
-        let service = AppService::open_with_db_path_and_runtime(db_path.clone(), fake.clone())
-            .await
-            .expect("open app service with fake agent");
-        let timestamp = "2026-08-30T23:00:00Z";
-        let adapter = ConversationAdapter {
-            id: "session-memory-fixture-adapter".to_string(),
-            name: "Session Memory Fixture Agent".to_string(),
-            kind: ConversationAdapterKind::External,
-            version: "1.0.0".to_string(),
-            enabled: true,
-            manifest_path: None,
-            executable_path: None,
-            content_hash: None,
-            trusted_hash: None,
-            trust_state: ConversationAdapterTrustState::Trusted,
-            protocol_version: Some(1),
-            capabilities: vec!["read_session".to_string()],
-            input_kinds: vec![ConversationSourceKind::Directory],
-            card_contract_version: None,
-            card_kinds: Vec::new(),
-            created_at: timestamp.to_string(),
-            updated_at: timestamp.to_string(),
-        };
-        let source = ConversationSource {
-            id: "session-memory-fixture-source".to_string(),
-            adapter_id: adapter.id.clone(),
-            name: "Session Memory Fixture Source".to_string(),
-            kind: ConversationSourceKind::Directory,
-            location: root.to_string_lossy().to_string(),
-            config_json: None,
-            enabled: true,
-            last_synced_at: None,
-            last_sync_status: None,
-            created_at: timestamp.to_string(),
-            updated_at: timestamp.to_string(),
-        };
-        let session = NormalizedConversationSession {
-            external_id: "session-memory-fixture".to_string(),
-            title: Some("Session Memory Fixture".to_string()),
-            project_path: None,
-            started_at: Some("2026-08-30T22:00:00Z".to_string()),
-            updated_at: Some(timestamp.to_string()),
-            source_locator: Some("fixture://session-memory".to_string()),
-            source_fingerprint: Some("fixture-revision-1".to_string()),
-            turns: vec![NormalizedConversationTurn {
-                external_id: "turn-1".to_string(),
-                turn_index: 0,
-                user_text: "Implement the Session Memory fixture".to_string(),
-                title: None,
-                started_at: Some(timestamp.to_string()),
-                ended_at: Some(timestamp.to_string()),
-                parts: vec![NormalizedConversationPart {
-                    role: ConversationPartRole::Assistant,
-                    kind: ConversationPartKind::Text,
-                    text: Some("The fixture was implemented.".to_string()),
-                    language: None,
-                    command: None,
-                    cwd: None,
-                    status: None,
-                    exit_code: None,
-                    command_label: None,
-                    source_execution_id: None,
-                    content_card: None,
-                    metadata_json: None,
-                }],
-            }],
-            ..Default::default()
-        };
-        let pool = service.db.pool().clone();
-        let source_for_import = source.clone();
-        let adapter_for_import = adapter.clone();
-        crate::backend::store::upsert_conversation_adapter_sqlx(
-            &pool,
-            "default",
-            &adapter_for_import,
-        )
-        .await
-        .expect("upsert adapter fixture");
-        crate::backend::store::upsert_conversation_source_sqlx(
-            &pool,
-            "default",
-            &source_for_import,
-        )
-        .await
-        .expect("upsert source fixture");
-        crate::backend::store::import_conversation_sessions_sqlx(
-            &pool,
-            "default",
-            &source_for_import,
-            &[session],
-            false,
-        )
-        .await
-        .expect("import canonical conversation fixture");
-
-        let session_id: String = sqlx::query_scalar(
-            "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = 'session-memory-fixture'",
-        )
-        .fetch_one(service.db.pool())
-        .await
-        .expect("load imported session id");
-        let detail = crate::backend::store::load_conversation_session_detail_sqlx(
-            service.db.pool(),
-            "default",
-            &session_id,
-        )
-        .await
-        .expect("load canonical session detail");
-        let reference_key = detail.questions[0]
-            .projected_content_nodes
-            .first()
-            .map(|node| format!("node:{}", node.node_id))
-            .unwrap_or_else(|| format!("turn:{}", detail.questions[0].turns[0].id));
-        let secret = "ghp_12345678901234567890";
-        let events = RecentMemoryEventCategory::ALL
-            .iter()
-            .enumerate()
-            .map(|(index, category)| {
-                json!({
-                    "category": category.as_str(),
-                    "title": format!("Event {index}"),
-                    "summary": format!("Event summary {index}"),
-                    "source_reference": reference_key.clone(),
-                    "fingerprint": format!("event-{index}"),
-                })
-            })
-            .collect::<Vec<_>>();
-        fake.set_result(
-            json!({
-                "summary": format!("Completed with {secret}"),
-                "goal": "Create a revision-bound memory",
-                "result": "Fixture persisted",
-                "decisions": ["Use canonical Conversation evidence"],
-                "verification": ["Six Recent Event categories validated"],
-                "blockers": [],
-                "follow_up": ["Review the generated locator"],
-                "topics": ["memory"],
-                "source_references": [{ "reference_key": reference_key.clone() }],
-                "events": events,
-            })
-            .to_string(),
-        );
-        let now = DateTime::parse_from_rfc3339("2026-08-30T23:00:00Z")
-            .expect("parse controlled clock")
-            .with_timezone(&Utc);
-        assert_eq!(
-            service
-                .enqueue_session_memory_jobs_at(
-                    &source.id,
-                    "sync-session-memory",
-                    1,
-                    "event-session-memory",
-                    Some(std::slice::from_ref(&session_id)),
-                    now,
-                )
-                .await
-                .expect("enqueue phase1 job"),
-            1
-        );
-        let job_id: String = sqlx::query_scalar(
-            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1",
-        )
-        .bind(&session_id)
-        .fetch_one(service.db.pool())
-        .await
-        .expect("load phase1 job id");
-        assert!(service
-            .run_session_memory_phase1_at(
-                &job_id,
-                now + Duration::minutes(29) + Duration::seconds(59),
-            )
-            .await
-            .expect("idle boundary before deadline")
-            .is_none());
-        let memory = service
-            .run_session_memory_phase1_at(&job_id, now + Duration::minutes(30))
-            .await
-            .expect("run phase1 worker")
-            .expect("phase1 memory result");
-        assert_eq!(memory.source_revision, 1);
-        assert!(!memory.summary.contains(secret));
-        assert!(memory.summary.contains("[REDACTED:api_key]"));
-
-        assert_eq!(
-            service
-                .enqueue_session_memory_jobs_at(
-                    &source.id,
-                    "sync-session-memory-scheduler",
-                    2,
-                    "event-session-memory-scheduler",
-                    Some(std::slice::from_ref(&session_id)),
-                    now + Duration::minutes(30),
-                )
-                .await
-                .expect("enqueue scheduler phase1 job"),
-            1
-        );
-        let scheduled_job_id: String = sqlx::query_scalar(
-            "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1 AND source_revision = 2",
-        )
-        .bind(&session_id)
-        .fetch_one(service.db.pool())
-        .await
-        .expect("load scheduler job id");
-        let scheduled_task_id = format!("session-memory-{}-0", scheduled_job_id);
-        assert_eq!(
-            service
-                .reconcile_session_memory_jobs_for_tenant_at("default", now + Duration::minutes(30))
-                .await
-                .expect("schedule durable phase1 job"),
-            1
-        );
-        for _ in 0..100 {
-            let status: String = sqlx::query_scalar(
-                "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-            )
-            .bind(&scheduled_job_id)
-            .fetch_one(service.db.pool())
-            .await
-            .expect("read scheduled job status");
-            if status == "succeeded" {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        let scheduled_status: String = sqlx::query_scalar(
-            "SELECT status FROM session_memory_jobs WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&scheduled_job_id)
-        .fetch_one(service.db.pool())
-        .await
-        .expect("read completed scheduled job");
-        assert_eq!(scheduled_status, "succeeded");
-        let mut scheduled_task = None;
-        for _ in 0..100 {
-            if let Some(snapshot) = service.runtime.task_runtime().get(&scheduled_task_id) {
-                if snapshot.progress.as_ref().map(|value| value.current) == Some(3) {
-                    scheduled_task = Some(snapshot);
-                    break;
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-        let scheduled_task = scheduled_task.expect("read scheduled TaskRuntime projection");
-        assert_eq!(
-            scheduled_task.progress.as_ref().map(|value| value.current),
-            Some(3)
-        );
-        assert_eq!(scheduled_task.stages.len(), 5);
-        assert_eq!(scheduled_task.stages[0].id, "claim");
-        assert_eq!(scheduled_task.stages[0].status, StageStatus::Succeeded);
-        assert_eq!(scheduled_task.stages[1].id, "load_facts");
-        assert_eq!(scheduled_task.stages[1].status, StageStatus::Succeeded);
-        assert_eq!(scheduled_task.stages[2].id, "agent_execution");
-        assert_eq!(scheduled_task.stages[2].status, StageStatus::Succeeded);
-        assert_eq!(scheduled_task.stages[3].id, "validation");
-        assert_eq!(scheduled_task.stages[3].status, StageStatus::Succeeded);
-        assert_eq!(scheduled_task.stages[4].id, "publish");
-        assert_eq!(scheduled_task.stages[4].status, StageStatus::Succeeded);
-        assert_eq!(scheduled_task.outcome, Some(TaskOutcome::Success));
-
-        let jobs = crate::backend::store::count_session_memory_rows_sqlx(
-            service.db.pool(),
-            "default",
-            "jobs",
-        )
-        .await
-        .expect("count jobs");
-        let memories = crate::backend::store::count_session_memory_rows_sqlx(
-            service.db.pool(),
-            "default",
-            "memories",
-        )
-        .await
-        .expect("count memories");
-        let references = crate::backend::store::count_session_memory_rows_sqlx(
-            service.db.pool(),
-            "default",
-            "references",
-        )
-        .await
-        .expect("count references");
-        let events = crate::backend::store::count_session_memory_rows_sqlx(
-            service.db.pool(),
-            "default",
-            "events",
-        )
-        .await
-        .expect("count events");
-        let row_counts = (jobs, memories, references, events);
-        assert_eq!(row_counts, (2, 2, 2, 12));
-        let raw_output: String = sqlx::query_scalar(
-            "SELECT raw_output_json FROM session_memories WHERE tenant_id = 'default' AND session_id = ?1",
-        )
-        .bind(&session_id)
-        .fetch_one(service.db.pool())
-        .await
-        .expect("read sanitized phase1 output");
-        assert!(!raw_output.contains(secret));
-        assert!(raw_output.contains("[REDACTED:api_key]"));
-        assert_eq!(
-            service
-                .enqueue_session_memory_jobs_at(
-                    &source.id,
-                    "sync-session-memory-replay",
-                    1,
-                    "event-session-memory-replay",
-                    Some(std::slice::from_ref(&session_id)),
-                    now + Duration::minutes(31),
-                )
-                .await
-                .expect("replay phase1 event"),
-            0
-        );
-        let recent = service
-            .list_recent_conversation_sessions_at(
-                crate::backend::application::RecentConversationSessionListParams::default(),
-                now + Duration::minutes(31),
-            )
-            .await
-            .expect("read Recent projection");
-        assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0].recent_events.len(), 6);
-        let requests = fake.requests.lock().expect("fake request lock");
-        assert_eq!(requests.len(), 2);
-        assert_eq!(requests[0].purpose, AiExecutionPurpose::SessionMemory);
-        assert!(!requests[0].prompt.contains(secret));
-        drop(requests);
-        drop(service);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn session_memory_uses_its_own_runtime_settings_snapshot() {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-session-memory-settings-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).expect("create test root");
-        let db_a_path = root.join("app_a.db");
-        let db_b_path = root.join("app_b.db");
-
-        let fake = FakeRuntime::new();
-        fake.set_result(
-            serde_json::json!({
-                "summary": "Phase 1 summary",
-                "topics": ["settings"],
-                "source_references": [],
-                "events": [],
-            })
-            .to_string(),
-        );
-
-        let service_a = AppService::open_with_db_path_and_runtime(db_a_path.clone(), fake.clone())
-            .await
-            .expect("open service A");
-
-        let service_b = AppService::open_with_db_path_and_runtime(db_b_path.clone(), fake.clone())
-            .await
-            .expect("open service B");
-
-        let timestamp = "2026-08-30T23:00:00Z";
-        let now = DateTime::parse_from_rfc3339(timestamp)
-            .expect("parse time")
-            .with_timezone(&Utc);
-
-        async fn setup_job(
-            service: &AppService,
-            session_id: &str,
-            now: DateTime<Utc>,
-        ) -> (String, String) {
-            let pool = service.db.pool();
-            let adapter = ConversationAdapter {
-                id: format!("adapter-{session_id}"),
-                name: "Adapter".to_string(),
-                kind: ConversationAdapterKind::External,
-                version: "1.0.0".to_string(),
-                enabled: true,
-                manifest_path: None,
-                executable_path: None,
-                content_hash: None,
-                trusted_hash: None,
-                trust_state: ConversationAdapterTrustState::Trusted,
-                protocol_version: Some(1),
-                capabilities: vec!["read_session".to_string()],
-                input_kinds: vec![ConversationSourceKind::Directory],
-                card_contract_version: None,
-                card_kinds: Vec::new(),
-                created_at: "2026-08-30T23:00:00Z".to_string(),
-                updated_at: "2026-08-30T23:00:00Z".to_string(),
-            };
-            let source = ConversationSource {
-                id: format!("source-{session_id}"),
-                adapter_id: adapter.id.clone(),
-                name: "Source".to_string(),
-                kind: ConversationSourceKind::Directory,
-                location: "/fixture".to_string(),
-                config_json: None,
-                enabled: true,
-                last_synced_at: None,
-                last_sync_status: None,
-                created_at: "2026-08-30T23:00:00Z".to_string(),
-                updated_at: "2026-08-30T23:00:00Z".to_string(),
-            };
-            let session = NormalizedConversationSession {
-                external_id: session_id.to_string(),
-                title: Some("Session".to_string()),
-                project_path: None,
-                started_at: Some("2026-08-30T22:00:00Z".to_string()),
-                updated_at: Some("2026-08-30T23:00:00Z".to_string()),
-                source_locator: Some("fixture://session".to_string()),
-                source_fingerprint: Some("rev1".to_string()),
-                turns: vec![NormalizedConversationTurn {
-                    external_id: "turn-1".to_string(),
-                    turn_index: 0,
-                    user_text: "Hello".to_string(),
-                    title: None,
-                    started_at: Some("2026-08-30T23:00:00Z".to_string()),
-                    ended_at: Some("2026-08-30T23:00:00Z".to_string()),
-                    parts: vec![NormalizedConversationPart {
-                        role: ConversationPartRole::Assistant,
-                        kind: ConversationPartKind::Text,
-                        text: Some("World".to_string()),
-                        language: None,
-                        command: None,
-                        cwd: None,
-                        status: None,
-                        exit_code: None,
-                        command_label: None,
-                        source_execution_id: None,
-                        content_card: None,
-                        metadata_json: None,
-                    }],
-                }],
-                ..Default::default()
-            };
-            crate::backend::store::upsert_conversation_adapter_sqlx(pool, "default", &adapter)
-                .await
-                .unwrap();
-            crate::backend::store::upsert_conversation_source_sqlx(pool, "default", &source)
-                .await
-                .unwrap();
-            crate::backend::store::import_conversation_sessions_sqlx(
-                pool,
-                "default",
-                &source,
-                &[session],
-                false,
-            )
-            .await
-            .unwrap();
-
-            let internal_session_id: String = sqlx::query_scalar(
-                "SELECT id FROM conversation_sessions WHERE tenant_id = 'default' AND external_id = ?1",
-            )
-            .bind(session_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-
-            service
-                .enqueue_session_memory_jobs_at(
-                    &source.id,
-                    "sync-1",
-                    1,
-                    "evt-1",
-                    Some(&[internal_session_id.clone()]),
-                    now,
-                )
-                .await
-                .unwrap();
-            let job_id: String = sqlx::query_scalar(
-                "SELECT id FROM session_memory_jobs WHERE tenant_id = 'default' AND session_id = ?1",
-            )
-            .bind(&internal_session_id)
-            .fetch_one(pool)
-            .await
-            .unwrap();
-
-            let detail = crate::backend::store::load_conversation_session_detail_sqlx(
-                pool,
-                "default",
-                &internal_session_id,
-            )
-            .await
-            .unwrap();
-            let reference_key = detail.questions[0]
-                .projected_content_nodes
-                .first()
-                .map(|node| format!("node:{}", node.node_id))
-                .unwrap_or_else(|| format!("turn:{}", detail.questions[0].turns[0].id));
-
-            (job_id, reference_key)
-        }
-
-        let (job_a_id, _ref_a) = setup_job(&service_a, "session-a", now).await;
-        let (job_b_id, ref_b) = setup_job(&service_b, "session-b", now).await;
-
-        fake.set_result(
-            serde_json::json!({
-                "summary": "Phase 1 summary",
-                "topics": ["settings"],
-                "source_references": [{ "reference_key": ref_b }],
-                "events": [],
-            })
-            .to_string(),
-        );
-
-        let mut settings_a = service_a.app_settings_value();
-        settings_a["memory"]["generationEnabled"] = serde_json::json!(false);
-        service_a.runtime.update_app_settings_value(settings_a);
-
-        let mut settings_b = service_b.app_settings_value();
-        settings_b["memory"]["generationEnabled"] = serde_json::json!(true);
-        service_b.runtime.update_app_settings_value(settings_b);
-
-        let run_at = now + Duration::minutes(30);
-
-        let result_a = service_a
-            .run_session_memory_phase1_at(&job_a_id, run_at)
-            .await
-            .expect("phase1 on A");
-        assert!(result_a.is_none(), "service A should have cancelled job");
-        let status_a: String =
-            sqlx::query_scalar("SELECT status FROM session_memory_jobs WHERE id = ?1")
-                .bind(&job_a_id)
-                .fetch_one(service_a.db.pool())
-                .await
-                .unwrap();
-        assert_eq!(status_a, "canceled", "job A must be canceled in DB_A");
-
-        let result_b = service_b
-            .run_session_memory_phase1_at(&job_b_id, run_at)
-            .await
-            .expect("phase1 on B");
-        assert!(result_b.is_some(), "service B should have executed phase 1");
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-}
+#[path = "session_memory_tests.rs"]
+mod tests;

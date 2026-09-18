@@ -21,6 +21,7 @@ pub(crate) mod host_process;
 pub(crate) mod http_client;
 pub(crate) mod logging;
 pub(crate) mod logs;
+pub(crate) mod memory_generation_mcp;
 pub(crate) mod memory_redaction;
 pub(crate) mod models;
 pub(crate) mod path_utils;

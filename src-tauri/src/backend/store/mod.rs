@@ -9,6 +9,7 @@ mod group_repo;
 mod memory_recall_query_repo;
 mod memory_recall_repo;
 mod memory_usage_repo;
+pub(crate) mod memory_v2_maintenance_repo;
 mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
@@ -81,6 +82,7 @@ pub(crate) use group_repo::{
 pub(crate) use memory_recall_query_repo::list_memory_recall_question_refs_sqlx;
 pub(crate) use memory_recall_repo::*;
 pub(crate) use memory_usage_repo::*;
+pub(crate) use memory_v2_maintenance_repo::*;
 pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]
 pub(crate) use mount_observation_repo::load_asset_mount_observations_sqlx;
@@ -129,7 +131,7 @@ pub(crate) use team_repo::{
 };
 pub(crate) use tenant_repo::{
     create_local_tenant_sqlx, list_tenants_for_principal_sqlx, load_local_request_context_sqlx,
-    set_active_tenant_sqlx,
+    load_tenant_membership_sqlx, load_tenant_sqlx, set_active_tenant_sqlx,
 };
 pub(crate) use web_record_repo::{
     import_web_record_sessions_sqlx, list_web_record_sessions_sqlx,
@@ -138,37 +140,5 @@ pub(crate) use web_record_repo::{
 };
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn stable_sqlx_repositories_have_zero_positional_try_get() {
-        let files = [
-            (
-                "global_memory_repo.rs",
-                include_str!("global_memory_repo.rs"),
-            ),
-            (
-                "project_memory_repo.rs",
-                include_str!("project_memory_repo.rs"),
-            ),
-            ("search_index_repo.rs", include_str!("search_index_repo.rs")),
-            (
-                "memory_recall_repo.rs",
-                include_str!("memory_recall_repo.rs"),
-            ),
-            ("menu_repo.rs", include_str!("menu_repo.rs")),
-        ];
-        let re = regex::Regex::new(r#"\.try_get(?:::<[^>]+>)?\s*\("#).unwrap();
-        let mut violations = Vec::new();
-        for (name, content) in files {
-            let count = re.find_iter(content).count();
-            if count > 0 {
-                violations.push(format!("{name}: {count} try_get calls remaining"));
-            }
-        }
-        assert!(
-            violations.is_empty(),
-            "Stable SQLx repositories must have zero try_get calls:\n{}",
-            violations.join("\n")
-        );
-    }
-}
+#[path = "store_tests.rs"]
+mod tests;

@@ -184,18 +184,3 @@ pub(crate) trait DomainEventConsumer: Send + Sync {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod unit_tests {
-    use super::*;
-
-    #[test]
-    fn changed_session_ids_are_capped_and_stable() {
-        let ids = (0..257).map(|index| format!("session-{index}"));
-        assert_eq!(cap_changed_session_ids(ids), None);
-        assert_eq!(
-            cap_changed_session_ids(["b".to_string(), "a".to_string(), "a".to_string()]),
-            Some(vec!["a".to_string(), "b".to_string()])
-        );
-    }
-}

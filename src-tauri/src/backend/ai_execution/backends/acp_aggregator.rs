@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use agent_client_protocol::schema::v1::{SessionId, StopReason};
 
 use crate::backend::{agents::protocol::acp::AcpRuntimeEvent, ai_execution::AiExecutionError};
@@ -95,20 +97,26 @@ impl TranslationTextAggregator {
     }
 }
 
-/// Aggregates Recall output while allowing the agent to use the read-only
-/// Recall MCP server. Other executions keep their fail-closed tool policy in
-/// `TranslationTextAggregator`.
-pub(crate) struct RecallStructuredAggregator {
+/// Aggregates text output while allowing calls to an execution-scoped,
+/// read-only MCP server. Requests without such a server keep the fail-closed
+/// tool policy in `TranslationTextAggregator`.
+pub(crate) struct ReadOnlyToolTextAggregator {
     session_id: SessionId,
     text: String,
     byte_limit: usize,
     chunks: usize,
     thinking_chunks: usize,
     ignored_session_events: usize,
+    allowed_tool_names: HashSet<String>,
+    allowed_tool_call_ids: HashSet<String>,
 }
 
-impl RecallStructuredAggregator {
-    pub(crate) fn new(session_id: SessionId, byte_limit: usize) -> Self {
+impl ReadOnlyToolTextAggregator {
+    pub(crate) fn new(
+        session_id: SessionId,
+        byte_limit: usize,
+        allowed_tool_names: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
         Self {
             session_id,
             text: String::new(),
@@ -116,6 +124,8 @@ impl RecallStructuredAggregator {
             chunks: 0,
             thinking_chunks: 0,
             ignored_session_events: 0,
+            allowed_tool_names: allowed_tool_names.into_iter().map(str::to_owned).collect(),
+            allowed_tool_call_ids: HashSet::new(),
         }
     }
 
@@ -154,9 +164,16 @@ impl RecallStructuredAggregator {
                 self.thinking_chunks += 1;
                 AggregatorAction::Continue
             }
-            AcpRuntimeEvent::ToolCall { .. } | AcpRuntimeEvent::ToolCallUpdate { .. } => {
-                AggregatorAction::Continue
-            }
+            AcpRuntimeEvent::ToolCall {
+                tool_call_id,
+                title,
+                ..
+            } => self.authorize_tool_call(tool_call_id, Some(&title)),
+            AcpRuntimeEvent::ToolCallUpdate {
+                tool_call_id,
+                title,
+                ..
+            } => self.authorize_tool_call(tool_call_id, title.as_deref()),
             AcpRuntimeEvent::PermissionRequested { .. } => {
                 AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
             }
@@ -182,222 +199,72 @@ impl RecallStructuredAggregator {
             self.ignored_session_events,
         )
     }
+
+    fn authorize_tool_call(
+        &mut self,
+        tool_call_id: String,
+        title: Option<&str>,
+    ) -> AggregatorAction {
+        if self.allowed_tool_call_ids.contains(&tool_call_id) {
+            return AggregatorAction::Continue;
+        }
+        let allowed = title
+            .map(|title| {
+                let trimmed = title.trim();
+                !trimmed.is_empty()
+                    && self
+                        .allowed_tool_names
+                        .iter()
+                        .any(|tool_name| title_mentions_tool(trimmed, tool_name))
+            })
+            .unwrap_or(false);
+
+        if allowed {
+            self.allowed_tool_call_ids.insert(tool_call_id);
+            AggregatorAction::Continue
+        } else {
+            tracing::warn!(
+                "tool_use_denied: tool_call_id={}, title={:?}, allowed={:?}",
+                tool_call_id,
+                title,
+                self.allowed_tool_names
+            );
+            AggregatorAction::CancelAndFail(AiExecutionError::ToolUseDenied)
+        }
+    }
+}
+
+fn title_mentions_tool(title: &str, tool_name: &str) -> bool {
+    let title = title.trim();
+    if title.eq_ignore_ascii_case(tool_name) {
+        return true;
+    }
+
+    let title = title.to_ascii_lowercase();
+    let tool_name = tool_name.to_ascii_lowercase();
+    if title.ends_with(&tool_name) || title.starts_with(&tool_name) {
+        return true;
+    }
+    title.match_indices(&tool_name).any(|(start, matched)| {
+        let end = start + matched.len();
+        let before_is_boundary = if start == 0 {
+            true
+        } else {
+            let prev_char = title[..start].chars().next_back().unwrap();
+            !prev_char.is_ascii_alphanumeric()
+                || title[..start].ends_with("assetiweave_memory_generation")
+                || title[..start].ends_with("assetiweave-memory-generation")
+        };
+        let after_is_boundary = if end == title.len() {
+            true
+        } else {
+            let next_char = title[end..].chars().next().unwrap();
+            !next_char.is_ascii_alphanumeric()
+        };
+        before_is_boundary && after_is_boundary
+    })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::sync::mpsc;
-
-    fn session() -> SessionId {
-        SessionId::new("session")
-    }
-
-    fn text(session_id: &SessionId, value: &str) -> AcpRuntimeEvent {
-        AcpRuntimeEvent::AgentText {
-            session_id: session_id.clone(),
-            text: value.to_owned(),
-        }
-    }
-
-    fn complete(session_id: &SessionId) -> AcpRuntimeEvent {
-        AcpRuntimeEvent::TurnCompleted {
-            session_id: session_id.clone(),
-            stop_reason: StopReason::EndTurn,
-        }
-    }
-
-    #[test]
-    fn evt_01_one_text_chunk_returns_exact_text() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-
-        assert!(matches!(
-            aggregator.apply(text(&session, "answer")),
-            AggregatorAction::Continue
-        ));
-
-        assert_eq!(aggregator.finish().unwrap(), "answer");
-    }
-
-    #[test]
-    fn evt_02_multiple_chunks_preserve_order() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        aggregator.apply(text(&session, "first "));
-        aggregator.apply(text(&session, "second"));
-
-        assert_eq!(aggregator.finish().unwrap(), "first second");
-    }
-
-    #[test]
-    fn evt_03_unicode_chunks_remain_valid_and_ordered() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        aggregator.apply(text(&session, "你"));
-        aggregator.apply(text(&session, "好🌍"));
-
-        assert_eq!(aggregator.finish().unwrap(), "你好🌍");
-    }
-
-    #[test]
-    fn evt_04_thinking_is_counted_but_not_returned() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        aggregator.apply(AcpRuntimeEvent::AgentThought {
-            session_id: session.clone(),
-            text: Some("provider thought".to_string()),
-        });
-        aggregator.apply(text(&session, "visible"));
-
-        assert_eq!(aggregator.diagnostics(), (1, 1, 0));
-        assert_eq!(aggregator.finish().unwrap(), "visible");
-    }
-
-    #[test]
-    fn evt_05_wrong_session_is_ignored() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        aggregator.apply(text(&SessionId::new("other"), "wrong"));
-        aggregator.apply(text(&session, "right"));
-
-        assert_eq!(aggregator.diagnostics(), (1, 0, 1));
-        assert_eq!(aggregator.finish().unwrap(), "right");
-    }
-
-    #[test]
-    fn evt_06_permission_requires_cancel_and_fails_closed() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-
-        assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::PermissionRequested {
-                session_id: session
-            }),
-            AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
-        ));
-    }
-
-    #[test]
-    fn evt_07_tool_activity_requires_cancel_and_fails_closed() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-
-        assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::ToolCall {
-                session_id: session.clone(),
-                tool_call_id: "tool".to_string(),
-                title: "tool".to_string(),
-                status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
-                raw_input: None,
-                raw_output: None,
-            }),
-            AggregatorAction::CancelAndFail(AiExecutionError::ToolUseDenied)
-        ));
-    }
-
-    #[test]
-    fn evt_08_empty_output_fails() {
-        let aggregator = TranslationTextAggregator::new(session(), 64);
-
-        assert!(matches!(
-            aggregator.finish(),
-            Err(AiExecutionError::EmptyOutput { .. })
-        ));
-    }
-
-    #[test]
-    fn evt_09_whitespace_only_output_fails() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        aggregator.apply(text(&session, " \n\t "));
-
-        assert!(matches!(
-            aggregator.finish(),
-            Err(AiExecutionError::EmptyOutput { .. })
-        ));
-    }
-
-    #[test]
-    fn evt_10_exact_byte_cap_succeeds() {
-        let session = session();
-        let value = "你好";
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), value.len());
-        aggregator.apply(text(&session, value));
-
-        assert_eq!(aggregator.finish().unwrap(), value);
-    }
-
-    #[test]
-    fn evt_11_cap_plus_one_fails_without_appending_partial_chunk() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 5);
-        aggregator.apply(text(&session, "12345"));
-
-        assert!(matches!(
-            aggregator.apply(text(&session, "6")),
-            AggregatorAction::CancelAndFail(AiExecutionError::OutputLimit { limit: 5 })
-        ));
-        assert_eq!(aggregator.finish().unwrap(), "12345");
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn evt_12_completion_marker_includes_the_late_final_chunk_without_sleep() {
-        let session = session();
-        let mut aggregator = TranslationTextAggregator::new(session.clone(), 64);
-        let (tx, mut rx) = mpsc::channel(4);
-        tx.send(text(&session, "before ")).await.unwrap();
-        tx.send(text(&session, "late")).await.unwrap();
-        tx.send(complete(&session)).await.unwrap();
-        drop(tx);
-
-        loop {
-            let event = rx.recv().await.expect("completion marker");
-            match aggregator.apply(event) {
-                AggregatorAction::Continue => {}
-                AggregatorAction::Complete { stop_reason } => {
-                    assert_eq!(stop_reason, StopReason::EndTurn);
-                    break;
-                }
-                AggregatorAction::CancelAndFail(error) => {
-                    panic!("unexpected aggregation failure: {error}")
-                }
-            }
-        }
-
-        assert_eq!(aggregator.finish().unwrap(), "before late");
-    }
-
-    #[test]
-    fn recall_evt_01_tool_activity_is_allowed_for_read_only_mcp() {
-        let session = session();
-        let mut aggregator = RecallStructuredAggregator::new(session.clone(), 64);
-
-        assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::ToolCall {
-                session_id: session.clone(),
-                tool_call_id: "tool".to_string(),
-                title: "tool".to_string(),
-                status: crate::backend::agents::protocol::acp::AcpToolStatus::Pending,
-                raw_input: None,
-                raw_output: None,
-            }),
-            AggregatorAction::Continue
-        ));
-        aggregator.apply(text(&session, "answer"));
-        assert_eq!(aggregator.finish().unwrap(), "answer");
-    }
-
-    #[test]
-    fn recall_evt_02_permission_is_still_denied() {
-        let session = session();
-        let mut aggregator = RecallStructuredAggregator::new(session.clone(), 64);
-
-        assert!(matches!(
-            aggregator.apply(AcpRuntimeEvent::PermissionRequested {
-                session_id: session
-            }),
-            AggregatorAction::CancelAndFail(AiExecutionError::PermissionDenied)
-        ));
-    }
-}
+#[path = "acp_aggregator_tests.rs"]
+mod tests;

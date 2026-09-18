@@ -2,6 +2,36 @@ use super::prelude::*;
 use crate::backend::runtime::{AppError, AppResult};
 
 impl AppService {
+    pub(crate) async fn for_tenant(&self, tenant_id: &str) -> AppResult<Self> {
+        let tenant = crate::backend::store::load_tenant_sqlx(self.db.pool(), tenant_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("tenant not found: {tenant_id}")))?;
+        let membership = crate::backend::store::load_tenant_membership_sqlx(
+            self.db.pool(),
+            tenant_id,
+            &self.request_context().principal.id,
+        )
+        .await?
+        .ok_or_else(|| AppError::Conflict(format!("tenant membership not found: {tenant_id}")))?;
+        let adapters =
+            crate::backend::store::list_conversation_adapters_sqlx(self.db.pool(), tenant_id)
+                .await?;
+        let mut context = self.context.clone();
+        context.tenant = tenant;
+        context.membership = membership;
+        Ok(Self {
+            runtime: self.runtime.clone(),
+            db: self.db.clone(),
+            db_path: self.db_path.clone(),
+            context,
+            agent_runtime_manager: self.agent_runtime_manager.clone(),
+            agent_runtime: self.agent_runtime.clone(),
+            conversation_adapter_catalog: std::sync::Arc::new(
+                crate::backend::conversations::ConversationAdapterCatalog::new(adapters),
+            ),
+        })
+    }
+
     pub(crate) async fn open_for_engine() -> AppResult<Self> {
         if let Some(runtime) = crate::backend::runtime::current_process_runtime() {
             return Ok(Self::from_runtime(&runtime));
@@ -221,9 +251,8 @@ impl AppService {
             })?;
             let purpose = match action_id.as_str() {
                 "translation.card" => "card_translation",
-                "memory.extraction" | "memory.project" | "memory.global" | "memory.recall" => {
-                    "memory"
-                }
+                "memory.extraction" | "memory.generation" | "memory.project" | "memory.global"
+                | "memory.recall" => "memory",
                 "prompt.optimization" => "prompt_optimization",
                 other => {
                     return Err(AppError::Validation(format!(
@@ -321,111 +350,5 @@ fn conversation_runtime_doctor_summary(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::ai_execution::{
-        executor::BackendFuture, AgentExecutionRuntime, AiExecutionRequest,
-    };
-    use crate::backend::conversations::{
-        ConversationAdapterRuntimeKind, ConversationAdapterRuntimeStatus,
-    };
-    use std::sync::Arc;
-
-    struct FakeAgentRuntime;
-
-    impl AgentExecutionRuntime for FakeAgentRuntime {
-        fn execute<'a>(&'a self, _request: AiExecutionRequest) -> BackendFuture<'a> {
-            Box::pin(async { panic!("runtime execution is outside this constructor test") })
-        }
-    }
-
-    #[tokio::test]
-    async fn app_service_accepts_an_injected_agent_runtime() {
-        let db_path = std::env::temp_dir().join(format!(
-            "assetiweave-runtime-injection-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let runtime: Arc<dyn AgentExecutionRuntime> = Arc::new(FakeAgentRuntime);
-
-        let service = AppService::open_with_db_path_and_runtime(db_path.clone(), runtime.clone())
-            .await
-            .expect("open service with fake runtime");
-
-        assert!(Arc::ptr_eq(&service.agent_runtime, &runtime));
-        drop(service);
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn default_app_services_use_independent_runtime_snapshots() {
-        let first_path = std::env::temp_dir().join(format!(
-            "assetiweave-runtime-shared-first-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-        let second_path = std::env::temp_dir().join(format!(
-            "assetiweave-runtime-shared-second-{}.sqlite",
-            uuid::Uuid::new_v4()
-        ));
-
-        let first = AppService::open_with_db_path(first_path.clone())
-            .await
-            .expect("first service");
-        let second = AppService::open_with_db_path(second_path.clone())
-            .await
-            .expect("second service");
-
-        let first_runtime = first.agent_runtime.clone();
-        let second_runtime = second.agent_runtime.clone();
-        assert!(!Arc::ptr_eq(&first_runtime, &second_runtime));
-        drop(first);
-        drop(second);
-        let _ = std::fs::remove_file(first_path);
-        let _ = std::fs::remove_file(second_path);
-    }
-
-    #[test]
-    fn runtime_doctor_ignores_unavailable_unrequired_runtimes() {
-        let statuses = vec![
-            runtime_status(ConversationAdapterRuntimeKind::Node, false, None),
-            runtime_status(ConversationAdapterRuntimeKind::Python, true, Some(">=3.10")),
-            runtime_status(ConversationAdapterRuntimeKind::Bash, true, None),
-        ];
-
-        let (status, message) = conversation_runtime_doctor_summary(&statuses);
-
-        assert_eq!(status, "pass");
-        assert!(message.contains("all required conversation plugin runtimes available"));
-        assert!(!message.contains("node runtime missing"));
-    }
-
-    #[test]
-    fn runtime_doctor_warns_for_unavailable_required_runtimes() {
-        let statuses = vec![
-            runtime_status(ConversationAdapterRuntimeKind::Node, false, Some(">=20")),
-            runtime_status(ConversationAdapterRuntimeKind::Python, true, None),
-            runtime_status(ConversationAdapterRuntimeKind::Bash, true, None),
-        ];
-
-        let (status, message) = conversation_runtime_doctor_summary(&statuses);
-
-        assert_eq!(status, "warn");
-        assert!(message.contains("missing required conversation plugin runtimes"));
-        assert!(message.contains("node >=20"));
-    }
-
-    fn runtime_status(
-        kind: ConversationAdapterRuntimeKind,
-        available: bool,
-        required_version: Option<&str>,
-    ) -> ConversationAdapterRuntimeStatus {
-        ConversationAdapterRuntimeStatus {
-            kind,
-            program: "runtime".to_string(),
-            available,
-            version: None,
-            required_version: required_version.map(str::to_string),
-            error: None,
-            hint: None,
-        }
-    }
-}
+#[path = "system_tests.rs"]
+mod tests;

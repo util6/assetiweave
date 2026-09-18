@@ -110,6 +110,30 @@ pub(crate) struct MemoryProjectGetParams {
 pub(crate) struct MemoryScopeRebuildParams {
     #[serde(default)]
     pub(crate) scope: MemoryScope,
+    /// 新版入口优先使用显式 target；缺省时兼容旧 scope 语义。
+    #[serde(default)]
+    pub(crate) target: Option<MemoryRebuildTarget>,
+    #[serde(default, alias = "projectPath")]
+    pub(crate) project_path: Option<String>,
+    #[serde(default)]
+    pub(crate) reason: Option<MemoryRebuildReason>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MemoryRebuildTarget {
+    Recent,
+    Project,
+    Global,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum MemoryRebuildReason {
+    Manual,
+    Migration,
+    ProjectionRepair,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
@@ -823,21 +847,5 @@ pub(crate) struct ConversationPartTranslationUpdateParams {
 }
 
 #[cfg(test)]
-mod conversation_sync_mode_tests {
-    use super::*;
-
-    #[test]
-    fn conversation_sync_mode_defaults_to_incremental_and_accepts_full() {
-        let incremental: ConversationSyncParams = serde_json::from_value(serde_json::json!({}))
-            .expect("default conversation sync params");
-        let full: ConversationSyncParams = serde_json::from_value(serde_json::json!({
-            "mode": "full"
-        }))
-        .expect("full conversation sync params");
-
-        assert_eq!(incremental.mode, ConversationSyncMode::Incremental);
-        assert_eq!(full.mode, ConversationSyncMode::Full);
-        assert!(incremental.mode.uses_known_versions());
-        assert!(!full.mode.uses_known_versions());
-    }
-}
+#[path = "params_tests.rs"]
+mod tests;

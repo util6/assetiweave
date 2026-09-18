@@ -19,7 +19,8 @@ pub(crate) use session_events::{
 pub(crate) use types::{
     AgentSessionMode, AiExecutionCancellation, AiExecutionCleanupReport, AiExecutionLimits,
     AiExecutionPhase, AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
-    AiExecutionResult, AiExecutionSessionDeleteMethod, AiRecallTools, AiTeamTools,
+    AiExecutionResult, AiExecutionSessionDeleteMethod, AiMemoryGenerationTools, AiRecallTools,
+    AiTeamTools, SessionCleanupStatus,
 };
 
 use crate::backend::agents::types::{

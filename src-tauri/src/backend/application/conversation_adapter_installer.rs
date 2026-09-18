@@ -366,15 +366,6 @@ fn download_and_extract_install_artifact(
     result
 }
 
-#[cfg(test)]
-pub(super) fn extract_install_artifact_bytes(
-    spec: &ConversationAdapterPackageInstallSpec,
-    bytes: Vec<u8>,
-    staging_dir: &Path,
-) -> AppResult<PathBuf> {
-    extract_install_artifact_reader(spec, std::io::Cursor::new(bytes), staging_dir)
-}
-
 pub(super) fn extract_install_artifact_reader<R: Read + Seek>(
     spec: &ConversationAdapterPackageInstallSpec,
     reader: R,

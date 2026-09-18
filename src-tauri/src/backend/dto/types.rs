@@ -1,9 +1,8 @@
 use crate::backend::models::{
     AppKind, Asset, AssetGroupRules, AssetKind, AssetMount, ConversationPart, ConversationPartRole,
     ConversationQuestion, ConversationQuestionTurn, ConversationSession, ConversationTurn,
-    DeploymentStrategy, GlobalMemoryVersion, MemoryScope, ProfileSafety, ProjectMemory,
-    ProjectMemorySource, ProjectMemoryVersion, RuleSet, SourceKind, SourceOrigin,
-    SourceScannerKind,
+    DeploymentStrategy, GlobalMemoryVersion, ProfileSafety, ProjectMemorySource,
+    ProjectMemoryVersion, RuleSet, SourceKind, SourceOrigin, SourceScannerKind,
 };
 use crate::backend::targeting::PhysicalMountState;
 use schemars::JsonSchema;
@@ -31,18 +30,15 @@ pub(crate) struct MemoryContextResult {
     pub(crate) project_sources: Vec<ProjectMemorySource>,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub(crate) struct MemoryProjectView {
-    pub(crate) project: ProjectMemory,
-    pub(crate) version: Option<ProjectMemoryVersion>,
-    pub(crate) sources: Vec<ProjectMemorySource>,
-}
+pub(crate) type MemoryProjectView = crate::backend::models::L2ProjectMemoryView;
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct MemoryRebuildResult {
-    pub(crate) scope: MemoryScope,
-    pub(crate) queued: bool,
-    pub(crate) scheduled_tasks: usize,
+    pub(crate) accepted: bool,
+    pub(crate) scheduled_task_ids: Vec<String>,
+    pub(crate) target_watermark: Option<String>,
+    pub(crate) reused: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

@@ -1,23 +1,30 @@
 use super::prelude::*;
 use super::recent::resolve_project_directory;
 use crate::backend::{
-    dto::{RecentMemorySnapshotView, RecentSnapshotPublicationKind},
+    ai_execution::{
+        execute_agent, AgentSessionMode, AiExecutionCancellation, AiExecutionLimits,
+        AiExecutionProgressSink, AiExecutionPurpose, AiExecutionRequest,
+    },
+    dto::RecentMemorySnapshotView,
     models::{
-        CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView,
-        MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
-        MemorySkillBinding, RecentSnapshotWorkOrderEvidencePack, ResolvedEvidenceRef,
-        ALLOWED_MEMORY_GENERATION_TOOLS,
+        CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView, L2ProjectMemoryView,
+        L3MemoryItemView, MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus,
+        MemoryJobPurpose, MemoryPromotionNomination, MemoryScopeV2, MemorySkillBinding,
+        MemoryWindowV2, MemoryWorkOrderV2, RecentSnapshotSessionEvidence,
+        RecentSnapshotWorkOrderEvidencePack, RecentSnapshotWorkOrderPayload, ResolvedEvidenceRef,
+        SessionMemory, SessionMemorySourceReference, ALLOWED_MEMORY_GENERATION_TOOLS,
     },
     runtime::{AppError, AppResult},
     store,
 };
-use chrono::{DateTime, Duration, Offset, TimeZone, Utc};
+use chrono::{DateTime, Duration, Offset, Utc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub(crate) struct WatermarkTarget {
     pub(crate) target_watermark_utc: DateTime<Utc>,
     pub(crate) local_watermark_date: String,
@@ -26,6 +33,319 @@ pub(crate) struct WatermarkTarget {
     pub(crate) window_hours: i64,
     pub(crate) window_start_utc: DateTime<Utc>,
     pub(crate) window_end_utc: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RecentSnapshotPreparation {
+    pub(crate) target: WatermarkTarget,
+    pub(crate) skill_binding: MemorySkillBinding,
+    pub(crate) target_fingerprint: String,
+    pub(crate) content_fingerprint: String,
+    pub(crate) evidence: RecentSnapshotWorkOrderEvidencePack,
+    pub(crate) skill_text: String,
+}
+
+fn build_recent_generation_prompt(
+    envelope: &serde_json::Value,
+    payload: &RecentSnapshotWorkOrderPayload,
+) -> AppResult<String> {
+    let output_schema = schemars::schema_for!(MemoryGenerationResultV2);
+    let evidence = model_visible_recent_snapshot_evidence(&payload.evidence)?;
+    serde_json::to_string(&serde_json::json!({
+        "contract": "memory.contract.v2",
+        "instruction": "Return exactly one JSON object matching the supplied output_schema. Do not return Markdown, prose, or code fences. Consume the frozen evidence first. Never inspect the workspace or execute shell commands. coverage.coveredSessions, coverage.noMemorySessions, and every project.sourceSessions must use candidate.sessionRef values such as s1. Every item.sourceRefs entry must use only sourceReferences[].reference_key or MCP nodeRef values such as s1.r1; never emit internal IDs or session-memory-ref-* values. Each project must use a valid candidate projectKey; project.sourceSessions and item.sourceRefs must strictly belong to that exact projectKey (do not mix sessions across projects). Keep descriptions concise and focused on high-signal items: at most 3 to 5 most important items per project; keep summary and rationale concise (1-2 sentences) to ensure the JSON completes cleanly within token limits. For each project with actionable items, assign recommendationRank (1, 2, or 3) to the top next action items. For projectKey=unassigned, every promotionNomination must be none. All evidence required for this generation is fully provided in the frozen evidence pack; do NOT invoke any shell, workspace, filesystem, external tools, or MCP commands. Generate the JSON output directly.",
+        "execution_policy": {
+            "tool_mode": "allowlisted_read_only_mcp",
+            "allowed_tools": ALLOWED_MEMORY_GENERATION_TOOLS,
+            "forbidden_capabilities": ["shell", "filesystem", "network", "subagent", "global_tool_inventory", "database_write"],
+        },
+        "output_schema": output_schema,
+        "skill": payload.skill_text,
+        "work_order": envelope.get("workOrder"),
+        "evidence": evidence,
+    }))
+    .map_err(AppError::external)
+}
+
+pub(super) fn source_reference_alias(session_ref: &str, index: usize) -> String {
+    format!("{session_ref}.r{}", index + 1)
+}
+
+fn model_visible_recent_snapshot_evidence(
+    evidence: &RecentSnapshotWorkOrderEvidencePack,
+) -> AppResult<serde_json::Value> {
+    let mut value = serde_json::to_value(evidence).map_err(AppError::external)?;
+    let Some(session_evidence) = value
+        .get_mut("sessionEvidence")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(value);
+    };
+
+    let mut visible_aliases = HashMap::new();
+    for session in session_evidence {
+        let session_ref = session
+            .get("candidate")
+            .and_then(|candidate| candidate.get("sessionRef"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if let Some(references) = session
+            .get_mut("sourceReferences")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for (index, reference) in references.iter_mut().enumerate() {
+                let alias = source_reference_alias(&session_ref, index);
+                if let Some(object) = reference.as_object_mut() {
+                    if let Some(id) = object.get("id").and_then(serde_json::Value::as_str) {
+                        visible_aliases.insert(id.to_string(), alias.clone());
+                    }
+                    if let Some(key) = object
+                        .get("reference_key")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        visible_aliases.insert(key.to_string(), alias.clone());
+                    }
+                    object.retain(|key, _| {
+                        matches!(key.as_str(), "reference_key" | "source_revision")
+                    });
+                    object.insert(
+                        "reference_key".to_string(),
+                        serde_json::Value::String(alias),
+                    );
+                }
+            }
+        }
+        if let Some(events) = session
+            .get_mut("recentEvents")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for event in events {
+                if let Some(object) = event.as_object_mut() {
+                    let alias = object
+                        .get("source_reference_id")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|id| visible_aliases.get(id))
+                        .cloned();
+                    object.insert(
+                        "source_reference_id".to_string(),
+                        alias.map_or(serde_json::Value::Null, serde_json::Value::String),
+                    );
+                }
+            }
+        }
+    }
+    if let Some(items) = value
+        .get_mut("continuableItems")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for item in items {
+            if let Some(source_refs) = item
+                .get_mut("sourceRefs")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                *source_refs = source_refs
+                    .iter()
+                    .filter_map(|reference| {
+                        let reference = reference.as_str()?;
+                        visible_aliases
+                            .get(reference)
+                            .cloned()
+                            .or_else(|| {
+                                (!reference.starts_with("session-memory-ref-"))
+                                    .then(|| reference.to_string())
+                            })
+                            .map(serde_json::Value::String)
+                    })
+                    .collect();
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn extend_source_reference_aliases(
+    ref_map: &mut HashMap<String, ResolvedEvidenceRef>,
+    candidate: &CandidateSession,
+    references: &[SessionMemorySourceReference],
+) {
+    for (index, reference) in references.iter().enumerate() {
+        let alias = source_reference_alias(&candidate.short_ref, index);
+        let resolved = ResolvedEvidenceRef {
+            short_ref: alias.clone(),
+            source_id: reference.source_id.clone(),
+            session_id: reference.session_id.clone(),
+            project_key: candidate.project_key.clone(),
+            session_title: candidate.session_title.clone(),
+            source_agent: candidate.source_agent.clone(),
+            last_activity_at: candidate.last_activity_at.clone(),
+            reference_key: reference.reference_key.clone(),
+            source_revision: reference.source_revision,
+            question_id: reference.question_id.clone(),
+            turn_id: reference.turn_id.clone(),
+            node_id: reference.node_id.clone(),
+        };
+        ref_map.insert(alias, resolved.clone());
+        // Compatibility for immutable Work Orders queued before short source
+        // references were enforced. New prompts never expose this key.
+        ref_map
+            .entry(reference.reference_key.clone())
+            .or_insert(resolved);
+    }
+}
+
+fn normalize_agent_memory_generation_result(
+    result: &mut MemoryGenerationResultV2,
+    candidates: &[CandidateSession],
+    ref_map: &HashMap<String, ResolvedEvidenceRef>,
+) {
+    let candidate_by_ref = candidates
+        .iter()
+        .map(|c| (c.short_ref.as_str(), c))
+        .collect::<HashMap<_, _>>();
+    let candidate_project_keys = candidates
+        .iter()
+        .map(|c| c.project_key.as_str())
+        .collect::<HashSet<_>>();
+
+    let mut seen_keys = HashSet::new();
+    result.projects.retain_mut(|project| {
+        let key = project.project_key.trim();
+        if key.is_empty() {
+            return false;
+        }
+        if !candidates.is_empty() && key != "unassigned" && !candidate_project_keys.contains(key) {
+            return false;
+        }
+        seen_keys.insert(key.to_string())
+    });
+
+    for project in &mut result.projects {
+        let project_key = project.project_key.trim().to_string();
+        project.project_key = project_key.clone();
+
+        // 仅保留属于当前 project 的 session_ref
+        project.source_sessions.retain(|session_ref| {
+            candidate_by_ref
+                .get(session_ref.as_str())
+                .map_or(false, |c| c.project_key == project_key)
+        });
+
+        if project.source_sessions.is_empty() {
+            for c in candidates {
+                if c.project_key == project_key {
+                    project.source_sessions.push(c.short_ref.clone());
+                }
+            }
+        }
+
+        let project_available_refs = ref_map
+            .iter()
+            .filter(|(_, res)| res.project_key == project_key)
+            .map(|(k, _)| k.clone())
+            .collect::<Vec<_>>();
+
+        let mut rank_set = HashSet::new();
+        for item in &mut project.items {
+            item.source_refs.retain(|ref_key| {
+                ref_map
+                    .get(ref_key.as_str())
+                    .map_or(false, |res| res.project_key == project_key)
+            });
+
+            if item.source_refs.is_empty() && !project_available_refs.is_empty() {
+                item.source_refs.push(project_available_refs[0].clone());
+            }
+
+            if let Some(rank) = item.recommendation_rank {
+                if (1..=3).contains(&rank) && !item.source_refs.is_empty() && rank_set.insert(rank) {
+                    // 保留有效建议
+                } else {
+                    item.recommendation_rank = None;
+                }
+            }
+
+            if project_key == "unassigned" || item.source_refs.is_empty() {
+                item.promotion_nomination = MemoryPromotionNomination::None;
+            }
+        }
+
+        if rank_set.len() < 3 && !project_available_refs.is_empty() {
+            let mut available_ranks = Vec::new();
+            for r in (1..=3).rev() {
+                if !rank_set.contains(&r) {
+                    available_ranks.push(r);
+                }
+            }
+            for item in &mut project.items {
+                if item.recommendation_rank.is_some() {
+                    continue;
+                }
+                let is_actionable = matches!(
+                    item.category,
+                    MemoryItemCategory::FollowUp | MemoryItemCategory::Blocker
+                );
+                if is_actionable {
+                    if let Some(next_rank) = available_ranks.pop() {
+                        item.recommendation_rank = Some(next_rank);
+                        rank_set.insert(next_rank);
+                        if item.source_refs.is_empty() {
+                            item.source_refs.push(project_available_refs[0].clone());
+                        }
+                    }
+                }
+                if available_ranks.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
+fn memory_generation_tools_for_job(
+    job: &store::RecentMemoryJob,
+    database_path: &Path,
+) -> AppResult<crate::backend::ai_execution::AiMemoryGenerationTools> {
+    Ok(crate::backend::ai_execution::AiMemoryGenerationTools {
+        tenant_id: job.tenant_id.clone(),
+        job_id: job.id.clone(),
+        ownership_token: job.ownership_token.clone().ok_or_else(|| {
+            AppError::Validation(
+                "MEMORY_WORK_ORDER_INVALID: running job has no ownership token".to_string(),
+            )
+        })?,
+        database_path: database_path.to_string_lossy().into_owned(),
+    })
+}
+
+#[derive(Debug, Default)]
+struct RecentSnapshotFrozenContext {
+    session_memories: BTreeMap<String, SessionMemory>,
+    source_references: BTreeMap<String, Vec<SessionMemorySourceReference>>,
+    recent_events: BTreeMap<String, Vec<crate::backend::models::RecentMemoryEvent>>,
+    current_l2_projects: Vec<L2ProjectMemoryView>,
+    current_l3_items: Vec<L3MemoryItemView>,
+}
+
+fn has_complete_recent_snapshot_evidence(
+    candidates: &[CandidateSession],
+    context: &RecentSnapshotFrozenContext,
+) -> bool {
+    candidates.iter().all(|candidate| {
+        context.session_memories.contains_key(&candidate.session_id)
+            && context
+                .source_references
+                .get(&candidate.session_id)
+                .is_some_and(|references| {
+                    references.iter().any(|reference| {
+                        reference.question_id.is_some()
+                            || reference.turn_id.is_some()
+                            || reference.part_id.is_some()
+                            || reference.node_id.is_some()
+                    })
+                })
+    })
 }
 
 pub(crate) fn parse_hh_mm(time_str: &str) -> AppResult<chrono::NaiveTime> {
@@ -305,7 +625,79 @@ pub(crate) fn compute_content_fingerprint(
     format!("{:x}", hasher.finalize())
 }
 
+fn compute_recent_snapshot_evidence_fingerprint(
+    base_content_fingerprint: &str,
+    evidence: &RecentSnapshotWorkOrderEvidencePack,
+) -> String {
+    let canonical_json = serde_json::to_string(&(
+        base_content_fingerprint,
+        &evidence.session_evidence,
+        &evidence.current_l2_projects,
+        &evidence.current_l3_items,
+    ))
+    .unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_json.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
 impl AppService {
+    async fn load_current_long_term_revision_ids(&self) -> AppResult<Vec<String>> {
+        sqlx::query_scalar(
+            "SELECT current_revision_id FROM memory_items
+             WHERE tenant_id = ?1 AND layer IN ('l2', 'l3')
+               AND lifecycle = 'current' AND current_revision_id IS NOT NULL
+             ORDER BY layer ASC, project_key ASC, id ASC",
+        )
+        .bind(self.tenant_id())
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(AppError::external)
+    }
+
+    /// Ensures that every Session candidate in the exact frozen Recent
+    /// watermark window has Phase-1 work. The candidate set must come from
+    /// the same watermark calculation as Phase 2; deriving a second rolling
+    /// `now - 48h` window can silently omit sessions near the lower bound.
+    pub(crate) async fn ensure_recent_snapshot_phase1_jobs_at<Tz: chrono::TimeZone>(
+        &self,
+        now: DateTime<Tz>,
+        restart_terminal: bool,
+    ) -> AppResult<Option<(WatermarkTarget, usize)>> {
+        let memory_settings = self.backend_settings()?.memory.clone();
+        if !memory_settings.generation_enabled {
+            return Ok(None);
+        }
+
+        let now_text = now.with_timezone(&Utc).to_rfc3339();
+        let target = resolve_target_watermark(
+            now,
+            memory_settings.recent_window_hours,
+            &memory_settings.watermark_time_1,
+            &memory_settings.watermark_time_2,
+        )?;
+        let (candidates, _) = self
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
+            .await?;
+        let session_ids = candidates
+            .into_iter()
+            .map(|candidate| candidate.session_id)
+            .collect::<Vec<_>>();
+        let internal_agent_workspace =
+            crate::backend::ai_execution::agent_execution_workspace_root(&self.db_path);
+        let prepared = store::ensure_session_memory_jobs_for_sessions_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &session_ids,
+            &internal_agent_workspace,
+            &now_text,
+            restart_terminal,
+        )
+        .await?;
+
+        Ok(Some((target, prepared)))
+    }
+
     /// 根据目标水位与窗口小时数收集候选 Session 及对应短引用映射表 (M35-L1-03/04)
     pub(crate) async fn collect_recent_snapshot_candidates(
         &self,
@@ -410,27 +802,56 @@ impl AppService {
                 .then_with(|| left.session_id.cmp(&right.session_id))
         });
 
+        let session_ids = candidates
+            .iter()
+            .map(|candidate| candidate.session_id.clone())
+            .collect::<Vec<_>>();
+        let source_references = store::list_session_memory_source_references_for_sessions_sqlx(
+            pool,
+            tenant_id,
+            &session_ids,
+        )
+        .await?;
+
         let mut ref_map = HashMap::new();
         for (idx, candidate) in candidates.iter_mut().enumerate() {
             let short_ref = format!("s{}", idx + 1);
             candidate.short_ref = short_ref.clone();
 
+            let canonical_reference = source_references
+                .get(&candidate.session_id)
+                .and_then(|references| references.first());
+            if let Some(reference) = canonical_reference {
+                candidate.source_revision = reference.source_revision;
+            }
+
             ref_map.insert(
                 short_ref.clone(),
                 ResolvedEvidenceRef {
                     short_ref,
-                    source_id: candidate.source_id.clone(),
+                    source_id: canonical_reference
+                        .map(|reference| reference.source_id.clone())
+                        .unwrap_or_else(|| candidate.source_id.clone()),
                     session_id: candidate.session_id.clone(),
+                    project_key: candidate.project_key.clone(),
                     session_title: candidate.session_title.clone(),
                     source_agent: candidate.source_agent.clone(),
                     last_activity_at: candidate.last_activity_at.clone(),
-                    reference_key: format!("{}/{}", candidate.source_id, candidate.session_id),
+                    reference_key: canonical_reference
+                        .map(|reference| reference.reference_key.clone())
+                        .unwrap_or_else(|| {
+                            format!("{}/{}", candidate.source_id, candidate.session_id)
+                        }),
                     source_revision: candidate.source_revision,
-                    question_id: None,
-                    turn_id: None,
-                    node_id: None,
+                    question_id: canonical_reference
+                        .and_then(|reference| reference.question_id.clone()),
+                    turn_id: canonical_reference.and_then(|reference| reference.turn_id.clone()),
+                    node_id: canonical_reference.and_then(|reference| reference.node_id.clone()),
                 },
             );
+            if let Some(references) = source_references.get(&candidate.session_id) {
+                extend_source_reference_aliases(&mut ref_map, candidate, references);
+            }
         }
 
         Ok((candidates, ref_map))
@@ -702,6 +1123,21 @@ impl AppService {
         candidates: &[CandidateSession],
         continuable_items: &[ContinuableMemoryItemView],
     ) -> RecentSnapshotWorkOrderEvidencePack {
+        self.build_recent_snapshot_work_order_evidence_pack_with_context(
+            target,
+            candidates,
+            continuable_items,
+            &RecentSnapshotFrozenContext::default(),
+        )
+    }
+
+    fn build_recent_snapshot_work_order_evidence_pack_with_context(
+        &self,
+        target: &WatermarkTarget,
+        candidates: &[CandidateSession],
+        continuable_items: &[ContinuableMemoryItemView],
+        context: &RecentSnapshotFrozenContext,
+    ) -> RecentSnapshotWorkOrderEvidencePack {
         let candidate_sessions = candidates
             .iter()
             .map(|c| CandidateSessionSummary {
@@ -711,6 +1147,54 @@ impl AppService {
                 title: c.session_title.clone(),
                 last_activity_at: c.last_activity_at.clone(),
                 source_id: c.source_id.clone(),
+                source_agent: c.source_agent.clone(),
+                source_revision: c.source_revision,
+            })
+            .collect::<Vec<_>>();
+
+        let session_evidence = candidates
+            .iter()
+            .map(|candidate| {
+                let memory = context.session_memories.get(&candidate.session_id);
+                RecentSnapshotSessionEvidence {
+                    candidate: CandidateSessionSummary {
+                        session_ref: candidate.short_ref.clone(),
+                        session_id: candidate.session_id.clone(),
+                        project_key: candidate.project_key.clone(),
+                        title: candidate.session_title.clone(),
+                        last_activity_at: candidate.last_activity_at.clone(),
+                        source_id: candidate.source_id.clone(),
+                        source_agent: candidate.source_agent.clone(),
+                        source_revision: candidate.source_revision,
+                    },
+                    memory_source_revision: memory.map(|value| value.source_revision),
+                    summary: memory.map(|value| value.summary.clone()),
+                    goal: memory.map(|value| value.goal.clone()),
+                    result: memory.map(|value| value.result.clone()),
+                    decisions: memory
+                        .map(|value| value.decisions.clone())
+                        .unwrap_or_default(),
+                    verification: memory
+                        .map(|value| value.verification.clone())
+                        .unwrap_or_default(),
+                    blockers: memory
+                        .map(|value| value.blockers.clone())
+                        .unwrap_or_default(),
+                    follow_up: memory
+                        .map(|value| value.follow_up.clone())
+                        .unwrap_or_default(),
+                    topics: memory.map(|value| value.topics.clone()).unwrap_or_default(),
+                    source_references: context
+                        .source_references
+                        .get(&candidate.session_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    recent_events: context
+                        .recent_events
+                        .get(&candidate.session_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                }
             })
             .collect();
 
@@ -735,10 +1219,557 @@ impl AppService {
             window_hours: target.window_hours as u32,
             project_keys,
             candidate_sessions,
+            session_evidence,
             continuable_items: continuable_items.to_vec(),
+            current_l2_projects: context.current_l2_projects.clone(),
+            current_l3_items: context.current_l3_items.clone(),
             allowed_tools,
             output_schema_version: 2,
         }
+    }
+
+    async fn load_recent_snapshot_frozen_context(
+        &self,
+        target: &WatermarkTarget,
+        candidates: &[CandidateSession],
+    ) -> AppResult<RecentSnapshotFrozenContext> {
+        let session_ids = candidates
+            .iter()
+            .map(|candidate| candidate.session_id.clone())
+            .collect::<Vec<_>>();
+        let session_memories = store::list_active_session_memories_for_sessions_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &session_ids,
+        )
+        .await?;
+        let source_references = store::list_session_memory_source_references_for_sessions_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &session_ids,
+        )
+        .await?;
+        let recent_events = store::list_recent_memory_events_for_sessions_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &session_ids,
+            &target.window_start_utc.to_rfc3339(),
+            &target.window_end_utc.to_rfc3339(),
+        )
+        .await?;
+
+        let project_keys = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT project_key FROM memory_items WHERE tenant_id = ?1 AND layer = 'l2' AND lifecycle = 'current' AND project_key IS NOT NULL ORDER BY project_key ASC",
+        )
+        .bind(self.tenant_id())
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(AppError::external)?;
+        let mut current_l2_projects = Vec::new();
+        for project_key in project_keys {
+            if let Some(view) = crate::backend::application::project_consolidation_pipeline::
+                load_l2_project_memory_view(self.db.pool(), self.tenant_id(), &project_key)
+                .await?
+            {
+                current_l2_projects.push(view);
+            }
+        }
+        let current_l3_items =
+            crate::backend::application::global_consolidation_pipeline::get_global_memory_l3_view(
+                self.db.pool(),
+                self.tenant_id(),
+            )
+            .await?
+            .map(|view| view.items)
+            .unwrap_or_default();
+
+        Ok(RecentSnapshotFrozenContext {
+            session_memories,
+            source_references,
+            recent_events,
+            current_l2_projects,
+            current_l3_items,
+        })
+    }
+
+    /// 准备一个 v2 Recent Snapshot 任务。该方法只负责确定性输入、指纹和
+    /// reuse；真正的 Agent 调用由 durable job worker 执行。
+    pub(crate) async fn prepare_recent_snapshot_generation<Tz: chrono::TimeZone>(
+        &self,
+        now: Option<DateTime<Tz>>,
+    ) -> AppResult<Option<RecentSnapshotPreparation>> {
+        self.prepare_recent_snapshot_generation_with_options(now, false)
+            .await
+    }
+
+    pub(crate) async fn prepare_recent_snapshot_generation_with_options<Tz: chrono::TimeZone>(
+        &self,
+        now: Option<DateTime<Tz>>,
+        force_rebuild: bool,
+    ) -> AppResult<Option<RecentSnapshotPreparation>> {
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|value| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(
+                    value.clone(),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+
+        if !memory_settings.generation_enabled {
+            return Ok(None);
+        }
+
+        let current = now
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+        let target = resolve_target_watermark(
+            current,
+            memory_settings.recent_window_hours,
+            &memory_settings.watermark_time_1,
+            &memory_settings.watermark_time_2,
+        )?;
+        let pool = self.db.pool();
+        let tenant_id = self.tenant_id();
+        let state = store::load_recent_memory_state_sqlx(pool, tenant_id).await?;
+        let (candidates, _ref_map) = self
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
+            .await?;
+        let skill_binding = self.get_active_generation_skill_binding().await?;
+        let skill_text = self.load_active_generation_skill_text().await?;
+        let continuable_items = self
+            .collect_continuable_items(&target.target_watermark_utc)
+            .await?;
+        let prior_items: Vec<(&str, &str)> = continuable_items
+            .iter()
+            .map(|item| (item.item_id.as_str(), item.current_revision_id.as_str()))
+            .collect();
+        let carry_over: Vec<(&str, &str, i64)> = continuable_items
+            .iter()
+            .map(|item| {
+                (
+                    item.item_id.as_str(),
+                    item.current_revision_id.as_str(),
+                    item.remaining_days,
+                )
+            })
+            .collect();
+        let frozen_context = self
+            .load_recent_snapshot_frozen_context(&target, &candidates)
+            .await?;
+        // Recent generation consumes successful Phase-1 facts and canonical
+        // Conversation locators only. If Phase 1 is still pending, leave the
+        // durable watermark untouched so the next coordinator pass can retry
+        // after the prerequisite job reaches a terminal state.
+        if !has_complete_recent_snapshot_evidence(&candidates, &frozen_context) {
+            return Ok(None);
+        }
+        let evidence = self.build_recent_snapshot_work_order_evidence_pack_with_context(
+            &target,
+            &candidates,
+            &continuable_items,
+            &frozen_context,
+        );
+        let current_l2_l3_revisions = self.load_current_long_term_revision_ids().await?;
+        let current_l2_l3_revision_refs = current_l2_l3_revisions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let target_fingerprint = compute_target_fingerprint(
+            tenant_id,
+            &target.target_watermark_utc,
+            target.window_hours,
+            &candidates,
+            &prior_items,
+            &skill_binding,
+        );
+        let base_content_fingerprint = compute_content_fingerprint(
+            target.window_hours,
+            &candidates,
+            &carry_over,
+            &current_l2_l3_revision_refs,
+            &skill_binding,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+        let content_fingerprint =
+            compute_recent_snapshot_evidence_fingerprint(&base_content_fingerprint, &evidence);
+
+        if !force_rebuild {
+            if let Some(last_snapshot) = state.snapshot {
+                if let Some(last_meta) = store::load_recent_snapshot_meta_by_id_sqlx(
+                    pool,
+                    tenant_id,
+                    &last_snapshot.snapshot_id,
+                )
+                .await?
+                {
+                    if last_meta.content_fingerprint == content_fingerprint {
+                        if last_meta.target_watermark_utc
+                            == target.target_watermark_utc.to_rfc3339()
+                            || last_meta.target_fingerprint == target_fingerprint
+                        {
+                            return Ok(None);
+                        }
+                        self.commit_reused_memory_snapshot(
+                            &target,
+                            &skill_binding,
+                            &last_meta.id,
+                            &target_fingerprint,
+                            &content_fingerprint,
+                        )
+                        .await?;
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        Ok(Some(RecentSnapshotPreparation {
+            target,
+            skill_binding,
+            target_fingerprint,
+            content_fingerprint,
+            evidence,
+            skill_text,
+        }))
+    }
+
+    /// 将确定性输入固定为 v2 durable job。相同目标水位和输入指纹只生成一个任务。
+    pub(crate) async fn enqueue_recent_snapshot_generation(
+        &self,
+        preparation: &RecentSnapshotPreparation,
+        now: DateTime<Utc>,
+    ) -> AppResult<String> {
+        let work_order = MemoryWorkOrderV2::new(
+            format!("recent-snapshot-{}", Uuid::new_v4()),
+            self.tenant_id().to_string(),
+            MemoryJobPurpose::RecentSnapshot,
+            preparation.target.target_watermark_utc.to_rfc3339(),
+            MemoryWindowV2 {
+                start_utc: preparation.target.window_start_utc.to_rfc3339(),
+                end_utc: preparation.target.window_end_utc.to_rfc3339(),
+                hours: preparation.target.window_hours as u32,
+            },
+            MemoryScopeV2 { project_key: None },
+            preparation.content_fingerprint.clone(),
+            preparation.skill_binding.clone(),
+            now.to_rfc3339(),
+        );
+        let payload = RecentSnapshotWorkOrderPayload {
+            target_watermark_utc: preparation.target.target_watermark_utc.to_rfc3339(),
+            local_watermark_date: preparation.target.local_watermark_date.clone(),
+            local_watermark_time: preparation.target.local_watermark_time.clone(),
+            timezone_offset_minutes: preparation.target.timezone_offset_minutes,
+            window_hours: preparation.target.window_hours,
+            window_start_utc: preparation.target.window_start_utc.to_rfc3339(),
+            window_end_utc: preparation.target.window_end_utc.to_rfc3339(),
+            target_fingerprint: preparation.target_fingerprint.clone(),
+            content_fingerprint: preparation.content_fingerprint.clone(),
+            skill: preparation.skill_binding.clone(),
+            skill_text: preparation.skill_text.clone(),
+            evidence: preparation.evidence.clone(),
+        };
+        let work_order_json = serde_json::to_string(&serde_json::json!({
+            "workOrder": work_order,
+            "payload": payload,
+        }))
+        .map_err(AppError::external)?;
+        store::enqueue_recent_memory_job_sqlx(
+            self.db.pool(),
+            self.tenant_id(),
+            &format!("recent-memory-{}", Uuid::new_v4()),
+            &preparation.target.target_watermark_utc.to_rfc3339(),
+            preparation.target.window_hours,
+            &preparation.target_fingerprint,
+            &preparation.content_fingerprint,
+            &work_order_json,
+            &now.to_rfc3339(),
+        )
+        .await
+    }
+
+    pub(super) async fn run_recent_snapshot_generation_job(
+        &self,
+        job: &store::RecentMemoryJob,
+        cancellation: tokio_util::sync::CancellationToken,
+        progress: Option<std::sync::Arc<dyn AiExecutionProgressSink>>,
+        mut task_progress: Option<
+            &mut super::recent_snapshot_task_progress::RecentSnapshotTaskProgress,
+        >,
+    ) -> AppResult<RecentMemorySnapshotView> {
+        let envelope: serde_json::Value =
+            serde_json::from_str(&job.work_order_json).map_err(|_| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid JSON".to_string())
+            })?;
+        let work_order: MemoryWorkOrderV2 =
+            serde_json::from_value(envelope.get("workOrder").cloned().ok_or_else(|| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: missing work order".to_string())
+            })?)
+            .map_err(|_| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid work order".to_string())
+            })?;
+        let payload: RecentSnapshotWorkOrderPayload =
+            serde_json::from_value(envelope.get("payload").cloned().ok_or_else(|| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: missing payload".to_string())
+            })?)
+            .map_err(|_| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid payload".to_string())
+            })?;
+        if work_order.tenant_id != self.tenant_id()
+            || work_order.purpose != MemoryJobPurpose::RecentSnapshot
+            || work_order.scope.project_key.is_some()
+            || work_order.target_watermark_utc != payload.target_watermark_utc
+            || work_order.window.hours != payload.window_hours as u32
+            || work_order.skill != payload.skill
+            || work_order.contract_version != "memory.contract.v2"
+            || work_order.allowed_tools
+                != ALLOWED_MEMORY_GENERATION_TOOLS
+                    .iter()
+                    .map(|tool| (*tool).to_string())
+                    .collect::<Vec<_>>()
+        {
+            return Err(AppError::Validation(
+                "MEMORY_WORK_ORDER_INVALID: work order binding mismatch".to_string(),
+            ));
+        }
+        let expected_input_fingerprint = MemoryWorkOrderV2::compute_input_fingerprint(
+            work_order.purpose,
+            &work_order.target_watermark_utc,
+            work_order.window.hours,
+            work_order.scope.project_key.as_deref(),
+            &work_order.source_revision_set_hash,
+            &work_order.skill.content_hash,
+            &work_order.contract_version,
+            &work_order.budget_policy_version,
+            &work_order.projection_policy_version,
+        );
+        if expected_input_fingerprint != work_order.input_fingerprint {
+            return Err(AppError::Validation(
+                "MEMORY_WORK_ORDER_INVALID: input fingerprint mismatch".to_string(),
+            ));
+        }
+
+        let target_watermark = DateTime::parse_from_rfc3339(&payload.target_watermark_utc)
+            .map_err(|_| {
+                AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid watermark".to_string())
+            })?
+            .with_timezone(&Utc);
+        let target = WatermarkTarget {
+            target_watermark_utc: target_watermark,
+            local_watermark_date: payload.local_watermark_date.clone(),
+            local_watermark_time: payload.local_watermark_time.clone(),
+            timezone_offset_minutes: payload.timezone_offset_minutes,
+            window_hours: payload.window_hours,
+            window_start_utc: DateTime::parse_from_rfc3339(&payload.window_start_utc)
+                .map_err(|_| {
+                    AppError::Validation(
+                        "MEMORY_WORK_ORDER_INVALID: invalid window start".to_string(),
+                    )
+                })?
+                .with_timezone(&Utc),
+            window_end_utc: DateTime::parse_from_rfc3339(&payload.window_end_utc)
+                .map_err(|_| {
+                    AppError::Validation(
+                        "MEMORY_WORK_ORDER_INVALID: invalid window end".to_string(),
+                    )
+                })?
+                .with_timezone(&Utc),
+        };
+        let current_skill = self.get_active_generation_skill_binding().await?;
+        if current_skill != payload.skill {
+            return Err(AppError::Domain {
+                code: "MEMORY_RESULT_STALE".to_string(),
+                message: "Memory Generation Skill changed after the job was queued".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        let (candidates, ref_map) = self
+            .collect_recent_snapshot_candidates(target.target_watermark_utc, target.window_hours)
+            .await?;
+        let continuable_items = self
+            .collect_continuable_items(&target.target_watermark_utc)
+            .await?;
+        let prior_items = continuable_items
+            .iter()
+            .map(|item| (item.item_id.as_str(), item.current_revision_id.as_str()))
+            .collect::<Vec<_>>();
+        let carry_over = continuable_items
+            .iter()
+            .map(|item| {
+                (
+                    item.item_id.as_str(),
+                    item.current_revision_id.as_str(),
+                    item.remaining_days,
+                )
+            })
+            .collect::<Vec<_>>();
+        let current_l2_l3_revisions = self.load_current_long_term_revision_ids().await?;
+        let current_l2_l3_revision_refs = current_l2_l3_revisions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let current_frozen_context = self
+            .load_recent_snapshot_frozen_context(&target, &candidates)
+            .await?;
+        if !has_complete_recent_snapshot_evidence(&candidates, &current_frozen_context) {
+            return Err(AppError::Domain {
+                code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
+                message: "Recent Snapshot requires successful Phase-1 facts and canonical references for every candidate session".to_string(),
+                retryable: true,
+                details: None,
+            });
+        }
+        let current_evidence = self.build_recent_snapshot_work_order_evidence_pack_with_context(
+            &target,
+            &candidates,
+            &continuable_items,
+            &current_frozen_context,
+        );
+        let settings = self.app_settings_value();
+        let memory_settings = settings
+            .get("memory")
+            .and_then(|value| {
+                serde_json::from_value::<crate::backend::app_settings::MemorySettings>(
+                    value.clone(),
+                )
+                .ok()
+            })
+            .unwrap_or_default();
+        let current_target_fingerprint = compute_target_fingerprint(
+            self.tenant_id(),
+            &target.target_watermark_utc,
+            target.window_hours,
+            &candidates,
+            &prior_items,
+            &current_skill,
+        );
+        let current_base_content_fingerprint = compute_content_fingerprint(
+            target.window_hours,
+            &candidates,
+            &carry_over,
+            &current_l2_l3_revision_refs,
+            &current_skill,
+            &memory_settings.excluded_session_ids,
+            &memory_settings.excluded_source_ids,
+        );
+        let current_content_fingerprint = compute_recent_snapshot_evidence_fingerprint(
+            &current_base_content_fingerprint,
+            &current_evidence,
+        );
+        if current_target_fingerprint != payload.target_fingerprint
+            || current_content_fingerprint != payload.content_fingerprint
+        {
+            return Err(AppError::Domain {
+                code: "MEMORY_RESULT_STALE".to_string(),
+                message: "Memory evidence changed after the job was queued".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+
+        if cancellation.is_cancelled() {
+            return Err(AppError::Cancelled(
+                "Recent memory generation was cancelled before execution".to_string(),
+            ));
+        }
+
+        let mut result = if candidates.is_empty() {
+            if let Some(task_progress) = task_progress.as_deref_mut() {
+                task_progress.transition("agent_execution");
+                task_progress.skip_current_and_transition("validation");
+            }
+            MemoryGenerationResultV2 {
+                schema_version: 2,
+                projects: Vec::new(),
+                coverage: Default::default(),
+                unknowns: Vec::new(),
+            }
+        } else {
+            if let Some(task_progress) = task_progress.as_deref_mut() {
+                task_progress.transition("agent_execution");
+            }
+            let prompt = build_recent_generation_prompt(&envelope, &payload)?;
+            let settings = self.app_settings_value();
+            let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+                &crate::backend::ai_execution::composition::ActionId::new("memory.generation"),
+                &settings,
+            )?;
+            let request = AiExecutionRequest {
+                execution_id: format!("recent-memory-execution-{}", job.id),
+                agent_id,
+                purpose: AiExecutionPurpose::MemoryGeneration,
+                session_mode: AgentSessionMode::OneShot,
+                prompt,
+                model,
+                limits: AiExecutionLimits::default(),
+                cancellation: AiExecutionCancellation::from_token(cancellation.clone()),
+                progress,
+                tenant_id: Some(job.tenant_id.clone()),
+                execution_context_key: None,
+                binding: None,
+                replay: false,
+                restore_only: false,
+                team_tools: None,
+                recall_tools: None,
+                memory_generation_tools: Some(memory_generation_tools_for_job(job, &self.db_path)?),
+            };
+            let execution = execute_agent(self.agent_runtime.clone(), request)
+                .await
+                .map_err(|error| {
+                    let view = error.to_view();
+                    AppError::Domain {
+                        code: view.code,
+                        message: view.message,
+                        retryable: view.retryable,
+                        details: None,
+                    }
+                })?;
+            if let Some(task_progress) = task_progress.as_deref_mut() {
+                task_progress.transition("validation");
+            }
+            parse_memory_generation_output(&execution.text)?
+        };
+
+        normalize_agent_memory_generation_result(&mut result, &candidates, &ref_map);
+
+        self.validate_memory_generation_result(&result, &candidates, &ref_map)?;
+        if cancellation.is_cancelled() {
+            return Err(AppError::Cancelled(
+                "Recent memory generation was cancelled before publication".to_string(),
+            ));
+        }
+        if let Some(task_progress) = task_progress.as_deref_mut() {
+            task_progress.transition("publish");
+        }
+        let snapshot = self
+            .commit_recent_memory_snapshot(
+                &target,
+                &payload.skill,
+                result,
+                &candidates,
+                &ref_map,
+                &payload.target_fingerprint,
+                &payload.content_fingerprint,
+                Some(&current_l2_l3_revisions),
+                Some((
+                    job.id.as_str(),
+                    job.ownership_token.as_deref().ok_or_else(|| {
+                        AppError::Conflict(
+                            "recent memory job has no active ownership token".to_string(),
+                        )
+                    })?,
+                )),
+            )
+            .await?;
+        if let Some(task_progress) = task_progress.as_deref_mut() {
+            task_progress.transition("cleanup_session");
+            task_progress.finish();
+        }
+        Ok(snapshot)
     }
 
     /// 校验 Agent 输出是否符合准入与质量门禁 (M35-L1-07/12, Schema, Coverage, Refs)
@@ -776,14 +1807,30 @@ impl AppService {
             });
         }
 
-        // 所有 candidate 必须被 covered_sessions 或 no_memory_sessions 覆盖
-        let covered_set = result
-            .coverage
-            .covered_sessions
+        // Coverage must be an exact partition of the frozen candidate set.
+        // Do not allow an Agent to invent a short ref, silently duplicate a
+        // session, or omit a candidate while still returning a valid shape.
+        let candidate_by_ref = candidates
             .iter()
-            .chain(result.coverage.no_memory_sessions.iter())
-            .cloned()
-            .collect::<HashSet<_>>();
+            .map(|candidate| (candidate.short_ref.as_str(), candidate))
+            .collect::<HashMap<_, _>>();
+        let mut covered_set = HashSet::new();
+        for short_ref in &result.coverage.covered_sessions {
+            if !candidate_by_ref.contains_key(short_ref.as_str()) || !covered_set.insert(short_ref)
+            {
+                return Err(AppError::Validation(format!(
+                    "Invalid or duplicate covered session reference '{short_ref}'"
+                )));
+            }
+        }
+        for short_ref in &result.coverage.no_memory_sessions {
+            if !candidate_by_ref.contains_key(short_ref.as_str()) || !covered_set.insert(short_ref)
+            {
+                return Err(AppError::Validation(format!(
+                    "Invalid or duplicate no-memory session reference '{short_ref}'"
+                )));
+            }
+        }
 
         for candidate in candidates {
             if !covered_set.contains(&candidate.short_ref) {
@@ -799,12 +1846,22 @@ impl AppService {
             }
         }
 
+        if covered_set.len() != candidates.len() {
+            return Err(AppError::Domain {
+                code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
+                message: "Generation coverage contains more or fewer sessions than the frozen candidate set".to_string(),
+                retryable: true,
+                details: None,
+            });
+        }
+
         // 2. Project & Item 校验
         let candidate_project_keys = candidates
             .iter()
-            .map(|c| c.project_key.as_str())
+            .map(|c| c.project_key.clone())
             .collect::<HashSet<_>>();
 
+        let mut result_project_keys = HashSet::new();
         for project in &result.projects {
             let key = project.project_key.trim();
             if key.is_empty() {
@@ -822,6 +1879,27 @@ impl AppService {
                     "Project key '{}' not present in candidate work order",
                     key
                 )));
+            }
+            if !result_project_keys.insert(key.to_string()) {
+                return Err(AppError::Validation(format!(
+                    "Duplicate project '{}' in memory generation result",
+                    key
+                )));
+            }
+
+            for session_ref in &project.source_sessions {
+                let candidate = candidate_by_ref.get(session_ref.as_str()).ok_or_else(|| {
+                    AppError::Validation(format!(
+                        "Unknown source session reference '{}' in project '{}'",
+                        session_ref, key
+                    ))
+                })?;
+                if candidate.project_key != key {
+                    return Err(AppError::Validation(format!(
+                        "Project '{}' references session '{}' from project '{}'",
+                        key, session_ref, candidate.project_key
+                    )));
+                }
             }
 
             // 摘要长度
@@ -881,12 +1959,27 @@ impl AppService {
 
                 // 引用校验: 所有 source_refs 必须合法在 ref_map 中存在
                 for ref_key in &item.source_refs {
-                    if !ref_map.contains_key(ref_key) {
-                        return Err(AppError::Validation(format!(
+                    let resolved = ref_map.get(ref_key).ok_or_else(|| {
+                        AppError::Validation(format!(
                             "Unknown source reference '{}' in item '{}'",
                             ref_key, item.title
+                        ))
+                    })?;
+                    if resolved.project_key != key {
+                        return Err(AppError::Validation(format!(
+                            "Item '{}' in project '{}' references session '{}' from project '{}'",
+                            item.title, key, ref_key, resolved.project_key
                         )));
                     }
+                }
+
+                if item.promotion_nomination != MemoryPromotionNomination::None
+                    && item.source_refs.is_empty()
+                {
+                    return Err(AppError::Validation(format!(
+                        "Promoted item '{}' must have at least one source ref",
+                        item.title
+                    )));
                 }
 
                 // M35-L1-12: unassigned 项目不能被提名晋升 L2
@@ -907,6 +2000,102 @@ impl AppService {
             }
         }
 
+        if result_project_keys != candidate_project_keys {
+            return Err(AppError::Domain {
+                code: "MEMORY_COVERAGE_INCOMPLETE".to_string(),
+                message:
+                    "Every candidate project must have exactly one Recent Snapshot project output"
+                        .to_string(),
+                retryable: true,
+                details: None,
+            });
+        }
+
+        Ok(())
+    }
+
+    async fn remove_conflicting_recent_snapshots(
+        conn: &mut sqlx::SqliteConnection,
+        tenant_id: &str,
+        target_watermark_str: &str,
+        window_hours: i64,
+        exclude_snapshot_id: Option<&str>,
+    ) -> AppResult<()> {
+        let existing_snapshot_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM recent_memory_snapshots \
+             WHERE tenant_id = ?1 AND target_watermark_utc = ?2 AND window_hours = ?3 AND contract_version = 'memory.contract.v2'",
+        )
+        .bind(tenant_id)
+        .bind(target_watermark_str)
+        .bind(window_hours)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(AppError::external)?;
+
+        for old_id in &existing_snapshot_ids {
+            if let Some(exclude) = exclude_snapshot_id {
+                if old_id == exclude {
+                    continue;
+                }
+            }
+
+            sqlx::query(
+                "UPDATE recent_memory_state SET last_successful_snapshot_id = NULL \
+                 WHERE tenant_id = ?1 AND last_successful_snapshot_id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+
+            sqlx::query(
+                "UPDATE recent_memory_snapshots SET reused_from_snapshot_id = NULL \
+                 WHERE tenant_id = ?1 AND reused_from_snapshot_id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+
+            sqlx::query(
+                "DELETE FROM memory_promotion_observations WHERE tenant_id = ?1 AND snapshot_id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+
+            sqlx::query(
+                "DELETE FROM recent_memory_snapshot_items WHERE tenant_id = ?1 AND snapshot_id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+
+            sqlx::query(
+                "DELETE FROM recent_memory_snapshot_projects WHERE tenant_id = ?1 AND snapshot_id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+
+            sqlx::query(
+                "DELETE FROM recent_memory_snapshots WHERE tenant_id = ?1 AND id = ?2",
+            )
+            .bind(tenant_id)
+            .bind(old_id)
+            .execute(&mut *conn)
+            .await
+            .map_err(AppError::external)?;
+        }
+
         Ok(())
     }
 
@@ -920,11 +2109,35 @@ impl AppService {
         ref_map: &HashMap<String, ResolvedEvidenceRef>,
         target_fingerprint: &str,
         content_fingerprint: &str,
+        expected_long_term_revisions: Option<&[String]>,
+        job_lease: Option<(&str, &str)>,
     ) -> AppResult<RecentMemorySnapshotView> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
 
         let mut tx = pool.begin().await.map_err(AppError::external)?;
+
+        if let Some((job_id, ownership_token)) = job_lease {
+            let now = Utc::now().to_rfc3339();
+            let owned = sqlx::query(
+                "SELECT 1 FROM recent_memory_jobs WHERE tenant_id = ?1 AND id = ?2 \
+                 AND status = 'running' AND ownership_token = ?3 \
+                 AND lease_expires_at > ?4",
+            )
+            .bind(tenant_id)
+            .bind(job_id)
+            .bind(ownership_token)
+            .bind(now)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(AppError::external)?
+            .is_some();
+            if !owned {
+                return Err(AppError::Conflict(
+                    "recent memory job lease is no longer owned".to_string(),
+                ));
+            }
+        }
 
         let snapshot_id = format!("snap-{}", uuid::Uuid::new_v4());
         let now = Utc::now();
@@ -939,6 +2152,16 @@ impl AppService {
         let local_watermark_time = &target.local_watermark_time;
         let timezone_offset_minutes = target.timezone_offset_minutes;
         let window_hours = target.window_hours;
+
+        // 清理同一 watermark 的历史快照冲突（若存在），支持用户重试任务/重新生成无缝覆盖
+        Self::remove_conflicting_recent_snapshots(
+            &mut tx,
+            tenant_id,
+            &target_watermark_str,
+            window_hours,
+            None,
+        )
+        .await?;
 
         // Sequence
         let seq_row = sqlx::query(
@@ -1304,15 +2527,42 @@ impl AppService {
             .map(|(i, r, b)| (i.as_str(), r.as_str(), *b))
             .collect();
 
+        let current_long_term_revisions: Vec<String> = sqlx::query_scalar(
+            "SELECT mir.id FROM memory_items mi
+             JOIN memory_item_revisions mir
+               ON mi.tenant_id = mir.tenant_id AND mi.current_revision_id = mir.id
+             WHERE mi.tenant_id = ?1 AND mi.layer IN ('l2', 'l3')
+               AND mi.lifecycle = 'current' ORDER BY mi.id ASC",
+        )
+        .bind(tenant_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(AppError::external)?;
+        let current_long_term_revision_refs = current_long_term_revisions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+
         let effective_content_fp = compute_content_fingerprint(
             target.window_hours,
             candidates,
             &carry_over_refs,
-            &[],
+            &current_long_term_revision_refs,
             skill_binding,
             &memory_settings.excluded_session_ids,
             &memory_settings.excluded_source_ids,
         );
+
+        if let Some(expected) = expected_long_term_revisions {
+            if expected != current_long_term_revisions.as_slice() {
+                return Err(AppError::Domain {
+                    code: "MEMORY_RESULT_STALE".to_string(),
+                    message: "Long-term memory changed before publication".to_string(),
+                    retryable: false,
+                    details: None,
+                });
+            }
+        }
 
         sqlx::query(
             "UPDATE recent_memory_snapshots SET content_fingerprint = ?3 \
@@ -1345,6 +2595,28 @@ impl AppService {
         .execute(&mut *tx)
         .await
         .map_err(AppError::external)?;
+
+        if let Some((job_id, ownership_token)) = job_lease {
+            let finalized = sqlx::query(
+                "UPDATE recent_memory_jobs SET status = 'succeeded', retry_at = NULL, \
+                 last_error_code = NULL, last_error_message = NULL, finished_at = ?1, \
+                 ownership_token = NULL, lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?1 \
+                 WHERE tenant_id = ?2 AND id = ?3 AND status = 'running' \
+                 AND ownership_token = ?4 AND lease_expires_at > ?1",
+            )
+            .bind(&published_at)
+            .bind(tenant_id)
+            .bind(job_id)
+            .bind(ownership_token)
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::external)?;
+            if finalized.rows_affected() != 1 {
+                return Err(AppError::Conflict(
+                    "recent memory job lease is no longer owned".to_string(),
+                ));
+            }
+        }
 
         tx.commit().await.map_err(AppError::external)?;
 
@@ -1418,6 +2690,8 @@ impl AppService {
                 &ref_map,
                 &target_fingerprint,
                 &content_fingerprint,
+                None,
+                None,
             )
             .await?;
 
@@ -1457,6 +2731,16 @@ impl AppService {
         let window_start_utc = target.window_start_utc.to_rfc3339();
         let window_end_utc = target.window_end_utc.to_rfc3339();
         let target_watermark_str = target.target_watermark_utc.to_rfc3339();
+
+        // 清理同一 watermark 的历史快照冲突（若存在，排除 prior_snapshot_id）
+        Self::remove_conflicting_recent_snapshots(
+            &mut tx,
+            tenant_id,
+            &target_watermark_str,
+            target.window_hours,
+            Some(prior_snapshot_id),
+        )
+        .await?;
 
         let seq_row = sqlx::query(
             "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_seq FROM recent_memory_snapshots WHERE tenant_id = ?1",
@@ -1629,6 +2913,11 @@ impl AppService {
                 )
             })
             .collect();
+        let current_l2_l3_revisions = self.load_current_long_term_revision_ids().await?;
+        let current_l2_l3_revision_refs = current_l2_l3_revisions
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
 
         let target_fingerprint = compute_target_fingerprint(
             tenant_id,
@@ -1643,7 +2932,7 @@ impl AppService {
             target.window_hours,
             &candidates,
             &carry_over_items_for_content,
-            &[],
+            &current_l2_l3_revision_refs,
             &skill_binding,
             &memory_settings.excluded_session_ids,
             &memory_settings.excluded_source_ids,
@@ -1703,6 +2992,8 @@ impl AppService {
                     &ref_map,
                     &target_fingerprint,
                     &content_fingerprint,
+                    None,
+                    None,
                 )
                 .await?;
             return Ok(Some(snap));
@@ -1745,1483 +3036,90 @@ impl AppService {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::dto::RecentMemoryStatus;
-    use crate::backend::models::{
-        MemoryGenerationCoverageV2, MemoryGenerationItemV2, MemoryGenerationProjectV2,
-        MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
+pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGenerationResultV2> {
+    let trimmed = raw.trim();
+    let json_text = if let Some(rest) = trimmed.strip_prefix("```") {
+        let rest = rest.strip_prefix("json").unwrap_or(rest);
+        let rest = rest.strip_prefix('\n').unwrap_or(rest);
+        rest.strip_suffix("```").map(str::trim).ok_or_else(|| {
+            AppError::Validation("MEMORY_OUTPUT_INVALID: unterminated JSON code fence".to_string())
+        })?
+    } else {
+        trimmed
     };
-    use std::fs;
-
-    async fn setup_test_service() -> (AppService, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-snapshot-pipeline-test-{}",
-            uuid::Uuid::new_v4()
+    if json_text.is_empty() {
+        return Err(AppError::Validation(
+            "MEMORY_OUTPUT_INVALID: empty Agent output".to_string(),
         ));
-        fs::create_dir_all(&root).expect("create test root");
-        let db_path = root.join("app.db");
-
-        let service = AppService::open_with_db_path(db_path)
-            .await
-            .expect("open service");
-
-        (service, root)
     }
-
-    async fn seed_test_conversation_data(service: &AppService) {
-        let pool = service.db.pool();
-
-        // 1. Insert conversation source
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sources (
-                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
-                last_synced_at, last_sync_status, created_at, updated_at
-            ) VALUES (
-                'default', 'source-alpha', 'adapter-claude', 'Alpha Source', 'local_folder',
-                '/tmp/source', '{}', 1, '2026-09-14T00:00:00Z', 'idle',
-                '2026-09-14T00:00:00Z', '2026-09-14T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .expect("insert source");
-
-        // Target watermark: 2026-09-15T12:00:00Z, 48h cutoff: 2026-09-13T12:00:00Z
-
-        // Session 1: in window (10h before watermark), project alpha
-        insert_test_session(
-            pool,
-            "session-in-alpha",
-            "source-alpha",
-            "Alpha In-Window",
-            Some("/tmp/alpha-project"),
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        // Session 2: in window (30h before watermark), unassigned (no project)
-        insert_test_session(
-            pool,
-            "session-in-unassigned",
-            "source-alpha",
-            "Unassigned In-Window",
-            None,
-            "2026-09-14T06:00:00Z",
-        )
-        .await;
-
-        // Session 3: too old (outside 48h window: 50h before watermark)
-        insert_test_session(
-            pool,
-            "session-too-old",
-            "source-alpha",
-            "Too Old Session",
-            Some("/tmp/alpha-project"),
-            "2026-09-13T10:00:00Z",
-        )
-        .await;
-
-        // Session 4: in future (after watermark)
-        insert_test_session(
-            pool,
-            "session-in-future",
-            "source-alpha",
-            "Future Session",
-            Some("/tmp/alpha-project"),
-            "2026-09-15T13:00:00Z",
-        )
-        .await;
-    }
-
-    async fn insert_test_session(
-        pool: &sqlx::SqlitePool,
-        session_id: &str,
-        source_id: &str,
-        title: &str,
-        project_path: Option<&str>,
-        activity_at: &str,
-    ) {
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sessions (
-                tenant_id, id, source_id, adapter_id, external_id, title,
-                project_path, started_at, updated_at, source_locator,
-                source_fingerprint, missing, user_visible, created_at, imported_at
-            ) VALUES (
-                'default', ?1, ?2, 'adapter-claude', ?1, ?3, ?4,
-                ?5, ?5, 'loc', 'fp', 0, 1, ?5, ?5
-            )
-            "#,
-        )
-        .bind(session_id)
-        .bind(source_id)
-        .bind(title)
-        .bind(project_path)
-        .bind(activity_at)
-        .execute(pool)
-        .await
-        .expect("insert test session");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_recent_snapshot_pipeline_candidate_selection() {
-        let (service, _root) = setup_test_service().await;
-        seed_test_conversation_data(&service).await;
-
-        // Session 5: in window (12h before watermark), but will be excluded via settings
-        insert_test_session(
-            service.db.pool(),
-            "session-excluded",
-            "source-alpha",
-            "Excluded Session",
-            Some("/tmp/alpha-project"),
-            "2026-09-15T00:00:00Z",
-        )
-        .await;
-
-        // Configure exclusion in settings
-        service
-            .save_app_settings(serde_json::json!({
-                "memory": {
-                    "generationEnabled": true,
-                    "usageEnabled": true,
-                    "recentWindowHours": 48,
-                    "watermarkTime1": "02:00",
-                    "watermarkTime2": "14:00",
-                    "generationSkillAssetId": null,
-                    "excludedSessionIds": ["session-excluded"],
-                    "excludedSourceIds": []
+    match serde_json::from_str::<MemoryGenerationResultV2>(json_text) {
+        Ok(result) => Ok(result),
+        Err(orig_err) => {
+            if let Some(repaired) = attempt_repair_truncated_json(json_text) {
+                if let Ok(result) = serde_json::from_str::<MemoryGenerationResultV2>(&repaired) {
+                    tracing::warn!("Successfully repaired truncated JSON in memory generation output");
+                    return Ok(result);
                 }
-            }))
-            .await
-            .expect("save settings");
-
-        let target_watermark: DateTime<Utc> = "2026-09-15T12:00:00Z".parse().unwrap();
-        let (candidates, ref_map) = service
-            .collect_recent_snapshot_candidates(target_watermark, 48)
-            .await
-            .expect("collect candidates");
-
-        // Exactly 2 candidates: session-in-alpha and session-in-unassigned
-        assert_eq!(candidates.len(), 2);
-
-        let alpha_candidate = candidates
-            .iter()
-            .find(|c| c.session_id == "session-in-alpha")
-            .expect("find alpha candidate");
-        assert_eq!(alpha_candidate.project_key, "/tmp/alpha-project");
-        assert_eq!(
-            alpha_candidate.project_path.as_deref(),
-            Some("/tmp/alpha-project")
-        );
-        assert!(!alpha_candidate.short_ref.is_empty());
-
-        let unassigned_candidate = candidates
-            .iter()
-            .find(|c| c.session_id == "session-in-unassigned")
-            .expect("find unassigned candidate");
-        assert_eq!(unassigned_candidate.project_key, "unassigned");
-        assert_eq!(unassigned_candidate.project_path, None);
-        assert!(!unassigned_candidate.short_ref.is_empty());
-
-        // Verify ref_map has both short refs
-        assert!(ref_map.contains_key(&alpha_candidate.short_ref));
-        assert!(ref_map.contains_key(&unassigned_candidate.short_ref));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_recent_snapshot_pipeline_quality_gates() {
-        let (service, _root) = setup_test_service().await;
-        seed_test_conversation_data(&service).await;
-
-        let target_watermark: DateTime<Utc> = "2026-09-15T12:00:00Z".parse().unwrap();
-        let (candidates, ref_map) = service
-            .collect_recent_snapshot_candidates(target_watermark, 48)
-            .await
-            .expect("collect candidates");
-        assert_eq!(candidates.len(), 2);
-
-        let ref1 = &candidates[0].short_ref;
-        let ref2 = &candidates[1].short_ref;
-
-        // Gate 1: Coverage Incomplete (omitted s2)
-        let incomplete_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: candidates[0].project_key.clone(),
-                summary: "Summary".to_string(),
-                no_material_change: false,
-                source_sessions: vec![ref1.clone()],
-                items: vec![],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![ref1.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-        let err = service
-            .execute_recent_memory_snapshot_pipeline(target_watermark, 48, incomplete_result)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("not covered"));
-
-        // Verify state has failure and last-success is None
-        let state = service
-            .get_recent_memory_snapshot()
-            .await
-            .expect("get state");
-        assert_eq!(state.status, RecentMemoryStatus::UpdateFailed);
-        assert!(state.snapshot.is_none());
-        assert!(state.latest_attempt_error.is_some());
-
-        // Gate 2: Budget exhausted
-        let budget_exhausted_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![ref1.clone(), ref2.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: true,
-            },
-            unknowns: vec![],
-        };
-        let err = service
-            .validate_memory_generation_result(&budget_exhausted_result, &candidates, &ref_map)
-            .unwrap_err();
-        assert!(err.to_string().contains("budget exhausted"));
-
-        // Gate 3: Invalid reference key
-        let invalid_ref_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: candidates[0].project_key.clone(),
-                summary: "Summary".to_string(),
-                no_material_change: false,
-                source_sessions: vec![ref1.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: None,
-                    category: MemoryItemCategory::Progress,
-                    status: MemoryItemStatus::Active,
-                    title: "Item 1".to_string(),
-                    summary: "Item summary".to_string(),
-                    rationale: "Rationale".to_string(),
-                    occurred_at: "2026-09-15T01:00:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec!["unknown-ref-999".to_string()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![ref1.clone(), ref2.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-        let err = service
-            .validate_memory_generation_result(&invalid_ref_result, &candidates, &ref_map)
-            .unwrap_err();
-        assert!(err.to_string().contains("Unknown source reference"));
-
-        // Gate 4: Duplicate recommendation rank
-        let duplicate_rank_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: candidates[0].project_key.clone(),
-                summary: "Summary".to_string(),
-                no_material_change: false,
-                source_sessions: vec![ref1.clone()],
-                items: vec![
-                    MemoryGenerationItemV2 {
-                        continues_item_id: None,
-                        category: MemoryItemCategory::Decision,
-                        status: MemoryItemStatus::Verified,
-                        title: "Rec 1".to_string(),
-                        summary: "Summary".to_string(),
-                        rationale: "Rationale".to_string(),
-                        occurred_at: "2026-09-15T01:00:00Z".to_string(),
-                        recommendation_rank: Some(1),
-                        source_refs: vec![ref1.clone()],
-                        promotion_nomination: MemoryPromotionNomination::None,
-                    },
-                    MemoryGenerationItemV2 {
-                        continues_item_id: None,
-                        category: MemoryItemCategory::FollowUp,
-                        status: MemoryItemStatus::Active,
-                        title: "Rec 2".to_string(),
-                        summary: "Summary".to_string(),
-                        rationale: "Rationale".to_string(),
-                        occurred_at: "2026-09-15T01:00:00Z".to_string(),
-                        recommendation_rank: Some(1), // duplicate!
-                        source_refs: vec![ref1.clone()],
-                        promotion_nomination: MemoryPromotionNomination::None,
-                    },
-                ],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![ref1.clone(), ref2.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-        let err = service
-            .validate_memory_generation_result(&duplicate_rank_result, &candidates, &ref_map)
-            .unwrap_err();
-        assert!(err.to_string().contains("Duplicate recommendation rank"));
-
-        // Gate 5: M35-L1-12 Unassigned project cannot nominate promotion
-        let unassigned_nomination_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![
-                MemoryGenerationProjectV2 {
-                    project_key: "/tmp/alpha-project".to_string(),
-                    summary: "Alpha summary".to_string(),
-                    no_material_change: false,
-                    source_sessions: vec![ref1.clone()],
-                    items: vec![],
-                },
-                MemoryGenerationProjectV2 {
-                    project_key: "unassigned".to_string(),
-                    summary: "Unassigned summary".to_string(),
-                    no_material_change: false,
-                    source_sessions: vec![ref2.clone()],
-                    items: vec![MemoryGenerationItemV2 {
-                        continues_item_id: None,
-                        category: MemoryItemCategory::Decision,
-                        status: MemoryItemStatus::Verified,
-                        title: "Unassigned decision".to_string(),
-                        summary: "Summary".to_string(),
-                        rationale: "Rationale".to_string(),
-                        occurred_at: "2026-09-15T01:00:00Z".to_string(),
-                        recommendation_rank: None,
-                        source_refs: vec![ref2.clone()],
-                        promotion_nomination: MemoryPromotionNomination::ProjectDecision, // Not allowed!
-                    }],
-                },
-            ],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![ref1.clone(), ref2.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-        let err = service
-            .validate_memory_generation_result(&unassigned_nomination_result, &candidates, &ref_map)
-            .unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("unassigned project cannot be nominated"));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
-        let (service, _root) = setup_test_service().await;
-        seed_test_conversation_data(&service).await;
-
-        let target_watermark: DateTime<Utc> = "2026-09-15T12:00:00Z".parse().unwrap();
-        let (candidates, _ref_map) = service
-            .collect_recent_snapshot_candidates(target_watermark, 48)
-            .await
-            .expect("collect candidates");
-        assert_eq!(candidates.len(), 2);
-
-        let alpha_candidate = candidates
-            .iter()
-            .find(|c| c.project_key == "/tmp/alpha-project")
-            .unwrap();
-        let unassigned_candidate = candidates
-            .iter()
-            .find(|c| c.project_key == "unassigned")
-            .unwrap();
-
-        let valid_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![
-                MemoryGenerationProjectV2 {
-                    project_key: "/tmp/alpha-project".to_string(),
-                    summary: "Alpha project updates and next steps.".to_string(),
-                    no_material_change: false,
-                    source_sessions: vec![alpha_candidate.short_ref.clone()],
-                    items: vec![
-                        MemoryGenerationItemV2 {
-                            continues_item_id: None,
-                            category: MemoryItemCategory::Progress,
-                            status: MemoryItemStatus::Active,
-                            title: "Implemented database migrations".to_string(),
-                            summary: "Completed schema foundation tables".to_string(),
-                            rationale: "Needed for persistence".to_string(),
-                            occurred_at: "2026-09-15T02:00:00Z".to_string(),
-                            recommendation_rank: None,
-                            source_refs: vec![alpha_candidate.short_ref.clone()],
-                            promotion_nomination: MemoryPromotionNomination::None,
-                        },
-                        MemoryGenerationItemV2 {
-                            continues_item_id: None,
-                            category: MemoryItemCategory::Decision,
-                            status: MemoryItemStatus::Verified,
-                            title: "Decided to adopt single-tier symlinks".to_string(),
-                            summary: "Direct symlinks from app dir to sources".to_string(),
-                            rationale: "Reduces intermediate link complexity".to_string(),
-                            occurred_at: "2026-09-15T02:00:00Z".to_string(),
-                            recommendation_rank: Some(1),
-                            source_refs: vec![alpha_candidate.short_ref.clone()],
-                            promotion_nomination: MemoryPromotionNomination::ProjectDecision,
-                        },
-                    ],
-                },
-                MemoryGenerationProjectV2 {
-                    project_key: "unassigned".to_string(),
-                    summary: "Unassigned exploratory sessions.".to_string(),
-                    no_material_change: false,
-                    source_sessions: vec![unassigned_candidate.short_ref.clone()],
-                    items: vec![MemoryGenerationItemV2 {
-                        continues_item_id: None,
-                        category: MemoryItemCategory::Blocker,
-                        status: MemoryItemStatus::Blocked,
-                        title: "Waiting on external API key".to_string(),
-                        summary: "Cannot run tests without API key".to_string(),
-                        rationale: "Third party vendor delay".to_string(),
-                        occurred_at: "2026-09-14T06:00:00Z".to_string(),
-                        recommendation_rank: Some(1),
-                        source_refs: vec![unassigned_candidate.short_ref.clone()],
-                        promotion_nomination: MemoryPromotionNomination::None,
-                    }],
-                },
-            ],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![
-                    alpha_candidate.short_ref.clone(),
-                    unassigned_candidate.short_ref.clone(),
-                ],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        // 1. Commit snapshot successfully
-        let snapshot_view = service
-            .execute_recent_memory_snapshot_pipeline(target_watermark, 48, valid_result)
-            .await
-            .expect("execute pipeline successfully");
-
-        assert_eq!(snapshot_view.window_hours, 48);
-        assert_eq!(snapshot_view.projects.len(), 2);
-
-        let alpha_proj = snapshot_view
-            .projects
-            .iter()
-            .find(|p| p.project_key == "/tmp/alpha-project")
-            .unwrap();
-        assert_eq!(alpha_proj.items.len(), 2);
-        let rec_item = alpha_proj
-            .items
-            .iter()
-            .find(|i| i.recommendation_rank == Some(1))
-            .unwrap();
-        assert_eq!(rec_item.title, "Decided to adopt single-tier symlinks");
-        assert_eq!(rec_item.session_references.len(), 1);
-        assert_eq!(
-            rec_item.session_references[0].session_id,
-            "session-in-alpha"
-        );
-
-        let unassigned_proj = snapshot_view
-            .projects
-            .iter()
-            .find(|p| p.project_key == "unassigned")
-            .unwrap();
-        assert_eq!(unassigned_proj.items.len(), 1);
-
-        // Verify promotion observations in DB
-        let obs_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM memory_promotion_observations WHERE tenant_id = 'default'",
-        )
-        .fetch_one(service.db.pool())
-        .await
-        .expect("count observations");
-        // Only alpha project item had promotion nomination (unassigned had None)
-        assert_eq!(obs_count.0, 1);
-
-        // 2. Query state via public get_recent_memory_snapshot API
-        let state = service
-            .get_recent_memory_snapshot()
-            .await
-            .expect("get state");
-        assert_eq!(state.status, RecentMemoryStatus::Ready);
-        assert!(state.latest_attempt_error.is_none());
-        let current_snap = state.snapshot.expect("has snapshot");
-        assert_eq!(current_snap.snapshot_id, snapshot_view.snapshot_id);
-
-        // 3. Trigger a failure on subsequent pipeline run -> last success must be preserved!
-        let failing_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec!["unreadable".to_string()],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let err = service
-            .execute_recent_memory_snapshot_pipeline(target_watermark, 48, failing_result)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("Unreadable sessions"));
-
-        let state_after_fail = service
-            .get_recent_memory_snapshot()
-            .await
-            .expect("get state after fail");
-        assert_eq!(state_after_fail.status, RecentMemoryStatus::UpdateFailed);
-        assert!(state_after_fail.latest_attempt_error.is_some());
-        let preserved_snap = state_after_fail.snapshot.expect("preserved snapshot");
-        assert_eq!(preserved_snap.snapshot_id, snapshot_view.snapshot_id);
-    }
-
-    #[test]
-    fn test_watermark_resolution_defaults_and_custom() {
-        use chrono::FixedOffset;
-
-        let tz = FixedOffset::east_opt(8 * 3600).unwrap(); // UTC+8
-
-        // Test default 02:00 / 14:00 at various times of day:
-        // 1. At 01:59 UTC+8 on 2026-09-15 -> should pick yesterday 14:00 UTC+8 (2026-09-14 14:00)
-        let now_0159 = tz.with_ymd_and_hms(2026, 9, 15, 1, 59, 0).unwrap();
-        let target = resolve_target_watermark(now_0159, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-14");
-        assert_eq!(target.local_watermark_time, "14:00");
-        assert_eq!(target.timezone_offset_minutes, 480);
-        assert_eq!(target.window_hours, 48);
-
-        // 2. Exactly at 02:00 UTC+8 on 2026-09-15 -> picks today 02:00
-        let now_0200 = tz.with_ymd_and_hms(2026, 9, 15, 2, 0, 0).unwrap();
-        let target = resolve_target_watermark(now_0200, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-15");
-        assert_eq!(target.local_watermark_time, "02:00");
-
-        // 3. At 13:59 UTC+8 on 2026-09-15 -> still picks today 02:00
-        let now_1359 = tz.with_ymd_and_hms(2026, 9, 15, 13, 59, 0).unwrap();
-        let target = resolve_target_watermark(now_1359, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-15");
-        assert_eq!(target.local_watermark_time, "02:00");
-
-        // 4. At 14:00 UTC+8 on 2026-09-15 -> picks today 14:00
-        let now_1400 = tz.with_ymd_and_hms(2026, 9, 15, 14, 0, 0).unwrap();
-        let target = resolve_target_watermark(now_1400, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-15");
-        assert_eq!(target.local_watermark_time, "14:00");
-
-        // 5. At 23:59 UTC+8 on 2026-09-15 -> picks today 14:00
-        let now_2359 = tz.with_ymd_and_hms(2026, 9, 15, 23, 59, 0).unwrap();
-        let target = resolve_target_watermark(now_2359, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-15");
-        assert_eq!(target.local_watermark_time, "14:00");
-
-        // Test custom watermarks: 03:30 and 15:30 with window 24h
-        let target = resolve_target_watermark(now_1400, 24, "03:30", "15:30").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-15");
-        assert_eq!(target.local_watermark_time, "03:30");
-        assert_eq!(target.window_hours, 24);
-
-        // Validation errors
-        assert!(resolve_target_watermark(now_1400, 36, "02:00", "14:00").is_err());
-        assert!(resolve_target_watermark(now_1400, 48, "02:00", "02:00").is_err());
-        assert!(resolve_target_watermark(now_1400, 48, "24:00", "14:00").is_err());
-        assert!(resolve_target_watermark(now_1400, 48, "2:00", "14:00").is_err());
-    }
-
-    #[test]
-    fn test_watermark_missed_and_dst() {
-        use chrono::FixedOffset;
-
-        let tz = FixedOffset::east_opt(8 * 3600).unwrap();
-
-        // M35-L1-05: Missed watermark (app offline for 5 days)
-        // System comes online at 2026-09-20 16:00
-        // Should only resolve the latest expired watermark (2026-09-20 14:00), ignoring previous missed ones
-        let now_online = tz.with_ymd_and_hms(2026, 9, 20, 16, 0, 0).unwrap();
-        let target = resolve_target_watermark(now_online, 48, "02:00", "14:00").unwrap();
-        assert_eq!(target.local_watermark_date, "2026-09-20");
-        assert_eq!(target.local_watermark_time, "14:00");
-
-        // DST simulation: resolve_local_time_with_dst
-        let naive = chrono::NaiveDate::from_ymd_opt(2026, 3, 29)
-            .unwrap()
-            .and_hms_opt(2, 0, 0)
-            .unwrap();
-
-        let resolved = resolve_local_time_with_dst(&tz, naive);
-        assert!(resolved.is_some());
-    }
-
-    #[test]
-    fn test_fingerprint_separation() {
-        let skill = MemorySkillBinding {
-            asset_id: "skill-gen".to_string(),
-            asset_revision: 1,
-            content_hash: "hash-123".to_string(),
-            entry_hash: "entry-123".to_string(),
-        };
-
-        let cand1 = CandidateSession {
-            tenant_id: "default".to_string(),
-            session_id: "s1".to_string(),
-            source_id: "src1".to_string(),
-            session_title: "Session 1".to_string(),
-            source_agent: "agent".to_string(),
-            project_path: None,
-            project_key: "unassigned".to_string(),
-            last_activity_at: "2026-09-15T01:00:00Z".to_string(),
-            source_revision: 1,
-            short_ref: "s1".to_string(),
-        };
-
-        let dt1: DateTime<Utc> = "2026-09-15T02:00:00Z".parse().unwrap();
-        let dt2: DateTime<Utc> = "2026-09-15T14:00:00Z".parse().unwrap();
-
-        // 1. Same candidate sessions, different target watermarks:
-        let target_fp_1 =
-            compute_target_fingerprint("default", &dt1, 48, &[cand1.clone()], &[], &skill);
-        let target_fp_2 =
-            compute_target_fingerprint("default", &dt2, 48, &[cand1.clone()], &[], &skill);
-        // Target fingerprints MUST DIFFER because target_watermark_utc differed:
-        assert_ne!(target_fp_1, target_fp_2);
-
-        // Content fingerprints MUST BE IDENTICAL because target_watermark_utc is NOT in content fingerprint:
-        let content_fp_1 =
-            compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
-        let content_fp_2 =
-            compute_content_fingerprint(48, &[cand1.clone()], &[], &[], &skill, &[], &[]);
-        assert_eq!(content_fp_1, content_fp_2);
-
-        // 2. Modifying candidate activity time changes content fingerprint:
-        let mut cand2 = cand1.clone();
-        cand2.last_activity_at = "2026-09-15T01:30:00Z".to_string();
-        let content_fp_changed =
-            compute_content_fingerprint(48, &[cand2], &[], &[], &skill, &[], &[]);
-        assert_ne!(content_fp_1, content_fp_changed);
-
-        // 3. Modifying exclusion changes content fingerprint:
-        let content_fp_excluded = compute_content_fingerprint(
-            48,
-            &[cand1.clone()],
-            &[],
-            &[],
-            &skill,
-            &["s-other".to_string()],
-            &[],
-        );
-        assert_ne!(content_fp_1, content_fp_excluded);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_dual_watermark_reuse_pipeline() {
-        use chrono::FixedOffset;
-
-        let (service, _root) = setup_test_service().await;
-
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sources (
-                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
-                last_synced_at, last_sync_status, created_at, updated_at
-            ) VALUES (
-                'default', 'source-alpha', 'adapter-claude', 'Alpha Source', 'local_folder',
-                '/tmp/source', '{}', 1, '2026-09-14T00:00:00Z', 'idle',
-                '2026-09-14T00:00:00Z', '2026-09-14T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(service.db.pool())
-        .await
-        .expect("insert source");
-
-        // Insert two stable sessions whose activity falls within both the 02:00 and 14:00 48h windows
-        insert_test_session(
-            service.db.pool(),
-            "session-alpha",
-            "source-alpha",
-            "Alpha Active Session",
-            Some("/tmp/alpha-project"),
-            "2026-09-14T12:00:00Z",
-        )
-        .await;
-
-        insert_test_session(
-            service.db.pool(),
-            "session-unassigned",
-            "source-alpha",
-            "Unassigned Session",
-            None,
-            "2026-09-14T15:00:00Z",
-        )
-        .await;
-
-        let tz = FixedOffset::east_opt(8 * 3600).unwrap();
-
-        // Step 1: At 02:05 UTC+8, first watermark 02:00 has passed -> Generates snapshot 1
-        let now_0205 = tz.with_ymd_and_hms(2026, 9, 15, 2, 5, 0).unwrap();
-
-        let (candidates, _) = service
-            .collect_recent_snapshot_candidates("2026-09-14T18:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("collect candidates");
-
-        let alpha_cand = candidates
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-        let unassigned_cand = candidates
-            .iter()
-            .find(|c| c.project_key == "unassigned")
-            .unwrap();
-
-        let initial_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![
-                MemoryGenerationProjectV2 {
-                    project_key: alpha_cand.project_key.clone(),
-                    summary: "Alpha project summary.".to_string(),
-                    no_material_change: false,
-                    source_sessions: vec![alpha_cand.short_ref.clone()],
-                    items: vec![MemoryGenerationItemV2 {
-                        continues_item_id: None,
-                        category: MemoryItemCategory::Progress,
-                        status: MemoryItemStatus::Active,
-                        title: "Initial work".to_string(),
-                        summary: "Summary of work".to_string(),
-                        rationale: "Rationale".to_string(),
-                        occurred_at: "2026-09-14T20:00:00Z".to_string(),
-                        recommendation_rank: Some(1),
-                        source_refs: vec![alpha_cand.short_ref.clone()],
-                        promotion_nomination: MemoryPromotionNomination::ProjectDecision,
-                    }],
-                },
-                MemoryGenerationProjectV2 {
-                    project_key: "unassigned".to_string(),
-                    summary: "Unassigned summary.".to_string(),
-                    no_material_change: true,
-                    source_sessions: vec![unassigned_cand.short_ref.clone()],
-                    items: vec![],
-                },
-            ],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![
-                    alpha_cand.short_ref.clone(),
-                    unassigned_cand.short_ref.clone(),
-                ],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap1 = service
-            .evaluate_and_run_recent_snapshot(Some(now_0205), Some(initial_result))
-            .await
-            .expect("evaluate snap 1")
-            .expect("must produce snapshot 1");
-
-        assert_eq!(
-            snap1.publication_kind,
-            RecentSnapshotPublicationKind::Generated
-        );
-        assert_eq!(snap1.reused_from_snapshot_id, None);
-        let content_gen_at_1 = snap1.content_generated_at.clone();
-
-        // Observation count in DB should be 1
-        let obs_count: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM memory_promotion_observations WHERE tenant_id = 'default'",
-        )
-        .fetch_one(service.db.pool())
-        .await
-        .expect("count obs");
-        assert_eq!(obs_count.0, 1);
-
-        // Step 2: Running again at 02:10 UTC+8 (same watermark 02:00) -> Target idempotency, returns None
-        let now_0210 = tz.with_ymd_and_hms(2026, 9, 15, 2, 10, 0).unwrap();
-        let res_repeat = service
-            .evaluate_and_run_recent_snapshot::<FixedOffset>(Some(now_0210), None)
-            .await
-            .expect("repeat target check");
-        assert!(res_repeat.is_none());
-
-        // Step 3: At 14:05 UTC+8, watermark advances to 14:00!
-        // No session was added, so content_fingerprint is IDENTICAL!
-        // Agent must NOT be called (mock_result is None)
-        let now_1405 = tz.with_ymd_and_hms(2026, 9, 15, 14, 5, 0).unwrap();
-        let snap2 = service
-            .evaluate_and_run_recent_snapshot::<FixedOffset>(Some(now_1405), None)
-            .await
-            .expect("evaluate snap 2")
-            .expect("must produce reused snapshot 2");
-
-        // Verification of M35-L1-06 (Reuse):
-        assert_eq!(
-            snap2.publication_kind,
-            RecentSnapshotPublicationKind::Reused
-        );
-        assert_eq!(
-            snap2.reused_from_snapshot_id,
-            Some(snap1.snapshot_id.clone())
-        );
-        // M35-L1-06: Preserves original content_generated_at!
-        assert_eq!(snap2.content_generated_at, content_gen_at_1);
-        // Sequence incremented
-        assert_eq!(snap2.sequence, snap1.sequence + 1);
-        // Projects and items copied
-        assert_eq!(snap2.projects.len(), snap1.projects.len());
-        let alpha_snap2 = snap2
-            .projects
-            .iter()
-            .find(|p| p.project_key == alpha_cand.project_key)
-            .unwrap();
-        assert_eq!(alpha_snap2.items.len(), 1);
-        assert_eq!(alpha_snap2.items[0].title, "Initial work");
-
-        // M35-L1-06 / M35-L2-04: reused snapshot does NOT increment promotion observation count!
-        let obs_count_after: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM memory_promotion_observations WHERE tenant_id = 'default'",
-        )
-        .fetch_one(service.db.pool())
-        .await
-        .expect("count obs after reuse");
-        assert_eq!(obs_count_after.0, 1);
-
-        // State check: Ready, pointing to snap2
-        let state = service
-            .get_recent_memory_snapshot()
-            .await
-            .expect("get state");
-        assert_eq!(state.status, RecentMemoryStatus::Ready);
-        assert_eq!(state.snapshot.unwrap().snapshot_id, snap2.snapshot_id);
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_l1_item_continuation_and_7_day_limit() {
-        use chrono::FixedOffset;
-
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        // 1. Setup source and session
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sources (
-                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
-                last_synced_at, last_sync_status, created_at, updated_at
-            ) VALUES (
-                'default', 'source-alpha', 'adapter-claude', 'Alpha Source', 'local_folder',
-                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
-                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .expect("insert source");
-
-        insert_test_session(
-            pool,
-            "session-alpha",
-            "source-alpha",
-            "Alpha Session",
-            Some("/tmp/alpha-project"),
-            "2026-09-10T01:00:00Z",
-        )
-        .await;
-
-        let tz = FixedOffset::east_opt(0).unwrap();
-
-        // Step 1: Day 0 (2026-09-10T02:05:00Z) -> Generates Snapshot 1 with Active Item
-        let now_day0 = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
-        let (candidates, _) = service
-            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("collect candidates");
-
-        let alpha_cand = candidates
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-
-        let initial_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: alpha_cand.project_key.clone(),
-                summary: "Initial day 0 work.".to_string(),
-                no_material_change: false,
-                source_sessions: vec![alpha_cand.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: None,
-                    category: MemoryItemCategory::Progress,
-                    status: MemoryItemStatus::Active,
-                    title: "Feature A initial work".to_string(),
-                    summary: "Started feature A".to_string(),
-                    rationale: "Needed for milestone".to_string(),
-                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec![alpha_cand.short_ref.clone()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![alpha_cand.short_ref.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap1 = service
-            .evaluate_and_run_recent_snapshot(Some(now_day0), Some(initial_result))
-            .await
-            .expect("snap 1")
-            .expect("snap 1 some");
-
-        let item1_id = snap1.projects[0].items[0].item_id.clone();
-
-        // Verify Item 1 in DB
-        let row1: (String, String, String, i64) = sqlx::query_as(
-            "SELECT mi.first_seen_at, mi.last_seen_at, mi.lifecycle, mir.revision_number \
-             FROM memory_items mi JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
-             WHERE mi.tenant_id = 'default' AND mi.id = ?1",
-        )
-        .bind(&item1_id)
-        .fetch_one(pool)
-        .await
-        .expect("query item 1");
-
-        assert_eq!(row1.2, "current");
-        assert_eq!(row1.3, 1);
-        let first_seen_at_day0 = row1.0.clone();
-
-        // Step 2: Day 2 (2026-09-12T02:05:00Z)
-        // Check collect_continuable_items at Day 2: item 1 must be present with remaining_days = 5
-        let now_day2 = tz.with_ymd_and_hms(2026, 9, 12, 2, 5, 0).unwrap();
-        let continuable_day2 = service
-            .collect_continuable_items(&"2026-09-12T02:00:00Z".parse().unwrap())
-            .await
-            .expect("collect continuable day 2");
-
-        let cont1 = continuable_day2
-            .iter()
-            .find(|i| i.item_id == item1_id)
-            .expect("must find item1");
-        assert_eq!(cont1.days_since_first_seen, 2);
-        assert_eq!(cont1.remaining_days, 5);
-
-        // Insert new activity at Day 2
-        insert_test_session(
-            pool,
-            "session-alpha-day2",
-            "source-alpha",
-            "Alpha Session Day 2",
-            Some("/tmp/alpha-project"),
-            "2026-09-12T01:00:00Z",
-        )
-        .await;
-
-        let (candidates_day2, _) = service
-            .collect_recent_snapshot_candidates("2026-09-12T02:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("collect candidates day 2");
-        let alpha_cand_day2 = candidates_day2
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-
-        // Agent continues item 1, updates status to Blocked
-        let day2_result = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: alpha_cand_day2.project_key.clone(),
-                summary: "Day 2 work blocked.".to_string(),
-                no_material_change: false,
-                source_sessions: vec![alpha_cand_day2.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: Some(item1_id.clone()),
-                    category: MemoryItemCategory::Blocker,
-                    status: MemoryItemStatus::Blocked,
-                    title: "Feature A blocked by dependency".to_string(),
-                    summary: "Feature A is now blocked".to_string(),
-                    rationale: "Upstream API change".to_string(),
-                    occurred_at: "2026-09-12T01:30:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec![alpha_cand_day2.short_ref.clone()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![alpha_cand_day2.short_ref.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap2 = service
-            .evaluate_and_run_recent_snapshot(Some(now_day2), Some(day2_result))
-            .await
-            .expect("snap 2")
-            .expect("snap 2 some");
-
-        assert_eq!(snap2.projects[0].items[0].item_id, item1_id);
-
-        // Verify revision 2 and first_seen_at preserved
-        let row2: (String, String, String, i64, Option<String>) = sqlx::query_as(
-            "SELECT mi.first_seen_at, mi.last_seen_at, mi.lifecycle, mir.revision_number, mir.supersedes_revision_id \
-             FROM memory_items mi JOIN memory_item_revisions mir ON mi.current_revision_id = mir.id \
-             WHERE mi.tenant_id = 'default' AND mi.id = ?1",
-        )
-        .bind(&item1_id)
-        .fetch_one(pool)
-        .await
-        .expect("query item 1 after day 2");
-
-        // M35-L1-08: first_seen_at remains Day 0!
-        assert_eq!(row2.0, first_seen_at_day0);
-        // last_seen_at is updated to Day 2!
-        assert_eq!(row2.1, "2026-09-12T02:00:00+00:00");
-        assert_eq!(row2.2, "current");
-        assert_eq!(row2.3, 2); // revision 2
-        assert!(row2.4.is_some()); // supersedes rev 1
-
-        // Step 3: Day 8 (> 7 days after first_seen_at)
-        // 2026-09-18T02:00:00Z is 8 days after 2026-09-10T02:00:00Z
-        let continuable_day8 = service
-            .collect_continuable_items(&"2026-09-18T02:00:00Z".parse().unwrap())
-            .await
-            .expect("collect continuable day 8");
-
-        // M35-L1-08: item 1 must be retired and NOT in continuable items!
-        assert!(continuable_day8.iter().all(|i| i.item_id != item1_id));
-
-        let lifecycle_day8: (String,) = sqlx::query_as(
-            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&item1_id)
-        .fetch_one(pool)
-        .await
-        .expect("query item 1 lifecycle day 8");
-        assert_eq!(lifecycle_day8.0, "retired");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_l1_terminal_state_displays_once_and_exits() {
-        use chrono::FixedOffset;
-
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sources (
-                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
-                last_synced_at, last_sync_status, created_at, updated_at
-            ) VALUES (
-                'default', 'source-beta', 'adapter-claude', 'Beta Source', 'local_folder',
-                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
-                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .expect("insert source");
-
-        insert_test_session(
-            pool,
-            "session-beta-1",
-            "source-beta",
-            "Beta Session 1",
-            Some("/tmp/beta-project"),
-            "2026-09-10T01:00:00Z",
-        )
-        .await;
-
-        let tz = FixedOffset::east_opt(0).unwrap();
-
-        // Step 1: Snapshot 1: Item created as Active
-        let now_1 = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
-        let (cand1, _) = service
-            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("cand1");
-        let beta_cand1 = cand1
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-
-        let res1 = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: beta_cand1.project_key.clone(),
-                summary: "Beta active task.".to_string(),
-                no_material_change: false,
-                source_sessions: vec![beta_cand1.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: None,
-                    category: MemoryItemCategory::Progress,
-                    status: MemoryItemStatus::Active,
-                    title: "Feature B development".to_string(),
-                    summary: "Under development".to_string(),
-                    rationale: "Milestone B".to_string(),
-                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec![beta_cand1.short_ref.clone()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![beta_cand1.short_ref.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap1 = service
-            .evaluate_and_run_recent_snapshot(Some(now_1), Some(res1))
-            .await
-            .expect("snap 1")
-            .unwrap();
-        let item_id = snap1.projects[0].items[0].item_id.clone();
-
-        // Step 2: Snapshot 2: Item is Completed (terminal)
-        insert_test_session(
-            pool,
-            "session-beta-2",
-            "source-beta",
-            "Beta Session 2",
-            Some("/tmp/beta-project"),
-            "2026-09-10T13:00:00Z",
-        )
-        .await;
-
-        let now_2 = tz.with_ymd_and_hms(2026, 9, 10, 14, 5, 0).unwrap();
-        let (cand2, _) = service
-            .collect_recent_snapshot_candidates("2026-09-10T14:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("cand2");
-        let beta_cand2 = cand2
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-
-        let res2 = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: beta_cand2.project_key.clone(),
-                summary: "Beta task completed.".to_string(),
-                no_material_change: false,
-                source_sessions: vec![beta_cand2.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: Some(item_id.clone()),
-                    category: MemoryItemCategory::Progress,
-                    status: MemoryItemStatus::Completed,
-                    title: "Feature B development finished".to_string(),
-                    summary: "Completed and merged".to_string(),
-                    rationale: "Done".to_string(),
-                    occurred_at: "2026-09-10T13:30:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec![beta_cand2.short_ref.clone()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: cand2.iter().map(|c| c.short_ref.clone()).collect(),
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap2 = service
-            .evaluate_and_run_recent_snapshot(Some(now_2), Some(res2))
-            .await
-            .expect("snap 2")
-            .unwrap();
-
-        // M35-L1-09: In the snapshot where it becomes terminal, it displays once!
-        assert_eq!(snap2.projects[0].items.len(), 1);
-        assert_eq!(snap2.projects[0].items[0].item_id, item_id);
-        assert_eq!(snap2.projects[0].items[0].status, "completed");
-
-        // In DB, its lifecycle is now 'retired'
-        let lifecycle: (String,) = sqlx::query_as(
-            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&item_id)
-        .fetch_one(pool)
-        .await
-        .expect("lifecycle check");
-        assert_eq!(lifecycle.0, "retired");
-
-        // Step 3: Snapshot 3: Next day
-        // collect_continuable_items must NOT return the completed item!
-        let continuable_step3 = service
-            .collect_continuable_items(&"2026-09-11T02:00:00Z".parse().unwrap())
-            .await
-            .expect("continuable step 3");
-        assert!(continuable_step3.is_empty());
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_source_invalidation_retires_unpromoted_l1_item() {
-        use chrono::FixedOffset;
-
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        sqlx::query(
-            r#"
-            INSERT INTO conversation_sources (
-                tenant_id, id, adapter_id, name, kind, location, config_json, enabled,
-                last_synced_at, last_sync_status, created_at, updated_at
-            ) VALUES (
-                'default', 'source-gamma', 'adapter-claude', 'Gamma Source', 'local_folder',
-                '/tmp/source', '{}', 1, '2026-09-10T00:00:00Z', 'idle',
-                '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z'
-            )
-            "#,
-        )
-        .execute(pool)
-        .await
-        .expect("insert source");
-
-        insert_test_session(
-            pool,
-            "session-gamma",
-            "source-gamma",
-            "Gamma Session",
-            Some("/tmp/gamma-project"),
-            "2026-09-10T01:00:00Z",
-        )
-        .await;
-
-        let tz = FixedOffset::east_opt(0).unwrap();
-        let now = tz.with_ymd_and_hms(2026, 9, 10, 2, 5, 0).unwrap();
-
-        let (candidates, _) = service
-            .collect_recent_snapshot_candidates("2026-09-10T02:00:00Z".parse().unwrap(), 48)
-            .await
-            .expect("candidates");
-        let gamma_cand = candidates
-            .iter()
-            .find(|c| c.project_key != "unassigned")
-            .unwrap();
-
-        let res = MemoryGenerationResultV2 {
-            schema_version: 2,
-            projects: vec![MemoryGenerationProjectV2 {
-                project_key: gamma_cand.project_key.clone(),
-                summary: "Gamma task.".to_string(),
-                no_material_change: false,
-                source_sessions: vec![gamma_cand.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
-                    continues_item_id: None,
-                    category: MemoryItemCategory::Progress,
-                    status: MemoryItemStatus::Active,
-                    title: "Gamma Item".to_string(),
-                    summary: "Gamma summary".to_string(),
-                    rationale: "Gamma rationale".to_string(),
-                    occurred_at: "2026-09-10T01:30:00Z".to_string(),
-                    recommendation_rank: None,
-                    source_refs: vec![gamma_cand.short_ref.clone()],
-                    promotion_nomination: MemoryPromotionNomination::None,
-                }],
-            }],
-            coverage: MemoryGenerationCoverageV2 {
-                covered_sessions: vec![gamma_cand.short_ref.clone()],
-                no_memory_sessions: vec![],
-                unreadable_sessions: vec![],
-                budget_exhausted: false,
-            },
-            unknowns: vec![],
-        };
-
-        let snap = service
-            .evaluate_and_run_recent_snapshot(Some(now), Some(res))
-            .await
-            .expect("eval")
-            .unwrap();
-        let l1_item_id = snap.projects[0].items[0].item_id.clone();
-
-        // Also insert an L2 item to verify M35-L3-04 (L2 item is NOT retired on source invalidation)
-        let l2_item_id = "item-l2-test".to_string();
-        let l2_rev_id = "rev-l2-test".to_string();
-        sqlx::query(
-            "INSERT INTO memory_items (\
-                tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
-                first_seen_at, last_seen_at, created_at, updated_at\
-             ) VALUES ('default', ?1, 'l2', 'gamma', ?2, 'current', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z', '2026-09-10T00:00:00Z')",
-        )
-        .bind(&l2_item_id)
-        .bind(&l2_rev_id)
-        .execute(pool)
-        .await
-        .expect("insert l2 item");
-
-        sqlx::query(
-            "INSERT INTO memory_item_revisions (\
-                tenant_id, id, item_id, revision_number, category, status, title, summary, \
-                rationale, recommendation_rank, promotion_nomination, occurred_at, \
-                evidence_fingerprint, generated_by_snapshot_id, created_at\
-             ) VALUES ('default', ?1, ?2, 1, 'decision', 'active', 'L2 Rule', 'L2 summary', 'L2 rat', NULL, 'none', '2026-09-10T00:00:00Z', 'fp', NULL, '2026-09-10T00:00:00Z')",
-        )
-        .bind(&l2_rev_id)
-        .bind(&l2_item_id)
-        .execute(pool)
-        .await
-        .expect("insert l2 rev");
-
-        sqlx::query(
-            "INSERT INTO memory_item_source_references (\
-                tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-                reference_key, source_revision, availability, created_at\
-             ) VALUES ('default', 'ref-l2', ?1, 'session', 'source-gamma', 'session-gamma', 'source-gamma/session-gamma', 1, 'available', '2026-09-10T00:00:00Z')",
-        )
-        .bind(&l2_rev_id)
-        .execute(pool)
-        .await
-        .expect("insert l2 ref");
-
-        // Now disable source-gamma:
-        sqlx::query("UPDATE conversation_sources SET enabled = 0 WHERE id = 'source-gamma'")
-            .execute(pool)
-            .await
-            .expect("disable source");
-
-        // Run sync
-        service
-            .sync_source_availability_and_retire_unpromoted_items("2026-09-11T00:00:00Z")
-            .await
-            .expect("sync source availability");
-
-        // 1. Unpromoted L1 item's references are unavailable
-        let l1_ref_status: (String, Option<String>) = sqlx::query_as(
-            "SELECT availability, unavailable_reason FROM memory_item_source_references WHERE item_revision_id = (SELECT current_revision_id FROM memory_items WHERE id = ?1)",
-        )
-        .bind(&l1_item_id)
-        .fetch_one(pool)
-        .await
-        .expect("l1 ref status");
-        assert_eq!(l1_ref_status.0, "unavailable");
-        assert_eq!(l1_ref_status.1.as_deref(), Some("source_disabled"));
-
-        // 2. Unpromoted L1 item is retired
-        let l1_lifecycle: (String,) =
-            sqlx::query_as("SELECT lifecycle FROM memory_items WHERE id = ?1")
-                .bind(&l1_item_id)
-                .fetch_one(pool)
-                .await
-                .expect("l1 lifecycle");
-        assert_eq!(l1_lifecycle.0, "retired");
-
-        // 3. M35-L3-04: L2 item reference is unavailable, but L2 item lifecycle is STILL 'current'
-        let l2_ref_status: (String, Option<String>) = sqlx::query_as(
-            "SELECT availability, unavailable_reason FROM memory_item_source_references WHERE item_revision_id = ?1",
-        )
-        .bind(&l2_rev_id)
-        .fetch_one(pool)
-        .await
-        .expect("l2 ref status");
-        assert_eq!(l2_ref_status.0, "unavailable");
-        assert_eq!(l2_ref_status.1.as_deref(), Some("source_disabled"));
-
-        let l2_lifecycle: (String,) =
-            sqlx::query_as("SELECT lifecycle FROM memory_items WHERE id = ?1")
-                .bind(&l2_item_id)
-                .fetch_one(pool)
-                .await
-                .expect("l2 lifecycle");
-        assert_eq!(l2_lifecycle.0, "current");
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_work_order_evidence_pack_is_structured_facts_without_markdown() {
-        let (service, _root) = setup_test_service().await;
-        let target = WatermarkTarget {
-            target_watermark_utc: "2026-09-15T02:00:00Z".parse().unwrap(),
-            local_watermark_date: "2026-09-15".to_string(),
-            local_watermark_time: "02:00".to_string(),
-            timezone_offset_minutes: 0,
-            window_hours: 48,
-            window_start_utc: "2026-09-13T02:00:00Z".parse().unwrap(),
-            window_end_utc: "2026-09-15T02:00:00Z".parse().unwrap(),
-        };
-
-        let candidates = vec![CandidateSession {
-            tenant_id: "default".to_string(),
-            session_id: "s1".to_string(),
-            source_id: "src1".to_string(),
-            session_title: "Session 1".to_string(),
-            source_agent: "agent".to_string(),
-            project_key: "proj1".to_string(),
-            project_path: None,
-            last_activity_at: "2026-09-14T10:00:00Z".to_string(),
-            source_revision: 1,
-            short_ref: "SES-1".to_string(),
-        }];
-
-        let continuable = vec![ContinuableMemoryItemView {
-            item_id: "item1".to_string(),
-            project_key: "proj1".to_string(),
-            category: MemoryItemCategory::Blocker,
-            status: MemoryItemStatus::Blocked,
-            title: "Task Blocked".to_string(),
-            summary: "Blocked summary".to_string(),
-            rationale: "Rationale".to_string(),
-            first_seen_at: "2026-09-13T02:00:00Z".to_string(),
-            last_seen_at: "2026-09-14T02:00:00Z".to_string(),
-            days_since_first_seen: 1,
-            remaining_days: 6,
-            current_revision_id: "rev1".to_string(),
-            current_revision_number: 1,
-            evidence_fingerprint: "fp1".to_string(),
-            source_refs: vec!["SES-1".to_string()],
-        }];
-
-        let pack = service.build_recent_snapshot_work_order_evidence_pack(
-            &target,
-            &candidates,
-            &continuable,
-        );
-
-        assert_eq!(pack.project_keys, vec!["proj1".to_string()]);
-        assert_eq!(pack.candidate_sessions.len(), 1);
-        assert_eq!(pack.candidate_sessions[0].session_ref, "SES-1");
-        assert_eq!(pack.continuable_items.len(), 1);
-        assert_eq!(pack.continuable_items[0].remaining_days, 6);
-        assert_eq!(pack.allowed_tools.len(), 4);
-
-        // M35-L1-10: Verify serialized JSON has zero markdown fields
-        let json_str = serde_json::to_string(&pack).expect("serialize pack");
-        assert!(!json_str.contains(".md"));
-        assert!(!json_str.contains("memory_summary"));
+            }
+            Err(AppError::Validation(format!(
+                "MEMORY_OUTPUT_INVALID: expected one MemoryGenerationResultV2 JSON value: {orig_err}"
+            )))
+        }
     }
 }
+
+fn attempt_repair_truncated_json(input: &str) -> Option<String> {
+    let s = input.trim();
+    if !s.starts_with('{') {
+        return None;
+    }
+
+    let mut last_brace = s.rfind('}')?;
+    while last_brace > 0 {
+        let candidate = &s[..=last_brace];
+        let mut stack = Vec::new();
+        let mut in_string = false;
+        let mut escape = false;
+        let mut valid = true;
+
+        for ch in candidate.chars() {
+            if in_string {
+                if escape {
+                    escape = false;
+                } else if ch == '\\' {
+                    escape = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+            } else {
+                match ch {
+                    '"' => in_string = true,
+                    '{' => stack.push('}'),
+                    '[' => stack.push(']'),
+                    '}' | ']' => {
+                        if stack.pop() != Some(ch) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if valid && !in_string {
+            let mut repaired = candidate.to_string();
+            while let Some(closing) = stack.pop() {
+                repaired.push(closing);
+            }
+            return Some(repaired);
+        }
+
+        last_brace = s[..last_brace].rfind('}')?;
+    }
+    None
+}
+
+#[cfg(test)]
+#[path = "recent_snapshot_pipeline_tests.rs"]
+mod tests;

@@ -1,11 +1,12 @@
 use crate::backend::dto::recent_snapshot::SourceAvailability;
 use crate::backend::models::{
     compute_global_consolidation_fingerprint, GlobalConsolidationInput,
-    GlobalConsolidationOperation, L3CandidateReferenceView, L3GlobalMemoryView, L3MemoryItemView,
-    L3PromotionCandidate, L3SourceReferenceView, L3SupersededIndexItem, MemoryItemCategory,
-    MemoryItemStatus, MemoryPromotionNomination,
+    GlobalConsolidationOperation, GlobalConsolidationResult, L3CandidateReferenceView,
+    L3GlobalMemoryView, L3MemoryItemView, L3PromotionCandidate, L3SourceReferenceView,
+    L3SupersededIndexItem, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
 };
 use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::store;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
@@ -39,6 +40,81 @@ impl GlobalConsolidationLockMap {
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone()
     }
+}
+
+fn resolve_global_reference(
+    references: &HashMap<String, L3CandidateReferenceView>,
+    reference_key: &str,
+    strict: bool,
+) -> AppResult<L3CandidateReferenceView> {
+    if let Some(reference) = references.get(reference_key) {
+        return Ok(reference.clone());
+    }
+    if strict {
+        return Err(AppError::Validation(format!(
+            "MEMORY_OUTPUT_INVALID: global reference is outside the Work Order: {reference_key}"
+        )));
+    }
+
+    // 旧的显式 custom_operations 入口没有 Work Order，只能保留其历史
+    // reference_key；生产 Agent 路径严格要求引用当前 Work Order 的真实 locator。
+    Ok(L3CandidateReferenceView {
+        project_key: "unassigned".to_string(),
+        source_id: "global".to_string(),
+        session_id: "global_evidence".to_string(),
+        reference_key: reference_key.to_string(),
+        role: None,
+        question_id: None,
+        turn_id: None,
+        part_id: None,
+        node_id: None,
+        source_revision: 1,
+        available: true,
+        unavailable_reason: None,
+    })
+}
+
+fn promotion_nomination_for_source_refs(
+    candidates: &[L3PromotionCandidate],
+    source_refs: &[String],
+) -> MemoryPromotionNomination {
+    // L3 publication is allowed only when the operation preserves the scope
+    // declared by an admitted candidate. A cross-project candidate must keep
+    // evidence from at least two real projects; a global rule must retain a
+    // canonical user reference.
+    for candidate in candidates {
+        let matching = candidate
+            .session_references
+            .iter()
+            .filter(|reference| {
+                reference.available && source_refs.contains(&reference.reference_key)
+            })
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            continue;
+        }
+        match candidate.nomination {
+            MemoryPromotionNomination::GlobalRule
+                if matching
+                    .iter()
+                    .any(|reference| reference.role.as_deref() == Some("user")) =>
+            {
+                return MemoryPromotionNomination::GlobalRule;
+            }
+            MemoryPromotionNomination::CrossProjectPattern => {
+                let projects = matching
+                    .iter()
+                    .map(|reference| reference.project_key.as_str())
+                    .filter(|project_key| !project_key.is_empty() && *project_key != "unassigned")
+                    .collect::<HashSet<_>>();
+                if projects.len() >= 2 {
+                    return MemoryPromotionNomination::CrossProjectPattern;
+                }
+            }
+            _ => {}
+        }
+    }
+    MemoryPromotionNomination::None
 }
 
 /// L3 晋升候选准入评估 (M35-L3-01, M35-L3-02)
@@ -86,7 +162,8 @@ pub(crate) async fn evaluate_l3_candidates(
     // 3. 加载所有与这些 L2 revisions 关联的引用及其可用性
     let ref_rows = sqlx::query(
         "SELECT sr.item_revision_id, sr.source_id, sr.session_id, sr.reference_key, \
-                sr.availability, sr.unavailable_reason, mi.project_key \
+                sr.question_id, sr.turn_id, sr.part_id, sr.node_id, sr.source_revision, sr.availability, \
+                sr.unavailable_reason, mi.project_key \
          FROM memory_item_source_references sr \
          JOIN memory_item_revisions mir ON sr.tenant_id = mir.tenant_id AND sr.item_revision_id = mir.id \
          JOIN memory_items mi ON mir.tenant_id = mi.tenant_id AND mir.item_id = mi.id \
@@ -104,8 +181,15 @@ pub(crate) async fn evaluate_l3_candidates(
         let source_id: String = r.get("source_id");
         let session_id: String = r.get("session_id");
         let reference_key: String = r.get("reference_key");
+        let question_id: Option<String> = r.get("question_id");
+        let turn_id: Option<String> = r.get("turn_id");
+        let part_id: Option<String> = r.get("part_id");
+        let node_id: Option<String> = r.get("node_id");
         let availability: String = r.get("availability");
         let unavailable_reason: Option<String> = r.get("unavailable_reason");
+        let is_user_reference = question_id.is_some()
+            || turn_id.is_some()
+            || reference_key.to_ascii_lowercase().contains("user");
 
         refs_by_revision
             .entry(rev_id)
@@ -115,7 +199,12 @@ pub(crate) async fn evaluate_l3_candidates(
                 source_id,
                 session_id,
                 reference_key,
-                role: None,
+                role: is_user_reference.then(|| "user".to_string()),
+                question_id,
+                turn_id,
+                part_id,
+                node_id,
+                source_revision: r.get("source_revision"),
                 available: availability == "available",
                 unavailable_reason,
             });
@@ -247,9 +336,14 @@ pub(crate) async fn evaluate_l3_candidates(
             grouped.supporting_projects.len() >= 2 && grouped.supporting_sessions.len() >= 2;
 
         if is_global_rule {
-            // M35-L3-02 规则 1: 明确全局规则必须有至少一个 available 引用
-            let has_available = grouped.references.iter().any(|r| r.available);
-            if has_available {
+            // M35-L3-02 规则 1: 明确全局规则必须有 available 的用户引用。
+            // L2 的 global_rule nomination 是范围声明；引用 locator 的
+            // question/turn 或 user 标记是用户证据声明。
+            let has_available_user_reference = grouped
+                .references
+                .iter()
+                .any(|r| r.available && r.role.as_deref() == Some("user"));
+            if has_available_user_reference {
                 candidates.push(L3PromotionCandidate {
                     item_id: grouped.primary_item_id,
                     item_revision_id: grouped.primary_revision_id,
@@ -288,6 +382,44 @@ pub(crate) async fn evaluate_l3_candidates(
     // 按标题稳定排序
     candidates.sort_by(|a, b| a.title.cmp(&b.title));
     Ok(candidates)
+}
+
+/// Load the complete, structured L3 input that belongs to one maintenance
+/// Work Order. The coordinator serializes this value into the durable job so
+/// the Agent sees an immutable evidence set.
+pub(crate) async fn load_global_consolidation_input(
+    pool: &SqlitePool,
+    tenant_id: &str,
+) -> AppResult<GlobalConsolidationInput> {
+    let current_l3_items = get_global_memory_l3_view(pool, tenant_id)
+        .await?
+        .map(|view| view.items)
+        .unwrap_or_default();
+
+    let superseded_rows = sqlx::query(
+        "SELECT superseded_item_id, superseding_item_id, reason \
+         FROM memory_item_supersessions WHERE tenant_id = ?1",
+    )
+    .bind(tenant_id)
+    .fetch_all(pool)
+    .await
+    .map_err(AppError::external)?;
+
+    let superseded_index = superseded_rows
+        .into_iter()
+        .map(|row| L3SupersededIndexItem {
+            old_item_id: row.get("superseded_item_id"),
+            superseding_item_id: row.get("superseding_item_id"),
+            reason: row.get("reason"),
+        })
+        .collect();
+
+    Ok(GlobalConsolidationInput {
+        tenant_id: tenant_id.to_string(),
+        current_l3_items,
+        candidates: evaluate_l3_candidates(pool, tenant_id).await?,
+        superseded_index,
+    })
 }
 
 /// 检查是否满足 Global Consolidation 触发条件 (M35-L3-03)
@@ -340,6 +472,17 @@ pub(crate) async fn should_trigger_global_consolidation(
 
     let elapsed = now.signed_duration_since(last_dt.with_timezone(&Utc));
     Ok(elapsed.num_days() >= 7)
+}
+
+/// Recent 水位完成后只在 Global Consolidation 的低频触发门禁通过时创建
+/// durable job。没有合格 L3 候选时不产生空转任务。
+pub(crate) async fn should_schedule_global_consolidation(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    now: DateTime<Utc>,
+) -> AppResult<bool> {
+    let candidates = evaluate_l3_candidates(pool, tenant_id).await?;
+    should_trigger_global_consolidation(pool, tenant_id, candidates.len(), now, false).await
 }
 
 /// 读取当前 Tenant 的 L3 全局记忆视图
@@ -408,7 +551,7 @@ pub(crate) async fn get_global_memory_l3_view(
 
         // 加载关联引用
         let ref_rows = sqlx::query(
-            "SELECT source_id, session_id, reference_key, availability, unavailable_reason \
+            "SELECT source_id, session_id, reference_key, question_id, turn_id, part_id, node_id, availability, unavailable_reason \
              FROM memory_item_source_references \
              WHERE tenant_id = ?1 AND item_revision_id = ?2",
         )
@@ -435,6 +578,10 @@ pub(crate) async fn get_global_memory_l3_view(
                 session_id: ref_r.get("session_id"),
                 reference_key: ref_r.get("reference_key"),
                 project_key: None,
+                question_id: ref_r.get("question_id"),
+                turn_id: ref_r.get("turn_id"),
+                part_id: ref_r.get("part_id"),
+                node_id: ref_r.get("node_id"),
                 available: is_avail,
                 unavailable_reason: ref_r.get("unavailable_reason"),
             });
@@ -496,8 +643,82 @@ pub(crate) async fn reconcile_global_consolidation(
     is_manual_rebuild: bool,
     custom_operations: Option<Vec<GlobalConsolidationOperation>>,
 ) -> AppResult<Option<L3GlobalMemoryView>> {
-    // 步骤 1: 评估候选
-    let candidates = evaluate_l3_candidates(pool, tenant_id).await?;
+    reconcile_global_consolidation_with_runner(
+        pool,
+        tenant_id,
+        now,
+        is_manual_rebuild,
+        custom_operations,
+        None::<
+            fn(
+                GlobalConsolidationInput,
+            ) -> std::future::Ready<AppResult<GlobalConsolidationResult>>,
+        >,
+    )
+    .await
+}
+
+pub(crate) async fn reconcile_global_consolidation_with_runner<F, Fut>(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    now: DateTime<Utc>,
+    is_manual_rebuild: bool,
+    custom_operations: Option<Vec<GlobalConsolidationOperation>>,
+    agent_runner: Option<F>,
+) -> AppResult<Option<L3GlobalMemoryView>>
+where
+    F: FnOnce(GlobalConsolidationInput) -> Fut,
+    Fut: std::future::Future<Output = AppResult<GlobalConsolidationResult>>,
+{
+    reconcile_global_consolidation_with_runner_and_lease(
+        pool,
+        tenant_id,
+        now,
+        is_manual_rebuild,
+        custom_operations,
+        agent_runner,
+        None,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn reconcile_global_consolidation_with_runner_and_lease<F, Fut>(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    now: DateTime<Utc>,
+    is_manual_rebuild: bool,
+    custom_operations: Option<Vec<GlobalConsolidationOperation>>,
+    agent_runner: Option<F>,
+    job_lease: Option<(&str, &str)>,
+    frozen_input: Option<GlobalConsolidationInput>,
+) -> AppResult<Option<L3GlobalMemoryView>>
+where
+    F: FnOnce(GlobalConsolidationInput) -> Fut,
+    Fut: std::future::Future<Output = AppResult<GlobalConsolidationResult>>,
+{
+    // 步骤 1: 读取并验证不可变输入首包
+    let initial_live_input = load_global_consolidation_input(pool, tenant_id).await?;
+    let frozen_input_fingerprint = frozen_input
+        .as_ref()
+        .map(compute_global_consolidation_fingerprint);
+    if let Some(frozen_input) = frozen_input.as_ref() {
+        if frozen_input.tenant_id != tenant_id
+            || compute_global_consolidation_fingerprint(frozen_input)
+                != compute_global_consolidation_fingerprint(&initial_live_input)
+        {
+            return Err(AppError::Domain {
+                code: "MEMORY_WORK_ORDER_STALE".to_string(),
+                message: "global maintenance evidence changed after enqueue".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+    }
+    let initial_candidate_count = frozen_input
+        .as_ref()
+        .map(|input| input.candidates.len())
+        .unwrap_or(initial_live_input.candidates.len());
 
     // 步骤 2: 检查触发门禁 (M35-L3-03: 0 候选绝不触发，custom_operations 除外)
     let should_trigger = if custom_operations.is_some() {
@@ -506,7 +727,7 @@ pub(crate) async fn reconcile_global_consolidation(
         should_trigger_global_consolidation(
             pool,
             tenant_id,
-            candidates.len(),
+            initial_candidate_count,
             now,
             is_manual_rebuild,
         )
@@ -514,7 +735,27 @@ pub(crate) async fn reconcile_global_consolidation(
     };
 
     if !should_trigger {
-        return get_global_memory_l3_view(pool, tenant_id).await;
+        let view = get_global_memory_l3_view(pool, tenant_id).await?;
+        if let Some((job_id, ownership_token)) = job_lease {
+            let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                pool,
+                tenant_id,
+                job_id,
+                ownership_token,
+                "succeeded",
+                None,
+                None,
+                false,
+                &Utc::now().to_rfc3339(),
+            )
+            .await?;
+            if !completed {
+                return Err(AppError::Conflict(
+                    "memory v2 maintenance lease is no longer owned".to_string(),
+                ));
+            }
+        }
+        return Ok(view);
     }
 
     // 步骤 3: 锁定该 tenant 互斥锁
@@ -522,38 +763,24 @@ pub(crate) async fn reconcile_global_consolidation(
     let tenant_lock = lock_map.lock_for(tenant_id).await;
     let _guard = tenant_lock.lock().await;
 
-    // 步骤 4: 组装输入事实首包
-    let current_view = get_global_memory_l3_view(pool, tenant_id).await?;
-    let current_l3_items = current_view
-        .as_ref()
-        .map(|v| v.items.clone())
-        .unwrap_or_default();
-
-    // 加载被取代条目轻量索引 (M35-L3-05)
-    let superseded_rows = sqlx::query(
-        "SELECT superseded_item_id, superseding_item_id, reason \
-         FROM memory_item_supersessions WHERE tenant_id = ?1",
-    )
-    .bind(tenant_id)
-    .fetch_all(pool)
-    .await
-    .map_err(AppError::external)?;
-
-    let mut superseded_index = Vec::new();
-    for row in superseded_rows {
-        superseded_index.push(L3SupersededIndexItem {
-            old_item_id: row.get("superseded_item_id"),
-            superseding_item_id: row.get("superseding_item_id"),
-            reason: row.get("reason"),
-        });
-    }
-
-    let input = GlobalConsolidationInput {
-        tenant_id: tenant_id.to_string(),
-        current_l3_items,
-        candidates: candidates.clone(),
-        superseded_index,
+    // 步骤 4: 锁内再次确认输入；Agent 只消费冻结的 Work Order 首包
+    let input = if let Some(frozen_input) = frozen_input {
+        let current_live_input = load_global_consolidation_input(pool, tenant_id).await?;
+        if compute_global_consolidation_fingerprint(&frozen_input)
+            != compute_global_consolidation_fingerprint(&current_live_input)
+        {
+            return Err(AppError::Domain {
+                code: "MEMORY_WORK_ORDER_STALE".to_string(),
+                message: "global maintenance evidence changed before execution".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        frozen_input
+    } else {
+        load_global_consolidation_input(pool, tenant_id).await?
     };
+    let candidates = input.candidates.clone();
 
     let input_fingerprint = compute_global_consolidation_fingerprint(&input);
 
@@ -568,13 +795,37 @@ pub(crate) async fn reconcile_global_consolidation(
 
     if let Some(ref prev) = last_fingerprint {
         if prev == &input_fingerprint && !is_manual_rebuild {
-            return get_global_memory_l3_view(pool, tenant_id).await;
+            let view = get_global_memory_l3_view(pool, tenant_id).await?;
+            if let Some((job_id, ownership_token)) = job_lease {
+                let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                    pool,
+                    tenant_id,
+                    job_id,
+                    ownership_token,
+                    "succeeded",
+                    None,
+                    None,
+                    false,
+                    &Utc::now().to_rfc3339(),
+                )
+                .await?;
+                if !completed {
+                    return Err(AppError::Conflict(
+                        "memory v2 maintenance lease is no longer owned".to_string(),
+                    ));
+                }
+            }
+            return Ok(view);
         }
     }
+
+    let strict_reference_validation = agent_runner.is_some();
 
     // 步骤 5: 确定 operations (来自 Agent 输出或测试注入)
     let operations = if let Some(ops) = custom_operations {
         ops
+    } else if let Some(runner) = agent_runner {
+        runner(input.clone()).await?.operations
     } else {
         // 默认将通过准入的候选转换为 Create 操作
         let mut default_ops = Vec::new();
@@ -595,6 +846,50 @@ pub(crate) async fn reconcile_global_consolidation(
         default_ops
     };
 
+    // Agent 运行期间 SQLite 可能发生新的 L2/L3 变更。再次读取只用于
+    // stale 检测，绝不替换 Agent 已消费的 frozen input。
+    if let Some(expected_fingerprint) = frozen_input_fingerprint {
+        let current_input = load_global_consolidation_input(pool, tenant_id).await?;
+        if compute_global_consolidation_fingerprint(&current_input) != expected_fingerprint {
+            return Err(AppError::Domain {
+                code: "MEMORY_WORK_ORDER_STALE".to_string(),
+                message: "global maintenance evidence changed before commit".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+    }
+
+    // Preserve the real source/session locator attached to each candidate.
+    // Agent-provided reference keys are only valid when they resolve to an
+    // available reference from this Work Order.
+    let candidate_reference_map: HashMap<_, _> = candidates
+        .iter()
+        .flat_map(|candidate| candidate.session_references.iter())
+        .filter(|reference| reference.available)
+        .map(|reference| (reference.reference_key.clone(), reference.clone()))
+        .collect();
+
+    if strict_reference_validation {
+        for operation in &operations {
+            let source_refs = match operation {
+                GlobalConsolidationOperation::Create { source_refs, .. }
+                | GlobalConsolidationOperation::Revise { source_refs, .. }
+                | GlobalConsolidationOperation::Supersede { source_refs, .. } => source_refs,
+                GlobalConsolidationOperation::Keep { .. } => continue,
+            };
+            if source_refs.is_empty()
+                || promotion_nomination_for_source_refs(&candidates, source_refs)
+                    == MemoryPromotionNomination::None
+            {
+                return Err(AppError::Validation(
+                    "MEMORY_OUTPUT_INVALID: global operation has no valid global or cross-project scope"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
     // 步骤 6: 单一原子事务提交 (M35-L3-05)
     let now_str = now.to_rfc3339();
     let mut tx = pool.begin().await.map_err(AppError::external)?;
@@ -608,6 +903,11 @@ pub(crate) async fn reconcile_global_consolidation(
                 rationale,
                 source_refs,
             } => {
+                let promotion_nomination = if strict_reference_validation {
+                    promotion_nomination_for_source_refs(&candidates, &source_refs)
+                } else {
+                    MemoryPromotionNomination::GlobalRule
+                };
                 let new_item_id = format!("mem-l3-{}", uuid::Uuid::new_v4());
                 let new_rev_id = format!("rev-l3-{}", uuid::Uuid::new_v4());
 
@@ -644,7 +944,7 @@ pub(crate) async fn reconcile_global_consolidation(
                      (tenant_id, id, item_id, revision_number, category, status, title, summary, \
                       rationale, recommendation_rank, promotion_nomination, occurred_at, \
                       evidence_fingerprint, generated_by_snapshot_id, supersedes_revision_id, created_at) \
-                     VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, 'global_rule', ?8, ?9, NULL, NULL, ?8)",
+                     VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, ?8, ?9, ?10, NULL, NULL, ?9)",
                 )
                 .bind(tenant_id)
                 .bind(&new_rev_id)
@@ -653,6 +953,7 @@ pub(crate) async fn reconcile_global_consolidation(
                 .bind(&title)
                 .bind(&statement)
                 .bind(&rationale)
+                .bind(promotion_nomination.as_str())
                 .bind(&now_str)
                 .bind(&evidence_fingerprint)
                 .execute(&mut *tx)
@@ -660,17 +961,29 @@ pub(crate) async fn reconcile_global_consolidation(
                 .map_err(AppError::external)?;
 
                 for ref_key in source_refs {
+                    let source_ref = resolve_global_reference(
+                        &candidate_reference_map,
+                        &ref_key,
+                        strict_reference_validation,
+                    )?;
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-                          reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', 'global', 'global_evidence', ?4, 1, 'available', ?5)",
+                          question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
                     .bind(&new_rev_id)
-                    .bind(&ref_key)
+                    .bind(&source_ref.source_id)
+                    .bind(&source_ref.session_id)
+                    .bind(&source_ref.question_id)
+                    .bind(&source_ref.turn_id)
+                    .bind(&source_ref.part_id)
+                    .bind(&source_ref.node_id)
+                    .bind(&source_ref.reference_key)
+                    .bind(source_ref.source_revision)
                     .bind(&now_str)
                     .execute(&mut *tx)
                     .await
@@ -683,6 +996,11 @@ pub(crate) async fn reconcile_global_consolidation(
                 rationale,
                 source_refs,
             } => {
+                let promotion_nomination = if strict_reference_validation {
+                    promotion_nomination_for_source_refs(&candidates, &source_refs)
+                } else {
+                    MemoryPromotionNomination::GlobalRule
+                };
                 let item_row = sqlx::query(
                     "SELECT mi.current_revision_id, mir.revision_number, mir.category, mir.title \
                      FROM memory_items mi \
@@ -713,7 +1031,7 @@ pub(crate) async fn reconcile_global_consolidation(
                      (tenant_id, id, item_id, revision_number, category, status, title, summary, \
                       rationale, recommendation_rank, promotion_nomination, occurred_at, \
                       evidence_fingerprint, generated_by_snapshot_id, supersedes_revision_id, created_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?8, NULL, 'global_rule', ?9, ?10, NULL, ?11, ?9)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?8, NULL, ?9, ?10, ?11, NULL, ?12, ?10)",
                 )
                 .bind(tenant_id)
                 .bind(&new_rev_id)
@@ -723,6 +1041,7 @@ pub(crate) async fn reconcile_global_consolidation(
                 .bind(&title)
                 .bind(&statement)
                 .bind(&rationale)
+                .bind(promotion_nomination.as_str())
                 .bind(&now_str)
                 .bind(&evidence_fingerprint)
                 .bind(&prev_rev_id)
@@ -744,17 +1063,29 @@ pub(crate) async fn reconcile_global_consolidation(
                 .map_err(AppError::external)?;
 
                 for ref_key in source_refs {
+                    let source_ref = resolve_global_reference(
+                        &candidate_reference_map,
+                        &ref_key,
+                        strict_reference_validation,
+                    )?;
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-                          reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', 'global', 'global_evidence', ?4, 1, 'available', ?5)",
+                          question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
                     .bind(&new_rev_id)
-                    .bind(&ref_key)
+                    .bind(&source_ref.source_id)
+                    .bind(&source_ref.session_id)
+                    .bind(&source_ref.question_id)
+                    .bind(&source_ref.turn_id)
+                    .bind(&source_ref.part_id)
+                    .bind(&source_ref.node_id)
+                    .bind(&source_ref.reference_key)
+                    .bind(source_ref.source_revision)
                     .bind(&now_str)
                     .execute(&mut *tx)
                     .await
@@ -769,6 +1100,11 @@ pub(crate) async fn reconcile_global_consolidation(
                 category,
                 source_refs,
             } => {
+                let promotion_nomination = if strict_reference_validation {
+                    promotion_nomination_for_source_refs(&candidates, &source_refs)
+                } else {
+                    MemoryPromotionNomination::GlobalRule
+                };
                 // 标记旧条目为 superseded
                 sqlx::query(
                     "UPDATE memory_items \
@@ -819,7 +1155,7 @@ pub(crate) async fn reconcile_global_consolidation(
                      (tenant_id, id, item_id, revision_number, category, status, title, summary, \
                       rationale, recommendation_rank, promotion_nomination, occurred_at, \
                       evidence_fingerprint, generated_by_snapshot_id, supersedes_revision_id, created_at) \
-                     VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, 'global_rule', ?8, ?9, NULL, NULL, ?8)",
+                     VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, ?8, ?9, ?10, NULL, NULL, ?9)",
                 )
                 .bind(tenant_id)
                 .bind(&new_rev_id)
@@ -828,6 +1164,7 @@ pub(crate) async fn reconcile_global_consolidation(
                 .bind(&replacement_title)
                 .bind(&replacement_statement)
                 .bind(&rationale)
+                .bind(promotion_nomination.as_str())
                 .bind(&now_str)
                 .bind(&evidence_fingerprint)
                 .execute(&mut *tx)
@@ -852,17 +1189,29 @@ pub(crate) async fn reconcile_global_consolidation(
                 .map_err(AppError::external)?;
 
                 for ref_key in source_refs {
+                    let source_ref = resolve_global_reference(
+                        &candidate_reference_map,
+                        &ref_key,
+                        strict_reference_validation,
+                    )?;
                     let ref_id = format!("ref-l3-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references \
                          (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-                          reference_key, source_revision, availability, created_at) \
-                         VALUES (?1, ?2, ?3, 'session', 'global', 'global_evidence', ?4, 1, 'available', ?5)",
+                          question_id, turn_id, part_id, node_id, reference_key, source_revision, availability, created_at) \
+                         VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'available', ?12)",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
                     .bind(&new_rev_id)
-                    .bind(&ref_key)
+                    .bind(&source_ref.source_id)
+                    .bind(&source_ref.session_id)
+                    .bind(&source_ref.question_id)
+                    .bind(&source_ref.turn_id)
+                    .bind(&source_ref.part_id)
+                    .bind(&source_ref.node_id)
+                    .bind(&source_ref.reference_key)
+                    .bind(source_ref.source_revision)
                     .bind(&now_str)
                     .execute(&mut *tx)
                     .await
@@ -912,6 +1261,22 @@ pub(crate) async fn reconcile_global_consolidation(
     .execute(&mut *tx)
     .await
     .map_err(AppError::external)?;
+
+    if let Some((job_id, ownership_token)) = job_lease {
+        let completed = store::complete_memory_v2_maintenance_job_tx(
+            &mut tx,
+            tenant_id,
+            job_id,
+            ownership_token,
+            &now_str,
+        )
+        .await?;
+        if !completed {
+            return Err(AppError::Conflict(
+                "memory v2 maintenance lease is no longer owned".to_string(),
+            ));
+        }
+    }
 
     tx.commit().await.map_err(AppError::external)?;
 
@@ -1056,642 +1421,5 @@ pub(crate) async fn reconcile_source_invalidation(
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
-    use super::*;
-    use crate::backend::application::AppService;
-    use chrono::TimeZone;
-
-    async fn setup_test_db() -> (AppService, SqlitePool, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "test-global-consolidation-{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        let db_path = root.join("app.db");
-        let service = AppService::open_with_db_path(db_path)
-            .await
-            .expect("open service");
-        let pool = service.db.pool().clone();
-        (service, pool, root)
-    }
-
-    /// 辅助插入 L2 条目及其 revision 与引用
-    async fn insert_l2_fixture(
-        pool: &SqlitePool,
-        tenant_id: &str,
-        project_key: &str,
-        title: &str,
-        summary: &str,
-        category: &str,
-        nomination: &str,
-        session_id: &str,
-        reference_key: &str,
-        available: bool,
-    ) -> (String, String) {
-        let now = "2026-09-15T00:00:00Z";
-        let item_id = format!("l2-item-{}", uuid::Uuid::new_v4());
-        let rev_id = format!("l2-rev-{}", uuid::Uuid::new_v4());
-
-        sqlx::query(
-            "INSERT INTO memory_items \
-             (tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
-              first_seen_at, last_seen_at, created_at, updated_at) \
-             VALUES (?1, ?2, 'l2', ?3, ?4, 'current', ?5, ?5, ?5, ?5)",
-        )
-        .bind(tenant_id)
-        .bind(&item_id)
-        .bind(project_key)
-        .bind(&rev_id)
-        .bind(now)
-        .execute(pool)
-        .await
-        .expect("insert l2 item");
-
-        let mut hasher = Sha256::new();
-        hasher.update(title.as_bytes());
-        let fp = format!("{:x}", hasher.finalize());
-
-        sqlx::query(
-            "INSERT INTO memory_item_revisions \
-             (tenant_id, id, item_id, revision_number, category, status, title, summary, \
-              rationale, recommendation_rank, promotion_nomination, occurred_at, \
-              evidence_fingerprint, created_at) \
-             VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, 'Test rationale', NULL, ?7, ?8, ?9, ?8)",
-        )
-        .bind(tenant_id)
-        .bind(&rev_id)
-        .bind(&item_id)
-        .bind(category)
-        .bind(title)
-        .bind(summary)
-        .bind(nomination)
-        .bind(now)
-        .bind(&fp)
-        .execute(pool)
-        .await
-        .expect("insert l2 revision");
-
-        let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
-        let avail_str = if available {
-            "available"
-        } else {
-            "unavailable"
-        };
-        let reason = if available { None } else { Some("deleted") };
-
-        sqlx::query(
-            "INSERT INTO memory_item_source_references \
-             (tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-              reference_key, source_revision, availability, unavailable_reason, created_at) \
-             VALUES (?1, ?2, ?3, 'session', 'src-1', ?4, ?5, 1, ?6, ?7, ?8)",
-        )
-        .bind(tenant_id)
-        .bind(&ref_id)
-        .bind(&rev_id)
-        .bind(session_id)
-        .bind(reference_key)
-        .bind(avail_str)
-        .bind(reason)
-        .bind(now)
-        .execute(pool)
-        .await
-        .expect("insert l2 ref");
-
-        (item_id, rev_id)
-    }
-
-    /// 测试 1: M35-L3-02 跨项目候选必须由至少两个不同真实 project_key 独立支持
-    #[tokio::test]
-    async fn test_m35_l3_02_cross_project_candidate_requires_two_distinct_real_projects() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        // 项目 A 引入知识 "Shared Error Handling Pattern"
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "project-alpha",
-            "Shared Error Handling Pattern",
-            "Always wrap external calls in AppError::external",
-            "decision",
-            "cross_project_pattern",
-            "session-alpha-1",
-            "ref-alpha-1",
-            true,
-        )
-        .await;
-
-        // 单项目时评估候选: 不足以成为 cross_project_pattern 候选
-        let candidates_one = evaluate_l3_candidates(&pool, "default").await.unwrap();
-        assert!(
-            candidates_one.is_empty(),
-            "单项目支持不能形成 cross_project_pattern 候选"
-        );
-
-        // 如果第二个项目来自 unassigned，仍然不能成为合格候选 (M35-L3-02)
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "unassigned",
-            "Shared Error Handling Pattern",
-            "Always wrap external calls in AppError::external",
-            "decision",
-            "cross_project_pattern",
-            "session-unassigned-1",
-            "ref-unassigned-1",
-            true,
-        )
-        .await;
-        let candidates_unassigned = evaluate_l3_candidates(&pool, "default").await.unwrap();
-        assert!(
-            candidates_unassigned.is_empty(),
-            "unassigned 项目不能作为独立支持项目"
-        );
-
-        // 项目 B (第二个真实项目) 独立支持该知识
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "project-beta",
-            "Shared Error Handling Pattern",
-            "Always wrap external calls in AppError::external",
-            "decision",
-            "cross_project_pattern",
-            "session-beta-1",
-            "ref-beta-1",
-            true,
-        )
-        .await;
-
-        // 两个真实独立项目均支持: 形成合格候选
-        let candidates_two = evaluate_l3_candidates(&pool, "default").await.unwrap();
-        assert_eq!(candidates_two.len(), 1);
-        assert_eq!(candidates_two[0].title, "Shared Error Handling Pattern");
-        assert_eq!(
-            candidates_two[0].nomination,
-            MemoryPromotionNomination::CrossProjectPattern
-        );
-        assert_eq!(candidates_two[0].supporting_project_keys.len(), 2);
-        assert!(candidates_two[0]
-            .supporting_project_keys
-            .contains(&"project-alpha".to_string()));
-        assert!(candidates_two[0]
-            .supporting_project_keys
-            .contains(&"project-beta".to_string()));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 2: M35-L3-02 & M35-L3-04 unavailable 引用不计入独立支持数
-    #[tokio::test]
-    async fn test_m35_l3_02_unavailable_references_do_not_count_towards_cross_project() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        // 项目 A: available 引用
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "project-alpha",
-            "Universal Metric Format",
-            "Use ISO timestamps for all metrics",
-            "decision",
-            "cross_project_pattern",
-            "session-alpha-1",
-            "ref-alpha-1",
-            true,
-        )
-        .await;
-
-        // 项目 B: unavailable 引用 (来源已失效)
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "project-beta",
-            "Universal Metric Format",
-            "Use ISO timestamps for all metrics",
-            "decision",
-            "cross_project_pattern",
-            "session-beta-1",
-            "ref-beta-1",
-            false, // unavailable!
-        )
-        .await;
-
-        // 因为项目 B 仅有 unavailable 引用，不计入独立支持
-        let candidates = evaluate_l3_candidates(&pool, "default").await.unwrap();
-        assert!(
-            candidates.is_empty(),
-            "包含 unavailable 引用的项目不能计入独立支持数"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 3: M35-L3-02 明确全局规则 (global_rule) 需 available 用户引用
-    #[tokio::test]
-    async fn test_m35_l3_02_global_rule_requires_available_reference() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        // 仅在单项目中声明，但被提名为 global_rule
-        insert_l2_fixture(
-            &pool,
-            "default",
-            "project-alpha",
-            "Global License Policy",
-            "All internal libraries must use Apache-2.0",
-            "decision",
-            "global_rule",
-            "session-alpha-1",
-            "ref-alpha-1",
-            true,
-        )
-        .await;
-
-        let candidates = evaluate_l3_candidates(&pool, "default").await.unwrap();
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(
-            candidates[0].nomination,
-            MemoryPromotionNomination::GlobalRule
-        );
-        assert_eq!(candidates[0].title, "Global License Policy");
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 4: M35-L3-03 0 候选绝不触发 Agent
-    #[tokio::test]
-    async fn test_m35_l3_03_zero_candidates_triggers_zero_agent_calls() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-        let should_trigger = should_trigger_global_consolidation(&pool, "default", 0, now, false)
-            .await
-            .unwrap();
-        assert!(!should_trigger, "0 候选时 should_trigger 必须为 false");
-
-        // 即使是 manual_rebuild，0 候选也不能触发
-        let should_trigger_manual =
-            should_trigger_global_consolidation(&pool, "default", 0, now, true)
-                .await
-                .unwrap();
-        assert!(
-            !should_trigger_manual,
-            "0 候选时 manual_rebuild 依然必须为 false"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 5: M35-L3-03 低频触发（周级/8候选）与指纹跳过
-    #[tokio::test]
-    async fn test_m35_l3_03_low_frequency_trigger_and_fingerprint_skip() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-
-        // 少量候选 (3 个)
-        let trigger_few = should_trigger_global_consolidation(&pool, "default", 3, now, false)
-            .await
-            .unwrap();
-        // 因为没有上次成功记录，首次有候选允许触发
-        assert!(trigger_few);
-
-        // 插入上次成功记录为 3 天前
-        let three_days_ago = Utc
-            .with_ymd_and_hms(2026, 9, 12, 0, 0, 0)
-            .unwrap()
-            .to_rfc3339();
-        sqlx::query(
-            "INSERT INTO global_memory_state (tenant_id, last_successful_consolidation_at, last_input_fingerprint, revision_hash, created_at, updated_at) \
-             VALUES ('default', ?1, 'fp-old', 'rev-hash', ?1, ?1)",
-        )
-        .bind(&three_days_ago)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // 3 天前且只有 3 个候选 -> 不足 7 天且未达 8 候选，不触发
-        let trigger_blocked = should_trigger_global_consolidation(&pool, "default", 3, now, false)
-            .await
-            .unwrap();
-        assert!(
-            !trigger_blocked,
-            "未达 7 天且候选少于 8 时不触发低频 Consolidation"
-        );
-
-        // 候选达到 8 个 -> 立即触发
-        let trigger_threshold =
-            should_trigger_global_consolidation(&pool, "default", 8, now, false)
-                .await
-                .unwrap();
-        assert!(trigger_threshold, "候选达 8 个时立即触发");
-
-        // 超过 7 天 (如 8 天前) -> 触发周级巩固
-        let eight_days_ago = Utc
-            .with_ymd_and_hms(2026, 9, 7, 0, 0, 0)
-            .unwrap()
-            .to_rfc3339();
-        sqlx::query("UPDATE global_memory_state SET last_successful_consolidation_at = ?1 WHERE tenant_id = 'default'")
-            .bind(&eight_days_ago)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let trigger_weekly = should_trigger_global_consolidation(&pool, "default", 1, now, false)
-            .await
-            .unwrap();
-        assert!(
-            trigger_weekly,
-            "距离上次成功超过 7 天且有候选时触发周级维护"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 6: M35-L3-04 来源失效更新引用可用性，保留 L2/L3 长期条目
-    #[tokio::test]
-    async fn test_m35_l3_04_source_invalidation_updates_reference_keeps_l2_l3() {
-        let (_service, pool, root) = setup_test_db().await;
-
-        // 创建 source 和 session 实体
-        sqlx::query("INSERT INTO conversation_sources (tenant_id, id, adapter_id, name, kind, location, enabled, created_at, updated_at) VALUES ('default', 'src-1', 'adp-1', 'Source 1', 'fs', '/path', 1, '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z')")
-            .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO conversation_sessions (tenant_id, id, source_id, adapter_id, external_id, title, missing, created_at, imported_at) VALUES ('default', 'sess-1', 'src-1', 'adp-1', 'ext-1', 'Session 1', 0, '2026-09-15T00:00:00Z', '2026-09-15T00:00:00Z')")
-            .execute(&pool).await.unwrap();
-
-        // 插入 L2 条目
-        let (l2_item_id, _) = insert_l2_fixture(
-            &pool,
-            "default",
-            "proj-a",
-            "Immutable Architecture Principle",
-            "Always keep domain models decoupled from persistence",
-            "decision",
-            "project_decision",
-            "sess-1",
-            "ref-1",
-            true,
-        )
-        .await;
-
-        // 插入 L3 条目
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-        let ops = vec![GlobalConsolidationOperation::Create {
-            category: MemoryItemCategory::Decision,
-            title: "Global Resilience Rule".to_string(),
-            statement: "Never drop long term knowledge on source deletion".to_string(),
-            rationale: "Contract M35-L3-04".to_string(),
-            source_refs: vec!["ref-l3-sess-1".to_string()],
-        }];
-        let l3_view = reconcile_global_consolidation(&pool, "default", now, true, Some(ops))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(l3_view.items.len(), 1);
-        let l3_item_id = l3_view.items[0].item_id.clone();
-
-        // 将该 session 标记为 missing = 1
-        sqlx::query("UPDATE conversation_sessions SET missing = 1 WHERE tenant_id = 'default' AND id = 'sess-1'")
-            .execute(&pool).await.unwrap();
-
-        // 执行来源失效协调
-        reconcile_source_invalidation(&pool, "default", now, &[], &[])
-            .await
-            .unwrap();
-
-        // 验证引用的状态变为 unavailable, reason = missing
-        let l2_ref_avail: String = sqlx::query_scalar(
-            "SELECT availability FROM memory_item_source_references WHERE session_id = 'sess-1'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(l2_ref_avail, "unavailable");
-
-        // 关键验证 (M35-L3-04): L2 和 L3 条目的 lifecycle 仍然是 'current'！
-        let l2_lifecycle: String = sqlx::query_scalar(
-            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&l2_item_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            l2_lifecycle, "current",
-            "已晋升的 L2 条目不能因来源失效而被删除或 retired"
-        );
-
-        let l3_lifecycle: String = sqlx::query_scalar(
-            "SELECT lifecycle FROM memory_items WHERE tenant_id = 'default' AND id = ?1",
-        )
-        .bind(&l3_item_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            l3_lifecycle, "current",
-            "已晋升的 L3 条目不能因来源失效而被删除或 retired"
-        );
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 7: M35-L3-05 Revise 生成新 revision 并完整保留历史
-    #[tokio::test]
-    async fn test_m35_l3_05_revise_creates_new_revision_preserving_history() {
-        let (_service, pool, root) = setup_test_db().await;
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-
-        // 1. Create L3 条目
-        let create_op = vec![GlobalConsolidationOperation::Create {
-            category: MemoryItemCategory::Decision,
-            title: "Database Lock Standard".to_string(),
-            statement: "Use 500ms lock timeout".to_string(),
-            rationale: "Initial policy".to_string(),
-            source_refs: vec!["ref-1".to_string()],
-        }];
-        let view1 = reconcile_global_consolidation(&pool, "default", now, true, Some(create_op))
-            .await
-            .unwrap()
-            .unwrap();
-        let item_id = view1.items[0].item_id.clone();
-        let rev1_id = view1.items[0].revision_id.clone();
-        assert_eq!(view1.items[0].revision_number, 1);
-        assert_eq!(view1.items[0].summary, "Use 500ms lock timeout");
-
-        // 2. Revise 文本更新
-        let revise_now = Utc.with_ymd_and_hms(2026, 9, 16, 0, 0, 0).unwrap();
-        let revise_op = vec![GlobalConsolidationOperation::Revise {
-            item_id: item_id.clone(),
-            statement: "Use 1000ms lock timeout for large batches".to_string(),
-            rationale: "Observed batch timeout under high concurrency".to_string(),
-            source_refs: vec!["ref-2".to_string()],
-        }];
-        let view2 =
-            reconcile_global_consolidation(&pool, "default", revise_now, true, Some(revise_op))
-                .await
-                .unwrap()
-                .unwrap();
-        assert_eq!(view2.items.len(), 1);
-        assert_eq!(view2.items[0].item_id, item_id);
-        assert_eq!(view2.items[0].revision_number, 2);
-        assert_eq!(
-            view2.items[0].summary,
-            "Use 1000ms lock timeout for large batches"
-        );
-        let rev2_id = view2.items[0].revision_id.clone();
-        assert_ne!(rev1_id, rev2_id);
-
-        // 3. 验证历史完整保留 (M35-L3-05)
-        let total_revs: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM memory_item_revisions WHERE tenant_id = 'default' AND item_id = ?1",
-        )
-        .bind(&item_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(total_revs, 2, "旧 revision 必须保留在数据库中供审计与回忆");
-
-        let supersedes_check: Option<String> = sqlx::query_scalar(
-            "SELECT supersedes_revision_id FROM memory_item_revisions WHERE id = ?1",
-        )
-        .bind(&rev2_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(supersedes_check, Some(rev1_id));
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 8: M35-L3-05 Supersede 标记旧条目为 superseded 并新建取代条目
-    #[tokio::test]
-    async fn test_m35_l3_05_supersede_marks_old_and_creates_new_l3() {
-        let (_service, pool, root) = setup_test_db().await;
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-
-        // 1. 创建旧条目
-        let create_op = vec![GlobalConsolidationOperation::Create {
-            category: MemoryItemCategory::Decision,
-            title: "Legacy State Machine V1".to_string(),
-            statement: "Use monolithic state".to_string(),
-            rationale: "Early MVP".to_string(),
-            source_refs: vec!["ref-1".to_string()],
-        }];
-        let view1 = reconcile_global_consolidation(&pool, "default", now, true, Some(create_op))
-            .await
-            .unwrap()
-            .unwrap();
-        let old_item_id = view1.items[0].item_id.clone();
-
-        // 2. 执行 Supersede 操作
-        let supersede_now = Utc.with_ymd_and_hms(2026, 9, 16, 0, 0, 0).unwrap();
-        let supersede_op = vec![GlobalConsolidationOperation::Supersede {
-            old_item_id: old_item_id.clone(),
-            replacement_title: "Event-Driven State Architecture V2".to_string(),
-            replacement_statement: "Transition to distributed event-driven state machine"
-                .to_string(),
-            rationale: "ADR-0015 full replacement".to_string(),
-            category: MemoryItemCategory::Decision,
-            source_refs: vec!["ref-2".to_string()],
-        }];
-        let view2 = reconcile_global_consolidation(
-            &pool,
-            "default",
-            supersede_now,
-            true,
-            Some(supersede_op),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-
-        // 活跃列表中旧条目已被过滤，只包含新条目 (M35-L3-06)
-        assert_eq!(view2.items.len(), 1);
-        assert_ne!(view2.items[0].item_id, old_item_id);
-        assert_eq!(view2.items[0].title, "Event-Driven State Architecture V2");
-
-        // 验证数据库中旧条目 lifecycle 为 superseded
-        let old_lifecycle: String =
-            sqlx::query_scalar("SELECT lifecycle FROM memory_items WHERE id = ?1")
-                .bind(&old_item_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(old_lifecycle, "superseded");
-
-        // 验证 memory_item_supersessions 关系表记录
-        let super_row = sqlx::query(
-            "SELECT superseded_item_id, superseding_item_id, reason \
-             FROM memory_item_supersessions WHERE superseded_item_id = ?1",
-        )
-        .bind(&old_item_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-        let target_item_id: String = super_row.get("superseding_item_id");
-        assert_eq!(target_item_id, view2.items[0].item_id);
-        let reason: String = super_row.get("reason");
-        assert_eq!(reason, "ADR-0015 full replacement");
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    /// 测试 9: M35-L3-06 Context Resolver 读取当前 L3 且忽略 superseded
-    #[tokio::test]
-    async fn test_m35_l3_06_context_resolver_reads_current_l3_and_ignores_superseded() {
-        let (service, pool, root) = setup_test_db().await;
-        let now = Utc.with_ymd_and_hms(2026, 9, 15, 0, 0, 0).unwrap();
-
-        // 创建条目 A 并随后 supersede 它
-        let ops1 = vec![GlobalConsolidationOperation::Create {
-            category: MemoryItemCategory::Decision,
-            title: "Old Global Rule".to_string(),
-            statement: "Old deprecated statement".to_string(),
-            rationale: "To be superseded".to_string(),
-            source_refs: vec!["ref-old".to_string()],
-        }];
-        let view1 = reconcile_global_consolidation(&pool, "default", now, true, Some(ops1))
-            .await
-            .unwrap()
-            .unwrap();
-        let old_item_id = view1.items[0].item_id.clone();
-
-        let ops2 = vec![GlobalConsolidationOperation::Supersede {
-            old_item_id: old_item_id.clone(),
-            replacement_title: "Active Global Rule".to_string(),
-            replacement_statement: "New active long-term principle".to_string(),
-            rationale: "Replaces old rule".to_string(),
-            category: MemoryItemCategory::Decision,
-            source_refs: vec!["ref-new".to_string()],
-        }];
-        reconcile_global_consolidation(&pool, "default", now, true, Some(ops2))
-            .await
-            .unwrap();
-
-        // Context 解析
-        let ctx = service
-            .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
-                project_path: None,
-                query: None,
-                token_budget: Some(2000),
-            })
-            .await
-            .unwrap();
-
-        assert!(ctx.text.contains("Active Global Rule"));
-        assert!(ctx.text.contains("New active long-term principle"));
-        assert!(!ctx.text.contains("Old Global Rule"));
-        assert!(!ctx.text.contains("Old deprecated statement"));
-
-        // 验证 references 包含 global_memory_l3
-        let l3_refs: Vec<_> = ctx
-            .references
-            .iter()
-            .filter(|r| r.kind == "global_memory_l3")
-            .collect();
-        assert_eq!(l3_refs.len(), 1);
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-}
+#[path = "global_consolidation_pipeline_tests.rs"]
+pub(crate) mod tests;

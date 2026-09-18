@@ -6,6 +6,7 @@ use crate::backend::models::{
     ProjectConsolidationInput, ProjectConsolidationOperation, ProjectConsolidationResult,
 };
 use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::store;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
@@ -40,6 +41,84 @@ impl ProjectConsolidationLockMap {
             .or_insert_with(|| Arc::new(TokioMutex::new(())))
             .clone()
     }
+}
+
+fn resolve_project_reference(
+    references: &HashMap<String, L2CandidateReferenceView>,
+    reference_key: &str,
+    strict: bool,
+) -> AppResult<L2CandidateReferenceView> {
+    if let Some(reference) = references.get(reference_key) {
+        return Ok(reference.clone());
+    }
+    if strict {
+        return Err(AppError::Validation(format!(
+            "MEMORY_OUTPUT_INVALID: project reference is outside the Work Order: {reference_key}"
+        )));
+    }
+
+    // 保留旧的测试/兼容入口：没有 Agent Work Order 时，历史调用方只提供
+    // reference_key，继续写入显式的系统占位来源；生产 Agent 路径始终走上面的
+    // strict 分支，禁止伪造 source/session locator。
+    Ok(L2CandidateReferenceView {
+        source_id: "system".to_string(),
+        session_id: "consolidation".to_string(),
+        reference_key: reference_key.to_string(),
+        role: None,
+        question_id: None,
+        turn_id: None,
+        part_id: None,
+        node_id: None,
+        source_revision: 0,
+        available: true,
+    })
+}
+
+fn parse_promotion_nomination(value: &str) -> MemoryPromotionNomination {
+    match value {
+        "project_decision" => MemoryPromotionNomination::ProjectDecision,
+        "project_constraint" => MemoryPromotionNomination::ProjectConstraint,
+        "recurring_blocker" => MemoryPromotionNomination::RecurringBlocker,
+        "recurring_todo" => MemoryPromotionNomination::RecurringTodo,
+        "research_conclusion" => MemoryPromotionNomination::ResearchConclusion,
+        "global_rule" => MemoryPromotionNomination::GlobalRule,
+        "cross_project_pattern" => MemoryPromotionNomination::CrossProjectPattern,
+        _ => MemoryPromotionNomination::None,
+    }
+}
+
+fn promotion_nomination_for_source_refs(
+    candidates: &[L2PromotionCandidate],
+    source_refs: &[String],
+    fallback: MemoryPromotionNomination,
+) -> MemoryPromotionNomination {
+    // An operation may summarize multiple admitted candidates. Keep the
+    // strongest explicit nomination instead of silently resetting L2 to none.
+    let rank =
+        |nomination: MemoryPromotionNomination| match nomination {
+            MemoryPromotionNomination::None => 0,
+            MemoryPromotionNomination::RecurringTodo
+            | MemoryPromotionNomination::RecurringBlocker => 10,
+            MemoryPromotionNomination::ResearchConclusion => 20,
+            MemoryPromotionNomination::GlobalRule
+            | MemoryPromotionNomination::CrossProjectPattern => 30,
+            MemoryPromotionNomination::ProjectDecision
+            | MemoryPromotionNomination::ProjectConstraint => 40,
+        };
+    let mut selected = fallback;
+    for candidate in candidates {
+        if candidate.nomination == MemoryPromotionNomination::None
+            || !candidate.session_references.iter().any(|reference| {
+                reference.available && source_refs.contains(&reference.reference_key)
+            })
+        {
+            continue;
+        }
+        if rank(candidate.nomination) > rank(selected) {
+            selected = candidate.nomination;
+        }
+    }
+    selected
 }
 
 /// L2 晋升候选准入评估 (M35-L2-01 ~ M35-L2-05)
@@ -177,7 +256,7 @@ pub(crate) async fn evaluate_l2_candidates(
 
         // 加载当前 revision 的所有引用
         let ref_rows = sqlx::query(
-            "SELECT source_id, session_id, reference_key, question_id, turn_id, part_id, node_id, availability \
+            "SELECT source_id, session_id, reference_key, question_id, turn_id, part_id, node_id, source_revision, availability \
              FROM memory_item_source_references \
              WHERE tenant_id = ?1 AND item_revision_id = ?2",
         )
@@ -200,8 +279,9 @@ pub(crate) async fn evaluate_l2_candidates(
             let is_available = availability == "available";
 
             // 判断是否为用户内容引用 (question_id 非空，或者 reference_key 包含 user 标记)
-            let is_user_content =
-                question_id.is_some() || turn_id.is_some() || reference_key.contains("user");
+            let is_user_content = question_id.is_some()
+                || turn_id.is_some()
+                || reference_key.to_ascii_lowercase().contains("user");
             if is_available && is_user_content {
                 has_available_user_ref = true;
             }
@@ -216,6 +296,10 @@ pub(crate) async fn evaluate_l2_candidates(
                     None
                 },
                 question_id,
+                turn_id: r.get("turn_id"),
+                part_id: r.get("part_id"),
+                node_id: r.get("node_id"),
+                source_revision: r.get("source_revision"),
                 available: is_available,
             });
         }
@@ -281,6 +365,50 @@ pub(crate) async fn evaluate_l2_candidates(
     Ok(candidates)
 }
 
+/// Load the complete, structured L2 input that belongs to one maintenance
+/// Work Order. This is deliberately separate from the commit path so the
+/// coordinator can freeze exactly the evidence that the Agent will see.
+pub(crate) async fn load_project_consolidation_input(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_key: &str,
+    project_path: Option<&str>,
+) -> AppResult<ProjectConsolidationInput> {
+    Ok(ProjectConsolidationInput {
+        project_key: project_key.to_string(),
+        project_title: project_key.to_string(),
+        project_path: project_path.map(str::to_string),
+        current_l2_items: load_l2_items(pool, tenant_id, project_key).await?,
+        candidates: evaluate_l2_candidates(pool, tenant_id, project_key).await?,
+        source_availability_summary: load_source_availability_summary(pool, tenant_id, project_key)
+            .await?,
+        superseded_index: load_superseded_index(pool, tenant_id, project_key).await?,
+    })
+}
+
+/// 判断项目是否真的有 L2 consolidation 输入变化。
+///
+/// Recent 水位本身不是 Project Agent 的触发条件；只有通过准入的候选或
+/// 来源可用性变化才应该创建 durable maintenance job。
+pub(crate) async fn should_schedule_project_consolidation(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_key: &str,
+) -> AppResult<bool> {
+    if project_key.trim().is_empty() || project_key == "unassigned" {
+        return Ok(false);
+    }
+    let candidates = evaluate_l2_candidates(pool, tenant_id, project_key).await?;
+    if !candidates.is_empty() {
+        return Ok(true);
+    }
+    Ok(
+        !load_source_availability_summary(pool, tenant_id, project_key)
+            .await?
+            .is_empty(),
+    )
+}
+
 /// 默认 Project Consolidation 调度器（无自定义 runner）
 pub(crate) async fn reconcile_project_consolidation_default(
     pool: &SqlitePool,
@@ -323,6 +451,33 @@ where
     F: FnOnce(ProjectConsolidationInput) -> Fut,
     Fut: std::future::Future<Output = AppResult<ProjectConsolidationResult>>,
 {
+    reconcile_project_consolidation_with_lease(
+        pool,
+        tenant_id,
+        project_key,
+        project_path,
+        lock_map,
+        agent_runner,
+        None,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn reconcile_project_consolidation_with_lease<F, Fut>(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_key: &str,
+    project_path: Option<&str>,
+    lock_map: &ProjectConsolidationLockMap,
+    agent_runner: Option<F>,
+    job_lease: Option<(&str, &str)>,
+    frozen_input: Option<ProjectConsolidationInput>,
+) -> AppResult<Option<L2ProjectMemoryView>>
+where
+    F: FnOnce(ProjectConsolidationInput) -> Fut,
+    Fut: std::future::Future<Output = AppResult<ProjectConsolidationResult>>,
+{
     if project_key.trim().is_empty() || project_key == "unassigned" {
         return Ok(None);
     }
@@ -331,37 +486,62 @@ where
     let project_lock = lock_map.lock_for(tenant_id, project_key).await;
     let _guard = project_lock.lock().await;
 
-    // 2. 评估合格晋升候选 (M35-L2-01 ~ M35-L2-05)
-    let candidates = evaluate_l2_candidates(pool, tenant_id, project_key).await?;
+    // 2. Freeze the Agent input at enqueue time. A worker may only use a
+    // newer read to detect staleness; it must never silently replace the
+    // immutable Work Order evidence with that newer read.
+    let frozen_input_fingerprint = frozen_input
+        .as_ref()
+        .map(compute_project_consolidation_fingerprint);
+    let live_input =
+        load_project_consolidation_input(pool, tenant_id, project_key, project_path).await?;
+    let input = if let Some(frozen_input) = frozen_input {
+        if frozen_input.project_key != project_key
+            || compute_project_consolidation_fingerprint(&frozen_input)
+                != compute_project_consolidation_fingerprint(&live_input)
+        {
+            return Err(AppError::Domain {
+                code: "MEMORY_WORK_ORDER_STALE".to_string(),
+                message: "project maintenance evidence changed after enqueue".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+        frozen_input
+    } else {
+        live_input
+    };
 
-    // 加载当前 L2 条目
-    let current_l2 = load_l2_items(pool, tenant_id, project_key).await?;
-
-    // 加载已被取代条目索引
-    let superseded_index = load_superseded_index(pool, tenant_id, project_key).await?;
-
-    // 检查来源失效变更
-    let availability_changes =
-        load_source_availability_summary(pool, tenant_id, project_key).await?;
+    let candidates = input.candidates.clone();
+    let availability_changes = input.source_availability_summary.clone();
 
     // 3. 触发门禁判断 (M35-L2-06):
     // 仅在出现合格候选、来源可用性变更或后续证据修订时运行；无候选时不空转
     if candidates.is_empty() && availability_changes.is_empty() {
         // 无候选、无变更时：Agent 调用严格为 0 次！直接返回现有视图
-        return load_l2_project_memory_view(pool, tenant_id, project_key).await;
+        let view = load_l2_project_memory_view(pool, tenant_id, project_key).await?;
+        if let Some((job_id, ownership_token)) = job_lease {
+            let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                pool,
+                tenant_id,
+                job_id,
+                ownership_token,
+                "succeeded",
+                None,
+                None,
+                false,
+                &Utc::now().to_rfc3339(),
+            )
+            .await?;
+            if !completed {
+                return Err(AppError::Conflict(
+                    "memory v2 maintenance lease is no longer owned".to_string(),
+                ));
+            }
+        }
+        return Ok(view);
     }
 
-    // 4. 构建输入事实包与指纹
-    let input = ProjectConsolidationInput {
-        project_key: project_key.to_string(),
-        project_title: project_key.to_string(),
-        project_path: project_path.map(|p| p.to_string()),
-        current_l2_items: current_l2.clone(),
-        candidates: candidates.clone(),
-        source_availability_summary: availability_changes,
-        superseded_index,
-    };
-
+    // 4. 计算不可变输入事实包指纹
     let input_fingerprint = compute_project_consolidation_fingerprint(&input);
 
     // 查询上一次成功的 consolidation 记录
@@ -380,9 +560,31 @@ where
         let last_fp: Option<String> = row.get("last_input_fingerprint");
         if last_fp.as_deref() == Some(&input_fingerprint) {
             // 输入指纹完全相同：跳过 Agent 调用 (0 Agent calls)
-            return load_l2_project_memory_view(pool, tenant_id, project_key).await;
+            let view = load_l2_project_memory_view(pool, tenant_id, project_key).await?;
+            if let Some((job_id, ownership_token)) = job_lease {
+                let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                    pool,
+                    tenant_id,
+                    job_id,
+                    ownership_token,
+                    "succeeded",
+                    None,
+                    None,
+                    false,
+                    &Utc::now().to_rfc3339(),
+                )
+                .await?;
+                if !completed {
+                    return Err(AppError::Conflict(
+                        "memory v2 maintenance lease is no longer owned".to_string(),
+                    ));
+                }
+            }
+            return Ok(view);
         }
     }
+
+    let strict_reference_validation = agent_runner.is_some();
 
     // 5. 调用 Project Agent 获得结构化 operations (若未提供 runner，则采用确定性直通)
     let consolidation_result = if let Some(runner) = agent_runner {
@@ -409,6 +611,32 @@ where
         }
     };
 
+    // The Agent call can be long-running. Re-check immediately before opening
+    // the commit transaction so a newer SQLite revision can never be published
+    // from a stale Work Order.
+    if let Some(expected_fingerprint) = frozen_input_fingerprint {
+        let current_input =
+            load_project_consolidation_input(pool, tenant_id, project_key, project_path).await?;
+        if compute_project_consolidation_fingerprint(&current_input) != expected_fingerprint {
+            return Err(AppError::Domain {
+                code: "MEMORY_WORK_ORDER_STALE".to_string(),
+                message: "project maintenance evidence changed before commit".to_string(),
+                retryable: false,
+                details: None,
+            });
+        }
+    }
+
+    // Agent 只能引用本次 Work Order 通过准入的、仍可用的候选引用。
+    // 这张映射同时保留真实 source/session locator，避免把 Agent 返回的
+    // reference_key 当成可写入的来源身份。
+    let candidate_reference_map: HashMap<_, _> = candidates
+        .iter()
+        .flat_map(|candidate| candidate.session_references.iter())
+        .filter(|reference| reference.available)
+        .map(|reference| (reference.reference_key.clone(), reference.clone()))
+        .collect();
+
     // 6. 应用准入与单事务原子提交 (M35-L2-06: 失败保留 current L2)
     let mut tx = pool.begin().await.map_err(AppError::external)?;
     let now = Utc::now().to_rfc3339();
@@ -422,6 +650,11 @@ where
                 rationale,
                 source_refs,
             } => {
+                let promotion_nomination = promotion_nomination_for_source_refs(
+                    &candidates,
+                    &source_refs,
+                    MemoryPromotionNomination::None,
+                );
                 let new_item_id = format!("item-l2-{}", uuid::Uuid::new_v4());
                 let new_rev_id = format!("rev-l2-{}", uuid::Uuid::new_v4());
 
@@ -455,7 +688,7 @@ where
                         title, summary, rationale, recommendation_rank, promotion_nomination, \
                         occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
                         supersedes_revision_id, created_at\
-                     ) VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, 'none', ?8, ?9, NULL, NULL, ?8)",
+                     ) VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, ?8, ?9, ?10, NULL, NULL, ?9)",
                 )
                 .bind(tenant_id)
                 .bind(&new_rev_id)
@@ -464,6 +697,7 @@ where
                 .bind(&title)
                 .bind(&statement)
                 .bind(&rationale)
+                .bind(promotion_nomination.as_str())
                 .bind(&now)
                 .bind(&evidence_fp)
                 .execute(&mut *tx)
@@ -472,6 +706,11 @@ where
 
                 // 关联来源引用
                 for ref_key in source_refs {
+                    let source_ref = resolve_project_reference(
+                        &candidate_reference_map,
+                        &ref_key,
+                        strict_reference_validation,
+                    )?;
                     let ref_id = format!("ref-l2-{}", uuid::Uuid::new_v4());
                     sqlx::query(
                         "INSERT INTO memory_item_source_references (\
@@ -479,12 +718,19 @@ where
                             session_id, question_id, turn_id, part_id, node_id, \
                             node_order, reference_key, source_revision, availability, \
                             unavailable_reason, unavailable_at, created_at\
-                         ) VALUES (?1, ?2, ?3, 'session', 'system', 'consolidation', NULL, NULL, NULL, NULL, NULL, ?4, 0, 'available', NULL, NULL, ?5)",
+                         ) VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, 'available', NULL, NULL, ?12)",
                     )
                     .bind(tenant_id)
                     .bind(&ref_id)
                     .bind(&new_rev_id)
-                    .bind(&ref_key)
+                    .bind(&source_ref.source_id)
+                    .bind(&source_ref.session_id)
+                    .bind(&source_ref.question_id)
+                    .bind(&source_ref.turn_id)
+                    .bind(&source_ref.part_id)
+                    .bind(&source_ref.node_id)
+                    .bind(&source_ref.reference_key)
+                    .bind(source_ref.source_revision)
                     .bind(&now)
                     .execute(&mut *tx)
                     .await
@@ -499,7 +745,7 @@ where
             } => {
                 // 查询当前版本号
                 let cur_row = sqlx::query(
-                    "SELECT mir.revision_number, mir.category, mir.title \
+                    "SELECT mir.revision_number, mir.category, mir.title, mir.promotion_nomination \
                      FROM memory_items mi \
                      JOIN memory_item_revisions mir ON mi.tenant_id = mir.tenant_id AND mi.current_revision_id = mir.id \
                      WHERE mi.tenant_id = ?1 AND mi.id = ?2 AND mi.layer = 'l2' AND mi.lifecycle = 'current'",
@@ -514,6 +760,14 @@ where
                     let cur_rev_num: i64 = r.get("revision_number");
                     let category: String = r.get("category");
                     let title: String = r.get("title");
+                    let previous_nomination = parse_promotion_nomination(
+                        r.get::<String, _>("promotion_nomination").as_str(),
+                    );
+                    let promotion_nomination = promotion_nomination_for_source_refs(
+                        &candidates,
+                        &source_refs,
+                        previous_nomination,
+                    );
                     let new_rev_num = cur_rev_num + 1;
                     let new_rev_id = format!("rev-l2-{}", uuid::Uuid::new_v4());
 
@@ -530,7 +784,7 @@ where
                             title, summary, rationale, recommendation_rank, promotion_nomination, \
                             occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
                             supersedes_revision_id, created_at\
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?8, NULL, 'none', ?9, ?10, NULL, NULL, ?9)",
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?7, ?8, NULL, ?9, ?10, ?11, NULL, NULL, ?10)",
                     )
                     .bind(tenant_id)
                     .bind(&new_rev_id)
@@ -540,6 +794,7 @@ where
                     .bind(&title)
                     .bind(&statement)
                     .bind(&rationale)
+                    .bind(promotion_nomination.as_str())
                     .bind(&now)
                     .bind(&evidence_fp)
                     .execute(&mut *tx)
@@ -559,6 +814,38 @@ where
                     .execute(&mut *tx)
                     .await
                     .map_err(AppError::external)?;
+
+                    for ref_key in source_refs {
+                        let source_ref = resolve_project_reference(
+                            &candidate_reference_map,
+                            &ref_key,
+                            strict_reference_validation,
+                        )?;
+                        let ref_id = format!("ref-l2-{}", uuid::Uuid::new_v4());
+                        sqlx::query(
+                            "INSERT INTO memory_item_source_references (\
+                                tenant_id, id, item_revision_id, record_kind, source_id, \
+                                session_id, question_id, turn_id, part_id, node_id, \
+                                node_order, reference_key, source_revision, availability, \
+                                unavailable_reason, unavailable_at, created_at\
+                             ) VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, 'available', NULL, NULL, ?12)",
+                        )
+                        .bind(tenant_id)
+                        .bind(&ref_id)
+                        .bind(&new_rev_id)
+                        .bind(&source_ref.source_id)
+                        .bind(&source_ref.session_id)
+                        .bind(&source_ref.question_id)
+                        .bind(&source_ref.turn_id)
+                        .bind(&source_ref.part_id)
+                        .bind(&source_ref.node_id)
+                        .bind(&source_ref.reference_key)
+                        .bind(source_ref.source_revision)
+                        .bind(&now)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(AppError::external)?;
+                    }
                 }
             }
             ProjectConsolidationOperation::Supersede {
@@ -569,6 +856,11 @@ where
                 category,
                 source_refs,
             } => {
+                let promotion_nomination = promotion_nomination_for_source_refs(
+                    &candidates,
+                    &source_refs,
+                    MemoryPromotionNomination::None,
+                );
                 // 标记旧条目为 superseded
                 sqlx::query(
                     "UPDATE memory_items \
@@ -613,7 +905,7 @@ where
                         title, summary, rationale, recommendation_rank, promotion_nomination, \
                         occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
                         supersedes_revision_id, created_at\
-                     ) VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, 'none', ?8, ?9, NULL, NULL, ?8)",
+                     ) VALUES (?1, ?2, ?3, 1, ?4, 'active', ?5, ?6, ?7, NULL, ?8, ?9, ?10, NULL, NULL, ?9)",
                 )
                 .bind(tenant_id)
                 .bind(&new_rev_id)
@@ -622,6 +914,7 @@ where
                 .bind(&replacement_title)
                 .bind(&replacement_statement)
                 .bind(&rationale)
+                .bind(promotion_nomination.as_str())
                 .bind(&now)
                 .bind(&evidence_fp)
                 .execute(&mut *tx)
@@ -644,6 +937,37 @@ where
                 .execute(&mut *tx)
                 .await
                 .map_err(AppError::external)?;
+                for ref_key in source_refs {
+                    let source_ref = resolve_project_reference(
+                        &candidate_reference_map,
+                        &ref_key,
+                        strict_reference_validation,
+                    )?;
+                    let ref_id = format!("ref-l2-{}", uuid::Uuid::new_v4());
+                    sqlx::query(
+                        "INSERT INTO memory_item_source_references (\
+                            tenant_id, id, item_revision_id, record_kind, source_id, \
+                            session_id, question_id, turn_id, part_id, node_id, \
+                            node_order, reference_key, source_revision, availability, \
+                            unavailable_reason, unavailable_at, created_at\
+                         ) VALUES (?1, ?2, ?3, 'session', ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, 'available', NULL, NULL, ?12)",
+                    )
+                    .bind(tenant_id)
+                    .bind(&ref_id)
+                    .bind(&new_rev_id)
+                    .bind(&source_ref.source_id)
+                    .bind(&source_ref.session_id)
+                    .bind(&source_ref.question_id)
+                    .bind(&source_ref.turn_id)
+                    .bind(&source_ref.part_id)
+                    .bind(&source_ref.node_id)
+                    .bind(&source_ref.reference_key)
+                    .bind(source_ref.source_revision)
+                    .bind(&now)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(AppError::external)?;
+                }
             }
             ProjectConsolidationOperation::Keep { item_id } => {
                 // 保持原样，仅刷新 last_seen_at
@@ -702,6 +1026,22 @@ where
     .execute(&mut *tx)
     .await
     .map_err(AppError::external)?;
+
+    if let Some((job_id, ownership_token)) = job_lease {
+        let completed = store::complete_memory_v2_maintenance_job_tx(
+            &mut tx,
+            tenant_id,
+            job_id,
+            ownership_token,
+            &now,
+        )
+        .await?;
+        if !completed {
+            return Err(AppError::Conflict(
+                "memory v2 maintenance lease is no longer owned".to_string(),
+            ));
+        }
+    }
 
     // 事务提交
     tx.commit().await.map_err(AppError::external)?;
@@ -922,746 +1262,5 @@ async fn load_source_availability_summary(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::backend::application::AppService;
-    use std::fs;
-
-    async fn setup_test_service() -> (AppService, std::path::PathBuf) {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-project-consolidation-test-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&root).expect("create test root");
-        let db_path = root.join("app.db");
-
-        let service = AppService::open_with_db_path(db_path)
-            .await
-            .expect("open service");
-
-        (service, root)
-    }
-
-    async fn seed_snapshot(
-        pool: &SqlitePool,
-        snapshot_id: &str,
-        sequence: i64,
-        watermark_utc: &str,
-        pub_kind: &str,
-    ) {
-        sqlx::query(
-            "INSERT INTO recent_memory_snapshots (\
-                tenant_id, id, sequence, target_watermark_utc, local_watermark_date, \
-                local_watermark_time, timezone_offset_minutes, window_hours, window_start_utc, \
-                window_end_utc, publication_kind, reused_from_snapshot_id, target_fingerprint, \
-                content_fingerprint, generation_skill_asset_id, generation_skill_revision, \
-                generation_skill_content_hash, contract_version, budget_policy_version, \
-                projection_policy_version, content_generated_at, published_at\
-             ) VALUES (\
-                'default', ?1, ?2, ?3, '2026-09-15', '14:00', 0, 48, '2026-09-13T14:00:00Z', \
-                ?3, ?4, NULL, 'tfp', 'cfp', NULL, NULL, NULL, 'v2', 'budget.v1', 'proj.v1', ?3, ?3\
-             )",
-        )
-        .bind(snapshot_id)
-        .bind(sequence)
-        .bind(watermark_utc)
-        .bind(pub_kind)
-        .execute(pool)
-        .await
-        .expect("seed snapshot");
-    }
-
-    async fn seed_l1_item(
-        pool: &SqlitePool,
-        item_id: &str,
-        rev_id: &str,
-        project_key: &str,
-        category: &str,
-        status: &str,
-        nomination: &str,
-        title: &str,
-        evidence_fp: &str,
-    ) {
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "INSERT INTO memory_items (\
-                tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
-                first_seen_at, last_seen_at, created_at, updated_at\
-             ) VALUES ('default', ?1, 'l1', ?2, ?3, 'current', ?4, ?4, ?4, ?4)",
-        )
-        .bind(item_id)
-        .bind(project_key)
-        .bind(rev_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("seed l1 item");
-
-        sqlx::query(
-            "INSERT INTO memory_item_revisions (\
-                tenant_id, id, item_id, revision_number, category, status, title, \
-                summary, rationale, recommendation_rank, promotion_nomination, \
-                occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
-                supersedes_revision_id, created_at\
-             ) VALUES ('default', ?1, ?2, 1, ?3, ?4, ?5, 'summary', 'rationale', NULL, ?6, ?7, ?8, NULL, NULL, ?7)",
-        )
-        .bind(rev_id)
-        .bind(item_id)
-        .bind(category)
-        .bind(status)
-        .bind(title)
-        .bind(nomination)
-        .bind(&now)
-        .bind(evidence_fp)
-        .execute(pool)
-        .await
-        .expect("seed l1 revision");
-    }
-
-    async fn seed_source_reference(
-        pool: &SqlitePool,
-        rev_id: &str,
-        ref_key: &str,
-        is_user_content: bool,
-        is_available: bool,
-    ) {
-        let ref_id = format!("ref-{}", uuid::Uuid::new_v4());
-        let now = Utc::now().to_rfc3339();
-        let q_id = if is_user_content {
-            Some("q-1".to_string())
-        } else {
-            None
-        };
-        let avail = if is_available {
-            "available"
-        } else {
-            "unavailable"
-        };
-
-        sqlx::query(
-            "INSERT INTO memory_item_source_references (\
-                tenant_id, id, item_revision_id, record_kind, source_id, session_id, \
-                question_id, turn_id, part_id, node_id, node_order, reference_key, \
-                source_revision, availability, unavailable_reason, unavailable_at, created_at\
-             ) VALUES ('default', ?1, ?2, 'session', 'src-1', 'sess-1', ?3, NULL, NULL, NULL, NULL, ?4, 1, ?5, NULL, NULL, ?6)",
-        )
-        .bind(&ref_id)
-        .bind(rev_id)
-        .bind(q_id)
-        .bind(ref_key)
-        .bind(avail)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("seed source reference");
-    }
-
-    async fn seed_observation(
-        pool: &SqlitePool,
-        item_id: &str,
-        rev_id: &str,
-        snapshot_id: &str,
-        nomination: &str,
-        evidence_fp: &str,
-        project_key: &str,
-        observed_at: &str,
-    ) {
-        let obs_id = format!("obs-{}", uuid::Uuid::new_v4());
-        sqlx::query(
-            "INSERT INTO memory_promotion_observations (\
-                tenant_id, id, item_id, item_revision_id, snapshot_id, nomination, \
-                evidence_fingerprint, project_key, observed_at\
-             ) VALUES ('default', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )
-        .bind(&obs_id)
-        .bind(item_id)
-        .bind(rev_id)
-        .bind(snapshot_id)
-        .bind(nomination)
-        .bind(evidence_fp)
-        .bind(project_key)
-        .bind(observed_at)
-        .execute(pool)
-        .await
-        .expect("seed observation");
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_03_decision_promotes_with_one_observation() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-dec-1",
-            "rev-dec-1",
-            "proj-alpha",
-            "decision",
-            "active",
-            "project_decision",
-            "Decide SQLite Engine",
-            "fp-1",
-        )
-        .await;
-        seed_source_reference(pool, "rev-dec-1", "ref-user-1", true, true).await;
-        seed_observation(
-            pool,
-            "item-dec-1",
-            "rev-dec-1",
-            "snap-1",
-            "project_decision",
-            "fp-1",
-            "proj-alpha",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        let candidates = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-
-        assert_eq!(
-            candidates.len(),
-            1,
-            "M35-L2-03: project_decision with 1 generated observation must be a candidate"
-        );
-        assert_eq!(
-            candidates[0].nomination,
-            MemoryPromotionNomination::ProjectDecision
-        );
-        assert_eq!(candidates[0].observation_count, 1);
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_03_decision_without_user_content_rejected() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-dec-2",
-            "rev-dec-2",
-            "proj-alpha",
-            "decision",
-            "active",
-            "project_decision",
-            "Decide Without User Content",
-            "fp-1",
-        )
-        .await;
-        // Reference is available but NOT user content
-        seed_source_reference(pool, "rev-dec-2", "ref-agent-1", false, true).await;
-        seed_observation(
-            pool,
-            "item-dec-2",
-            "rev-dec-2",
-            "snap-1",
-            "project_decision",
-            "fp-1",
-            "proj-alpha",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        let candidates = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-
-        assert_eq!(
-            candidates.len(),
-            0,
-            "Decision without available user content reference must be rejected"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_04_blocker_requires_two_generated_snapshots_with_new_evidence() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-blk-1",
-            "rev-blk-1",
-            "proj-alpha",
-            "blocker",
-            "blocked",
-            "recurring_blocker",
-            "Docker Network Flake",
-            "fp-blk-1",
-        )
-        .await;
-        seed_source_reference(pool, "rev-blk-1", "ref-user-1", true, true).await;
-        seed_observation(
-            pool,
-            "item-blk-1",
-            "rev-blk-1",
-            "snap-1",
-            "recurring_blocker",
-            "fp-blk-1",
-            "proj-alpha",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        // 仅 1 次观察：不满足
-        let candidates1 = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates1.len(),
-            0,
-            "Single observation of blocker must not qualify"
-        );
-
-        // 中间插入 reused snapshot: reused snapshot 不增加观察
-        seed_snapshot(pool, "snap-2", 2, "2026-09-15T08:00:00Z", "reused").await;
-        let candidates2 = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates2.len(),
-            0,
-            "Reused snapshot does not qualify blocker"
-        );
-
-        // 第 2 次 generated snapshot，但指纹没有变化: 依然不满足
-        seed_snapshot(pool, "snap-3", 3, "2026-09-15T14:00:00Z", "generated").await;
-        seed_observation(
-            pool,
-            "item-blk-1",
-            "rev-blk-1",
-            "snap-3",
-            "recurring_blocker",
-            "fp-blk-1", // 相同指纹！
-            "proj-alpha",
-            "2026-09-15T14:00:00Z",
-        )
-        .await;
-        let candidates3 = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates3.len(),
-            0,
-            "Identical fingerprint without new evidence must not qualify"
-        );
-
-        // 第 3 次 generated snapshot，指纹发生变化且有新证据: 满足晋升！
-        seed_snapshot(pool, "snap-4", 4, "2026-09-16T02:00:00Z", "generated").await;
-        seed_observation(
-            pool,
-            "item-blk-1",
-            "rev-blk-1",
-            "snap-4",
-            "recurring_blocker",
-            "fp-blk-2", // 新指纹！
-            "proj-alpha",
-            "2026-09-16T02:00:00Z",
-        )
-        .await;
-
-        let candidates4 = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates4.len(),
-            1,
-            "Blocker with 2 distinct generated observations and changed fingerprint must qualify"
-        );
-        assert_eq!(
-            candidates4[0].nomination,
-            MemoryPromotionNomination::RecurringBlocker
-        );
-        assert_eq!(candidates4[0].observation_count, 3);
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_05_progress_and_completion_do_not_promote() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_snapshot(pool, "snap-2", 2, "2026-09-15T14:00:00Z", "generated").await;
-
-        // 1. Progress 项 (nomination = none): 绝不作为合格候选
-        seed_l1_item(
-            pool,
-            "item-prog-1",
-            "rev-prog-1",
-            "proj-alpha",
-            "progress",
-            "active",
-            "none",
-            "Refactored CSS styles",
-            "fp-prog-1",
-        )
-        .await;
-        seed_source_reference(pool, "rev-prog-1", "ref-1", true, true).await;
-
-        // 2. Completed 项: 即使 nomination 为 recurring_blocker 且有 2 次历史观察，一旦 completed 也不再晋升
-        seed_l1_item(
-            pool,
-            "item-comp-1",
-            "rev-comp-1",
-            "proj-alpha",
-            "blocker",
-            "completed",
-            "recurring_blocker",
-            "Resolved Flaky Test",
-            "fp-comp-2",
-        )
-        .await;
-        seed_source_reference(pool, "rev-comp-1", "ref-2", true, true).await;
-        seed_observation(
-            pool,
-            "item-comp-1",
-            "rev-comp-1",
-            "snap-1",
-            "recurring_blocker",
-            "fp-comp-1",
-            "proj-alpha",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-        seed_observation(
-            pool,
-            "item-comp-1",
-            "rev-comp-1",
-            "snap-2",
-            "recurring_blocker",
-            "fp-comp-2",
-            "proj-alpha",
-            "2026-09-15T14:00:00Z",
-        )
-        .await;
-
-        let candidates = evaluate_l2_candidates(pool, "default", "proj-alpha")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates.len(),
-            0,
-            "Progress items and completed blockers must NEVER promote to L2 (M35-L2-05)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_02_unassigned_does_not_promote() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-unassigned",
-            "rev-unassigned",
-            "unassigned",
-            "decision",
-            "active",
-            "project_decision",
-            "Unassigned Decision",
-            "fp-u",
-        )
-        .await;
-        seed_source_reference(pool, "rev-unassigned", "ref-u", true, true).await;
-        seed_observation(
-            pool,
-            "item-unassigned",
-            "rev-unassigned",
-            "snap-1",
-            "project_decision",
-            "fp-u",
-            "unassigned",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        let candidates = evaluate_l2_candidates(pool, "default", "unassigned")
-            .await
-            .expect("evaluate candidates");
-        assert_eq!(
-            candidates.len(),
-            0,
-            "unassigned items must NEVER promote to L2 (M35-L2-02)"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_06_zero_candidates_triggers_zero_agent_calls() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-        let lock_map = ProjectConsolidationLockMap::new();
-
-        // 当没有候选时，传入的 Agent runner 若被调用则直接 panic
-        let result = reconcile_project_consolidation(
-            pool,
-            "default",
-            "proj-empty",
-            Some("/path/empty"),
-            &lock_map,
-            Some(|_input: ProjectConsolidationInput| async move {
-                panic!("Agent runner MUST NOT be called when there are 0 candidates! (M35-L2-06)");
-                #[allow(unreachable_code)]
-                Ok::<_, AppError>(ProjectConsolidationResult { operations: vec![] })
-            }),
-        )
-        .await
-        .expect("consolidation with zero candidates");
-
-        assert!(
-            result.is_none(),
-            "Zero candidates should result in None view"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_06_serial_per_project_and_failure_preserves_current_l2() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-        let lock_map = ProjectConsolidationLockMap::new();
-
-        // 1. 预先在数据库中插入一个已存在的 current L2 item
-        let existing_l2_item_id = "item-l2-existing";
-        let existing_l2_rev_id = "rev-l2-existing";
-        let now = Utc::now().to_rfc3339();
-
-        sqlx::query(
-            "INSERT INTO memory_items (\
-                tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
-                first_seen_at, last_seen_at, created_at, updated_at\
-             ) VALUES ('default', ?1, 'l2', 'proj-alpha', ?2, 'current', ?3, ?3, ?3, ?3)",
-        )
-        .bind(existing_l2_item_id)
-        .bind(existing_l2_rev_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("insert existing l2 item");
-
-        sqlx::query(
-            "INSERT INTO memory_item_revisions (\
-                tenant_id, id, item_id, revision_number, category, status, title, \
-                summary, rationale, recommendation_rank, promotion_nomination, \
-                occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
-                supersedes_revision_id, created_at\
-             ) VALUES ('default', ?1, ?2, 1, 'decision', 'active', 'Pre-existing Decision', \
-                       'Summary existing', 'Rationale', NULL, 'none', ?3, 'fp-ex', NULL, NULL, ?3)",
-        )
-        .bind(existing_l2_rev_id)
-        .bind(existing_l2_item_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("insert existing l2 revision");
-
-        // 2. 插入一个新合格候选
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-dec-new",
-            "rev-dec-new",
-            "proj-alpha",
-            "decision",
-            "active",
-            "project_decision",
-            "New Alpha Decision",
-            "fp-new",
-        )
-        .await;
-        seed_source_reference(pool, "rev-dec-new", "ref-user-new", true, true).await;
-        seed_observation(
-            pool,
-            "item-dec-new",
-            "rev-dec-new",
-            "snap-1",
-            "project_decision",
-            "fp-new",
-            "proj-alpha",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        // 3. 运行 consolidation，模拟 Agent 或准入校验失败
-        let consolidation_res = reconcile_project_consolidation(
-            pool,
-            "default",
-            "proj-alpha",
-            Some("/path/alpha"),
-            &lock_map,
-            Some(|_input: ProjectConsolidationInput| async move {
-                Err::<ProjectConsolidationResult, _>(AppError::external("Simulated Agent Failure"))
-            }),
-        )
-        .await;
-
-        assert!(
-            consolidation_res.is_err(),
-            "Consolidation should fail when Agent fails"
-        );
-
-        // 4. 验证原有的 current L2 条目保持完好无损 (M35-L2-06: 失败保留 current L2)
-        let loaded = load_l2_items(pool, "default", "proj-alpha")
-            .await
-            .expect("load l2 items after failure");
-
-        assert_eq!(
-            loaded.len(),
-            1,
-            "Original L2 item must be preserved on failure"
-        );
-        assert_eq!(loaded[0].item_id, existing_l2_item_id);
-        assert_eq!(loaded[0].title, "Pre-existing Decision");
-    }
-
-    #[tokio::test]
-    async fn test_m35_l2_successful_consolidation_and_fingerprint_reuse() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-        let lock_map = ProjectConsolidationLockMap::new();
-
-        // 1. 插入一个合格候选
-        seed_snapshot(pool, "snap-1", 1, "2026-09-15T02:00:00Z", "generated").await;
-        seed_l1_item(
-            pool,
-            "item-dec-success",
-            "rev-dec-success",
-            "proj-beta",
-            "decision",
-            "active",
-            "project_decision",
-            "Beta Decision Adopted",
-            "fp-success",
-        )
-        .await;
-        seed_source_reference(pool, "rev-dec-success", "ref-user-success", true, true).await;
-        seed_observation(
-            pool,
-            "item-dec-success",
-            "rev-dec-success",
-            "snap-1",
-            "project_decision",
-            "fp-success",
-            "proj-beta",
-            "2026-09-15T02:00:00Z",
-        )
-        .await;
-
-        // 2. 首次运行 Consolidation: 成功提交
-        let view1 = reconcile_project_consolidation(
-            pool,
-            "default",
-            "proj-beta",
-            Some("/path/beta"),
-            &lock_map,
-            Some(|input: ProjectConsolidationInput| async move {
-                assert_eq!(input.candidates.len(), 1);
-                Ok::<_, AppError>(ProjectConsolidationResult {
-                    operations: vec![ProjectConsolidationOperation::Create {
-                        category: MemoryItemCategory::Decision,
-                        title: "Beta Decision Adopted".to_string(),
-                        statement: "Adopted Beta Strategy".to_string(),
-                        rationale: "Validated by benchmark".to_string(),
-                        source_refs: vec!["ref-user-success".to_string()],
-                    }],
-                })
-            }),
-        )
-        .await
-        .expect("consolidation succeeds")
-        .expect("view exists");
-
-        assert_eq!(view1.items.len(), 1);
-        assert_eq!(view1.items[0].title, "Beta Decision Adopted");
-        assert!(
-            !view1.revision_hash.is_empty(),
-            "Revision hash must be generated"
-        );
-
-        // 3. 再次运行 Consolidation: 由于输入指纹未变，Agent runner 被跳过 (0 Agent calls)
-        let view2 = reconcile_project_consolidation(
-            pool,
-            "default",
-            "proj-beta",
-            Some("/path/beta"),
-            &lock_map,
-            Some(|_input: ProjectConsolidationInput| async move {
-                panic!("Agent should not be called when input fingerprint is identical!");
-                #[allow(unreachable_code)]
-                Ok::<_, AppError>(ProjectConsolidationResult { operations: vec![] })
-            }),
-        )
-        .await
-        .expect("consolidation with cached fingerprint")
-        .expect("view exists");
-
-        assert_eq!(view2.items.len(), 1);
-        assert_eq!(view2.revision_hash, view1.revision_hash);
-    }
-
-    #[tokio::test]
-    async fn test_context_resolver_reads_current_l2_project_memory() {
-        let (service, _root) = setup_test_service().await;
-        let pool = service.db.pool();
-
-        let now = Utc::now().to_rfc3339();
-        let item_id = "item-l2-ctx";
-        let rev_id = "rev-l2-ctx";
-
-        sqlx::query(
-            "INSERT INTO memory_items (\
-                tenant_id, id, layer, project_key, current_revision_id, lifecycle, \
-                first_seen_at, last_seen_at, created_at, updated_at\
-             ) VALUES ('default', ?1, 'l2', '/workspace/app', ?2, 'current', ?3, ?3, ?3, ?3)",
-        )
-        .bind(item_id)
-        .bind(rev_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("insert l2 item");
-
-        sqlx::query(
-            "INSERT INTO memory_item_revisions (\
-                tenant_id, id, item_id, revision_number, category, status, title, \
-                summary, rationale, recommendation_rank, promotion_nomination, \
-                occurred_at, evidence_fingerprint, generated_by_snapshot_id, \
-                supersedes_revision_id, created_at\
-             ) VALUES ('default', ?1, ?2, 1, 'decision', 'active', 'Use SQLite WAL Mode', \
-                       'Enable WAL mode for performance', 'Benchmark proof', NULL, 'none', ?3, 'fp-wal', NULL, NULL, ?3)",
-        )
-        .bind(rev_id)
-        .bind(item_id)
-        .bind(&now)
-        .execute(pool)
-        .await
-        .expect("insert l2 revision");
-
-        let res = service
-            .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
-                project_path: Some("/workspace/app".to_string()),
-                query: None,
-                token_budget: Some(2000),
-            })
-            .await
-            .expect("resolve memory context");
-
-        assert!(
-            res.text.contains("Use SQLite WAL Mode"),
-            "Context text must contain L2 title"
-        );
-        assert!(
-            res.text.contains("Enable WAL mode for performance"),
-            "Context text must contain L2 summary"
-        );
-        assert!(
-            res.references
-                .iter()
-                .any(|r| r.kind == "project_memory_l2" && r.id == rev_id),
-            "Context references must include project_memory_l2"
-        );
-    }
-}
+#[path = "project_consolidation_pipeline_tests.rs"]
+mod tests;
