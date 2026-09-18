@@ -639,6 +639,57 @@ fn adapter_protocol_progress_parsing_and_sanitization() {
 }
 
 #[test]
+fn test_parse_external_adapter_output_usage_events() {
+    let output = format!(
+        "{}\n{}\n{}\n{}",
+        json!({
+            "type": "usage_event",
+            "usage_event": {
+                "external_event_id": "evt-1",
+                "session_id": "sess-1",
+                "timestamp": "2026-09-14T00:00:00Z",
+                "model": "gpt-5.6-sol",
+                "total_tokens": 100
+            }
+        }),
+        json!({
+            "type": "usage_event",
+            "event": {
+                "external_event_id": "evt-2",
+                "session_id": "sess-1",
+                "timestamp": "2026-09-14T00:01:00Z",
+                "model": "gpt-5.6-sol",
+                "total_tokens": 200
+            }
+        }),
+        json!({
+            "type": "item",
+            "item": {
+                "kind": "usage_event",
+                "event": {
+                    "external_event_id": "evt-3",
+                    "session_id": "sess-2",
+                    "timestamp": "2026-09-14T00:02:00Z",
+                    "model": "claude-3-7-sonnet",
+                    "total_tokens": 300
+                }
+            }
+        }),
+        json!({
+            "type": "complete",
+            "item": { "snapshot_complete": true, "usage_event_count": 3 }
+        })
+    );
+
+    let result = parse_external_adapter_output("read_usage", output.into_bytes(), Vec::new())
+        .expect("usage_events parsed cleanly");
+    assert_eq!(result.usage_events.len(), 3);
+    assert_eq!(result.usage_events[0].external_event_id, "evt-1");
+    assert_eq!(result.usage_events[1].external_event_id, "evt-2");
+    assert_eq!(result.usage_events[2].external_event_id, "evt-3");
+}
+
+#[test]
 fn adapter_output_rejects_empty_markdown_export_content() {
     let output = br#"{"type":"item","item":{"kind":"markdown_export","content":"","relative_path":"codex/project/session.md"}}
 {"type":"complete","item":{"export_count":1}}"#;

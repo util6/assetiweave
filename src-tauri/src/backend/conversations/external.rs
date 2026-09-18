@@ -22,14 +22,24 @@ impl<'a> ExternalAdapterSourceReader<'a> {
         settings: &Value,
         cancellation: Option<&'a tokio_util::sync::CancellationToken>,
     ) -> AppResult<Self> {
+        Self::new_for_method(adapter, source, "read_session", settings, cancellation).await
+    }
+
+    pub(super) async fn new_for_method(
+        adapter: &'a ConversationAdapter,
+        source: &'a ConversationSource,
+        method: &str,
+        settings: &Value,
+        cancellation: Option<&'a tokio_util::sync::CancellationToken>,
+    ) -> AppResult<Self> {
         ensure_read_not_cancelled(cancellation)?;
-        validate_external_adapter_for_method(adapter, source, "read_session")?;
+        validate_external_adapter_for_method(adapter, source, method)?;
         let manifest_path = adapter
             .manifest_path
             .as_deref()
             .ok_or_else(|| AppError::external("conversation adapter has no manifest"))?;
         let validation = validate_external_adapter_manifest(manifest_path)?;
-        validate_external_adapter_manifest_for_method(adapter, &validation, "read_session")?;
+        validate_external_adapter_manifest_for_method(adapter, &validation, method)?;
         let source_value = json!({
             "location": resolve_source_location_for_adapter(source)?,
             "config": source_config_value(source)?,
@@ -52,6 +62,22 @@ impl<'a> ExternalAdapterSourceReader<'a> {
     ) -> Self {
         self.progress_listener = progress_listener;
         self
+    }
+
+    pub(super) async fn read_usage(
+        &self,
+        mode: &str,
+        cursor: Option<&str>,
+    ) -> AppResult<ExternalAdapterRunResult> {
+        self.run(
+            "read_usage",
+            json!({
+                "mode": mode,
+                "cursor": cursor,
+            }),
+            DEFAULT_READ_TIMEOUT_MS,
+        )
+        .await
     }
 
     pub(super) async fn discover(&self) -> AppResult<Option<ExternalAdapterRunResult>> {
@@ -268,6 +294,49 @@ pub(crate) async fn export_external_adapter_markdown_with_settings(
             adapter.id
         ))
     })?)
+}
+
+pub(crate) fn adapter_supports_usage(adapter: &ConversationAdapter) -> bool {
+    adapter
+        .capabilities
+        .iter()
+        .any(|capability| capability == "read_usage")
+}
+
+pub(crate) async fn read_external_adapter_usage_with_settings(
+    adapter: &ConversationAdapter,
+    source: &ConversationSource,
+    cursor: Option<&str>,
+    settings: &Value,
+) -> AppResult<ExternalAdapterRunResult> {
+    validate_external_adapter_for_method(adapter, source, "read_usage")?;
+    let manifest_path = adapter.manifest_path.as_deref().ok_or_else(|| {
+        AppError::external(format!(
+            "external conversation adapter has no manifest: {}",
+            adapter.id
+        ))
+    })?;
+    let validation = validate_external_adapter_manifest(manifest_path)?;
+    validate_external_adapter_manifest_for_method(adapter, &validation, "read_usage")?;
+    let source_location = resolve_source_location_for_adapter(source)?;
+    let request = json!({
+        "protocol_version": EXTERNAL_ADAPTER_PROTOCOL_VERSION,
+        "request_id": format!("usage-{}-{}", source.id, Utc::now().timestamp_millis()),
+        "method": "read_usage",
+        "source": { "location": source_location, "config": source_config_value(source)? },
+        "params": {
+            "cursor": cursor,
+            "mode": if cursor.is_some() { "incremental" } else { "full" }
+        }
+    });
+    run_external_adapter_with_settings(
+        &validation,
+        "read_usage",
+        request,
+        Duration::from_millis(DEFAULT_READ_TIMEOUT_MS),
+        settings,
+    )
+    .await
 }
 
 pub(crate) async fn project_external_adapter_command_parts_with_settings(
@@ -1109,6 +1178,7 @@ fn validate_manifest_shape(manifest: &ConversationAdapterManifest) -> AppResult<
                 | "export_markdown"
                 | "web_records"
                 | "project_command_parts"
+                | "read_usage"
         ) {
             return Err(AppError::external(format!(
                 "unsupported adapter capability: {capability}"
@@ -1328,6 +1398,10 @@ fn parse_external_adapter_output_impl(
     let mut snapshot_complete = false;
     let mut sessions = Vec::new();
     let mut command_projections = Vec::new();
+    let mut usage_events = Vec::new();
+    let mut next_cursor = None;
+    let mut decoder_profile = None;
+    let mut diagnostics = Vec::new();
     let mut markdown_export = None;
     let mut warnings = Vec::new();
     let mut saw_complete = false;
@@ -1381,8 +1455,25 @@ fn parse_external_adapter_output_impl(
                     "command_projection" => {
                         command_projections.push(parse_adapter_command_projection_item(item)?);
                     }
+                    "usage_event" => {
+                        usage_events.push(parse_adapter_usage_event_item(item)?);
+                    }
                     _ => {}
                 }
+            }
+            "usage_event" => {
+                item_count += 1;
+                let event_val = parsed
+                    .usage_event
+                    .or(parsed.event)
+                    .or(parsed.item)
+                    .ok_or_else(|| {
+                        AppError::external(format!(
+                            "adapter usage_event line {} missing event payload",
+                            index + 1
+                        ))
+                    })?;
+                usage_events.push(parse_adapter_usage_event_item(event_val)?);
             }
             "warning" => warnings.push(
                 parsed
@@ -1391,12 +1482,32 @@ fn parse_external_adapter_output_impl(
             ),
             "complete" => {
                 saw_complete = true;
-                snapshot_complete = parsed
-                    .item
-                    .as_ref()
-                    .and_then(|item| item.get("snapshot_complete"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                if let Some(ref item) = parsed.item {
+                    snapshot_complete = item
+                        .get("snapshot_complete")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    next_cursor = item
+                        .get("next_cursor")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    decoder_profile = item
+                        .get("decoder_profile")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    if let Some(diag) = item.get("diagnostics") {
+                        if let Some(arr) = diag.as_array() {
+                            diagnostics.extend(
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(ToString::to_string)),
+                            );
+                        } else if let Some(s) = diag.as_str() {
+                            diagnostics.push(s.to_string());
+                        } else {
+                            diagnostics.push(diag.to_string());
+                        }
+                    }
+                }
             }
             "error" => {
                 return Err(AppError::external(format!(
@@ -1437,7 +1548,21 @@ fn parse_external_adapter_output_impl(
         markdown_export,
         warnings,
         stderr,
+        usage_events,
+        next_cursor,
+        decoder_profile,
+        diagnostics,
     })
+}
+
+fn parse_adapter_usage_event_item(item: Value) -> AppResult<super::usage_repo::RawUsageEventInput> {
+    let event_value = item
+        .get("usage_event")
+        .or_else(|| item.get("event"))
+        .cloned()
+        .unwrap_or(item);
+    serde_json::from_value(event_value)
+        .map_err(|err| AppError::external(format!("invalid adapter usage_event item: {err}")))
 }
 
 fn parse_adapter_command_projection_item(item: Value) -> AppResult<ConversationCommandProjection> {

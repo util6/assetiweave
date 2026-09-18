@@ -191,6 +191,7 @@ export const commonZh = {
   "nav.sub.profiles.plans": "部署计划",
   "nav.sub.conversations.sessions": "Session 浏览",
   "nav.sub.conversations.webRecords": "网页记录浏览",
+  "nav.sub.conversations.usage": "用量统计",
   "nav.sub.memory.recent": "近期",
   "nav.sub.memory.recall": "深度回忆",
   "nav.sub.team.overview": "团队与花名册",

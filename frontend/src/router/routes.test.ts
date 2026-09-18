@@ -13,6 +13,7 @@ describe("app route resolution", () => {
     expect(routePaths).toContain("/skills/mounts");
     expect(routePaths).toContain("/conversations/sessions");
     expect(routePaths).toContain("/conversations/web-records");
+    expect(routePaths).toContain("/conversations/usage");
     expect(routePaths).toContain("/prompts/overview");
     expect(routePaths).toContain("/memory/recent");
     expect(routePaths).toContain("/memory/recall");

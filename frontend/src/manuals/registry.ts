@@ -747,6 +747,57 @@ export const manualDocuments = [
     },
   ),
   manual(
+    "conversations.usage",
+    {
+      title: "Token 用量分析使用手册",
+      subtitle: "多源会话 Token 消耗统计与成本分析",
+      overview:
+        "用量分析用于聚合本地 AI 客户端（如 Codex、Antigravity、Claude Code、OpenCode、ZCode 等）的 Token 用量事件，提供多维度消耗统计、趋势分析与模型成本估算。",
+      sections: [
+        {
+          heading: "核心功能",
+          items: [
+            "总览看板：直观展示合计 Tokens、输入、输出、缓存 Tokens 与请求数总览。",
+            "趋势图表：查看历史日用量趋势平滑曲线，支持在 Tokens 与请求数之间切换指标。",
+            "多维拆解：按模型、按本地来源实例和按日期三个维度拆分统计，清晰掌握各模型与工具消耗。",
+          ],
+        },
+        {
+          heading: "数据扫描与刷新",
+          items: [
+            "增量扫描：点击「重新扫描」可触发适配器增量采集最新会话用量事件并入库。",
+            "即时刷新：切换相对时间范围（今天、近 7 天、近 30 天、近 90 天、全部）或单来源实例即时刷新统计。",
+            "离线安全：所有统计直接从本地 SQLite 数据库查询计算，不上传任何对话内容或统计数据。",
+          ],
+        },
+      ],
+    },
+    {
+      title: "Token Usage Analytics Manual",
+      subtitle: "Multi-source conversation token usage and cost analysis",
+      overview:
+        "Token Usage Analytics aggregates token usage events across local AI clients (Codex, Antigravity, Claude Code, OpenCode, ZCode, etc.), providing multi-dimensional statistics, trend charts, and cost estimates.",
+      sections: [
+        {
+          heading: "Core Features",
+          items: [
+            "Hero overview: Displays total tokens, input, output, cache tokens, and total request counts.",
+            "Trend chart: Smooth spline area chart for daily trends with tokens/requests metric toggling.",
+            "Multi-dimensional breakdown: Breakdown tables by model, local source instance, and date.",
+          ],
+        },
+        {
+          heading: "Scanning & Refresh",
+          items: [
+            "Incremental scanning: Trigger background scan to ingest new conversation usage events.",
+            "Reactive filtering: Switch time range (today, 7d, 30d, 90d, all-time) or filter by source instance.",
+            "Local & secure: All metrics are computed from local SQLite without sending data externally.",
+          ],
+        },
+      ],
+    },
+  ),
+  manual(
     "mcp.overview",
     {
       title: "服务总览使用手册",

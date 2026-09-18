@@ -233,6 +233,10 @@ pub(crate) struct ExternalAdapterRunResult {
     pub(crate) sessions: Vec<NormalizedConversationSession>,
     pub(crate) command_projections: Vec<ConversationCommandProjection>,
     pub(crate) markdown_export: Option<ExternalMarkdownExport>,
+    pub(crate) usage_events: Vec<super::usage_repo::RawUsageEventInput>,
+    pub(crate) next_cursor: Option<String>,
+    pub(crate) decoder_profile: Option<String>,
+    pub(crate) diagnostics: Vec<String>,
     pub(crate) warnings: Vec<String>,
     pub(crate) stderr: String,
 }
@@ -304,6 +308,10 @@ pub(super) struct ExternalAdapterLine {
     pub(super) kind: String,
     #[serde(default)]
     pub(super) item: Option<Value>,
+    #[serde(default)]
+    pub(super) event: Option<Value>,
+    #[serde(default)]
+    pub(super) usage_event: Option<Value>,
     #[serde(default)]
     pub(super) message: Option<String>,
     #[serde(default)]

@@ -324,6 +324,7 @@ describe("AppSettingsProvider", () => {
 
     expect(settings.agentAssignments).toEqual({
       "translation.card": { agentId: "opencode", modelId: "model/a" },
+      "memory.generation": { agentId: "opencode", modelId: null },
     });
     expect(resolveAgentCapability(settings, "memory")).toEqual({
       agentId: "",
@@ -341,6 +342,7 @@ describe("AppSettingsProvider", () => {
     expect(settings.agentAssignments).toEqual({
       "translation.card": { agentId: "gemini", modelId: "gemini-2.5-pro" },
       "memory.extraction": { agentId: "codex", modelId: "openai/gpt-5-codex" },
+      "memory.generation": { agentId: "codex", modelId: "openai/gpt-5-codex" },
       "memory.project": { agentId: "codex", modelId: "openai/gpt-5-codex" },
       "memory.global": { agentId: "codex", modelId: "openai/gpt-5-codex" },
       "memory.recall": { agentId: "codex", modelId: "openai/gpt-5-codex" },

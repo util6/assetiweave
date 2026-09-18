@@ -140,6 +140,9 @@ impl TaskView {
                 crate::backend::runtime::tasks::TaskKind::ConversationSync => {
                     "会话同步".to_string()
                 }
+                crate::backend::runtime::tasks::TaskKind::ConversationUsageScan => {
+                    "用量统计扫描".to_string()
+                }
                 crate::backend::runtime::tasks::TaskKind::ConversationDataMaintenance => {
                     "会话数据维护".to_string()
                 }

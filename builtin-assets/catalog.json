@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-09-10T00:00:00Z",
+  "updated_at": "2026-09-14T00:00:00Z",
   "items": [
     {
       "id": "io.github.util6.codex-session",
       "name": "Codex Session Parser",
-      "version": "1.6.3",
+      "version": "1.6.4",
       "record_kind": "session",
       "provider": "codex",
       "adapter_id": "codex",
@@ -16,7 +16,7 @@
         "codex",
         "node"
       ],
-      "expected_package_hash": "c44b75165e63785ae6968185ad391d5675846672213702b835cab187d656ef8d",
+      "expected_package_hash": "49e97db8f7dbfd0cc18b4e794fbe8633902e90a83d871318a12b3f2ff4cca5b4",
       "expected_content_hash": "51053c265f4a4c158e2ac6a7f2f0671203e7001452f83b39a2694b832d4bdcc8",
       "source": {
         "type": "github",
@@ -38,7 +38,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "3314ada6cc6338b016936a3f32d46079c5712560537e2433bed6f375608b737d",
+      "expected_package_hash": "d0528ff4bac1427959cb4cf572feeef98aa039dea56c0f4d704c81b797c23bdf",
       "expected_content_hash": "c5a17ca30a1cce031528ecea7ed0bfa51ad1d748f098de44a394dac2c1d4e3b5",
       "source": {
         "type": "github",
@@ -59,7 +59,7 @@
         "claude-code",
         "node"
       ],
-      "expected_package_hash": "7b525e797d4ce858bede97868bca4252196e259d0cc7649f4f7712d67d05e801",
+      "expected_package_hash": "a5193267892d73b4bda699f6b6407c624ef654b615e1151878d751dea6d12c7d",
       "expected_content_hash": "17aff181d7013a2f4dd696d582707ec0448aaf8e42db9aa0c71a7b15919553be",
       "source": {
         "type": "github",
@@ -81,7 +81,7 @@
         "sqlite",
         "node"
       ],
-      "expected_package_hash": "06a89b2a5d88cb7b77dc6ded17566e37a914ddacfefc167173e560de1565418b",
+      "expected_package_hash": "47127e3d5e0ec52bdef441fb6715a781e326a27e67dc63d8fe9ba0f562b71640",
       "expected_content_hash": "fa7e1b0c5641bc9315d7e969d7b864ef4085a6cdc2301d9ec2d2e588c8fea49d",
       "source": {
         "type": "github",

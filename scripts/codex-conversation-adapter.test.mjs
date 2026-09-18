@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -1206,6 +1206,161 @@ test("Codex adapter emits progress messages during list_sessions and read_sessio
     assert.equal(readProgress[0].progress.operation, "read_session");
     assert.equal(readProgress[readProgress.length - 1].progress.current, 1);
     assert.equal(readProgress[readProgress.length - 1].progress.total, 1);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter filters out subagent threads from list_sessions and read_session", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-subagent-"));
+  try {
+    const userRollout = path.join(fixtureRoot, "rollout-user.jsonl");
+    const subagentRollout = path.join(fixtureRoot, "rollout-subagent.jsonl");
+    writeFileSync(
+      userRollout,
+      [
+        event("2026-09-11T00:00:00Z", "user", "User question"),
+        event("2026-09-11T00:00:01Z", "assistant", "User answer"),
+      ].join("\n")
+    );
+    writeFileSync(
+      subagentRollout,
+      [
+        event("2026-09-11T00:00:00Z", "user", "User question fork"),
+        event("2026-09-11T00:00:02Z", "assistant", "Subagent answer"),
+      ].join("\n")
+    );
+
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('user-session-1', '${sqlString(userRollout)}', 'User Task', '2026-09-11T00:00:01Z', 'user', 'vscode');`,
+        `INSERT INTO threads VALUES ('subagent-session-1', '${sqlString(subagentRollout)}', '', '2026-09-11T00:00:02Z', 'subagent', '{"subagent":{"thread_spawn":{"parent_thread_id":"user-session-1"}}}');`,
+      ].join("\n")
+    );
+
+    // 1. list_sessions should only return user-session-1
+    const listResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "list_sessions",
+        source: { location: fixtureRoot },
+        params: {},
+      }),
+    });
+    assert.equal(listResult.status, 0, listResult.stderr);
+    const listItems = listResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item")
+      .map((m) => m.item.external_id);
+    assert.deepEqual(listItems, ["user-session-1"]);
+
+    // 2. read_session for user session should succeed
+    const readUserResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: "user-session-1" },
+      }),
+    });
+    assert.equal(readUserResult.status, 0, readUserResult.stderr);
+    const userSession = readUserResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((m) => m.type === "item")?.item?.session;
+    assert.ok(userSession);
+    assert.equal(userSession.external_id, "user-session-1");
+    assert.equal(userSession.turns.length, 1);
+    assert.equal(userSession.turns[0].user_text, "User question");
+
+    // 3. read_session for subagent should return empty
+    const readSubResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: "subagent-session-1" },
+      }),
+    });
+    assert.equal(readSubResult.status, 0, readSubResult.stderr);
+    const subItems = readSubResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .filter((m) => m.type === "item");
+    assert.equal(subItems.length, 0);
+  } finally {
+    rmSync(fixtureRoot, { force: true, recursive: true });
+  }
+});
+
+test("Codex adapter seamlessly merges multi-page paginated rollouts by history_base", () => {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "assetiweave-codex-multipage-"));
+  try {
+    const sessionId = "01a08e34-c343-7203-9e35-c23c39101192";
+    const sessionsDir = path.join(fixtureRoot, "sessions", "2026", "09", "11");
+    mkdirSync(sessionsDir, { recursive: true });
+
+    const page1Path = path.join(sessionsDir, `rollout-2026-09-11T10-00-00-${sessionId}.jsonl`);
+    const page2Path = path.join(sessionsDir, `rollout-2026-09-11T10-10-00-${sessionId}_page2.jsonl`);
+
+    // Page 1: Turn 0 and partial Turn 1 that got rolled over
+    writeFileSync(
+      page1Path,
+      [
+        JSON.stringify({ timestamp: "2026-09-11T10:00:00Z", ordinal: 0, type: "session_meta", payload: { id: sessionId, session_id: sessionId } }),
+        JSON.stringify({ timestamp: "2026-09-11T10:00:01Z", ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Turn 0 Question" }] } }),
+        JSON.stringify({ timestamp: "2026-09-11T10:00:02Z", ordinal: 2, type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Turn 0 Answer" }] } }),
+        JSON.stringify({ timestamp: "2026-09-11T10:00:03Z", ordinal: 3, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Turn 1 Partial" }] } }),
+      ].join("\n")
+    );
+
+    // Page 2: starts at ordinal 3 with history_base
+    writeFileSync(
+      page2Path,
+      [
+        JSON.stringify({ timestamp: "2026-09-11T10:10:00Z", ordinal: 3, type: "session_meta", payload: { id: sessionId, session_id: sessionId, history_mode: "paginated", history_base: { thread_id: sessionId, end_ordinal_exclusive: 3 } } }),
+        JSON.stringify({ timestamp: "2026-09-11T10:10:01Z", ordinal: 3, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Turn 1 Full Question" }] } }),
+        JSON.stringify({ timestamp: "2026-09-11T10:10:02Z", ordinal: 4, type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Turn 1 Full Answer" }] } }),
+      ].join("\n")
+    );
+
+    // threads.rollout_path only points to latest page (Page 2)
+    runSqlite(
+      fixtureRoot,
+      [
+        "CREATE TABLE threads (id TEXT, rollout_path TEXT, title TEXT, updated_at TEXT, thread_source TEXT, source TEXT);",
+        `INSERT INTO threads VALUES ('${sessionId}', '${sqlString(page2Path)}', 'MultiPage Session', '2026-09-11T10:10:02Z', 'user', 'vscode');`,
+      ].join("\n")
+    );
+
+    const readResult = spawnSync(process.execPath, [adapterPath], {
+      encoding: "utf8",
+      input: JSON.stringify({
+        method: "read_session",
+        source: { location: fixtureRoot },
+        params: { session_id: sessionId },
+      }),
+    });
+    assert.equal(readResult.status, 0, readResult.stderr);
+    const session = readResult.stdout
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((m) => m.type === "item")?.item?.session;
+
+    assert.ok(session);
+    assert.equal(session.external_id, sessionId);
+    assert.equal(session.turns.length, 2);
+    assert.equal(session.turns[0].user_text, "Turn 0 Question");
+    assert.equal(session.turns[1].user_text, "Turn 1 Full Question");
+    assert.equal(session.turns[0].parts[0].text, "Turn 0 Answer");
+    assert.equal(session.turns[1].parts[0].text, "Turn 1 Full Answer");
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
   }

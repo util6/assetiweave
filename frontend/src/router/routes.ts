@@ -3,6 +3,7 @@ import type { NavigationModel } from "./types";
 export type AppRouteId =
   | "catalog"
   | "conversations"
+  | "conversations-usage"
   | "prompts-overview"
   | "web-records"
   | "sources"

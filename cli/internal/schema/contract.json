@@ -865,7 +865,7 @@
       "contract_version": 3,
       "method": "memory.project.get",
       "canonical_method": "memory.project.get",
-      "description": "Get the persisted project Memory projection and its source references",
+      "description": "Get the current SQLite L2 project Memory view and source availability",
       "risk": "read",
       "confirmation_required": false,
       "exposure": "friendly",
@@ -894,7 +894,7 @@
       "contract_version": 3,
       "method": "memory.rebuild",
       "canonical_method": "memory.rebuild",
-      "description": "Queue a Memory rebuild for the selected scope",
+      "description": "Queue a Memory maintenance rebuild for recent, project, global, all, or projection repair",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "friendly",
@@ -935,14 +935,50 @@
               "projectPath": null,
               "sessionId": null
             },
-            "description": "Optional Memory scope"
+            "description": "Legacy optional Memory scope"
+          },
+          "target": {
+            "description": "Rebuild target: recent, project, global, or all",
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "recent",
+              "project",
+              "global",
+              "all"
+            ]
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Project path required for project target",
+            "aliases": [
+              "projectPath"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "manual",
+              "migration",
+              "projection_repair"
+            ],
+            "description": "Rebuild reason: manual, migration, or projection_repair"
           }
         },
         "type": "object",
         "additionalProperties": false,
         "required": []
       },
-      "cli": "assetiweave-cli memory rebuild",
+      "cli": "assetiweave-cli memory rebuild --target <target>",
       "since": "0.6.1",
       "deprecated": false
     },
@@ -6570,7 +6606,7 @@
       "contract_version": 3,
       "method": "get_memory_project",
       "canonical_method": "memory.project.get",
-      "description": "Get the persisted project Memory projection and its source references",
+      "description": "Get the current SQLite L2 project Memory view and source availability",
       "risk": "read",
       "confirmation_required": false,
       "exposure": "app",
@@ -6599,7 +6635,7 @@
       "contract_version": 3,
       "method": "rebuild_memory_scope",
       "canonical_method": "memory.rebuild",
-      "description": "Queue a Memory rebuild for the selected scope",
+      "description": "Queue a Memory maintenance rebuild for recent, project, global, all, or projection repair",
       "risk": "write",
       "confirmation_required": false,
       "exposure": "app",
@@ -6640,7 +6676,43 @@
               "projectPath": null,
               "sessionId": null
             },
-            "description": "Optional Memory scope"
+            "description": "Legacy optional Memory scope"
+          },
+          "target": {
+            "description": "Rebuild target: recent, project, global, or all",
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "recent",
+              "project",
+              "global",
+              "all"
+            ]
+          },
+          "project_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Project path required for project target",
+            "aliases": [
+              "projectPath"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "manual",
+              "migration",
+              "projection_repair"
+            ],
+            "description": "Rebuild reason: manual, migration, or projection_repair"
           }
         },
         "type": "object",

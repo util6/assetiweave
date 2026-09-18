@@ -168,6 +168,13 @@ export const navigationModel: NavigationModel = {
         routeKey: "conversations.web-records",
         enabled: true,
       },
+      {
+        id: "usage",
+        label: "Token Usage",
+        labels: { zh: "用量统计", en: "Token Usage" },
+        routeKey: "conversations.usage",
+        enabled: true,
+      },
     ],
     memory: [
       {

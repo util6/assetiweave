@@ -17,6 +17,7 @@ export type AgentCapabilityServiceId =
   | "cardTranslation"
   | "memory"
   | "memory.extraction"
+  | "memory.generation"
   | "memory.project"
   | "memory.global"
   | "memory.recall"
@@ -29,6 +30,7 @@ export type AgentCapabilityAssignments = Record<
 export type AgentActionId =
   | "translation.card"
   | "memory.extraction"
+  | "memory.generation"
   | "memory.project"
   | "memory.global"
   | "memory.recall"
@@ -336,6 +338,8 @@ function serviceToActionId(serviceId: AgentCapabilityServiceId): AgentActionId {
     case "memory":
     case "memory.extraction":
       return "memory.extraction";
+    case "memory.generation":
+      return "memory.generation";
     case "memory.project":
       return "memory.project";
     case "memory.global":
@@ -358,6 +362,7 @@ export const defaultSettings: AppSettings = {
   agentAssignments: {
     "translation.card": { agentId: "opencode", modelId: null },
     "memory.extraction": { agentId: "opencode", modelId: null },
+    "memory.generation": { agentId: "opencode", modelId: null },
     "memory.project": { agentId: "opencode", modelId: null },
     "memory.global": { agentId: "opencode", modelId: null },
     "memory.recall": { agentId: "opencode", modelId: null },
@@ -557,6 +562,7 @@ function normalizeLegacyAgentAssignments(
   const specs: Array<[AgentActionId, string, string]> = [
     ["translation.card", "cardTranslation", aiRuntime.cli],
     ["memory.extraction", "memory.extraction", legacyMemory],
+    ["memory.generation", "memory.generation", legacyMemory],
     ["memory.project", "memory.project", legacyMemory],
     ["memory.global", "memory.global", legacyMemory],
     ["memory.recall", "memory.recall", legacyMemory],
@@ -583,7 +589,12 @@ function normalizeCanonicalAgentAssignments(value: unknown): AgentAssignments {
   const stored = isRecord(value) ? value : null;
   const actionIds = (
     Object.keys(defaultSettings.agentAssignments) as AgentActionId[]
-  ).filter((actionId) => stored === null || isRecord(stored[actionId]));
+  ).filter(
+    (actionId) =>
+      stored === null ||
+      isRecord(stored[actionId]) ||
+      actionId === "memory.generation",
+  );
   return Object.fromEntries(
     actionIds.map((actionId) => {
       const fallback = defaultSettings.agentAssignments[actionId] ?? {

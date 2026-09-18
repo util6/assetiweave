@@ -1119,6 +1119,10 @@ function discoverBrainDirs(startLocation) {
 function discoverConversationDbFiles(startLocation) {
   if (!startLocation) return [];
   const resolved = path.resolve(expandPath(startLocation));
+  if (existsSync(resolved) && statSync(resolved).isFile()) {
+    if (resolved.endsWith(".db")) return [resolved];
+    return [];
+  }
   const dbFiles = new Set();
 
   function scanDir(targetDir) {
@@ -1458,6 +1462,123 @@ function structuredCardRenderer(card) {
   return "plain";
 }
 
+function readUsage() {
+  const location = expandPath(input.source?.location);
+  if (!location) {
+    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "antigravity-protobuf-acp-v1", diagnostics: [] } });
+    return;
+  }
+
+  const cursorRaw = input.params?.cursor;
+  let cursor = null;
+  if (cursorRaw) {
+    try {
+      cursor = typeof cursorRaw === "string" ? JSON.parse(cursorRaw) : cursorRaw;
+    } catch {}
+  }
+  const cursorMtime = cursor?.last_mtime ? Number(cursor.last_mtime) : 0;
+  const processedDbs = new Set(cursor?.processed_dbs || []);
+
+  const dbFiles = discoverConversationDbFiles(location);
+  let maxMtime = cursorMtime;
+  let eventCount = 0;
+  const newProcessedDbs = [];
+
+  for (const dbPath of dbFiles) {
+    try {
+      const stat = statSync(dbPath);
+      const mtimeMs = stat.mtimeMs;
+      if (mtimeMs > maxMtime) {
+        maxMtime = mtimeMs;
+      }
+      if (cursorMtime > 0 && mtimeMs <= cursorMtime && processedDbs.has(dbPath)) {
+        newProcessedDbs.push(dbPath);
+        continue;
+      }
+
+      const externalId = path.basename(dbPath, ".db");
+      const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, hex(data) as hex_data, size FROM gen_metadata WHERE size > 0 ORDER BY idx ASC;"], {
+        encoding: "utf8",
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      const rows = JSON.parse(raw || "[]");
+
+      for (const r of rows) {
+        if (!r.hex_data) continue;
+        const buf = Buffer.from(r.hex_data, "hex");
+        const top = decodeProto(buf);
+        const sub1 = top[1]?.[0] ? decodeProto(top[1][0].buf) : (top[17]?.[0] ? decodeProto(top[17][0].buf) : null);
+        if (!sub1) continue;
+
+        const usageRaw = sub1[4]?.[0];
+        if (!usageRaw) continue;
+        const usage = decodeProto(usageRaw.buf);
+
+        const promptTokens = usage[2]?.[0]?.val ? Number(usage[2][0].val) : 0;
+        const cachedTokens = usage[5]?.[0]?.val ? Number(usage[5][0].val) : 0;
+        const totalOutputTokens = usage[3]?.[0]?.val ? Number(usage[3][0].val) : 0;
+        const reasoningTokens = usage[9]?.[0]?.val ? Number(usage[9][0].val) : 0;
+        const candidateTokens = usage[10]?.[0]?.val ? Number(usage[10][0].val) : 0;
+
+        const inputTokens = Math.max(0, promptTokens - cachedTokens);
+        const outputTokens = candidateTokens > 0 ? candidateTokens : Math.max(0, totalOutputTokens - reasoningTokens);
+        const totalTokens = inputTokens + cachedTokens + reasoningTokens + outputTokens;
+
+        if (totalTokens === 0) continue;
+
+        const modelStr = sub1[19]?.[0]?.buf?.toString("utf8") || "gemini-2.5-pro";
+        const requestId = `${externalId}-${r.idx}`;
+
+        const event = {
+          external_event_id: requestId,
+          session_id: externalId,
+          turn_id: null,
+          logical_request_id: requestId,
+          attempt_index: 0,
+          timestamp: stat.mtime.toISOString(),
+          provider: "google",
+          model: modelStr,
+          status: "completed",
+          input_tokens: inputTokens,
+          cache_read_tokens: cachedTokens,
+          cache_write_tokens: 0,
+          reasoning_tokens: reasoningTokens,
+          output_tokens: outputTokens,
+          host_reported_cost: null,
+          currency: null,
+        };
+
+        emit("item", {
+          item: {
+            kind: "usage_event",
+            event,
+          },
+        });
+        eventCount++;
+      }
+
+      newProcessedDbs.push(dbPath);
+    } catch {
+      // Ignore individual corrupted db
+    }
+  }
+
+  const nextCursor = {
+    last_mtime: maxMtime,
+    processed_dbs: newProcessedDbs.slice(-2000),
+  };
+
+  emit("complete", {
+    item: {
+      snapshot_complete: true,
+      usage_event_count: eventCount,
+      next_cursor: JSON.stringify(nextCursor),
+      decoder_profile: "antigravity-protobuf-acp-v1",
+      diagnostics: [],
+    },
+  });
+}
+
 try {
   if (input.method === "project_command_parts") {
     const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
@@ -1481,6 +1602,9 @@ try {
       emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
     }
     emit("complete", { item: { session_count: sessions.length } });
+  } else if (input.method === "read_usage") {
+    emitProgress({ stage: "reading", operation: "read_usage" });
+    readUsage();
   } else {
     fail(`unsupported method: ${input.method}`);
   }

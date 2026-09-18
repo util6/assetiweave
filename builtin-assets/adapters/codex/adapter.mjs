@@ -5,7 +5,7 @@
  *              提取消息、命令行指令执行（Tool Exec）、Skill 软链接依赖与终端输出，并归一化为标准的 Card Schema v1 结构。
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -21,7 +21,7 @@ const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 
 /** 标识当前 Codex 内容卡片的 Schema 版本号，用于增量 Token 生成与缓存失效判定 */
-const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v18";
+const CONTENT_CARD_SCHEMA_VERSION = "codex-content-cards-v19";
 
 /** 单条 Part 节点的文本最大字符数上限 (96KB)，超长则触发截断规则 */
 const MAX_PART_TEXT_CHARS = 96 * 1024;
@@ -57,6 +57,10 @@ const SIGNAL_LINE_PATTERN =
 // ---------------------------------------------------------------------------
 // IPC 与路径工具函数 (Stdio IPC & Path Utilities)
 // ---------------------------------------------------------------------------
+
+process.stdout.on("error", (err) => {
+  if (err.code === "EPIPE") process.exit(0);
+});
 
 /**
  * 向标准输出 (stdout) 逐行写出 JSON 格式的 IPC 通信事件，供 Rust 父进程读取
@@ -115,31 +119,160 @@ function sha256(text) {
 }
 
 /**
- * 根据文件路径、更新时间戳、文件大小及 mtime 生成强类型增量版本 Token，用于快照对比
- * @param {string} filePath - JSONL 文件的绝对路径
+ * 根据文件路径列表、更新时间戳、文件大小及 mtime 生成强类型增量版本 Token，用于快照对比
+ * @param {Array<string>} filePaths - JSONL 文件的绝对路径列表
  * @param {string|null} [updatedAt=null] - 数据库记录的更新时间
  * @returns {string} SHA-256 版本 Token 字符串
  */
+function filesVersionToken(filePaths, updatedAt = null) {
+  const parts = [CONTENT_CARD_SCHEMA_VERSION, updatedAt ?? ""];
+  for (const filePath of filePaths) {
+    if (existsSync(filePath)) {
+      const stat = statSync(filePath);
+      parts.push(filePath, String(stat.size), String(stat.mtimeMs));
+    }
+  }
+  return sha256(parts.join("\0"));
+}
+
 function fileVersionToken(filePath, updatedAt = null) {
-  const stat = statSync(filePath);
-  return sha256(`${CONTENT_CARD_SCHEMA_VERSION}\0${updatedAt ?? ""}\0${stat.size}\0${stat.mtimeMs}`);
+  return filesVersionToken([filePath], updatedAt);
+}
+
+/**
+ * 合并一个会话的所有分卷（Paginated Rollouts）日志内容；
+ * 针对各分卷的首行 history_base.end_ordinal_exclusive 进行对齐去重，无缝拼接事件流。
+ * @param {Array<string>} filePaths - 按时间顺序排列的分卷绝对路径列表
+ * @returns {string} 拼接去重后的完整 JSONL 文本
+ */
+function mergeRolloutFiles(filePaths) {
+  if (filePaths.length === 0) return "";
+  if (filePaths.length === 1) return readFileSync(filePaths[0], "utf8");
+
+  let accumulatedLines = [];
+  for (let i = 0; i < filePaths.length; i++) {
+    const text = readFileSync(filePaths[i], "utf8");
+    const lines = text.split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length === 0) continue;
+
+    let historyBaseEndOrd = null;
+    try {
+      const first = JSON.parse(lines[0]);
+      const hb = first.payload?.history_base ?? first.history_base;
+      if (hb && Number.isInteger(hb.end_ordinal_exclusive)) {
+        historyBaseEndOrd = hb.end_ordinal_exclusive;
+      }
+    } catch {}
+
+    if (historyBaseEndOrd != null) {
+      accumulatedLines = accumulatedLines.filter((line) => {
+        try {
+          const parsed = JSON.parse(line);
+          const ord = parsed.ordinal ?? parsed.payload?.ordinal;
+          return ord == null || ord < historyBaseEndOrd;
+        } catch {
+          return true;
+        }
+      });
+    } else {
+      let startOrd = null;
+      try {
+        const first = JSON.parse(lines[0]);
+        startOrd = first.ordinal ?? first.payload?.ordinal;
+      } catch {}
+
+      if (startOrd === 0 && accumulatedLines.length > 0) {
+        accumulatedLines = [];
+      }
+    }
+
+    accumulatedLines.push(...lines);
+  }
+
+  return accumulatedLines.join("\n");
 }
 
 /**
  * 具有并发变更校验的安全文件读取函数；
  * 在读取前后对比文件 Token，若读取期间文件被 Codex 追加写入，则自动重试一次或抛出异常。
- * @param {string} filePath - 文件路径
+ * @param {Array<string>} filePaths - 文件路径列表
  * @param {string|null} [updatedAt=null] - 更新时间
  * @returns {{ text: string, versionToken: string }} 稳定内容与校验 Token
  */
-function readStableFile(filePath, updatedAt = null) {
+function readStableRollout(filePaths, updatedAt = null) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const before = fileVersionToken(filePath, updatedAt);
-    const text = readFileSync(filePath, "utf8");
-    const after = fileVersionToken(filePath, updatedAt);
+    const before = filesVersionToken(filePaths, updatedAt);
+    const text = mergeRolloutFiles(filePaths);
+    const after = filesVersionToken(filePaths, updatedAt);
     if (before === after) return { text, versionToken: after };
   }
-  throw new Error(`session changed while being read: ${filePath}`);
+  throw new Error(`session changed while being read: ${filePaths.join(", ")}`);
+}
+
+function readStableFile(filePath, updatedAt = null) {
+  return readStableRollout([filePath], updatedAt);
+}
+
+let _sessionFilesCacheDir = null;
+let _sessionFilesCache = null;
+
+function findSessionsRoot(rolloutPath) {
+  let current = path.dirname(rolloutPath);
+  while (current && current !== path.dirname(current)) {
+    if (path.basename(current) === "sessions") {
+      return current;
+    }
+    current = path.dirname(current);
+  }
+  return path.dirname(rolloutPath);
+}
+
+function getSessionFilesMap(sessionsDir) {
+  if (_sessionFilesCache && _sessionFilesCacheDir === sessionsDir) {
+    return _sessionFilesCache;
+  }
+  const map = new Map();
+  function walk(dir, depth = 0) {
+    if (depth > 4 || !existsSync(dir)) return;
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(fullPath, depth + 1);
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl") && entry.name.startsWith("rollout-")) {
+          const match = entry.name.match(
+            /^rollout-.*-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:_[^.]+)?\.jsonl$/
+          );
+          if (match) {
+            const sId = match[1];
+            if (!map.has(sId)) map.set(sId, []);
+            map.get(sId).push(fullPath);
+          }
+        }
+      }
+    } catch {}
+  }
+  walk(sessionsDir);
+  for (const [, files] of map.entries()) {
+    files.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+  }
+  _sessionFilesCacheDir = sessionsDir;
+  _sessionFilesCache = map;
+  return map;
+}
+
+function rolloutFilesForSession(rolloutPath, sessionId) {
+  const expanded = expandPath(rolloutPath);
+  if (!expanded || !existsSync(expanded)) return [];
+  const sessionsRoot = findSessionsRoot(expanded);
+  if (sessionsRoot && sessionId) {
+    const map = getSessionFilesMap(sessionsRoot);
+    const files = map.get(sessionId);
+    if (files && files.length > 0) {
+      return files;
+    }
+  }
+  return [expanded];
 }
 
 /**
@@ -1597,12 +1730,26 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   if (!idCol || !rolloutCol) return [];
   const titleCol = pick(columns, ["title", "name"]);
   const updatedCol = pick(columns, ["updated_at", "last_updated_at", "mtime", "created_at"]);
+  const threadSourceCol = pick(columns, ["thread_source"]);
+  const sourceCol = pick(columns, ["source"]);
   const titleProjection = includeTitle && titleCol ? quoteIdent(titleCol) : "NULL";
-  const sessionFilter = sessionId == null
-    ? ""
-    : ` WHERE ${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`;
+
+  const filters = [];
+  if (threadSourceCol && sourceCol) {
+    filters.push(`((${quoteIdent(threadSourceCol)} IS NULL OR ${quoteIdent(threadSourceCol)} != 'subagent') AND (${quoteIdent(sourceCol)} IS NULL OR ${quoteIdent(sourceCol)} NOT LIKE '%"subagent"%'))`);
+  } else if (threadSourceCol) {
+    filters.push(`(${quoteIdent(threadSourceCol)} IS NULL OR ${quoteIdent(threadSourceCol)} != 'subagent')`);
+  } else if (sourceCol) {
+    filters.push(`(${quoteIdent(sourceCol)} IS NULL OR ${quoteIdent(sourceCol)} NOT LIKE '%"subagent"%')`);
+  }
+
+  if (sessionId != null) {
+    filters.push(`${quoteIdent(idCol)} = ${quoteSqlString(sessionId)}`);
+  }
+
+  const whereClause = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
   const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
-  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads${sessionFilter}${orderClause}`;
+  const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads${whereClause}${orderClause}`;
   return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
 }
 
@@ -1613,11 +1760,13 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
 function listSessions() {
   return sessionRows({ includeTitle: false }).flatMap((row) => {
     if (!row.rollout_path || !existsSync(row.rollout_path)) return [];
+    const files = rolloutFilesForSession(row.rollout_path, String(row.id));
+    if (!files.length) return [];
     return [{
       external_id: String(row.id),
       updated_at: row.updated_at == null ? null : String(row.updated_at),
-      source_locator: row.rollout_path,
-      version_token: fileVersionToken(row.rollout_path, row.updated_at),
+      source_locator: files.length > 1 ? files[files.length - 1] : row.rollout_path,
+      version_token: filesVersionToken(files, row.updated_at),
     }];
   });
 }
@@ -1641,8 +1790,11 @@ function readSession() {
     const rolloutPath = expandPath(row.rollout_path);
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
 
-    // 4. 【步骤一：原子稳定读取】同步读取 JSONL 日志文本，生成防止并发追加写入的校验 Version Token
-    const { text, versionToken } = readStableFile(rolloutPath, row.updated_at);
+    const files = rolloutFilesForSession(rolloutPath, String(row.id));
+    if (!files.length) return [];
+
+    // 4. 【步骤一：原子稳定读取】同步读取 JSONL 日志文本（合并多卷日志），生成防止并发追加写入的校验 Version Token
+    const { text, versionToken } = readStableRollout(files, row.updated_at);
 
     // 5. 【步骤二：核心解析引擎】将 JSONL 逐行拆解为 User 提问、Assistant Markdown、Tool 命令与 Skill 依赖
     const parsed = normalizeTurns(text);
@@ -1658,7 +1810,7 @@ function readSession() {
       project_path: parsed.projectPath ?? inferProjectPath(turns),
       started_at: turns[0]?.started_at ?? null,
       updated_at: row.updated_at == null ? null : String(row.updated_at),
-      source_locator: rolloutPath,
+      source_locator: files.length > 1 ? files[files.length - 1] : rolloutPath,
       source_fingerprint: versionToken,
       turns,
     };
@@ -1877,6 +2029,135 @@ function structuredCardRenderer(card) {
   return "plain";
 }
 
+/**
+ * 【Token 用量提取入口】：供 Rust 侧 `read_usage` IPC 方法调用。
+ * 遍历 Codex 会话日志 (rollout.jsonl)，提取每个模型的实际 Token 消耗（输入、输出、缓存、推理等）。
+ */
+function readUsage() {
+  const location = expandPath(input.source?.location);
+  if (!location) {
+    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "codex-rollout-v1", diagnostics: [] } });
+    return;
+  }
+
+  const cursorRaw = input.params?.cursor;
+  let cursor = null;
+  if (cursorRaw) {
+    try {
+      cursor = typeof cursorRaw === "string" ? JSON.parse(cursorRaw) : cursorRaw;
+    } catch {}
+  }
+  const cursorMtime = cursor?.last_mtime ? Number(cursor.last_mtime) : 0;
+  const processedFiles = new Set(cursor?.processed_files || []);
+
+  const rows = sessionRows({ includeTitle: false });
+  let maxMtime = cursorMtime;
+  let eventCount = 0;
+  const newProcessedFiles = [];
+
+  for (const row of rows) {
+    const rolloutPath = expandPath(row.rollout_path);
+    if (!rolloutPath || !existsSync(rolloutPath)) continue;
+    const files = rolloutFilesForSession(rolloutPath, String(row.id));
+    if (!files.length) continue;
+
+    for (const filePath of files) {
+      try {
+        const stat = statSync(filePath);
+        const mtimeMs = stat.mtimeMs;
+        if (mtimeMs > maxMtime) {
+          maxMtime = mtimeMs;
+        }
+        if (cursorMtime > 0 && mtimeMs <= cursorMtime && processedFiles.has(filePath)) {
+          newProcessedFiles.push(filePath);
+          continue;
+        }
+
+        const text = readFileSync(filePath, "utf8");
+        const lines = text.split("\n");
+        let currentModel = "gpt-5.4";
+        let currentProvider = "openai";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let parsed;
+          try {
+            parsed = JSON.parse(line);
+          } catch {
+            continue;
+          }
+
+          if (parsed.type === "session_meta") {
+            if (parsed.payload?.model_provider) {
+              currentProvider = parsed.payload.model_provider;
+            }
+          } else if (parsed.type === "turn_context") {
+            if (parsed.payload?.model) {
+              currentModel = parsed.payload.model;
+            }
+          } else if (parsed.type === "event_msg" && parsed.payload?.type === "token_count") {
+            const usage = parsed.payload.info?.last_token_usage;
+            if (!usage || (usage.total_tokens ?? 0) <= 0) continue;
+
+            const inputTokens = usage.input_tokens ?? 0;
+            const cachedInputTokens = usage.cached_input_tokens ?? 0;
+            const outputTokens = usage.output_tokens ?? 0;
+            const reasoningTokens = usage.reasoning_output_tokens ?? 0;
+            const cacheWriteTokens = usage.cache_write_input_tokens ?? 0;
+            const totalTokens = usage.total_tokens ?? (inputTokens + outputTokens);
+
+            if (totalTokens <= 0) continue;
+
+            const ordinal = parsed.ordinal ?? eventCount;
+            const eventId = `${row.id}-${ordinal}`;
+            const timestamp = parsed.timestamp || stat.mtime.toISOString();
+
+            const event = {
+              external_event_id: eventId,
+              session_id: String(row.id),
+              turn_id: null,
+              logical_request_id: eventId,
+              attempt_index: 0,
+              timestamp,
+              provider: currentProvider,
+              model: currentModel,
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              cache_read_tokens: cachedInputTokens,
+              cache_write_tokens: cacheWriteTokens,
+              reasoning_tokens: reasoningTokens,
+              total_tokens: totalTokens,
+              status: "success",
+              currency: null,
+              cost: null,
+              metadata: {
+                ordinal,
+                file: path.basename(filePath),
+              },
+            };
+            emit("usage_event", { usage_event: event });
+            eventCount++;
+          }
+        }
+        newProcessedFiles.push(filePath);
+      } catch {}
+    }
+  }
+
+  emit("complete", {
+    item: {
+      snapshot_complete: true,
+      usage_event_count: eventCount,
+      next_cursor: JSON.stringify({
+        last_mtime: maxMtime,
+        processed_files: newProcessedFiles.slice(-2000),
+      }),
+      decoder_profile: "codex-rollout-v1",
+      diagnostics: [],
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 【顶级程序入口 (Top-Level Execution Entry)】
 //
@@ -1935,7 +2216,12 @@ try {
     }
     emit("complete", { item: { session_count: sessions.length } });
 
-  // 4. 【异常分支: 未知方法名】
+  // 4. 【方法分支: read_usage】Token 用量与模型消耗事件提取
+  } else if (input.method === "read_usage") {
+    emitProgress({ stage: "reading", operation: "read_usage" });
+    readUsage();
+
+  // 5. 【异常分支: 未知方法名】
   } else {
     fail(`unsupported method: ${input.method}`);
   }

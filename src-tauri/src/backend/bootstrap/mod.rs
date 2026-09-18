@@ -54,7 +54,56 @@ pub(crate) async fn reconcile_app_conversation_adapters(
 ) -> AppResult<()> {
     let settings = crate::backend::app_settings::load_or_import_app_settings_sqlx(pool).await?;
     let packages = store::list_conversation_adapter_packages_sqlx(pool).await?;
-    for package in packages {
+    for mut package in packages {
+        if let Ok(install_dir) = crate::backend::path_utils::expand_path(&package.install_dir) {
+            let is_official =
+                crate::backend::conversations::is_official_adapter_id(&package.adapter_id);
+            if is_official {
+                let _ = crate::backend::conversations::sync_official_adapter_to_package_dir(
+                    &package.adapter_id,
+                    &install_dir,
+                );
+                if let Ok(validation) =
+                    crate::backend::conversations::validate_conversation_adapter_package_dir(
+                        &install_dir,
+                    )
+                {
+                    if validation.manifest.package_id == package.package_id {
+                        let mut changed = false;
+                        if package.version != validation.manifest.version {
+                            package.version = validation.manifest.version;
+                            changed = true;
+                        }
+                        if package.trusted_package_hash.as_deref() != Some(&validation.content_hash)
+                        {
+                            package.trusted_package_hash = Some(validation.content_hash.clone());
+                            changed = true;
+                        }
+                        if package.installed_content_hash.as_deref()
+                            != Some(&validation.content_hash)
+                        {
+                            package.installed_content_hash = Some(validation.content_hash.clone());
+                            changed = true;
+                        }
+                        if !package.runtime_ready
+                            || package.runtime_gate_status
+                                != ConversationAdapterRuntimeGateStatus::Ready
+                        {
+                            package.runtime_ready = true;
+                            package.runtime_gate_status =
+                                ConversationAdapterRuntimeGateStatus::Ready;
+                            package.error_message = None;
+                            changed = true;
+                        }
+                        if changed {
+                            package.updated_at = chrono::Utc::now().to_rfc3339();
+                            let _ = store::upsert_conversation_adapter_package_sqlx(pool, &package)
+                                .await;
+                        }
+                    }
+                }
+            }
+        }
         let adapter = if package.runtime_ready
             && package.runtime_gate_status == ConversationAdapterRuntimeGateStatus::Ready
         {

@@ -11,7 +11,7 @@ struct OfficialAdapterAsset {
     manifest_text: &'static str,
     package_manifest_text: &'static str,
     script: &'static str,
-    payload_policy_script: &'static str,
+    payload_policy_script: Option<&'static str>,
 }
 
 const SHELL_PROJECTOR_SCRIPT: &str =
@@ -34,9 +34,9 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../builtin-assets/adapters/codex/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../builtin-assets/adapters/codex/adapter.mjs"),
-        payload_policy_script: include_str!(
+        payload_policy_script: Some(include_str!(
             "../../../../builtin-assets/adapters/codex/payload-policy.mjs"
-        ),
+        )),
     },
     OfficialAdapterAsset {
         manifest: "claude-code/conversation-adapter.json",
@@ -47,9 +47,9 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../builtin-assets/adapters/claude-code/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../builtin-assets/adapters/claude-code/adapter.mjs"),
-        payload_policy_script: include_str!(
+        payload_policy_script: Some(include_str!(
             "../../../../builtin-assets/adapters/claude-code/payload-policy.mjs"
-        ),
+        )),
     },
     OfficialAdapterAsset {
         manifest: "opencode/conversation-adapter.json",
@@ -60,9 +60,9 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../builtin-assets/adapters/opencode/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../builtin-assets/adapters/opencode/adapter.mjs"),
-        payload_policy_script: include_str!(
+        payload_policy_script: Some(include_str!(
             "../../../../builtin-assets/adapters/opencode/payload-policy.mjs"
-        ),
+        )),
     },
     OfficialAdapterAsset {
         manifest: "antigravity/conversation-adapter.json",
@@ -73,11 +73,94 @@ const OFFICIAL_ADAPTERS: &[OfficialAdapterAsset] = &[
             "../../../../builtin-assets/adapters/antigravity/conversation-adapter-package.json"
         ),
         script: include_str!("../../../../builtin-assets/adapters/antigravity/adapter.mjs"),
-        payload_policy_script: include_str!(
+        payload_policy_script: Some(include_str!(
             "../../../../builtin-assets/adapters/antigravity/payload-policy.mjs"
+        )),
+    },
+    OfficialAdapterAsset {
+        manifest: "zcode/conversation-adapter.json",
+        manifest_text: include_str!(
+            "../../../../builtin-assets/adapters/zcode/conversation-adapter.json"
         ),
+        package_manifest_text: include_str!(
+            "../../../../builtin-assets/adapters/zcode/conversation-adapter-package.json"
+        ),
+        script: include_str!("../../../../builtin-assets/adapters/zcode/adapter.mjs"),
+        payload_policy_script: None,
     },
 ];
+
+fn should_refresh_official_adapter(manifest_path: &Path, bundled_manifest_text: &str) -> bool {
+    let Ok(existing_text) = fs::read_to_string(manifest_path) else {
+        return true;
+    };
+    let Ok(existing): Result<serde_json::Value, _> = serde_json::from_str(&existing_text) else {
+        return true;
+    };
+    let Ok(bundled): Result<serde_json::Value, _> = serde_json::from_str(bundled_manifest_text)
+    else {
+        return true;
+    };
+    let existing_version = existing
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let bundled_version = bundled
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if existing_version != bundled_version {
+        return true;
+    }
+    let existing_caps = existing.get("capabilities").and_then(|c| c.as_array());
+    let bundled_caps = bundled.get("capabilities").and_then(|c| c.as_array());
+    match (existing_caps, bundled_caps) {
+        (Some(e), Some(b)) => b.iter().any(|req| !e.contains(req)),
+        _ => false,
+    }
+}
+
+pub(crate) fn is_official_adapter_id(adapter_id: &str) -> bool {
+    OFFICIAL_ADAPTERS
+        .iter()
+        .any(|a| a.manifest.starts_with(&format!("{adapter_id}/")))
+}
+
+pub(crate) fn sync_official_adapter_to_package_dir(
+    adapter_id: &str,
+    target_dir: &Path,
+) -> AppResult<bool> {
+    let Some(asset) = OFFICIAL_ADAPTERS
+        .iter()
+        .find(|a| a.manifest.starts_with(&format!("{adapter_id}/")))
+    else {
+        return Ok(false);
+    };
+    let target_manifest = target_dir.join("conversation-adapter.json");
+    if !should_refresh_official_adapter(&target_manifest, asset.manifest_text) {
+        return Ok(false);
+    }
+    fs::create_dir_all(target_dir)?;
+    write_managed_runtime_file(&target_manifest, asset.manifest_text.as_bytes())?;
+    write_managed_runtime_file(
+        &target_dir.join("conversation-adapter-package.json"),
+        asset.package_manifest_text.as_bytes(),
+    )?;
+    let script_path = target_dir.join("adapter.mjs");
+    write_managed_runtime_file(&script_path, asset.script.as_bytes())?;
+    if let Some(policy_script) = asset.payload_policy_script {
+        write_managed_runtime_file(
+            &target_dir.join("payload-policy.mjs"),
+            policy_script.as_bytes(),
+        )?;
+    }
+    write_managed_runtime_file(
+        &target_dir.join("shell-projector.cjs"),
+        SHELL_PROJECTOR_SCRIPT.as_bytes(),
+    )?;
+    make_executable(&script_path)?;
+    Ok(true)
+}
 
 pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<ConversationAdapter>> {
     let _guard = OFFICIAL_ADAPTER_MATERIALIZE_LOCK
@@ -91,18 +174,26 @@ pub(crate) fn ensure_official_conversation_adapters() -> AppResult<Vec<Conversat
             AppError::Validation("official adapter manifest has no parent directory".to_string())
         })?;
         fs::create_dir_all(adapter_dir)?;
-        write_if_missing(&manifest_path, asset.manifest_text.as_bytes())?;
+        let refresh = should_refresh_official_adapter(&manifest_path, asset.manifest_text);
+        let write_fn = if refresh {
+            write_managed_runtime_file
+        } else {
+            write_if_missing
+        };
+        write_fn(&manifest_path, asset.manifest_text.as_bytes())?;
         let package_manifest_path = adapter_dir.join("conversation-adapter-package.json");
-        write_if_missing(
+        write_fn(
             &package_manifest_path,
             asset.package_manifest_text.as_bytes(),
         )?;
         let script_path = adapter_dir.join("adapter.mjs");
-        write_if_missing(&script_path, asset.script.as_bytes())?;
-        let payload_policy_path = adapter_dir.join("payload-policy.mjs");
-        write_if_missing(&payload_policy_path, asset.payload_policy_script.as_bytes())?;
+        write_fn(&script_path, asset.script.as_bytes())?;
+        if let Some(payload_script) = asset.payload_policy_script {
+            let payload_policy_path = adapter_dir.join("payload-policy.mjs");
+            write_fn(&payload_policy_path, payload_script.as_bytes())?;
+        }
         let shell_projector_path = adapter_dir.join("shell-projector.cjs");
-        write_if_missing(&shell_projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
+        write_fn(&shell_projector_path, SHELL_PROJECTOR_SCRIPT.as_bytes())?;
         make_executable(&script_path)?;
 
         let Ok(validation) =
@@ -207,51 +298,5 @@ fn make_executable(_path: &Path) -> AppResult<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn seed_preserves_existing_editable_workspace_files() {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-official-workspace-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&root).expect("create workspace");
-        let path = root.join("adapter.mjs");
-        fs::write(&path, "user revision\n").expect("write user revision");
-
-        write_if_missing(&path, b"bundled revision\n").expect("seed file");
-
-        assert_eq!(
-            fs::read_to_string(&path).expect("read workspace file"),
-            "user revision\n"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn managed_shell_projector_runtime_is_refreshed_and_validated() {
-        let root = std::env::temp_dir().join(format!(
-            "assetiweave-shell-projector-runtime-{}",
-            uuid::Uuid::new_v4()
-        ));
-        fs::create_dir_all(&root).expect("create projector runtime");
-        fs::write(root.join("projector-adapter.cjs"), "stale runtime\n")
-            .expect("write stale projector runtime");
-
-        let adapter = materialize_shell_command_projector(&root)
-            .expect("materialize managed projector runtime");
-
-        assert_eq!(adapter.id, "assetiweave-shell-command-projector");
-        assert!(adapter
-            .capabilities
-            .iter()
-            .any(|capability| capability == "project_command_parts"));
-        assert_eq!(
-            fs::read_to_string(root.join("projector-adapter.cjs"))
-                .expect("read refreshed projector runtime"),
-            SHELL_PROJECTOR_ADAPTER_SCRIPT
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-}
+#[path = "official_tests.rs"]
+mod tests;

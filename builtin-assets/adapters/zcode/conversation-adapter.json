@@ -13,7 +13,8 @@
     "probe",
     "list_sessions",
     "read_session",
-    "project_command_parts"
+    "project_command_parts",
+    "read_usage"
   ],
   "input_kinds": [
     "sqlite"

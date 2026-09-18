@@ -200,6 +200,7 @@ export const commonEn = {
   "nav.sub.profiles.plans": "Deployment Plans",
   "nav.sub.conversations.sessions": "Sessions",
   "nav.sub.conversations.webRecords": "Web Records",
+  "nav.sub.conversations.usage": "Token Usage",
   "nav.sub.memory.recent": "Recent",
   "nav.sub.memory.recall": "Recall",
   "nav.sub.team.overview": "Teams & Rosters",

@@ -23,6 +23,10 @@ const IGNORED_PART_TYPES = new Set([
   "step-start",
 ]);
 
+process.stdout.on("error", (err) => {
+  if (err.code === "EPIPE") process.exit(0);
+});
+
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
@@ -908,12 +912,122 @@ function finalizeStructuredContentCards(session) {
   return session;
 }
 
+/**
+ * 【Token 用量提取入口】：供 Rust 侧 `read_usage` IPC 方法调用。
+ * 查询 ZCode 本地 SQLite (zcode.db) 中的 message 表，提取 message.data 内记录的 Token 用量与模型消耗。
+ */
+function readUsage(dbPath, params) {
+  if (!existsSync(dbPath)) {
+    emit({
+      type: "complete",
+      item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "zcode-sqlite-v1", diagnostics: [] },
+    });
+    return;
+  }
+
+  const cursorRaw = params?.cursor;
+  let cursor = null;
+  if (cursorRaw) {
+    try {
+      cursor = typeof cursorRaw === "string" ? JSON.parse(cursorRaw) : cursorRaw;
+    } catch {}
+  }
+  const lastTime = cursor?.last_time_created ? Number(cursor.last_time_created) : 0;
+
+  const whereClause = lastTime > 0
+    ? `WHERE time_created > ${lastTime} AND data LIKE '%"tokens"%'`
+    : `WHERE data LIKE '%"tokens"%'`;
+
+  const sql = `SELECT id, session_id, time_created, data FROM message ${whereClause} ORDER BY time_created ASC, id ASC LIMIT 10000;`;
+  let rows = [];
+  try {
+    rows = sqliteJson(dbPath, sql);
+  } catch (err) {
+    fail(err);
+    return;
+  }
+
+  let maxTime = lastTime;
+  let eventCount = 0;
+
+  for (const row of rows) {
+    const timeCreated = Number(row.time_created || 0);
+    if (timeCreated > maxTime) {
+      maxTime = timeCreated;
+    }
+
+    const data = parseJson(row.data);
+    if (!data || typeof data !== "object") continue;
+
+    const tokens = data.tokens;
+    if (!tokens || typeof tokens !== "object") continue;
+
+    const inputTokens = Number(tokens.input || 0);
+    const outputTokens = Number(tokens.output || 0);
+    const reasoningTokens = Number(tokens.reasoning || 0);
+    const cacheReadTokens = Number(tokens.cache?.read || 0);
+    const cacheWriteTokens = Number(tokens.cache?.write || 0);
+    const totalTokens = Number(tokens.total || (inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens));
+
+    if (totalTokens <= 0) continue;
+
+    const eventId = String(row.id);
+    const sessionId = String(row.session_id);
+    const ts = timeCreated > 0 ? new Date(timeCreated).toISOString() : new Date().toISOString();
+    const modelStr = String(data.modelID || data.model || "unknown");
+    const providerStr = String(data.providerID || data.provider || "zcode");
+    const cost = typeof data.cost === "number" ? data.cost : null;
+
+    const event = {
+      external_event_id: eventId,
+      session_id: sessionId,
+      turn_id: null,
+      logical_request_id: eventId,
+      attempt_index: 0,
+      timestamp: ts,
+      provider: providerStr,
+      model: modelStr,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cache_read_tokens: cacheReadTokens,
+      cache_write_tokens: cacheWriteTokens,
+      reasoning_tokens: reasoningTokens,
+      total_tokens: totalTokens,
+      status: "success",
+      currency: null,
+      cost,
+      metadata: {
+        mode: data.mode,
+        agent: data.agent,
+      },
+    };
+    emit({
+      type: "usage_event",
+      usage_event: event,
+    });
+    eventCount++;
+  }
+
+  emit({
+    type: "complete",
+    item: {
+      snapshot_complete: rows.length < 10000,
+      usage_event_count: eventCount,
+      next_cursor: JSON.stringify({
+        last_time_created: maxTime,
+      }),
+      decoder_profile: "zcode-sqlite-v1",
+      diagnostics: [],
+    },
+  });
+}
+
 function run(request) {
   if (request.protocol_version !== 1) {
     throw new Error("unsupported protocol_version");
   }
   const method = String(request.method || "");
-  if (!["probe", "list_sessions", "read_session"].includes(method)) {
+  if (!["probe", "list_sessions", "read_session", "read_usage"].includes(method)) {
     throw new Error(`unsupported method: ${method}`);
   }
   if (method === "probe") {
@@ -967,6 +1081,12 @@ function run(request) {
         snapshot_complete: true,
       },
     });
+    return;
+  }
+
+  if (method === "read_usage") {
+    emitProgress({ stage: "reading", operation: "read_usage" });
+    readUsage(dbPath, params);
     return;
   }
 

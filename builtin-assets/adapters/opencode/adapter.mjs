@@ -3,7 +3,7 @@ import { normalizeSessionPayload } from "./payload-policy.mjs";
 import shellProjector from "./shell-projector.cjs";
 const { projectCommandParts, SHELL_PROJECTOR_VERSION } = shellProjector;
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -11,6 +11,10 @@ import { spawnSync } from "node:child_process";
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const SQLITE_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const CONTENT_CARD_SCHEMA_VERSION = "opencode-content-cards-v7";
+
+process.stdout.on("error", (err) => {
+  if (err.code === "EPIPE") process.exit(0);
+});
 
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
@@ -833,6 +837,123 @@ function structuredCardRenderer(card) {
   return "plain";
 }
 
+/**
+ * 【Token 用量提取入口】：供 Rust 侧 `read_usage` IPC 方法调用。
+ * 查询 OpenCode 本地 SQLite (opencode.db) 中的 message 表，提取 message.data 内记录的 Token 用量与模型消耗。
+ */
+function readUsage() {
+  const location = expandPath(input.source?.location);
+  if (!location) {
+    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "opencode-sqlite-v1", diagnostics: [] } });
+    return;
+  }
+  let dbPath = location;
+  if (existsSync(location) && statSync(location).isDirectory()) {
+    dbPath = path.join(location, "opencode.db");
+  }
+  if (!existsSync(dbPath)) {
+    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "opencode-sqlite-v1", diagnostics: [] } });
+    return;
+  }
+
+  const cursorRaw = input.params?.cursor;
+  let cursor = null;
+  if (cursorRaw) {
+    try {
+      cursor = typeof cursorRaw === "string" ? JSON.parse(cursorRaw) : cursorRaw;
+    } catch {}
+  }
+  const lastTime = cursor?.last_time_created ? Number(cursor.last_time_created) : 0;
+
+  const whereClause = lastTime > 0
+    ? `WHERE time_created > ${lastTime} AND data LIKE '%"tokens"%'`
+    : `WHERE data LIKE '%"tokens"%'`;
+
+  const sql = `SELECT id, session_id, time_created, data FROM message ${whereClause} ORDER BY time_created ASC, id ASC LIMIT 10000;`;
+  let rows = [];
+  try {
+    rows = sqliteJson(dbPath, sql);
+  } catch (err) {
+    fail(`failed to query opencode sqlite: ${err.message}`);
+    return;
+  }
+
+  let maxTime = lastTime;
+  let eventCount = 0;
+
+  for (const row of rows) {
+    const timeCreated = Number(row.time_created || 0);
+    if (timeCreated > maxTime) {
+      maxTime = timeCreated;
+    }
+
+    let data;
+    try {
+      data = typeof row.data === "string" ? JSON.parse(row.data) : row.data;
+    } catch {
+      continue;
+    }
+    if (!data || typeof data !== "object") continue;
+
+    const tokens = data.tokens;
+    if (!tokens || typeof tokens !== "object") continue;
+
+    const inputTokens = Number(tokens.input || 0);
+    const outputTokens = Number(tokens.output || 0);
+    const reasoningTokens = Number(tokens.reasoning || 0);
+    const cacheReadTokens = Number(tokens.cache?.read || 0);
+    const cacheWriteTokens = Number(tokens.cache?.write || 0);
+    const totalTokens = Number(tokens.total || (inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens));
+
+    if (totalTokens <= 0) continue;
+
+    const eventId = String(row.id);
+    const sessionId = String(row.session_id);
+    const timestamp = timeCreated > 0 ? new Date(timeCreated).toISOString() : new Date().toISOString();
+    const modelStr = String(data.modelID || data.model || "unknown");
+    const providerStr = String(data.providerID || data.provider || "opencode");
+    const cost = typeof data.cost === "number" ? data.cost : null;
+
+    const event = {
+      external_event_id: eventId,
+      session_id: sessionId,
+      turn_id: null,
+      logical_request_id: eventId,
+      attempt_index: 0,
+      timestamp,
+      provider: providerStr,
+      model: modelStr,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cache_read_tokens: cacheReadTokens,
+      cache_write_tokens: cacheWriteTokens,
+      reasoning_tokens: reasoningTokens,
+      total_tokens: totalTokens,
+      status: "success",
+      currency: null,
+      cost,
+      metadata: {
+        mode: data.mode,
+        agent: data.agent,
+      },
+    };
+    emit("usage_event", { usage_event: event });
+    eventCount++;
+  }
+
+  emit("complete", {
+    item: {
+      snapshot_complete: rows.length < 10000,
+      usage_event_count: eventCount,
+      next_cursor: JSON.stringify({
+        last_time_created: maxTime,
+      }),
+      decoder_profile: "opencode-sqlite-v1",
+      diagnostics: [],
+    },
+  });
+}
+
 try {
   if (input.method === "project_command_parts") {
     const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
@@ -872,6 +993,9 @@ try {
       emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
     }
     emit("complete", { item: { session_count: sessions.length } });
+  } else if (input.method === "read_usage") {
+    emitProgress({ stage: "reading", operation: "read_usage" });
+    readUsage();
   } else {
     fail(`unsupported method: ${input.method}`);
   }

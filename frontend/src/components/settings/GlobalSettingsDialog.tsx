@@ -156,10 +156,17 @@ import { useAppSettings } from "../../store/settings/useAppSettings";
 import type {
   AppShortcut,
   AppShortcutIconSvg,
+  Asset,
   SkillBackupSettings,
 } from "../../types";
 import { abbreviateHomePath } from "../../utils/path";
 import { useConversationSync } from "../../app/backgroundTasks/ConversationSyncProvider";
+import { useMemoryTasks } from "../../app/backgroundTasks/MemoryTaskProvider";
+import {
+  duplicateMemoryGenerationSkill,
+  rebuildMemoryScope,
+  resetMemoryGenerationSkillToDefault,
+} from "../../services/memory";
 
 interface SettingsPanelConfig {
   id: SettingsPanelId;
@@ -301,6 +308,7 @@ export function GlobalSettingsDialog({
     useAppSettings();
   const { startSync: startConversationSync, tasks: conversationSyncTasks } =
     useConversationSync();
+  const { tasks: memoryTasks, refresh: refreshMemoryTasks } = useMemoryTasks();
   const { activePanel, collapsedGroups, openPanel, toggleGroupCollapsed } =
     useSettingsPanelController({
       groups: settingGroups,
@@ -331,6 +339,43 @@ export function GlobalSettingsDialog({
   const [fullSyncConfirmOpen, setFullSyncConfirmOpen] = useState(false);
   const [fullSyncStarting, setFullSyncStarting] = useState(false);
   const [fullSyncError, setFullSyncError] = useState("");
+  const [memorySkills, setMemorySkills] = useState<Asset[]>([]);
+  const [memoryMaintenanceStatus, setMemoryMaintenanceStatus] = useState("");
+  const [memoryMaintenanceError, setMemoryMaintenanceError] = useState("");
+  const [memoryMaintenanceRunning, setMemoryMaintenanceRunning] =
+    useState(false);
+
+  const runningMemoryTask = memoryTasks.find(
+    (task) =>
+      task.status === "running" ||
+      task.status === "pending" ||
+      task.status === "cancelling",
+  );
+  const isMemoryGenerating =
+    Boolean(runningMemoryTask) || memoryMaintenanceRunning;
+
+  const latestMemoryTask =
+    memoryTasks
+      .slice()
+      .sort((a, b) => b.started_at.localeCompare(a.started_at))[0] ?? null;
+
+  const memoryTaskStatusText = isMemoryGenerating
+    ? runningMemoryTask?.status === "pending"
+      ? t("settings.memory.statusQueued")
+      : t("settings.memory.statusRunning")
+    : latestMemoryTask?.status === "failed"
+      ? t("settings.memory.statusFailed", {
+          message: latestMemoryTask.error?.message || "Unknown error",
+        })
+      : latestMemoryTask?.status === "succeeded"
+        ? t("settings.memory.statusCompleted")
+        : t("settings.memory.statusIdle");
+
+  const memoryDisplayError =
+    memoryMaintenanceError ||
+    (!isMemoryGenerating && latestMemoryTask?.status === "failed"
+      ? latestMemoryTask.error?.message
+      : "");
   const [agentFocusId, setAgentFocusId] = useState<string | null>(null);
   const [agentCapabilityDialog, setAgentCapabilityDialog] = useState<{
     agentId: string;
@@ -392,6 +437,20 @@ export function GlobalSettingsDialog({
           setAdapterRuntimeLoading(false);
         }
       });
+    import("../../services/catalog")
+      .then(({ listAssets: loadAssets }) =>
+        typeof loadAssets === "function" ? loadAssets("skill") : [],
+      )
+      .then((assets) => {
+        if (!cancelled) {
+          setMemorySkills(assets);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMemorySkills([]);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -410,6 +469,11 @@ export function GlobalSettingsDialog({
     settingGroups.find((group) =>
       group.panels.some((panel) => panel.id === activePanel),
     )?.scope ?? t("settings.scope.general");
+  const selectedMemorySkill = settings.memory.generationSkillAssetId
+    ? memorySkills.find(
+        (asset) => asset.id === settings.memory.generationSkillAssetId,
+      )
+    : null;
   const configurableRailItems = navigationModel.railItems.filter(
     isConfigurableRailItem,
   );
@@ -452,6 +516,63 @@ export function GlobalSettingsDialog({
       ),
     );
     setAgentCapabilityDialog(null);
+  }
+
+  async function duplicateMemorySkill() {
+    setMemoryMaintenanceError("");
+    try {
+      const asset = await duplicateMemoryGenerationSkill();
+      updateSetting("memory", {
+        ...settings.memory,
+        generationSkillAssetId: asset.id,
+      });
+      setMemorySkills((current) => [
+        ...current.filter((item) => item.id !== asset.id),
+        asset,
+      ]);
+      setMemoryMaintenanceStatus(t("settings.memory.skillDuplicated"));
+    } catch (error) {
+      setMemoryMaintenanceError(errorMessage(error));
+    }
+  }
+
+  async function resetMemorySkill() {
+    setMemoryMaintenanceError("");
+    try {
+      await resetMemoryGenerationSkillToDefault();
+      updateSetting("memory", {
+        ...settings.memory,
+        generationSkillAssetId: null,
+      });
+      setMemoryMaintenanceStatus(t("settings.memory.skillReset"));
+    } catch (error) {
+      setMemoryMaintenanceError(errorMessage(error));
+    }
+  }
+
+  async function rebuildMemory(
+    target: "recent" | "all",
+    reason?: "projection_repair",
+  ) {
+    setMemoryMaintenanceError("");
+    setMemoryMaintenanceStatus("");
+    setMemoryMaintenanceRunning(true);
+    try {
+      const result = await rebuildMemoryScope(undefined, {
+        target,
+        reason,
+      });
+      setMemoryMaintenanceStatus(
+        t("settings.memory.rebuildQueued", {
+          count: result.scheduledTaskIds.length,
+        }),
+      );
+      await refreshMemoryTasks();
+    } catch (error) {
+      setMemoryMaintenanceError(errorMessage(error));
+    } finally {
+      setMemoryMaintenanceRunning(false);
+    }
   }
 
   function updateRailItem(id: string, patch: Partial<RailMenuItem>) {
@@ -1064,18 +1185,10 @@ export function GlobalSettingsDialog({
                   t={t}
                 />
                 <MemoryAgentAssignmentRow
-                  actionId="memory.project"
+                  actionId="memory.generation"
                   appShortcuts={appShortcuts}
-                  label={t("settings.memory.project")}
-                  onOpen={() => openAgentCapabilityDialog("memory.project")}
-                  settings={settings}
-                  t={t}
-                />
-                <MemoryAgentAssignmentRow
-                  actionId="memory.global"
-                  appShortcuts={appShortcuts}
-                  label={t("settings.memory.global")}
-                  onOpen={() => openAgentCapabilityDialog("memory.global")}
+                  label={t("settings.memory.generation")}
+                  onOpen={() => openAgentCapabilityDialog("memory.generation")}
                   settings={settings}
                   t={t}
                 />
@@ -1104,6 +1217,100 @@ export function GlobalSettingsDialog({
                 </SettingRow>
                 <SettingRow
                   icon={<Gauge size={18} />}
+                  label={t("settings.memory.recentWindow")}
+                >
+                  <SimpleSelect
+                    ariaLabel={t("settings.memory.recentWindow")}
+                    className="w-36"
+                    onChange={(value) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        recentWindowHours: Number(value),
+                      })
+                    }
+                    options={[24, 48, 72].map((hours) => ({
+                      label: t("settings.memory.hours", { hours }),
+                      value: String(hours),
+                    }))}
+                    value={String(settings.memory.recentWindowHours)}
+                  />
+                </SettingRow>
+                <SettingRow
+                  icon={<Activity size={18} />}
+                  label={t("settings.memory.watermarkTime1")}
+                >
+                  <Input
+                    aria-label={t("settings.memory.watermarkTime1")}
+                    className="h-9 w-36"
+                    onChange={(event) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        watermarkTime1: event.target.value,
+                      })
+                    }
+                    type="time"
+                    value={settings.memory.watermarkTime1}
+                  />
+                </SettingRow>
+                <SettingRow
+                  icon={<Activity size={18} />}
+                  label={t("settings.memory.watermarkTime2")}
+                >
+                  <Input
+                    aria-label={t("settings.memory.watermarkTime2")}
+                    className="h-9 w-36"
+                    onChange={(event) =>
+                      updateSetting("memory", {
+                        ...settings.memory,
+                        watermarkTime2: event.target.value,
+                      })
+                    }
+                    type="time"
+                    value={settings.memory.watermarkTime2}
+                  />
+                </SettingRow>
+                <SettingRow
+                  icon={<Sparkles size={18} />}
+                  label={t("settings.memory.generationSkill")}
+                >
+                  <div className="flex w-[min(38rem,52vw)] min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate rounded-xl border border-theme-control-border bg-theme-control px-3 py-2 text-body-sm text-on-surface-variant">
+                      {selectedMemorySkill?.name ??
+                        t("settings.memory.builtinGenerationSkill")}
+                    </span>
+                    <Button
+                      onClick={duplicateMemorySkill}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t("settings.memory.duplicateSkill")}
+                    </Button>
+                    {settings.memory.generationSkillAssetId ? (
+                      <Button
+                        onClick={() => {
+                          if (selectedMemorySkill) {
+                            void revealPath(selectedMemorySkill.absolute_path);
+                          }
+                        }}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <FolderOpen size={15} />
+                      </Button>
+                    ) : null}
+                    {settings.memory.generationSkillAssetId ? (
+                      <Button
+                        onClick={resetMemorySkill}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <RotateCcw size={15} />
+                      </Button>
+                    ) : null}
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  icon={<Gauge size={18} />}
                   label={t("settings.memory.usageEnabled")}
                 >
                   <SwitchControl
@@ -1116,6 +1323,85 @@ export function GlobalSettingsDialog({
                       })
                     }
                   />
+                </SettingRow>
+                <SettingRow
+                  icon={<RefreshCw size={18} />}
+                  label={t("settings.memory.manualGenerateTitle")}
+                >
+                  <div className="flex w-[min(38rem,52vw)] flex-col gap-2 py-1">
+                    <p className="text-body-sm leading-6 text-on-surface-variant">
+                      {t("settings.memory.manualGenerateDescription")}
+                    </p>
+                    <div className="flex items-center justify-between gap-3">
+                      <span
+                        aria-live="polite"
+                        className="min-w-0 truncate text-body-sm text-outline"
+                      >
+                        {memoryTaskStatusText}
+                      </span>
+                      <Button
+                        className={
+                          isMemoryGenerating
+                            ? "border-status-update/55 bg-status-update/10 text-status-update disabled:opacity-100"
+                            : undefined
+                        }
+                        disabled={isMemoryGenerating}
+                        onClick={() => void rebuildMemory("recent")}
+                        type="button"
+                        variant="outline"
+                      >
+                        <RefreshCw
+                          className={
+                            isMemoryGenerating
+                              ? "motion-safe:animate-spin"
+                              : undefined
+                          }
+                          size={16}
+                        />
+                        {isMemoryGenerating
+                          ? t("settings.memory.generatingRecent")
+                          : t("settings.memory.generateRecentNow")}
+                      </Button>
+                    </div>
+                    {memoryMaintenanceStatus ? (
+                      <p className="text-body-sm text-status-add">
+                        {memoryMaintenanceStatus}
+                      </p>
+                    ) : null}
+                    {memoryDisplayError ? (
+                      <p
+                        className="text-body-sm text-status-remove"
+                        role="alert"
+                      >
+                        {memoryDisplayError}
+                      </p>
+                    ) : null}
+                  </div>
+                </SettingRow>
+                <SettingRow
+                  icon={<Sparkles size={18} />}
+                  label={t("settings.memory.advancedMaintenance")}
+                >
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      disabled={isMemoryGenerating}
+                      onClick={() => void rebuildMemory("all")}
+                      type="button"
+                      variant="outline"
+                    >
+                      {t("settings.memory.rebuildAll")}
+                    </Button>
+                    <Button
+                      disabled={isMemoryGenerating}
+                      onClick={() =>
+                        void rebuildMemory("recent", "projection_repair")
+                      }
+                      type="button"
+                      variant="ghost"
+                    >
+                      {t("settings.memory.repairProjection")}
+                    </Button>
+                  </div>
                 </SettingRow>
                 <SettingRow
                   icon={<ListTree size={18} />}
@@ -1987,6 +2273,8 @@ function agentActionIdForService(serviceId: AgentCapabilityServiceId) {
     case "memory":
     case "memory.extraction":
       return "memory.extraction" as const;
+    case "memory.generation":
+      return "memory.generation" as const;
     case "memory.project":
       return "memory.project" as const;
     case "memory.global":
@@ -2016,7 +2304,12 @@ function MenuSection({
   title: string;
 }) {
   return (
-    <Panel aria-label={title} className="overflow-hidden p-0" role="region" variant="default">
+    <Panel
+      aria-label={title}
+      className="overflow-hidden p-0"
+      role="region"
+      variant="default"
+    >
       <div className="flex h-12 flex-row items-center gap-3 border-b border-theme-card-border/60 bg-theme-card-header/60 px-4 py-0">
         <span className="grid size-8 place-items-center rounded-lg border border-theme-control-border bg-theme-control text-primary">
           {icon}
@@ -2522,8 +2815,7 @@ function MemoryAgentAssignmentRow({
   settings,
   t,
 }: {
-  actionId:
-    "memory.extraction" | "memory.project" | "memory.global" | "memory.recall";
+  actionId: "memory.extraction" | "memory.generation" | "memory.recall";
   appShortcuts: AppShortcut[];
   label: string;
   onOpen: () => void;

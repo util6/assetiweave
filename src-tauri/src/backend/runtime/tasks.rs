@@ -24,6 +24,7 @@ pub(crate) const TASK_TERMINAL_LIMIT: usize = 50;
 #[serde(rename_all = "PascalCase")]
 pub(crate) enum TaskKind {
     ConversationSync,
+    ConversationUsageScan,
     ConversationDataMaintenance,
     SearchIndexRebuild,
     ScriptInstall,
@@ -502,8 +503,11 @@ impl TaskRuntime {
             ));
         }
         Self::prune_terminal_tasks_locked(&mut tasks);
-        if tasks.contains_key(&task_id) {
-            return Ok(None);
+        if let Some(existing) = tasks.get(&task_id) {
+            if existing.snapshot.state.is_active() {
+                return Ok(None);
+            }
+            tasks.remove(&task_id);
         }
         if spec.dedup_key.as_ref().is_some_and(|key| {
             tasks

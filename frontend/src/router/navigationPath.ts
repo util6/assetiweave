@@ -8,6 +8,7 @@ const routeKeyToPath: Record<string, string> = {
   "skills.mounts": "/skills/mounts",
   "conversations.sessions": "/conversations/sessions",
   "conversations.web-records": "/conversations/web-records",
+  "conversations.usage": "/conversations/usage",
   "prompts.overview": "/prompts/overview",
   "memory.recent": "/memory/recent",
   "memory.recall": "/memory/recall",

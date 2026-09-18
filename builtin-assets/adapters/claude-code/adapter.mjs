@@ -10,6 +10,10 @@ import path from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8") || "{}");
 const CONTENT_CARD_SCHEMA_VERSION = "claude-code-content-cards-v8";
 
+process.stdout.on("error", (err) => {
+  if (err.code === "EPIPE") process.exit(0);
+});
+
 function emit(type, payload = {}) {
   process.stdout.write(`${JSON.stringify({ type, ...payload })}\n`);
 }
@@ -924,6 +928,119 @@ function structuredCardRenderer(card) {
   return "plain";
 }
 
+/**
+ * 【Token 用量提取入口】：供 Rust 侧 `read_usage` IPC 方法调用。
+ * 遍历 Claude Code 转录和项目日志 (.jsonl)，提取每个模型的实际 Token 消耗。
+ */
+function readUsage() {
+  const location = expandPath(input.source?.location);
+  if (!location || !existsSync(location)) {
+    emit("complete", { item: { snapshot_complete: true, usage_event_count: 0, next_cursor: null, decoder_profile: "claude-code-transcript-v1", diagnostics: [] } });
+    return;
+  }
+
+  const cursorRaw = input.params?.cursor;
+  let cursor = null;
+  if (cursorRaw) {
+    try {
+      cursor = typeof cursorRaw === "string" ? JSON.parse(cursorRaw) : cursorRaw;
+    } catch {}
+  }
+  const cursorMtime = cursor?.last_mtime ? Number(cursor.last_mtime) : 0;
+  const processedFiles = new Set(cursor?.processed_files || []);
+
+  const files = collectJsonlFiles(location);
+  let maxMtime = cursorMtime;
+  let eventCount = 0;
+  const newProcessedFiles = [];
+
+  for (const filePath of files) {
+    try {
+      const stat = statSync(filePath);
+      const mtimeMs = stat.mtimeMs;
+      if (mtimeMs > maxMtime) {
+        maxMtime = mtimeMs;
+      }
+      if (cursorMtime > 0 && mtimeMs <= cursorMtime && processedFiles.has(filePath)) {
+        newProcessedFiles.push(filePath);
+        continue;
+      }
+
+      const sessionId = path.basename(filePath, ".jsonl");
+      const text = readFileSync(filePath, "utf8");
+      const lines = text.split("\n");
+
+      let lineIdx = 0;
+      for (const line of lines) {
+        lineIdx++;
+        if (!line.trim()) continue;
+        let p;
+        try {
+          p = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        const usage = p.message?.usage || p.usage || p.payload?.usage || p.item?.usage;
+        if (!usage) continue;
+
+        const inputTokens = Number(usage.input_tokens || 0);
+        const outputTokens = Number(usage.output_tokens || 0);
+        const cacheReadTokens = Number(usage.cache_read_input_tokens || usage.cache_read_tokens || 0);
+        const cacheWriteTokens = Number(usage.cache_creation_input_tokens || usage.cache_write_tokens || 0);
+        const reasoningTokens = Number(usage.reasoning_tokens || 0);
+        const totalTokens = Number(usage.total_tokens || (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens + reasoningTokens));
+
+        if (totalTokens <= 0) continue;
+
+        const eventId = String(p.uuid || p.id || `${sessionId}-${lineIdx}`);
+        const timestamp = p.timestamp || stat.mtime.toISOString();
+        const modelStr = String(p.message?.model || p.model || "claude-3-7-sonnet-20250219");
+
+        const event = {
+          external_event_id: eventId,
+          session_id: sessionId,
+          turn_id: null,
+          logical_request_id: eventId,
+          attempt_index: 0,
+          timestamp,
+          provider: "anthropic",
+          model: modelStr,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_read_tokens: cacheReadTokens,
+          cache_write_tokens: cacheWriteTokens,
+          reasoning_tokens: reasoningTokens,
+          total_tokens: totalTokens,
+          status: "success",
+          currency: null,
+          cost: null,
+          metadata: {
+            line: lineIdx,
+            file: path.basename(filePath),
+          },
+        };
+        emit("usage_event", { usage_event: event });
+        eventCount++;
+      }
+      newProcessedFiles.push(filePath);
+    } catch {}
+  }
+
+  emit("complete", {
+    item: {
+      snapshot_complete: true,
+      usage_event_count: eventCount,
+      next_cursor: JSON.stringify({
+        last_mtime: maxMtime,
+        processed_files: newProcessedFiles.slice(-2000),
+      }),
+      decoder_profile: "claude-code-transcript-v1",
+      diagnostics: [],
+    },
+  });
+}
+
 try {
   if (input.method === "project_command_parts") {
     const projections = projectCommandParts(input.params?.parts ?? input.params?.command_parts);
@@ -963,6 +1080,9 @@ try {
       emit("item", { item: { kind: "session", session: finalizeStructuredContentCards(session) } });
     }
     emit("complete", { item: { session_count: sessions.length } });
+  } else if (input.method === "read_usage") {
+    emitProgress({ stage: "reading", operation: "read_usage" });
+    readUsage();
   } else {
     fail(`unsupported method: ${input.method}`);
   }

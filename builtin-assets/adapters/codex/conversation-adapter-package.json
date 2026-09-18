@@ -2,18 +2,27 @@
   "schema_version": 1,
   "package_id": "io.github.util6.codex-session",
   "name": "Codex Session Parser",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "min_core_version": "0.5.2",
   "record_kind": "session",
   "adapter_manifest": "conversation-adapter.json",
   "capabilities": [
     "read_session",
-    "project_command_parts"
+    "project_command_parts",
+    "read_usage"
   ],
   "runtime": {
     "protocol": "stdio-ndjson-v1"
   },
   "changelog": [
+    {
+      "version": "1.6.4",
+      "date": "2026-09-11",
+      "notes": [
+        "Filter out subagent derivative sessions so they do not appear as independent sessions in conversation lists.",
+        "Automatically detect and seamlessly merge multi-rollout paginated session files by history_base alignment."
+      ]
+    },
     {
       "version": "1.6.3",
       "date": "2026-09-01",

@@ -17,6 +17,10 @@ const ConversationsPage = lazyRouteComponent(
   () => import("../pages/conversations/ConversationsPage"),
   "ConversationsPage",
 );
+const UsageDashboardPage = lazyRouteComponent(
+  () => import("../pages/conversations/UsageDashboardPage"),
+  "UsageDashboardPage",
+);
 const SkillGroupsPage = lazyRouteComponent(
   () => import("../pages/groups/SkillGroupsPage"),
   "SkillGroupsPage",
@@ -219,6 +223,10 @@ function ConversationsWebRecordsView() {
   );
 }
 
+function ConversationsUsageView() {
+  return <UsageDashboardPage />;
+}
+
 function PromptsOverviewView() {
   const { onManualOpen, catalog } = useWorkspaceContext();
   return (
@@ -311,6 +319,13 @@ export const conversationsWebRecordsRoute = createRoute({
   pendingComponent: ColumnsPending,
 });
 
+export const conversationsUsageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/conversations/usage",
+  component: ConversationsUsageView,
+  pendingComponent: CardsPending,
+});
+
 export const promptsOverviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/prompts/overview",
@@ -360,6 +375,7 @@ export const routeTree = rootRoute.addChildren([
   skillsMountsRoute,
   conversationsSessionsRoute,
   conversationsWebRecordsRoute,
+  conversationsUsageRoute,
   promptsOverviewRoute,
   memoryRecentRoute,
   memoryRecallRoute,

@@ -31,6 +31,17 @@ vi.mock("../../app/backgroundTasks/ConversationSyncProvider", () => ({
   }),
 }));
 
+vi.mock("../../app/backgroundTasks/MemoryTaskProvider", () => ({
+  useMemoryTasks: () => ({
+    cancelTask: vi.fn(),
+    refresh: vi.fn().mockResolvedValue(undefined),
+    retryTask: vi.fn(),
+    task: null,
+    tasks: [],
+    publicTasks: [],
+  }),
+}));
+
 vi.mock("../../i18n/I18nProvider", () => ({
   useI18n: () => ({
     locale: "en",
@@ -307,7 +318,9 @@ describe("GlobalSettingsDialog", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: /OpenCode/ })[0]);
 
-    const dialog = screen.getByRole("dialog");
+    const dialogs = screen.getAllByRole("dialog");
+    const dialog = dialogs[dialogs.length - 1];
+    expect(dialog).toBeTruthy();
     expect(
       within(dialog).getByRole("list", {
         name: "settings.agentCapabilities.dialogTitle",
@@ -644,5 +657,47 @@ describe("GlobalSettingsDialog", () => {
     expect(
       backupDialogTitle.closest('[role="dialog"]')?.parentElement?.className,
     ).toContain("z-[60]");
+  });
+
+  it("renders manual recent memory generation row and triggers rebuild", async () => {
+    const rebuildMemoryScopeMock = vi.fn().mockResolvedValue({
+      accepted: true,
+      scheduledTaskIds: ["memory-v2-recent-test-1"],
+      targetWatermark: null,
+      reused: false,
+    });
+    const memoryService = await import("../../services/memory");
+    vi.spyOn(memoryService, "rebuildMemoryScope").mockImplementation(
+      rebuildMemoryScopeMock,
+    );
+
+    render(
+      <GlobalSettingsDialog
+        appShortcuts={[]}
+        initialPanel="general.memory"
+        navigationModel={navigationModel}
+        onAppShortcutsChange={vi.fn()}
+        onClose={vi.fn()}
+        onNavigationModelChange={vi.fn()}
+        open
+      />,
+    );
+
+    expect(screen.getByText("settings.memory.manualGenerateTitle")).toBeTruthy();
+    expect(
+      screen.getByText("settings.memory.manualGenerateDescription"),
+    ).toBeTruthy();
+    const generateBtn = screen.getByRole("button", {
+      name: "settings.memory.generateRecentNow",
+    });
+    expect(generateBtn).toBeTruthy();
+
+    fireEvent.click(generateBtn);
+
+    await waitFor(() => {
+      expect(rebuildMemoryScopeMock).toHaveBeenCalledWith(undefined, {
+        target: "recent",
+      });
+    });
   });
 });

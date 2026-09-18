@@ -620,7 +620,10 @@ export async function deleteProfile(id: string): Promise<void> {
 export async function getNavigationModel(): Promise<NavigationModel> {
   try {
     return normalizeNavigationModelRoutes(
-      await invoke<NavigationModel>("get_navigation_model"),
+      mergeNavigationModelDefaults(
+        await invoke<NavigationModel>("get_navigation_model"),
+        fallbackNavigationModel,
+      ),
     );
   } catch (error) {
     if (isTauriRuntime()) {
