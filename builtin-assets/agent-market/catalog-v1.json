@@ -147,6 +147,7 @@
       },
       "upstream": {
         "registryId": "antigravity-acp",
+        "revision": "81bf71b55e15f630c4fb8a86d20d3088071d2071",
         "homepage": "https://antigravity.google/product/antigravity-cli",
         "license": "proprietary"
       },

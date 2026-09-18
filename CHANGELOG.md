@@ -1,5 +1,13 @@
 # Changelog
  
+## v0.7.0
+
+- 监控与成本：新增 Usage 费用与 Token 仪表盘，支持多维度过滤（按模型、提供商、项目）与统计分析，提供后端聚合查询支撑。
+- 架构：全面重构 Memory 架构（Memory v2 维护模式），支持 Session Memory、Project Memory 与 Global Memory 分层隔离；修复 L2 项目级内存的跨工作区相对路径规范化及上下文精准解析；新增独立的 `memory_generation_mcp` 标准 stdio MCP 协议服务。
+- 视觉与设计系统：落实 ADR-0009 架构决策与 Auroraqua-UI 设计系统，规范微光辉、内阴影高光与流体拟态设计，统一圆角标尺与 PillTabs 交互，全面完成前端代码风格统一与格式化。
+- 架构守卫与质量：实施 Rust 业务文件瘦身与独立测试组织规范（单个业务文件 500 行限制，测试独立至同级 `*_tests.rs`），强化模块边界检查并消减不安全 Runtime Bridges。
+- 跨平台与 CI：彻底修复 Windows 环境下的路径判定与短引用容错机制，GitHub CI 全平台 5 项流水线（Linux Frontend, Linux Rust, Windows Rust/Go/Frontend, Go, E2E）全绿通过。
+
 ## v0.6.1
 
 - 架构：统一运行时与扩展领域基础设施（0010 与 0011），引入 `AppRuntime` 运行时内核、细粒度分片锁与优雅关机支持。

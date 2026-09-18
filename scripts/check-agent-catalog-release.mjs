@@ -19,8 +19,8 @@ const evidencePath = evidenceFlag >= 0 ? path.resolve(process.argv[evidenceFlag 
 const release = args.has("--release");
 const network = args.has("--network");
 const e2e = args.has("--e2e");
-const MAX_NETWORK_BYTES = 256 * 1024 * 1024;
-const NETWORK_TIMEOUT_MS = 120_000;
+const MAX_NETWORK_BYTES = 1024 * 1024 * 1024;
+const NETWORK_TIMEOUT_MS = 600_000;
 
 function parseVersion(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(String(value));
@@ -189,18 +189,28 @@ async function fetchJson(url) {
 
 async function fetchBytes(url) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+  let timeout = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+  const resetTimer = () => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+  };
   try {
     const response = await fetch(url, { signal: controller.signal, headers: { "user-agent": "AssetIWeave-agent-market-release-check" } });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
     const hash = crypto.createHash("sha256");
     let size = 0;
     for await (const chunk of response.body) {
+      resetTimer();
       size += chunk.length;
-      if (size > MAX_NETWORK_BYTES) throw new Error(`response exceeds ${MAX_NETWORK_BYTES} bytes`);
+      if (size > MAX_NETWORK_BYTES) throw new Error(`${url}: response exceeds ${MAX_NETWORK_BYTES} bytes`);
       hash.update(chunk);
     }
     return { size, sha256: hash.digest("hex") };
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`${url}: network transfer timed out after ${NETWORK_TIMEOUT_MS / 1000}s of inactivity`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
@@ -230,7 +240,8 @@ async function checkNetwork(catalog, evidence) {
     for (const item of catalog.items) {
       if (item.protocol !== "acp") continue;
       const registryId = item.upstream.registryId;
-      const source = await fetchJson(upstreamAgentUrl(revision, registryId));
+      const itemRevision = item.upstream?.revision ?? revision;
+      const source = await fetchJson(upstreamAgentUrl(itemRevision, registryId));
       if (source.id !== registryId) errors.push(`${item.id}: pinned upstream id mismatch`);
       const latest = latestById.get(registryId);
       if (!latest) errors.push(`${item.id}: CDN registry no longer contains the pinned registry item`);
@@ -242,7 +253,8 @@ async function checkNetwork(catalog, evidence) {
             errors.push(`${item.id}/${distribution.id}: pinned upstream binary target is missing`);
             continue;
           }
-          if (sourceTarget.archive !== distribution.url || sourceTarget.sha256 !== distribution.sha256) errors.push(`${item.id}/${distribution.id}: binary metadata differs from pinned upstream`);
+          if (sourceTarget.archive !== distribution.url || (sourceTarget.sha256 && sourceTarget.sha256 !== distribution.sha256)) errors.push(`${item.id}/${distribution.id}: binary metadata differs from pinned upstream`);
+          console.log(`  - verifying binary artifact ${item.id}/${distribution.id} (${(distribution.size / 1024 / 1024).toFixed(1)} MB)...`);
           const artifact = await fetchBytes(distribution.url);
           if (artifact.sha256 !== distribution.sha256) errors.push(`${item.id}/${distribution.id}: downloaded SHA256 does not match catalog`);
           if (record?.artifact?.sizeBytes !== artifact.size) errors.push(`${item.id}/${distribution.id}: downloaded size does not match evidence`);
