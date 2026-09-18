@@ -751,16 +751,20 @@ async fn test_m35_l2_successful_consolidation_and_fingerprint_reuse() {
 
 #[tokio::test]
 async fn test_context_resolver_reads_current_l2_project_memory() {
-    let (service, _root) = setup_test_service().await;
+    let (service, root) = setup_test_service().await;
     let pool = service.db.pool();
+
+    let project_dir = root.join("app");
+    fs::create_dir_all(&project_dir).expect("create test project dir");
+    let project_path_str = project_dir.to_str().expect("valid utf8 path");
 
     let now = Utc::now().to_rfc3339();
     let item_id = "item-l2-ctx";
     let rev_id = "rev-l2-ctx";
 
     let project_key =
-        crate::backend::application::recent::resolve_project_directory("/workspace/app", &[])
-            .unwrap_or_else(|| "/workspace/app".to_string());
+        crate::backend::application::recent::resolve_project_directory(project_path_str, &[])
+            .unwrap_or_else(|| project_path_str.to_string());
 
     sqlx::query(
         "INSERT INTO memory_items (\
@@ -794,7 +798,7 @@ async fn test_context_resolver_reads_current_l2_project_memory() {
 
     let res = service
         .resolve_memory_context(crate::backend::application::MemoryContextResolveParams {
-            project_path: Some(project_key),
+            project_path: Some(project_path_str.to_string()),
             query: None,
             token_budget: Some(2000),
         })
