@@ -11,10 +11,13 @@ mod error;
 mod memory_legacy_archive;
 pub(crate) mod session_streams;
 pub(crate) mod task_pipeline;
+pub(crate) mod task_runner;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]
 pub(crate) use task_pipeline::{PipelineDescriptor, StageDescriptor, StageGuard, TaskCategory};
+#[allow(unused_imports)]
+pub(crate) use task_runner::{TaskHandle, TaskOutput};
 
 #[allow(unused_imports)]
 pub(crate) use app_runtime::{

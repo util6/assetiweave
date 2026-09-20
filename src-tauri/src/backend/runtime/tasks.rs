@@ -354,6 +354,13 @@ impl TaskContext {
             self.cancellation.clone(),
         )
     }
+    pub(crate) fn check_cancellation(&self) -> AppResult<()> {
+        if self.is_cancelled() {
+            Err(AppError::Cancelled("后台任务已取消".to_string()))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -668,6 +675,75 @@ impl TaskRuntime {
         };
         self.launch_task_async(task_id, cancellation, tracking, task)?;
         Ok(SpawnOutcome::Started)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn run<T, F, Fut>(
+        &self,
+        spec: TaskSpec,
+        task: F,
+    ) -> AppResult<super::task_runner::TaskHandle<T>>
+    where
+        T: serde::Serialize + Send + 'static,
+        F: FnOnce(TaskContext) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = AppResult<super::task_runner::TaskOutput<T>>>
+            + Send
+            + 'static,
+    {
+        let Some((task_id, cancellation, tracking)) = self.prepare_spawn(spec)? else {
+            return Err(AppError::Conflict("同类任务已在运行中".to_string()));
+        };
+        let handle = self
+            .runtime_handle
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())
+            .ok_or_else(|| {
+                AppError::external(
+                    "TaskRuntime requires runtime_handle for async tasks".to_string(),
+                )
+            })?;
+        let runtime = self.clone();
+        let run_task_id = task_id.clone();
+        let ret_task_id = task_id.clone();
+        let ret_cancel = cancellation.clone();
+
+        handle.spawn(async move {
+            let _tracking = tracking;
+            let cancellation_for_finish = cancellation.clone();
+            let context = TaskContext {
+                cancellation: cancellation.clone(),
+                progress: ProgressHandle {
+                    task_id: run_task_id.clone(),
+                    runtime: runtime.clone(),
+                },
+            };
+            let span = tracing::info_span!("task_execution", task_id = %run_task_id);
+            use tracing::Instrument;
+            let result = match tokio::spawn(task(context).instrument(span)).await {
+                Ok(Ok(output)) => {
+                    let value =
+                        serde_json::to_value(&output.data).unwrap_or(serde_json::Value::Null);
+                    if let Some(summary) = output.summary {
+                        let _ = runtime.set_result_summary(&run_task_id, summary);
+                    }
+                    Ok(value)
+                }
+                Ok(Err(err)) => Err(err),
+                Err(join_err) => {
+                    if join_err.is_cancelled() {
+                        Err(AppError::Cancelled("后台任务已取消".to_string()))
+                    } else {
+                        Err(AppError::External("后台任务发生 panic".to_string()))
+                    }
+                }
+            };
+            runtime.finish_task(&run_task_id, &cancellation_for_finish, result);
+        });
+
+        Ok(super::task_runner::TaskHandle::new(
+            ret_task_id,
+            ret_cancel,
+        ))
     }
 
     /// Register an externally-driven task without moving its domain work into
@@ -1749,6 +1825,28 @@ impl TaskRuntime {
             if let Some(e) = error_summary {
                 entry.snapshot.error_summary = Some(e);
             }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = Utc::now().to_rfc3339();
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn set_result_summary(
+        &self,
+        task_id: &str,
+        summary: String,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            entry.snapshot.result_summary = Some(summary);
             entry.snapshot.revision += 1;
             entry.snapshot.updated_at = Utc::now().to_rfc3339();
             entry.snapshot.clone()
