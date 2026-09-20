@@ -14,7 +14,7 @@ pub(crate) mod task_pipeline;
 pub(crate) mod tasks;
 
 #[allow(unused_imports)]
-pub(crate) use task_pipeline::{PipelineDescriptor, StageDescriptor, TaskCategory};
+pub(crate) use task_pipeline::{PipelineDescriptor, StageDescriptor, StageGuard, TaskCategory};
 
 #[allow(unused_imports)]
 pub(crate) use app_runtime::{

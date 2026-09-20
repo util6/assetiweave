@@ -343,6 +343,17 @@ impl TaskContext {
     pub(crate) fn task_id(&self) -> &str {
         &self.progress.task_id
     }
+    pub(crate) fn enter_stage(
+        &self,
+        stage_id: impl Into<String>,
+    ) -> super::task_pipeline::StageGuard {
+        super::task_pipeline::StageGuard::enter(
+            &self.progress.task_id,
+            stage_id,
+            self.progress.runtime.clone(),
+            self.cancellation.clone(),
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -354,6 +365,18 @@ pub(crate) struct ProgressHandle {
 impl ProgressHandle {
     pub(crate) fn task_id(&self) -> &str {
         &self.task_id
+    }
+    pub(crate) fn enter_stage(
+        &self,
+        stage_id: impl Into<String>,
+        cancellation: CancellationToken,
+    ) -> super::task_pipeline::StageGuard {
+        super::task_pipeline::StageGuard::enter(
+            &self.task_id,
+            stage_id,
+            self.runtime.clone(),
+            cancellation,
+        )
     }
 
     pub(crate) fn progress(&self, current: u64, total: Option<u64>, note: Option<&str>) {
@@ -1519,6 +1542,38 @@ impl TaskRuntime {
                     agent_session_ref: None,
                 };
                 entry.snapshot.stages.push(stage);
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn set_stage_progress(
+        &self,
+        task_id: &str,
+        stage_id: &str,
+        current: u64,
+        total: Option<u64>,
+        note: Option<String>,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry.snapshot.stages.iter_mut().find(|s| s.id == stage_id) {
+                stage.progress = Some(TaskProgress {
+                    current,
+                    total,
+                    note,
+                });
             }
             entry.snapshot.revision += 1;
             entry.snapshot.updated_at = now;

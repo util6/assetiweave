@@ -1,5 +1,9 @@
-use super::tasks::{StageStatus, TaskKind, TaskStage};
+use super::tasks::{
+    StageStatus, TaskFailure, TaskKind, TaskMetric, TaskRuntime, TaskSkippedGroup, TaskStage,
+};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 /// 开放任务分类。
 ///
@@ -140,6 +144,186 @@ impl PipelineDescriptorBuilder {
         PipelineDescriptor {
             stages: self.stages,
         }
+    }
+}
+
+/// 作用域阶段哨兵 (RAII StageGuard)
+///
+/// 生命周期与流水线阶段严格绑定：
+/// 1. 构造/enter 时自动将阶段标记为 `Running` 并记录开始时间；
+/// 2. 离开作用域 (Drop) 时：
+///    - 若发生 Panic 展开，自动闭环为 `Failed` 并记录 `stage_panic` 失败凭证；
+///    - 若收到取消信号，自动闭环为 `Canceled`；
+///    - 若内部已收集失败项或显式标记失败，自动闭环为 `Failed`；
+///    - 若正常结束且未指定终态，自动以 `Succeeded` 终结，并自动计算耗时；
+///    - 杜绝传统异步任务中因 `?` 早期返回或漏调 finish 导致的阶段永久挂起。
+pub struct StageGuard {
+    task_id: String,
+    stage_id: String,
+    runtime: TaskRuntime,
+    cancellation: CancellationToken,
+    status: Option<StageStatus>,
+    metrics: Vec<TaskMetric>,
+    failures: Vec<TaskFailure>,
+    skipped: Vec<TaskSkippedGroup>,
+    completed: bool,
+}
+
+impl StageGuard {
+    pub(crate) fn enter(
+        task_id: impl Into<String>,
+        stage_id: impl Into<String>,
+        runtime: TaskRuntime,
+        cancellation: CancellationToken,
+    ) -> Self {
+        let task_id = task_id.into();
+        let stage_id = stage_id.into();
+        let _ = runtime.update_stage_status(&task_id, &stage_id, StageStatus::Running);
+        Self {
+            task_id,
+            stage_id,
+            runtime,
+            cancellation,
+            status: None,
+            metrics: Vec::new(),
+            failures: Vec::new(),
+            skipped: Vec::new(),
+            completed: false,
+        }
+    }
+
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+
+    pub fn stage_id(&self) -> &str {
+        &self.stage_id
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    pub fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
+    }
+
+    pub fn record_metric(&mut self, code: impl Into<String>, value: u64) {
+        let code = code.into();
+        if let Some(existing) = self.metrics.iter_mut().find(|m| m.code == code) {
+            existing.value += value;
+        } else {
+            self.metrics.push(TaskMetric { code, value });
+        }
+    }
+
+    pub fn record_failure(
+        &mut self,
+        code: impl Into<String>,
+        message: impl Into<String>,
+        retryable: bool,
+    ) {
+        self.failures.push(TaskFailure {
+            code: code.into(),
+            message: message.into(),
+            stage: self.stage_id.clone(),
+            identity: None,
+            retryable,
+            path: None,
+            timestamp: Utc::now().to_rfc3339(),
+        });
+    }
+
+    pub fn record_skipped(&mut self, reason_code: impl Into<String>, sample: impl Into<String>) {
+        let reason_code = reason_code.into();
+        let sample = sample.into();
+        if let Some(group) = self.skipped.iter_mut().find(|g| g.reason_code == reason_code) {
+            group.count += 1;
+            if group.samples.len() < 5 {
+                group.samples.push(sample);
+            }
+        } else {
+            self.skipped.push(TaskSkippedGroup {
+                reason_code,
+                count: 1,
+                samples: vec![sample],
+            });
+        }
+    }
+
+    pub fn set_progress(&self, current: u64, total: Option<u64>, note: Option<String>) {
+        let _ = self.runtime.set_stage_progress(
+            &self.task_id,
+            &self.stage_id,
+            current,
+            total,
+            note,
+        );
+    }
+
+    /// 显式标记阶段为跳过 (Skipped)
+    pub fn skip(&mut self, reason_code: impl Into<String>, reason_message: impl Into<String>) {
+        self.status = Some(StageStatus::Skipped);
+        self.record_skipped(reason_code, reason_message);
+    }
+
+    /// 显式标记阶段为失败 (Failed)
+    pub fn fail(&mut self, code: impl Into<String>, message: impl Into<String>, retryable: bool) {
+        self.status = Some(StageStatus::Failed);
+        self.record_failure(code, message, retryable);
+    }
+
+    /// 显式指定闭环状态
+    pub fn finish_with_status(&mut self, status: StageStatus) {
+        self.status = Some(status);
+    }
+
+    /// 提前闭环 StageGuard，不再等待 drop
+    pub fn finish(mut self) {
+        self.do_finish();
+    }
+
+    fn do_finish(&mut self) {
+        if self.completed {
+            return;
+        }
+        self.completed = true;
+
+        let final_status = if std::thread::panicking() {
+            self.failures.push(TaskFailure {
+                code: "stage_panic".to_string(),
+                message: "阶段执行过程中触发意外 panic".to_string(),
+                stage: self.stage_id.clone(),
+                identity: None,
+                retryable: false,
+                path: None,
+                timestamp: Utc::now().to_rfc3339(),
+            });
+            StageStatus::Failed
+        } else if let Some(explicit) = self.status {
+            explicit
+        } else if self.cancellation.is_cancelled() {
+            StageStatus::Canceled
+        } else if !self.failures.is_empty() {
+            StageStatus::Failed
+        } else {
+            StageStatus::Succeeded
+        };
+
+        let _ = self.runtime.finish_stage(
+            &self.task_id,
+            &self.stage_id,
+            final_status,
+            std::mem::take(&mut self.metrics),
+            std::mem::take(&mut self.failures),
+            std::mem::take(&mut self.skipped),
+        );
+    }
+}
+
+impl Drop for StageGuard {
+    fn drop(&mut self) {
+        self.do_finish();
     }
 }
 
