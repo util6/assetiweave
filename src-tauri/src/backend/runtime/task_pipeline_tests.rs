@@ -187,7 +187,12 @@ fn stage_guard_cancelled_token_marks_canceled() {
     let cancel = CancellationToken::new();
 
     {
-        let _guard = StageGuard::enter("task-guard-cancel", "compute", tasks.clone(), cancel.clone());
+        let _guard = StageGuard::enter(
+            "task-guard-cancel",
+            "compute",
+            tasks.clone(),
+            cancel.clone(),
+        );
         cancel.cancel();
     }
 

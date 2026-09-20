@@ -78,7 +78,10 @@ impl WorkerTracker {
         };
 
         let should_publish = {
-            let mut last = self.last_published.lock().unwrap_or_else(|p| p.into_inner());
+            let mut last = self
+                .last_published
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             let now = Instant::now();
             if now.duration_since(*last) >= self.throttle_interval {
                 *last = now;

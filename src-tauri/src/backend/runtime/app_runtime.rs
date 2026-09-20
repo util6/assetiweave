@@ -402,10 +402,10 @@ impl AppRuntime {
                             Ok(bound) => bound,
                             Err(error) => {
                                 tracing::warn!(
-                                    action = "memory_v2.coordinator.tenant_binding",
+                                    action = "memory.coordinator.tenant_binding",
                                     tenant_id = %tenant.id,
                                     error = %error,
-                                    "Memory v2 tenant binding failed"
+                                    "Memory tenant binding failed"
                                 );
                                 continue;
                             }
@@ -432,24 +432,24 @@ impl AppRuntime {
                             .await
                         {
                             tracing::warn!(
-                                action = "memory_v2.coordinator.recovery",
+                                action = "memory.coordinator.recovery",
                                 tenant_id = %tenant.id,
                                 error = %error,
-                                "Memory v2 Recent Snapshot durable coordinator reconciliation failed"
+                                "Memory Recent Snapshot durable coordinator reconciliation failed"
                             );
                         }
                         if let Err(error) = tenant_service
-                            .reconcile_memory_v2_maintenance_jobs_for_tenant_at(
+                            .reconcile_memory_maintenance_jobs_for_tenant_at(
                                 &tenant.id,
                                 chrono::Utc::now(),
                             )
                             .await
                         {
                             tracing::warn!(
-                                action = "memory_v2.maintenance.recovery",
+                                action = "memory.maintenance.recovery",
                                 tenant_id = %tenant.id,
                                 error = %error,
-                                "Memory v2 Project/Global maintenance reconciliation failed"
+                                "Memory Project/Global maintenance reconciliation failed"
                             );
                         }
                         if let Err(error) = tenant_service

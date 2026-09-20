@@ -239,7 +239,11 @@ impl StageGuard {
     pub fn record_skipped(&mut self, reason_code: impl Into<String>, sample: impl Into<String>) {
         let reason_code = reason_code.into();
         let sample = sample.into();
-        if let Some(group) = self.skipped.iter_mut().find(|g| g.reason_code == reason_code) {
+        if let Some(group) = self
+            .skipped
+            .iter_mut()
+            .find(|g| g.reason_code == reason_code)
+        {
             group.count += 1;
             if group.samples.len() < 5 {
                 group.samples.push(sample);
@@ -286,7 +290,9 @@ impl StageGuard {
     }
 
     pub fn remove_activity(&self, worker_id: &str) {
-        let _ = self.runtime.remove_activity(&self.task_id, &self.stage_id, worker_id);
+        let _ = self
+            .runtime
+            .remove_activity(&self.task_id, &self.stage_id, worker_id);
     }
 
     pub fn record_skipped_group(
@@ -297,7 +303,11 @@ impl StageGuard {
         let reason_code = reason_code.into();
         let samples: Vec<String> = samples.into_iter().map(Into::into).collect();
         let count = samples.len() as u64;
-        if let Some(group) = self.skipped.iter_mut().find(|g| g.reason_code == reason_code) {
+        if let Some(group) = self
+            .skipped
+            .iter_mut()
+            .find(|g| g.reason_code == reason_code)
+        {
             group.count += count;
             for sample in samples {
                 if group.samples.len() < 5 {
@@ -316,13 +326,15 @@ impl StageGuard {
     }
 
     pub fn set_progress(&self, current: u64, total: Option<u64>, note: Option<String>) {
-        let _ = self.runtime.set_stage_progress(
-            &self.task_id,
-            &self.stage_id,
-            current,
-            total,
-            note,
-        );
+        let _ =
+            self.runtime
+                .set_stage_progress(&self.task_id, &self.stage_id, current, total, note);
+    }
+
+    pub fn set_agent_session_ref(&self, session_ref: Option<crate::backend::dto::AgentSessionRef>) {
+        let _ =
+            self.runtime
+                .set_stage_agent_session_ref(&self.task_id, &self.stage_id, session_ref);
     }
 
     /// 显式标记阶段为跳过 (Skipped)

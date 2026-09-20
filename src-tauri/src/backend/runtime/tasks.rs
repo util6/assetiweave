@@ -364,6 +364,14 @@ impl TaskContext {
             Ok(())
         }
     }
+    pub(crate) fn set_outcome(
+        &self,
+        outcome: TaskOutcome,
+        summary: Option<String>,
+        detail: Option<String>,
+    ) {
+        self.progress.set_outcome(outcome, summary, detail);
+    }
 }
 
 #[derive(Clone)]
@@ -743,10 +751,7 @@ impl TaskRuntime {
             runtime.finish_task(&run_task_id, &cancellation_for_finish, result);
         });
 
-        Ok(super::task_runner::TaskHandle::new(
-            ret_task_id,
-            ret_cancel,
-        ))
+        Ok(super::task_runner::TaskHandle::new(ret_task_id, ret_cancel))
     }
 
     /// Register an externally-driven task without moving its domain work into

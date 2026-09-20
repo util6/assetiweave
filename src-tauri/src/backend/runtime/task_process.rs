@@ -2,10 +2,10 @@ use super::task_pipeline::StageGuard;
 use super::tasks::{TaskRuntime, TaskSpec};
 use super::{AppError, AppResult, TaskHandle, TaskOutput};
 use process_wrap::tokio::CommandWrap;
-#[cfg(unix)]
-use process_wrap::tokio::ProcessGroup;
 #[cfg(windows)]
 use process_wrap::tokio::JobObject;
+#[cfg(unix)]
+use process_wrap::tokio::ProcessGroup;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -136,9 +136,9 @@ impl ProcessRunner {
         #[cfg(windows)]
         let wrap = wrap.wrap(JobObject);
 
-        let mut child = wrap
-            .spawn()
-            .map_err(|e| AppError::external(format!("启动子进程失败 ({}): {e}", spec.program.display())))?;
+        let mut child = wrap.spawn().map_err(|e| {
+            AppError::external(format!("启动子进程失败 ({}): {e}", spec.program.display()))
+        })?;
 
         let stdout = child
             .stdout()
@@ -276,12 +276,10 @@ impl TaskRuntime {
             let result = ProcessRunner::run_process_in_stage(&mut guard, process_spec).await?;
             drop(guard);
 
-            let summary = result.summary.clone().unwrap_or_else(|| {
-                format!(
-                    "子进程执行完成 (exit code: {:?})",
-                    result.exit_code
-                )
-            });
+            let summary = result
+                .summary
+                .clone()
+                .unwrap_or_else(|| format!("子进程执行完成 (exit code: {:?})", result.exit_code));
 
             Ok(TaskOutput::with_summary(result, summary))
         })

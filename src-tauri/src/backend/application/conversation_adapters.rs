@@ -1,8 +1,6 @@
 use super::prelude::*;
-use crate::backend::runtime::tasks::{
-    StageStatus, TaskActivity, TaskFailure, TaskOutcome, TaskStage,
-};
-use crate::backend::runtime::{AppError, AppResult};
+use crate::backend::runtime::tasks::{StageStatus, TaskOutcome, TaskStage};
+use crate::backend::runtime::{AppError, AppResult, WorkerTracker};
 
 fn conversation_storage_error(error: AppError) -> AppError {
     error
@@ -645,9 +643,9 @@ impl AppService {
 
                 ensure_conversation_sync_not_cancelled(cancellation)?;
                 let stage_id = format!("adapter:{adapter_id}");
-                if let Some(task_id) = task_id {
-                    let _ = task_runtime.update_stage_status(task_id, &stage_id, StageStatus::Running);
-                }
+                let mut stage_guard = task_id
+                    .and_then(|tid| task_runtime.task_context(tid).ok())
+                    .map(|ctx| ctx.enter_stage(&stage_id));
 
                 let mut group_results = Vec::new();
                 let mut group_errors = Vec::new();
@@ -660,32 +658,26 @@ impl AppService {
                         (**lock)(completed, total_source_count, Some(source.name.clone()));
                     }
 
-                    let task_id_string = task_id.map(|s| s.to_string());
-                    let stage_id_clone = stage_id.clone();
                     let worker_id = format!("{}:{}", adapter_id, source.id);
-                    let worker_id_clone = worker_id.clone();
+                    let worker_tracker = stage_guard
+                        .as_ref()
+                        .map(|g| g.worker(&worker_id));
+
+                    let worker_tracker_for_progress = worker_tracker.as_ref().map(|t| (t.worker_id().to_string(), stage_id.clone()));
                     let progress_task_runtime = task_runtime.clone();
+                    let task_id_string = task_id.map(|s| s.to_string());
 
                     let progress_listener: crate::backend::conversations::ExternalAdapterProgressListener =
                         std::sync::Arc::new(move |progress| {
-                            if let Some(ref tid) = task_id_string {
-                                let activity = TaskActivity {
-                                    stage_id: stage_id_clone.clone(),
-                                    worker_id: progress
-                                        .worker
-                                        .clone()
-                                        .unwrap_or_else(|| worker_id_clone.clone()),
-                                    operation: progress
-                                        .operation
-                                        .clone()
-                                        .unwrap_or_else(|| "processing".to_string()),
-                                    path: progress.path.clone(),
-                                    display_path: None,
-                                    started_at: chrono::Utc::now().to_rfc3339(),
-                                    current: progress.current,
-                                    total: progress.total,
-                                };
-                                let _ = progress_task_runtime.record_activity(tid, activity);
+                            if let (Some(ref tid), Some((ref default_worker, ref stg_id))) = (&task_id_string, &worker_tracker_for_progress) {
+                                let tracker = WorkerTracker::new(
+                                    tid.clone(),
+                                    stg_id.clone(),
+                                    progress.worker.clone().unwrap_or_else(|| default_worker.clone()),
+                                    progress_task_runtime.clone(),
+                                );
+                                let op = progress.operation.clone().unwrap_or_else(|| "processing".to_string());
+                                tracker.report(op, progress.current, progress.total, progress.path.clone());
                             }
                         });
 
@@ -710,8 +702,8 @@ impl AppService {
                         )
                         .await;
 
-                    if let Some(task_id) = task_id {
-                        let _ = task_runtime.remove_activity(task_id, &stage_id, &worker_id);
+                    if let Some(tracker) = worker_tracker {
+                        tracker.complete();
                     }
 
                     let completed =
@@ -730,25 +722,14 @@ impl AppService {
                         }
                         Ok(None) => {}
                         Err(error) => {
+                            if let Some(guard) = stage_guard.as_mut() {
+                                guard.record_failure(
+                                    "ADAPTER_SOURCE_ERROR",
+                                    error.to_string(),
+                                    false,
+                                );
+                            }
                             if params.source_id.is_some() {
-                                if let Some(task_id) = task_id {
-                                    let _ = task_runtime.finish_stage(
-                                        task_id,
-                                        &stage_id,
-                                        StageStatus::Failed,
-                                        Vec::new(),
-                                        vec![TaskFailure {
-                                            code: "ADAPTER_SOURCE_ERROR".to_string(),
-                                            message: error.to_string(),
-                                            stage: stage_id.clone(),
-                                            identity: Some(format!("{}:{}", adapter_id, source.id)),
-                                            retryable: false,
-                                            path: None,
-                                            timestamp: chrono::Utc::now().to_rfc3339(),
-                                        }],
-                                        Vec::new(),
-                                    );
-                                }
                                 return Err(error);
                             }
                             group_errors.push(json!({
@@ -760,37 +741,8 @@ impl AppService {
                     }
                 }
 
-                if let Some(task_id) = task_id {
-                    let (status, failures) = if group_errors.is_empty() {
-                        (StageStatus::Succeeded, Vec::new())
-                    } else {
-                        let failures = group_errors
-                            .iter()
-                            .map(|err| TaskFailure {
-                                code: "ADAPTER_SOURCE_ERROR".to_string(),
-                                message: err
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("未知错误")
-                                    .to_string(),
-                                stage: stage_id.clone(),
-                                identity: Some(adapter_id.clone()),
-                                retryable: false,
-                                path: None,
-                                timestamp: chrono::Utc::now().to_rfc3339(),
-                            })
-                            .collect::<Vec<_>>();
-                        (StageStatus::Failed, failures)
-                    };
-                    let _ = task_runtime.finish_stage(
-                        task_id,
-                        &stage_id,
-                        status,
-                        Vec::new(),
-                        failures,
-                        Vec::new(),
-                    );
-                }
+                // 阶段离开作用域时由 StageGuard 自动以 Succeeded / Failed 闭环并自动清理 activities
+                drop(stage_guard);
 
                 Ok((group_results, group_errors))
             });

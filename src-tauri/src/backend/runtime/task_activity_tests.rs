@@ -14,14 +14,14 @@ async fn worker_tracker_reports_and_auto_cleans_up_on_drop() {
 
     // 作用域内启动 Worker
     {
-        let tracker = WorkerTracker::new(
-            "activity-task-1",
-            "harvest",
-            "worker-0",
-            runtime.clone(),
-        );
+        let tracker = WorkerTracker::new("activity-task-1", "harvest", "worker-0", runtime.clone());
 
-        tracker.report("reading_file", Some(1), Some(10), Some("file_1.json".to_string()));
+        tracker.report(
+            "reading_file",
+            Some(1),
+            Some(10),
+            Some("file_1.json".to_string()),
+        );
 
         let snap = runtime.get("activity-task-1").expect("snapshot exists");
         let stage = snap.stages.iter().find(|s| s.id == "harvest").unwrap();
@@ -49,13 +49,8 @@ async fn worker_tracker_throttled_reporting_keeps_latest_in_memory() {
 
     let _stage = context.enter_stage("process");
 
-    let tracker = WorkerTracker::new(
-        "throttle-task-1",
-        "process",
-        "worker-fast",
-        runtime.clone(),
-    )
-    .with_throttle_interval(Duration::from_millis(50));
+    let tracker = WorkerTracker::new("throttle-task-1", "process", "worker-fast", runtime.clone())
+        .with_throttle_interval(Duration::from_millis(50));
 
     // 高频连续上报 20 次
     for i in 1..=20 {
@@ -73,7 +68,11 @@ async fn worker_tracker_throttled_reporting_keeps_latest_in_memory() {
     tracker.complete();
 
     let snap_after = runtime.get("throttle-task-1").expect("snapshot exists");
-    let stage_after = snap_after.stages.iter().find(|s| s.id == "process").unwrap();
+    let stage_after = snap_after
+        .stages
+        .iter()
+        .find(|s| s.id == "process")
+        .unwrap();
     assert!(stage_after.current_activities.is_empty());
 }
 
@@ -100,7 +99,11 @@ async fn stage_guard_activity_facade_and_auto_clear_on_stage_finish() {
 
             // 阶段结束后，活跃 worker 自动移出，但进度、指标和跳过保留
             let snap_after = context.runtime().get(context.task_id()).unwrap();
-            let stage_after = snap_after.stages.iter().find(|s| s.id == "bulk_index").unwrap();
+            let stage_after = snap_after
+                .stages
+                .iter()
+                .find(|s| s.id == "bulk_index")
+                .unwrap();
             assert!(stage_after.current_activities.is_empty());
             assert_eq!(stage_after.status, StageStatus::Succeeded);
             assert_eq!(stage_after.metrics.len(), 1);
@@ -129,8 +132,18 @@ async fn worker_tracker_concurrent_multiple_workers() {
     let tracker_a = guard.worker("worker-A");
     let tracker_b = guard.worker("worker-B");
 
-    tracker_a.report("downloading", Some(10), Some(100), Some("part1.bin".to_string()));
-    tracker_b.report("processing", Some(50), Some(100), Some("part2.bin".to_string()));
+    tracker_a.report(
+        "downloading",
+        Some(10),
+        Some(100),
+        Some("part1.bin".to_string()),
+    );
+    tracker_b.report(
+        "processing",
+        Some(50),
+        Some(100),
+        Some("part2.bin".to_string()),
+    );
 
     let snap = runtime.get("concurrent-task").unwrap();
     let stage = snap.stages.iter().find(|s| s.id == "multi_worker").unwrap();
@@ -140,7 +153,11 @@ async fn worker_tracker_concurrent_multiple_workers() {
     tracker_a.complete();
 
     let snap_mid = runtime.get("concurrent-task").unwrap();
-    let stage_mid = snap_mid.stages.iter().find(|s| s.id == "multi_worker").unwrap();
+    let stage_mid = snap_mid
+        .stages
+        .iter()
+        .find(|s| s.id == "multi_worker")
+        .unwrap();
     assert_eq!(stage_mid.current_activities.len(), 1);
     assert_eq!(stage_mid.current_activities[0].worker_id, "worker-B");
 
@@ -148,6 +165,10 @@ async fn worker_tracker_concurrent_multiple_workers() {
     drop(guard);
 
     let snap_end = runtime.get("concurrent-task").unwrap();
-    let stage_end = snap_end.stages.iter().find(|s| s.id == "multi_worker").unwrap();
+    let stage_end = snap_end
+        .stages
+        .iter()
+        .find(|s| s.id == "multi_worker")
+        .unwrap();
     assert!(stage_end.current_activities.is_empty());
 }

@@ -15,10 +15,7 @@ use crate::backend::{
         RecentMemoryEventCategory, SessionMemory, SessionMemoryJob, SessionMemoryJobStatus,
     },
     runtime::{
-        tasks::{
-            StageStatus, TaskActivity, TaskCapabilities, TaskContext, TaskFailure, TaskMetric,
-            TaskOutcome, TaskStage,
-        },
+        tasks::{StageStatus, TaskCapabilities, TaskContext, TaskFailure, TaskOutcome},
         AppError, AppResult,
     },
     store::{
@@ -30,7 +27,6 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -298,182 +294,64 @@ impl AppService {
             return store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await;
         }
 
-        let progress = context.progress();
-        let stages = vec![
-            TaskStage {
-                id: "claim".to_string(),
-                name: "领取工作与租约".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-            TaskStage {
-                id: "load_facts".to_string(),
-                name: "加载上下文与事实".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-            TaskStage {
-                id: "agent_execution".to_string(),
-                name: "调用 Agent 提取".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-            TaskStage {
-                id: "validation".to_string(),
-                name: "校验记忆卡片".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-            TaskStage {
-                id: "publish".to_string(),
-                name: "持久化与发布".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-            TaskStage {
-                id: "cleanup_session".to_string(),
-                name: "清理 Agent 会话".to_string(),
-                status: StageStatus::Pending,
-                started_at: None,
-                finished_at: None,
-                duration_ms: None,
-                progress: None,
-                current_activities: Vec::new(),
-                metrics: Vec::new(),
-                failures: Vec::new(),
-                skipped: Vec::new(),
-                agent_session_ref: None,
-            },
-        ];
-        progress.set_stages(stages);
+        let pipeline = crate::backend::runtime::PipelineDescriptor::builder()
+            .stage("claim", "领取工作与租约")
+            .stage("load_facts", "加载上下文与事实")
+            .stage("agent_execution", "调用 Agent 提取")
+            .stage("validation", "校验记忆卡片")
+            .stage("publish", "持久化与发布")
+            .stage("cleanup_session", "清理 Agent 会话")
+            .build();
+        context.progress().set_stages(pipeline.to_initial_stages());
 
         let worker_id = format!("memory:{}", job_id);
-        progress.update_stage_status("claim", StageStatus::Running);
-        progress.record_activity(TaskActivity {
-            stage_id: "claim".to_string(),
-            worker_id: worker_id.clone(),
-            operation: "claim_lease".to_string(),
-            path: None,
-            display_path: None,
-            started_at: Utc::now().to_rfc3339(),
-            current: Some(0),
-            total: None,
-        });
+        let (detail, registered_roots, ownership_token, job) = {
+            let mut guard = context.enter_stage("claim");
+            let worker = guard.worker(&worker_id);
+            worker.report("claim_lease", Some(0), None, None);
 
-        let detail =
-            store::load_conversation_session_detail_sqlx(&pool, tenant_id, &job.session_id).await?;
-        let roots = store::load_sources_sqlx(&pool, tenant_id)
-            .await?
-            .into_iter()
-            .filter_map(|source| source.repo_root)
-            .collect::<Vec<_>>();
-        let registered_roots = roots;
+            let detail =
+                store::load_conversation_session_detail_sqlx(&pool, tenant_id, &job.session_id)
+                    .await?;
+            let roots = store::load_sources_sqlx(&pool, tenant_id)
+                .await?
+                .into_iter()
+                .filter_map(|source| source.repo_root)
+                .collect::<Vec<_>>();
+            let registered_roots = roots;
 
-        let completed = session_has_completion_signal(&detail);
-        let idle_ready = session_idle_ready(&detail, now);
-        if !completed && !idle_ready {
-            progress.finish_stage(
-                "claim",
-                StageStatus::Skipped,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
-            progress.remove_activity("claim", &worker_id);
-            return Ok(None);
-        }
-        let ownership_token = format!("session-memory-owner-{}", Uuid::new_v4());
-        let claimed = store::claim_session_memory_job_with_lease_sqlx(
-            &pool,
-            tenant_id,
-            job_id,
-            &now_text,
-            completed,
-            &ownership_token,
-            store::SESSION_MEMORY_JOB_LEASE,
-        )
-        .await?;
-        let Some(job) = claimed else {
-            progress.finish_stage(
-                "claim",
-                StageStatus::Skipped,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
-            progress.remove_activity("claim", &worker_id);
-            return Ok(None);
+            let completed = session_has_completion_signal(&detail);
+            let idle_ready = session_idle_ready(&detail, now);
+            if !completed && !idle_ready {
+                guard.skip("not_ready", "会话未完成且未达到空闲阈值");
+                return Ok(None);
+            }
+            let ownership_token = format!("session-memory-owner-{}", Uuid::new_v4());
+            let claimed = store::claim_session_memory_job_with_lease_sqlx(
+                &pool,
+                tenant_id,
+                job_id,
+                &now_text,
+                completed,
+                &ownership_token,
+                store::SESSION_MEMORY_JOB_LEASE,
+            )
+            .await?;
+            let Some(job) = claimed else {
+                guard.skip("lease_conflict", "工作项已被其他 Worker 认领");
+                return Ok(None);
+            };
+
+            (detail, registered_roots, ownership_token, job)
         };
-        progress.finish_stage(
-            "claim",
-            StageStatus::Succeeded,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
-        progress.remove_activity("claim", &worker_id);
-        progress.progress(0, Some(3), Some("claimed"));
+        context.progress().progress(0, Some(3), Some("claimed"));
 
         // Stage 2: load_facts
-        progress.update_stage_status("load_facts", StageStatus::Running);
-        progress.record_activity(TaskActivity {
-            stage_id: "load_facts".to_string(),
-            worker_id: worker_id.clone(),
-            operation: "load_conversation_facts".to_string(),
-            path: None,
-            display_path: None,
-            started_at: Utc::now().to_rfc3339(),
-            current: Some(1),
-            total: Some(1),
-        });
-        progress.finish_stage(
-            "load_facts",
-            StageStatus::Succeeded,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
-        progress.remove_activity("load_facts", &worker_id);
+        {
+            let guard = context.enter_stage("load_facts");
+            let worker = guard.worker(&worker_id);
+            worker.report("load_conversation_facts", Some(1), Some(1), None);
+        }
 
         let lease_guard = SessionMemoryLeaseGuard::start(
             self.db.clone(),
@@ -485,76 +363,267 @@ impl AppService {
 
         // Stage 3: agent_execution
         let session_ref = AgentSessionRef::new(format!("sm-{}", job.id));
-        progress.set_stage_agent_session_ref("agent_execution", Some(session_ref.clone()));
-        progress.update_stage_status("agent_execution", StageStatus::Running);
-        progress.record_activity(TaskActivity {
-            stage_id: "agent_execution".to_string(),
-            worker_id: worker_id.clone(),
-            operation: "extract_session_memory".to_string(),
-            path: None,
-            display_path: None,
-            started_at: Utc::now().to_rfc3339(),
-            current: Some(0),
-            total: None,
-        });
+        let execution = {
+            let mut guard = context.enter_stage("agent_execution");
+            guard.set_agent_session_ref(Some(session_ref.clone()));
+            let worker = guard.worker(&worker_id);
+            worker.report("extract_session_memory", Some(0), None, None);
 
-        let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
-            &crate::backend::ai_execution::composition::ActionId::new(SESSION_MEMORY_ACTION),
-            &self.app_settings_value(),
-        )
-        .map(|(id, m)| (id.to_string(), m))
-        .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
-
-        let memory_session = ActiveMemoryAgentSession::start(
-            &self.runtime,
-            MemoryAgentSessionParams {
-                tenant_id,
-                scope: "session",
-                job_id: &job.id,
-                task_id: Some(context.task_id()),
-                agent_id: &agent_id,
-                display_name: Some("Session Memory Agent".to_string()),
-                model,
-                prompt_summary: "提取会话记忆与事实上下文",
-                custom_session_ref: Some(session_ref.clone()),
-                persistent: false,
-            },
-        );
-
-        let result = self
-            .execute_session_memory_agent(
-                &job,
-                &detail,
-                context.cancellation(),
-                Some(memory_session.sink.clone()),
+            let (agent_id, model) = crate::backend::ai_execution::composition::resolve_agent_for(
+                &crate::backend::ai_execution::composition::ActionId::new(SESSION_MEMORY_ACTION),
+                &self.app_settings_value(),
             )
-            .await;
-        let execution = match result {
-            Ok(output) => {
-                memory_session.finish_succeeded(&self.runtime);
-                progress.finish_stage(
-                    "agent_execution",
-                    StageStatus::Succeeded,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-                progress.remove_activity("agent_execution", &worker_id);
-                output
-            }
-            Err(error) => {
-                drop(lease_guard);
-                progress.remove_activity("agent_execution", &worker_id);
-                if context.is_cancelled() {
-                    memory_session.finish_cancelled(&self.runtime);
-                    progress.finish_stage(
+            .map(|(id, m)| (id.to_string(), m))
+            .unwrap_or_else(|_| ("builtin:assistant".to_string(), None));
+
+            let memory_session = ActiveMemoryAgentSession::start(
+                &self.runtime,
+                MemoryAgentSessionParams {
+                    tenant_id,
+                    scope: "session",
+                    job_id: &job.id,
+                    task_id: Some(context.task_id()),
+                    agent_id: &agent_id,
+                    display_name: Some("Session Memory Agent".to_string()),
+                    model,
+                    prompt_summary: "提取会话记忆与事实上下文",
+                    custom_session_ref: Some(session_ref.clone()),
+                    persistent: false,
+                },
+            );
+
+            let result = self
+                .execute_session_memory_agent(
+                    &job,
+                    &detail,
+                    context.cancellation(),
+                    Some(memory_session.sink.clone()),
+                )
+                .await;
+
+            match result {
+                Ok(output) => {
+                    memory_session.finish_succeeded(&self.runtime);
+                    worker.complete();
+                    output
+                }
+                Err(error) => {
+                    drop(worker);
+                    drop(lease_guard);
+                    if context.is_cancelled() {
+                        memory_session.finish_cancelled(&self.runtime);
+                        context.set_outcome(
+                            TaskOutcome::Canceled,
+                            None,
+                            Some("任务已被取消".to_string()),
+                        );
+                        store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text)
+                            .await?;
+                        return Err(AppError::Cancelled(
+                            "Session Memory task was canceled".to_string(),
+                        ));
+                    }
+                    let code = error
+                        .view()
+                        .code
+                        .chars()
+                        .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
+                        .collect::<String>();
+                    let failure_code = if code.is_empty() {
+                        "phase1_failed".to_string()
+                    } else {
+                        code
+                    };
+                    let retryable = is_error_retryable(&error);
+                    let safe_failure = sanitize_memory_failure(
+                        &failure_code,
+                        &error.to_string(),
                         "agent_execution",
-                        StageStatus::Canceled,
-                        Vec::new(),
-                        Vec::new(),
-                        Vec::new(),
+                        retryable,
                     );
-                    progress.set_outcome(
+                    memory_session.finish_failed(
+                        &self.runtime,
+                        &failure_code,
+                        &safe_failure.message,
+                        false,
+                    );
+                    guard.record_failure(
+                        safe_failure.code.clone(),
+                        safe_failure.message.clone(),
+                        safe_failure.retryable,
+                    );
+                    context.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
+                    store::mark_session_memory_job_failed_with_lease_sqlx(
+                        &pool,
+                        tenant_id,
+                        job_id,
+                        &ownership_token,
+                        &failure_code,
+                        &now_text,
+                        retryable,
+                    )
+                    .await?;
+                    return Err(error);
+                }
+            }
+        };
+        context
+            .progress()
+            .progress(1, Some(3), Some("agent_completed"));
+
+        // Stage 4: validation
+        let (output, persist) = {
+            let mut guard = context.enter_stage("validation");
+            if context.is_cancelled() {
+                drop(lease_guard);
+                context.set_outcome(
+                    TaskOutcome::Canceled,
+                    None,
+                    Some("任务已被取消".to_string()),
+                );
+                store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
+                return Err(AppError::Cancelled(
+                    "Session Memory task was canceled".to_string(),
+                ));
+            }
+
+            let output = if execution.is_empty {
+                SessionMemoryAgentOutput {
+                    summary: "No content available in this session.".to_string(),
+                    goal: String::new(),
+                    result: String::new(),
+                    decisions: Vec::new(),
+                    verification: Vec::new(),
+                    blockers: Vec::new(),
+                    follow_up: Vec::new(),
+                    topics: Vec::new(),
+                    source_references: Vec::new(),
+                    events: Vec::new(),
+                }
+            } else {
+                let parsed_output = parse_session_memory_agent_output(&execution.raw_text);
+                let mut parsed = match parsed_output {
+                    Ok(out) => out,
+                    Err(err) => {
+                        drop(lease_guard);
+                        let line = err.line();
+                        let column = err.column();
+                        let category = match err.classify() {
+                            serde_json::error::Category::Io => "io",
+                            serde_json::error::Category::Syntax => "syntax",
+                            serde_json::error::Category::Data => "data",
+                            serde_json::error::Category::Eof => "eof",
+                        };
+                        let raw_len = execution.raw_text.len();
+                        let raw_sha256 = digest(&execution.raw_text);
+                        let err_msg = format!(
+                            "Session Memory Agent output JSON validation failed: {err} (cat={category}, line={line}, col={column}, len={raw_len}, sha={:.8})",
+                            raw_sha256
+                        );
+                        let safe_failure = sanitize_memory_failure(
+                            "session_memory_validation_failed",
+                            &err_msg,
+                            "validation",
+                            false,
+                        );
+                        guard.record_failure(
+                            safe_failure.code.clone(),
+                            safe_failure.message.clone(),
+                            safe_failure.retryable,
+                        );
+                        context.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
+                        store::mark_session_memory_job_failed_with_lease_sqlx(
+                            &pool,
+                            tenant_id,
+                            job_id,
+                            &ownership_token,
+                            "session_memory_validation_failed",
+                            &now_text,
+                            false,
+                        )
+                        .await?;
+                        return Err(AppError::Validation(format!(
+                            "Session Memory Agent output is invalid: {err_msg}"
+                        )));
+                    }
+                };
+
+                // 准入校验与事实过滤：
+                // 1. 过滤被用户更正/否决的提案 (E02)
+                let corrections: Vec<BoundedEvidenceNode> = execution
+                    .pack
+                    .intent_and_corrections
+                    .iter()
+                    .filter(|n| n.kind == EvidenceNodeKind::UserCorrection)
+                    .cloned()
+                    .collect();
+                parsed.decisions =
+                    sanitize_decisions_with_corrections(parsed.decisions, &corrections);
+
+                // 2. 检查是否有 VerificationEvidence，无则过滤虚假通过 (E03)
+                let has_verification_evidence = execution
+                    .pack
+                    .outcomes_and_verifications
+                    .iter()
+                    .any(|n| n.kind == EvidenceNodeKind::VerificationEvidence);
+                parsed.verification = sanitize_verifications_with_evidence(
+                    parsed.verification,
+                    has_verification_evidence,
+                );
+
+                parsed
+            };
+
+            let evidence = if !execution.short_refs.is_empty() {
+                let mut refs = build_bounded_evidence_references(&detail, &execution.short_refs);
+                refs.extend(build_evidence_references(&detail));
+                refs
+            } else {
+                build_evidence_references(&detail)
+            };
+            let project_path = session_project_path(&detail, &registered_roots);
+            let persist =
+                match validated_persist_input(&job, &output, &evidence, project_path, &now_text) {
+                    Ok(persist) => persist,
+                    Err(error) => {
+                        drop(lease_guard);
+                        let safe_failure = sanitize_memory_failure(
+                            "session_memory_validation_failed",
+                            &error.to_string(),
+                            "validation",
+                            false,
+                        );
+                        guard.record_failure(
+                            safe_failure.code.clone(),
+                            safe_failure.message.clone(),
+                            safe_failure.retryable,
+                        );
+                        context.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
+                        store::mark_session_memory_job_failed_with_lease_sqlx(
+                            &pool,
+                            tenant_id,
+                            job_id,
+                            &ownership_token,
+                            "session_memory_validation_failed",
+                            &now_text,
+                            false,
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                };
+
+            (output, persist)
+        };
+        context.progress().progress(2, Some(3), Some("validated"));
+
+        // Stage 5: publish
+        {
+            let mut guard = context.enter_stage("publish");
+            if let Err(error) = store::persist_session_memory_sqlx(&pool, &persist).await {
+                drop(lease_guard);
+                if context.is_cancelled() {
+                    context.set_outcome(
                         TaskOutcome::Canceled,
                         None,
                         Some("任务已被取消".to_string()),
@@ -565,331 +634,68 @@ impl AppService {
                         "Session Memory task was canceled".to_string(),
                     ));
                 }
-                let code = error
-                    .view()
-                    .code
-                    .chars()
-                    .filter(|character| character.is_ascii_alphanumeric() || *character == '_')
-                    .collect::<String>();
-                let failure_code = if code.is_empty() {
-                    "phase1_failed".to_string()
-                } else {
-                    code
-                };
-                let retryable = is_error_retryable(&error);
                 let safe_failure = sanitize_memory_failure(
-                    &failure_code,
+                    "session_memory_persist_failed",
                     &error.to_string(),
-                    "agent_execution",
-                    retryable,
+                    "publish",
+                    true,
                 );
-                memory_session.finish_failed(
-                    &self.runtime,
-                    &failure_code,
-                    &safe_failure.message,
-                    false,
+                guard.record_failure(
+                    safe_failure.code.clone(),
+                    safe_failure.message.clone(),
+                    safe_failure.retryable,
                 );
-                progress.finish_stage(
-                    "agent_execution",
-                    StageStatus::Failed,
-                    Vec::new(),
-                    vec![safe_failure.clone()],
-                    Vec::new(),
-                );
-                progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
+                context.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
                 store::mark_session_memory_job_failed_with_lease_sqlx(
                     &pool,
                     tenant_id,
                     job_id,
                     &ownership_token,
-                    &failure_code,
+                    "session_memory_persist_failed",
                     &now_text,
-                    retryable,
+                    true,
                 )
                 .await?;
                 return Err(error);
             }
-        };
-        progress.progress(1, Some(3), Some("agent_completed"));
-        if context.is_cancelled() {
             drop(lease_guard);
-            progress.finish_stage(
-                "validation",
-                StageStatus::Canceled,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
-            progress.set_outcome(
-                TaskOutcome::Canceled,
-                None,
-                Some("任务已被取消".to_string()),
-            );
-            store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-            return Err(AppError::Cancelled(
-                "Session Memory task was canceled".to_string(),
-            ));
+            guard.record_metric("memories_created", 1);
         }
-
-        // Stage 4: validation
-        progress.update_stage_status("validation", StageStatus::Running);
-        let output = if execution.is_empty {
-            SessionMemoryAgentOutput {
-                summary: "No content available in this session.".to_string(),
-                goal: String::new(),
-                result: String::new(),
-                decisions: Vec::new(),
-                verification: Vec::new(),
-                blockers: Vec::new(),
-                follow_up: Vec::new(),
-                topics: Vec::new(),
-                source_references: Vec::new(),
-                events: Vec::new(),
-            }
-        } else {
-            let parsed_output = parse_session_memory_agent_output(&execution.raw_text);
-            let mut parsed = match parsed_output {
-                Ok(out) => out,
-                Err(err) => {
-                    drop(lease_guard);
-                    let line = err.line();
-                    let column = err.column();
-                    let category = match err.classify() {
-                        serde_json::error::Category::Io => "io",
-                        serde_json::error::Category::Syntax => "syntax",
-                        serde_json::error::Category::Data => "data",
-                        serde_json::error::Category::Eof => "eof",
-                    };
-                    let raw_len = execution.raw_text.len();
-                    let raw_sha256 = digest(&execution.raw_text);
-                    let err_msg = format!(
-                        "Session Memory Agent output JSON validation failed: {err} (cat={category}, line={line}, col={column}, len={raw_len}, sha={:.8})",
-                        raw_sha256
-                    );
-                    let safe_failure = sanitize_memory_failure(
-                        "session_memory_validation_failed",
-                        &err_msg,
-                        "validation",
-                        false,
-                    );
-                    progress.finish_stage(
-                        "validation",
-                        StageStatus::Failed,
-                        Vec::new(),
-                        vec![safe_failure.clone()],
-                        Vec::new(),
-                    );
-                    progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
-                    store::mark_session_memory_job_failed_with_lease_sqlx(
-                        &pool,
-                        tenant_id,
-                        job_id,
-                        &ownership_token,
-                        "session_memory_validation_failed",
-                        &now_text,
-                        false,
-                    )
-                    .await?;
-                    return Err(AppError::Validation(format!(
-                        "Session Memory Agent output is invalid: {err_msg}"
-                    )));
-                }
-            };
-
-            // 准入校验与事实过滤：
-            // 1. 过滤被用户更正/否决的提案 (E02)
-            let corrections: Vec<BoundedEvidenceNode> = execution
-                .pack
-                .intent_and_corrections
-                .iter()
-                .filter(|n| n.kind == EvidenceNodeKind::UserCorrection)
-                .cloned()
-                .collect();
-            parsed.decisions = sanitize_decisions_with_corrections(parsed.decisions, &corrections);
-
-            // 2. 检查是否有 VerificationEvidence，无则过滤虚假通过 (E03)
-            let has_verification_evidence = execution
-                .pack
-                .outcomes_and_verifications
-                .iter()
-                .any(|n| n.kind == EvidenceNodeKind::VerificationEvidence);
-            parsed.verification = sanitize_verifications_with_evidence(
-                parsed.verification,
-                has_verification_evidence,
-            );
-
-            parsed
-        };
-
-        let evidence = if !execution.short_refs.is_empty() {
-            let mut refs = build_bounded_evidence_references(&detail, &execution.short_refs);
-            refs.extend(build_evidence_references(&detail));
-            refs
-        } else {
-            build_evidence_references(&detail)
-        };
-        let project_path = session_project_path(&detail, &registered_roots);
-        let persist =
-            match validated_persist_input(&job, &output, &evidence, project_path, &now_text) {
-                Ok(persist) => {
-                    progress.finish_stage(
-                        "validation",
-                        StageStatus::Succeeded,
-                        Vec::new(),
-                        Vec::new(),
-                        Vec::new(),
-                    );
-                    persist
-                }
-                Err(error) => {
-                    drop(lease_guard);
-                    let safe_failure = sanitize_memory_failure(
-                        "session_memory_validation_failed",
-                        &error.to_string(),
-                        "validation",
-                        false,
-                    );
-                    progress.finish_stage(
-                        "validation",
-                        StageStatus::Failed,
-                        Vec::new(),
-                        vec![safe_failure.clone()],
-                        Vec::new(),
-                    );
-                    progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
-                    store::mark_session_memory_job_failed_with_lease_sqlx(
-                        &pool,
-                        tenant_id,
-                        job_id,
-                        &ownership_token,
-                        "session_memory_validation_failed",
-                        &now_text,
-                        false,
-                    )
-                    .await?;
-                    return Err(error);
-                }
-            };
-        progress.progress(2, Some(3), Some("validated"));
-
-        // Stage 5: publish
-        progress.update_stage_status("publish", StageStatus::Running);
-        if let Err(error) = store::persist_session_memory_sqlx(&pool, &persist).await {
-            drop(lease_guard);
-            if context.is_cancelled() {
-                progress.finish_stage(
-                    "publish",
-                    StageStatus::Canceled,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-                progress.set_outcome(
-                    TaskOutcome::Canceled,
-                    None,
-                    Some("任务已被取消".to_string()),
-                );
-                store::cancel_session_memory_job_sqlx(&pool, tenant_id, job_id, &now_text).await?;
-                return Err(AppError::Cancelled(
-                    "Session Memory task was canceled".to_string(),
-                ));
-            }
-            let safe_failure = sanitize_memory_failure(
-                "session_memory_persist_failed",
-                &error.to_string(),
-                "publish",
-                true,
-            );
-            progress.finish_stage(
-                "publish",
-                StageStatus::Failed,
-                Vec::new(),
-                vec![safe_failure.clone()],
-                Vec::new(),
-            );
-            progress.set_outcome(TaskOutcome::Failure, None, Some(safe_failure.message));
-            store::mark_session_memory_job_failed_with_lease_sqlx(
-                &pool,
-                tenant_id,
-                job_id,
-                &ownership_token,
-                "session_memory_persist_failed",
-                &now_text,
-                true,
-            )
-            .await?;
-            return Err(error);
-        }
-        drop(lease_guard);
-        progress.finish_stage(
-            "publish",
-            StageStatus::Succeeded,
-            vec![TaskMetric {
-                code: "memories_created".to_string(),
-                value: 1,
-            }],
-            Vec::new(),
-            Vec::new(),
-        );
 
         // Stage 6: cleanup_session
-        progress.update_stage_status("cleanup_session", StageStatus::Running);
-        match execution.session_cleanup {
-            SessionCleanupStatus::Deleted => {
-                progress.finish_stage(
-                    "cleanup_session",
-                    StageStatus::Succeeded,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-            }
-            SessionCleanupStatus::Unsupported => {
-                tracing::warn!(
-                    action = "session_memory.cleanup_session",
-                    job_id = %job.id,
-                    "Agent backend reported session deletion unsupported; continuing with partial success"
-                );
-                progress.finish_stage(
-                    "cleanup_session",
-                    StageStatus::PartialSuccess,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-            }
-            SessionCleanupStatus::Failed(ref reason) => {
-                tracing::warn!(
-                    action = "session_memory.cleanup_session",
-                    job_id = %job.id,
-                    reason = %reason,
-                    "Agent backend reported session cleanup warning; continuing with partial success"
-                );
-                progress.finish_stage(
-                    "cleanup_session",
-                    StageStatus::PartialSuccess,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
-            }
-            SessionCleanupStatus::Skipped => {
-                progress.finish_stage(
-                    "cleanup_session",
-                    StageStatus::Skipped,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                );
+        {
+            let mut guard = context.enter_stage("cleanup_session");
+            match execution.session_cleanup {
+                SessionCleanupStatus::Deleted => {}
+                SessionCleanupStatus::Unsupported => {
+                    tracing::warn!(
+                        action = "session_memory.cleanup_session",
+                        job_id = %job.id,
+                        "Agent backend reported session deletion unsupported; continuing with partial success"
+                    );
+                    guard.finish_with_status(StageStatus::PartialSuccess);
+                }
+                SessionCleanupStatus::Failed(ref reason) => {
+                    tracing::warn!(
+                        action = "session_memory.cleanup_session",
+                        job_id = %job.id,
+                        reason = %reason,
+                        "Agent backend reported session cleanup warning; continuing with partial success"
+                    );
+                    guard.finish_with_status(StageStatus::PartialSuccess);
+                }
+                SessionCleanupStatus::Skipped => {
+                    guard.finish_with_status(StageStatus::Skipped);
+                }
             }
         }
 
-        progress.set_outcome(
+        context.set_outcome(
             TaskOutcome::Success,
             Some("会话记忆已成功生成并发布".to_string()),
             None,
         );
-        progress.progress(3, Some(3), Some("persisted"));
+        context.progress().progress(3, Some(3), Some("persisted"));
         store::load_session_memory_for_job_sqlx(&pool, tenant_id, &job).await
     }
 

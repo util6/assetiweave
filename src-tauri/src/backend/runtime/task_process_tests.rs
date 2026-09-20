@@ -27,12 +27,30 @@ echo '{"type":"result_summary","summary":"完成 5 个文件转换"}'
     assert_eq!(snap.state, TaskState::Succeeded);
     assert_eq!(snap.result_summary.as_deref(), Some("完成 5 个文件转换"));
 
-    let stage = snap.stages.iter().find(|s| s.id == "transform").expect("stage exists");
+    let stage = snap
+        .stages
+        .iter()
+        .find(|s| s.id == "transform")
+        .expect("stage exists");
     assert_eq!(stage.status, StageStatus::Succeeded);
     assert_eq!(stage.progress.as_ref().map(|p| p.current), Some(5));
     assert_eq!(stage.progress.as_ref().map(|p| p.total), Some(Some(10)));
-    assert_eq!(stage.metrics.iter().find(|m| m.code == "converted_files").map(|m| m.value), Some(5));
-    assert_eq!(stage.skipped.iter().find(|s| s.reason_code == "ignore_hidden").map(|s| s.count), Some(1));
+    assert_eq!(
+        stage
+            .metrics
+            .iter()
+            .find(|m| m.code == "converted_files")
+            .map(|m| m.value),
+        Some(5)
+    );
+    assert_eq!(
+        stage
+            .skipped
+            .iter()
+            .find(|s| s.reason_code == "ignore_hidden")
+            .map(|s| s.count),
+        Some(1)
+    );
     // 阶段完成后活跃活动已被清空
     assert!(stage.current_activities.is_empty());
 }
@@ -53,9 +71,17 @@ async fn process_runner_handles_non_zero_exit_code() {
     let snap = runtime.get("proc-task-fail").expect("snapshot exists");
     assert_eq!(snap.state, TaskState::Failed);
 
-    let stage = snap.stages.iter().find(|s| s.id == "build").expect("stage exists");
+    let stage = snap
+        .stages
+        .iter()
+        .find(|s| s.id == "build")
+        .expect("stage exists");
     assert_eq!(stage.status, StageStatus::Failed);
-    let failure = stage.failures.iter().find(|f| f.code == "process_exit_error").expect("failure exists");
+    let failure = stage
+        .failures
+        .iter()
+        .find(|f| f.code == "process_exit_error")
+        .expect("failure exists");
     assert!(failure.message.contains("42"));
 }
 
@@ -83,6 +109,10 @@ async fn process_runner_kills_child_process_on_cancellation() {
     let snap = runtime.get("proc-task-cancel").expect("snapshot exists");
     assert_eq!(snap.state, TaskState::Canceled);
 
-    let stage = snap.stages.iter().find(|s| s.id == "long_job").expect("stage exists");
+    let stage = snap
+        .stages
+        .iter()
+        .find(|s| s.id == "long_job")
+        .expect("stage exists");
     assert_eq!(stage.status, StageStatus::Canceled);
 }
