@@ -520,7 +520,7 @@ where
         // 无候选、无变更时：Agent 调用严格为 0 次！直接返回现有视图
         let view = load_l2_project_memory_view(pool, tenant_id, project_key).await?;
         if let Some((job_id, ownership_token)) = job_lease {
-            let completed = store::finish_memory_v2_maintenance_job_sqlx(
+            let completed = store::finish_memory_maintenance_job_sqlx(
                 pool,
                 tenant_id,
                 job_id,
@@ -534,7 +534,7 @@ where
             .await?;
             if !completed {
                 return Err(AppError::Conflict(
-                    "memory v2 maintenance lease is no longer owned".to_string(),
+                    "memory maintenance lease is no longer owned".to_string(),
                 ));
             }
         }
@@ -562,7 +562,7 @@ where
             // 输入指纹完全相同：跳过 Agent 调用 (0 Agent calls)
             let view = load_l2_project_memory_view(pool, tenant_id, project_key).await?;
             if let Some((job_id, ownership_token)) = job_lease {
-                let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                let completed = store::finish_memory_maintenance_job_sqlx(
                     pool,
                     tenant_id,
                     job_id,
@@ -576,7 +576,7 @@ where
                 .await?;
                 if !completed {
                     return Err(AppError::Conflict(
-                        "memory v2 maintenance lease is no longer owned".to_string(),
+                        "memory maintenance lease is no longer owned".to_string(),
                     ));
                 }
             }
@@ -1028,7 +1028,7 @@ where
     .map_err(AppError::external)?;
 
     if let Some((job_id, ownership_token)) = job_lease {
-        let completed = store::complete_memory_v2_maintenance_job_tx(
+        let completed = store::complete_memory_maintenance_job_tx(
             &mut tx,
             tenant_id,
             job_id,
@@ -1038,7 +1038,7 @@ where
         .await?;
         if !completed {
             return Err(AppError::Conflict(
-                "memory v2 maintenance lease is no longer owned".to_string(),
+                "memory maintenance lease is no longer owned".to_string(),
             ));
         }
     }

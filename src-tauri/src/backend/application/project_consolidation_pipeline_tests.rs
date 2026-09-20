@@ -494,7 +494,7 @@ async fn test_m35_l2_06_zero_candidates_triggers_zero_agent_calls() {
 }
 
 #[tokio::test]
-async fn test_memory_v2_frozen_project_input_rejects_changed_sqlite_evidence() {
+async fn test_memory_frozen_project_input_rejects_changed_sqlite_evidence() {
     let (service, _root) = setup_test_service().await;
     let pool = service.db.pool();
     let lock_map = ProjectConsolidationLockMap::new();

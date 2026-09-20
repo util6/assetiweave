@@ -776,7 +776,7 @@ function StageCard({
                     ) : null}
                   </div>
 
-                  {act.current && act.total ? (
+                  {act.current != null && act.total != null ? (
                     <span className="shrink-0 text-outline">
                       {act.current} / {act.total}
                     </span>

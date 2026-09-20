@@ -737,7 +737,7 @@ where
     if !should_trigger {
         let view = get_global_memory_l3_view(pool, tenant_id).await?;
         if let Some((job_id, ownership_token)) = job_lease {
-            let completed = store::finish_memory_v2_maintenance_job_sqlx(
+            let completed = store::finish_memory_maintenance_job_sqlx(
                 pool,
                 tenant_id,
                 job_id,
@@ -751,7 +751,7 @@ where
             .await?;
             if !completed {
                 return Err(AppError::Conflict(
-                    "memory v2 maintenance lease is no longer owned".to_string(),
+                    "memory maintenance lease is no longer owned".to_string(),
                 ));
             }
         }
@@ -797,7 +797,7 @@ where
         if prev == &input_fingerprint && !is_manual_rebuild {
             let view = get_global_memory_l3_view(pool, tenant_id).await?;
             if let Some((job_id, ownership_token)) = job_lease {
-                let completed = store::finish_memory_v2_maintenance_job_sqlx(
+                let completed = store::finish_memory_maintenance_job_sqlx(
                     pool,
                     tenant_id,
                     job_id,
@@ -811,7 +811,7 @@ where
                 .await?;
                 if !completed {
                     return Err(AppError::Conflict(
-                        "memory v2 maintenance lease is no longer owned".to_string(),
+                        "memory maintenance lease is no longer owned".to_string(),
                     ));
                 }
             }
@@ -1263,7 +1263,7 @@ where
     .map_err(AppError::external)?;
 
     if let Some((job_id, ownership_token)) = job_lease {
-        let completed = store::complete_memory_v2_maintenance_job_tx(
+        let completed = store::complete_memory_maintenance_job_tx(
             &mut tx,
             tenant_id,
             job_id,
@@ -1273,7 +1273,7 @@ where
         .await?;
         if !completed {
             return Err(AppError::Conflict(
-                "memory v2 maintenance lease is no longer owned".to_string(),
+                "memory maintenance lease is no longer owned".to_string(),
             ));
         }
     }

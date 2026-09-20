@@ -46,4 +46,4 @@ description: AssetIWeave 后台记忆提取与结构化沉淀生成模板
 优先消费 Work Order 首包中已下发的有界证据；仅在存在关键缺失信息时，按需调用有界读取工具补读证据片段。
 
 ## 9. 输出要求
-严格只返回符合 `MemoryGenerationResultV2` JSON Schema 的纯 JSON 对象，严禁包含任何 Markdown 格式包裹、代码块反引号或解释文字。
+严格只返回符合 `MemoryGenerationResult` JSON Schema 的纯 JSON 对象，严禁包含任何 Markdown 格式包裹、代码块反引号或解释文字。

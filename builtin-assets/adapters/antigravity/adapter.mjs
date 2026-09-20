@@ -34,15 +34,17 @@ function fail(message) {
 }
 
 function emitProgress(progress = {}) {
+  const p = {
+    stage: progress.stage ?? "reading",
+    operation: progress.operation ?? "scanning",
+    worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+    path: progress.path,
+    current: progress.current,
+    total: progress.total,
+  };
   emit("progress", {
-    progress: {
-      stage: progress.stage ?? "reading",
-      operation: progress.operation ?? "scanning",
-      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
-      path: progress.path,
-      current: progress.current,
-      total: progress.total,
-    },
+    ...p,
+    progress: p,
   });
 }
 
@@ -861,6 +863,11 @@ function getProtoTimestamp(top) {
 }
 
 function parseSqliteSteps(dbPath) {
+  emitProgress({
+    stage: "scan",
+    operation: "query_sqlite_steps",
+    path: `${path.basename(dbPath)}: SELECT idx, step_type, hex(step_payload) FROM steps`,
+  });
   let rows = [];
   try {
     const raw = execFileSync("sqlite3", ["-json", dbPath, "SELECT idx, step_type, hex(step_payload) as hex_payload FROM steps ORDER BY idx ASC;"], {
@@ -1188,10 +1195,17 @@ function readSession() {
     const stat = statSync(location);
     if (stat.isFile()) {
       if (location.endsWith(".db")) {
+        const externalId = path.basename(location, ".db");
+        emitProgress({
+          stage: "parse",
+          operation: "syncing_session_db",
+          path: `${externalId} (${path.basename(location)})`,
+          current: 1,
+          total: 1,
+        });
         const parsed = parseSqliteDb(location);
         const turns = displayTurns(parsed.turns);
         if (!turns.length) return [];
-        const externalId = path.basename(location, ".db");
         return [applyTextBudgets(finalizeStructuredContentCards({
           external_id: externalId,
           title: titleFromUserText(turns[0]?.user_text),
@@ -1204,6 +1218,13 @@ function readSession() {
         }))];
       }
       // Pointing to a transcript file directly
+      emitProgress({
+        stage: "parse",
+        operation: "parsing_transcript",
+        path: path.basename(location),
+        current: 1,
+        total: 1,
+      });
       const text = readFileSync(location, "utf8");
       const parsed = parseTranscript(text);
       const turns = displayTurns(parsed.turns);
@@ -1227,11 +1248,18 @@ function readSession() {
   // Check if this is a single conversation dir (contains .system_generated)
   const transcriptInDir = findTranscriptFile(location);
   if (transcriptInDir) {
+    const externalId = path.basename(location) || "antigravity-session";
+    emitProgress({
+      stage: "parse",
+      operation: "parsing_transcript",
+      path: `${externalId}/transcript.jsonl`,
+      current: 1,
+      total: 1,
+    });
     const text = readFileSync(transcriptInDir, "utf8");
     const parsed = parseTranscript(text);
     const turns = displayTurns(parsed.turns);
     if (!turns.length) return [];
-    const externalId = path.basename(location) || "antigravity-session";
     return [applyTextBudgets(finalizeStructuredContentCards({
       external_id: externalId,
       title: titleFromUserText(turns[0]?.user_text),
@@ -1245,51 +1273,84 @@ function readSession() {
   }
 
   // Brain directories: enumerate conversation subdirectories across all discovered brain directories
+  emitProgress({
+    stage: "scan",
+    operation: "discovering_brain_dirs",
+    path: path.basename(location),
+  });
   const brainDirs = discoverBrainDirs(location);
   const seenDirPaths = new Set();
   const seenExternalIds = new Set();
   const sessions = [];
 
+  const allConvDirs = [];
   for (const bDir of brainDirs) {
     const conversationDirs = discoverConversationDirs(bDir);
     for (const convDir of conversationDirs) {
       const canonicalConvDir = path.resolve(convDir);
       if (seenDirPaths.has(canonicalConvDir)) continue;
       seenDirPaths.add(canonicalConvDir);
-
-      const transcriptPath = findTranscriptFile(convDir);
-      if (!transcriptPath) continue;
-      let text;
-      try {
-        text = readFileSync(transcriptPath, "utf8");
-      } catch {
-        continue;
-      }
-      const parsed = parseTranscript(text);
-      const turns = displayTurns(parsed.turns);
-      if (!turns.length) continue;
-      const externalId = path.basename(convDir);
-      if (seenExternalIds.has(externalId)) continue;
-      seenExternalIds.add(externalId);
-
-      sessions.push(applyTextBudgets(finalizeStructuredContentCards({
-        external_id: externalId,
-        title: titleFromUserText(turns[0]?.user_text),
-        project_path: parsed.projectPath ?? inferProjectPath(turns),
-        started_at: turns[0]?.started_at ?? null,
-        updated_at: turns.at(-1)?.ended_at ?? null,
-        source_locator: transcriptPath,
-        source_fingerprint: sourceFingerprint(text),
-        turns,
-      })));
+      allConvDirs.push(convDir);
     }
   }
 
-  // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)
   const dbFiles = discoverConversationDbFiles(location);
+  const totalItems = allConvDirs.length + dbFiles.length;
+  let currentItemIdx = 0;
+
+  for (const convDir of allConvDirs) {
+    currentItemIdx += 1;
+    const transcriptPath = findTranscriptFile(convDir);
+    if (!transcriptPath) continue;
+
+    const externalId = path.basename(convDir);
+    if (seenExternalIds.has(externalId)) continue;
+
+    emitProgress({
+      stage: "parse",
+      operation: "parsing_transcript",
+      path: `${externalId}/transcript.jsonl`,
+      current: currentItemIdx,
+      total: totalItems,
+    });
+
+    let text;
+    try {
+      text = readFileSync(transcriptPath, "utf8");
+    } catch {
+      continue;
+    }
+    const parsed = parseTranscript(text);
+    const turns = displayTurns(parsed.turns);
+    if (!turns.length) continue;
+    seenExternalIds.add(externalId);
+
+    sessions.push(applyTextBudgets(finalizeStructuredContentCards({
+      external_id: externalId,
+      title: titleFromUserText(turns[0]?.user_text),
+      project_path: parsed.projectPath ?? inferProjectPath(turns),
+      started_at: turns[0]?.started_at ?? null,
+      updated_at: turns.at(-1)?.ended_at ?? null,
+      source_locator: transcriptPath,
+      source_fingerprint: sourceFingerprint(text),
+      turns,
+    })));
+  }
+
+  // Conversation DB files (e.g. Antigravity ACP or standalone sqlite conversations)
   for (const dbPath of dbFiles) {
+    currentItemIdx += 1;
     const externalId = path.basename(dbPath, ".db");
     if (seenExternalIds.has(externalId)) continue;
+
+    emitProgress({
+      stage: "parse",
+      operation: "syncing_session_db",
+      path: `${externalId} (${path.basename(dbPath)})`,
+      current: currentItemIdx,
+      total: totalItems,
+    });
+
     try {
       const parsed = parseSqliteDb(dbPath);
       const turns = displayTurns(parsed.turns);

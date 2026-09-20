@@ -5,7 +5,7 @@ use crate::backend::{
         AiExecutionPurpose, AiExecutionRequest,
     },
     dto::{MemoryProjectView, MemoryRebuildResult, MemoryTaskView},
-    models::{GlobalConsolidationInput, MemoryWorkOrderV2, ProjectConsolidationInput},
+    models::{GlobalConsolidationInput, MemoryWorkOrder, ProjectConsolidationInput},
     runtime::tasks::{CancelOutcome, TaskFilter, TaskKind, TaskState},
     store,
 };
@@ -63,7 +63,7 @@ impl AppService {
         &self,
         project_key: &str,
         project_path: Option<&str>,
-        work_order: MemoryWorkOrderV2,
+        work_order: MemoryWorkOrder,
         skill_text: String,
         cancellation: CancellationToken,
         maintenance_lease: Option<(&str, &str)>,
@@ -175,7 +175,7 @@ impl AppService {
     pub(crate) async fn reconcile_global_consolidation_with_agent(
         &self,
         now: chrono::DateTime<chrono::Utc>,
-        work_order: MemoryWorkOrderV2,
+        work_order: MemoryWorkOrder,
         skill_text: String,
         cancellation: CancellationToken,
         maintenance_lease: Option<(&str, &str)>,
@@ -286,8 +286,8 @@ impl AppService {
     /// 重建 Markdown 投影文件 (M35-PROJ-01 ~ M35-PROJ-03)
     pub(crate) async fn rebuild_markdown_projections(
         &self,
-    ) -> AppResult<crate::backend::application::memory_projection_v2::MemoryProjectionPaths> {
-        crate::backend::application::memory_projection_v2::rebuild_markdown_projections(
+    ) -> AppResult<crate::backend::application::memory_projection::MemoryProjectionPaths> {
+        crate::backend::application::memory_projection::rebuild_markdown_projections(
             self.db.pool(),
             self.tenant_id(),
             None,
@@ -301,7 +301,7 @@ impl AppService {
         retention_days: i64,
     ) -> AppResult<usize> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
-        crate::backend::application::memory_projection_v2::purge_stale_recent_memory_snapshots(
+        crate::backend::application::memory_projection::purge_stale_recent_memory_snapshots(
             self.db.pool(),
             self.tenant_id(),
             cutoff,
@@ -338,7 +338,7 @@ impl AppService {
             || params.scope.session_id.is_some();
         if narrow_scope {
             return Err(AppError::Validation(
-                "Memory v2 rebuild does not support app/source/session scopes".to_string(),
+                "Memory rebuild does not support app/source/session scopes".to_string(),
             ));
         }
         if matches!(params.reason, Some(MemoryRebuildReason::ProjectionRepair)) {
@@ -388,7 +388,7 @@ impl AppService {
                         &now.to_rfc3339(),
                     )
                     .await?;
-                    scheduled_task_ids.push(format!("memory-v2-recent-{job_id}"));
+                    scheduled_task_ids.push(format!("memory-recent-{job_id}"));
                 }
                 self.reconcile_recent_memory_jobs_for_tenant_at(self.tenant_id(), now)
                     .await?;
@@ -456,13 +456,12 @@ impl AppService {
                         &now.to_rfc3339(),
                     )
                     .await?;
-                    scheduled_task_ids.push(format!("memory-v2-recent-{job_id}"));
+                    scheduled_task_ids.push(format!("memory-recent-{job_id}"));
                 }
                 self.reconcile_recent_memory_jobs_for_tenant_at(self.tenant_id(), now)
                     .await?;
                 for project_path in
-                    store::list_memory_v2_project_paths_sqlx(self.db.pool(), self.tenant_id())
-                        .await?
+                    store::list_memory_project_paths_sqlx(self.db.pool(), self.tenant_id()).await?
                 {
                     scheduled_task_ids.extend(
                         self.schedule_project_memory_rebuild(&project_path, now)
@@ -560,7 +559,7 @@ impl AppService {
             .and_then(Value::as_str);
         if matches!(domain, "project_memory" | "global_memory") && maintenance_job_id.is_some() {
             let maintenance_job_id = maintenance_job_id.expect("checked above");
-            let changed = store::retry_memory_v2_maintenance_job_sqlx(
+            let changed = store::retry_memory_maintenance_job_sqlx(
                 self.db.pool(),
                 &tenant_id,
                 maintenance_job_id,
@@ -573,7 +572,7 @@ impl AppService {
                 ));
             }
             let _ = self.runtime.task_runtime().remove_terminal(&params.task_id);
-            self.reconcile_memory_v2_maintenance_jobs_for_tenant_at(&tenant_id, Utc::now())
+            self.reconcile_memory_maintenance_jobs_for_tenant_at(&tenant_id, Utc::now())
                 .await?;
             return self
                 .get_memory_task_view(MemoryTaskGetParams {

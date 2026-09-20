@@ -626,7 +626,31 @@ fn adapter_protocol_progress_parsing_and_sanitization() {
         .contains('\0'));
     assert!(!sanitized_injection.worker.as_ref().unwrap().contains('<'));
 
-    // 5. Legacy adapter with NO progress lines works 100% identically
+    // 5. Nested progress payload is correctly extracted and sanitized
+    let nested_line: ExternalAdapterLine = serde_json::from_value(json!({
+        "type": "progress",
+        "progress": {
+            "stage": "parse",
+            "operation": "parsing_session_file",
+            "path": "rollout.jsonl",
+            "current": 5,
+            "total": 10,
+            "worker": "worker-1"
+        }
+    }))
+    .expect("deserialize nested progress");
+    let sanitized_nested = sanitize_adapter_progress(&nested_line);
+    assert_eq!(sanitized_nested.stage.as_deref(), Some("parse"));
+    assert_eq!(
+        sanitized_nested.operation.as_deref(),
+        Some("parsing_session_file")
+    );
+    assert_eq!(sanitized_nested.path.as_deref(), Some("rollout.jsonl"));
+    assert_eq!(sanitized_nested.current, Some(5));
+    assert_eq!(sanitized_nested.total, Some(10));
+    assert_eq!(sanitized_nested.worker.as_deref(), Some("worker-1"));
+
+    // 6. Legacy adapter with NO progress lines works 100% identically
     let legacy_output = format!(
         "{}\n{}",
         json!({ "type": "item", "item": { "kind": "session_descriptor", "external_id": "sess-legacy", "version_token": "v0", "updated_at": "2026-01-01T00:00:00Z" } }),

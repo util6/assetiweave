@@ -554,5 +554,5 @@ pub(crate) async fn purge_stale_recent_memory_snapshots(
 }
 
 #[cfg(test)]
-#[path = "memory_projection_v2_tests.rs"]
+#[path = "memory_projection_tests.rs"]
 pub(crate) mod tests;

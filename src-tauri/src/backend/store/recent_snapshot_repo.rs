@@ -361,7 +361,7 @@ pub(crate) async fn record_recent_memory_attempt_task_sqlx(
     Ok(())
 }
 
-pub(crate) async fn list_memory_v2_project_paths_sqlx(
+pub(crate) async fn list_memory_project_paths_sqlx(
     pool: &SqlitePool,
     tenant_id: &str,
 ) -> AppResult<Vec<String>> {

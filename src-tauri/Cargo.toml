@@ -10,7 +10,7 @@ default-run = "assetiweave"
 
 [lib]
 name = "assetiweave_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

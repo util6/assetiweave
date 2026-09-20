@@ -1,6 +1,6 @@
 use super::*;
 use crate::backend::models::{
-    MemoryJobPurpose, MemoryScopeV2, MemoryWindowV2, MemoryWorkOrderV2,
+    MemoryJobPurpose, MemoryWindow, MemoryWorkOrder, MemoryWorkOrderScope,
     ALLOWED_MEMORY_GENERATION_TOOLS,
 };
 
@@ -44,18 +44,18 @@ async fn test_generation_skill_lifecycle_and_work_order() {
     assert_eq!(active_binding.asset_revision, 1);
     assert!(!active_binding.content_hash.is_empty());
 
-    // 3. 构建 Work Order V2 并验证绑定
-    let work_order = MemoryWorkOrderV2::new(
+    // 3. 构建 Work Order 并验证绑定
+    let work_order = MemoryWorkOrder::new(
         "wo-001".to_string(),
         service.tenant_id().to_string(),
         MemoryJobPurpose::RecentSnapshot,
         "2026-09-15T14:00:00Z".to_string(),
-        MemoryWindowV2 {
+        MemoryWindow {
             start_utc: "2026-09-13T14:00:00Z".to_string(),
             end_utc: "2026-09-15T14:00:00Z".to_string(),
             hours: 48,
         },
-        MemoryScopeV2 {
+        MemoryWorkOrderScope {
             project_key: Some("assetiweave".to_string()),
         },
         "src-rev-hash-001".to_string(),

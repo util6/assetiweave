@@ -283,7 +283,7 @@ async fn test_m35_l3_03_zero_candidates_triggers_zero_agent_calls() {
 }
 
 #[tokio::test]
-async fn test_memory_v2_frozen_global_input_rejects_changed_sqlite_evidence() {
+async fn test_memory_frozen_global_input_rejects_changed_sqlite_evidence() {
     let (_service, pool, root) = setup_test_db().await;
     insert_l2_fixture(
         &pool,

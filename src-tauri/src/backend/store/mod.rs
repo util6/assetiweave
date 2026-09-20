@@ -6,10 +6,10 @@ mod database;
 mod deployment_repo;
 mod global_memory_repo;
 mod group_repo;
+pub(crate) mod memory_maintenance_repo;
 mod memory_recall_query_repo;
 mod memory_recall_repo;
 mod memory_usage_repo;
-pub(crate) mod memory_v2_maintenance_repo;
 mod menu_repo;
 mod mount_observation_repo;
 mod mount_repo;
@@ -78,10 +78,10 @@ pub(crate) use group_repo::{
     load_skill_group_details_by_ids_sqlx, load_skill_group_details_sqlx,
     replace_asset_group_members_sqlx, upsert_asset_group_sqlx,
 };
+pub(crate) use memory_maintenance_repo::*;
 pub(crate) use memory_recall_query_repo::list_memory_recall_question_refs_sqlx;
 pub(crate) use memory_recall_repo::*;
 pub(crate) use memory_usage_repo::*;
-pub(crate) use memory_v2_maintenance_repo::*;
 pub(crate) use menu_repo::{load_navigation_model_sqlx, save_navigation_model_sqlx};
 #[cfg(test)]
 pub(crate) use mount_observation_repo::load_asset_mount_observations_sqlx;

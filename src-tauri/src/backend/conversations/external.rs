@@ -1841,19 +1841,57 @@ fn example_session_detail() -> Value {
 }
 
 pub(crate) fn sanitize_adapter_progress(line: &ExternalAdapterLine) -> ExternalAdapterProgress {
+    let nested = line.progress.as_ref().and_then(|v| v.as_object());
+
+    let stage = line
+        .stage
+        .as_deref()
+        .or_else(|| nested.and_then(|o| o.get("stage")).and_then(|v| v.as_str()))
+        .map(|s| sanitize_progress_text(s, 64));
+
+    let operation = line
+        .operation
+        .as_deref()
+        .or_else(|| {
+            nested
+                .and_then(|o| o.get("operation"))
+                .and_then(|v| v.as_str())
+        })
+        .map(|s| sanitize_progress_text(s, 128));
+
+    let path = line
+        .path
+        .as_deref()
+        .or_else(|| nested.and_then(|o| o.get("path")).and_then(|v| v.as_str()))
+        .map(|s| sanitize_progress_path(s, 512));
+
+    let current = line.current.or_else(|| {
+        nested
+            .and_then(|o| o.get("current"))
+            .and_then(|v| v.as_u64())
+    });
+
+    let total = line
+        .total
+        .or_else(|| nested.and_then(|o| o.get("total")).and_then(|v| v.as_u64()));
+
+    let worker = line
+        .worker
+        .as_deref()
+        .or_else(|| {
+            nested
+                .and_then(|o| o.get("worker"))
+                .and_then(|v| v.as_str())
+        })
+        .map(|s| sanitize_progress_text(s, 64));
+
     ExternalAdapterProgress {
-        stage: line.stage.as_deref().map(|s| sanitize_progress_text(s, 64)),
-        operation: line
-            .operation
-            .as_deref()
-            .map(|s| sanitize_progress_text(s, 128)),
-        path: line.path.as_deref().map(|s| sanitize_progress_path(s, 512)),
-        current: line.current,
-        total: line.total,
-        worker: line
-            .worker
-            .as_deref()
-            .map(|s| sanitize_progress_text(s, 64)),
+        stage,
+        operation,
+        path,
+        current,
+        total,
+        worker,
     }
 }
 

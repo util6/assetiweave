@@ -8,7 +8,7 @@ use crate::backend::store::recent_snapshot_repo::{
 #[tokio::test(flavor = "multi_thread")]
 async fn test_recent_memory_snapshot_empty_and_fixture_ready() {
     let root = std::env::temp_dir().join(format!(
-        "assetiweave-memory-v2-snapshot-{}",
+        "assetiweave-memory-snapshot-{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&root).expect("create test root");
@@ -127,9 +127,9 @@ async fn test_recent_memory_snapshot_empty_and_fixture_ready() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_memory_v2_schema_constraints() {
+async fn test_memory_schema_constraints() {
     let root = std::env::temp_dir().join(format!(
-        "assetiweave-memory-v2-constraints-{}",
+        "assetiweave-memory-constraints-{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&root).expect("create test root");

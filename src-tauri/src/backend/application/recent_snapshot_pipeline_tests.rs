@@ -1,8 +1,8 @@
 use super::*;
 use crate::backend::dto::{RecentMemoryStatus, RecentSnapshotPublicationKind};
 use crate::backend::models::{
-    MemoryGenerationCoverageV2, MemoryGenerationItemV2, MemoryGenerationProjectV2,
-    MemoryGenerationResultV2, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
+    MemoryGenerationCoverage, MemoryGenerationItem, MemoryGenerationProject,
+    MemoryGenerationResult, MemoryItemCategory, MemoryItemStatus, MemoryPromotionNomination,
 };
 use chrono::TimeZone;
 use std::fs;
@@ -197,14 +197,14 @@ fn frozen_source_reference_aliases_resolve_to_the_persistent_locator() {
 
 #[test]
 fn agent_result_normalization_drops_unassigned_promotion_nomination() {
-    let mut result = MemoryGenerationResultV2 {
+    let mut result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: "unassigned".to_string(),
             summary: "Summary".to_string(),
             no_material_change: false,
             source_sessions: vec!["s1".to_string()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: None,
                 category: MemoryItemCategory::Research,
                 status: MemoryItemStatus::Verified,
@@ -217,7 +217,7 @@ fn agent_result_normalization_drops_unassigned_promotion_nomination() {
                 promotion_nomination: MemoryPromotionNomination::ResearchConclusion,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2::default(),
+        coverage: MemoryGenerationCoverage::default(),
         unknowns: Vec::new(),
     };
 
@@ -466,16 +466,16 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
     let ref2 = &candidates[1].short_ref;
 
     // Gate 1: Coverage Incomplete (omitted s2)
-    let incomplete_result = MemoryGenerationResultV2 {
+    let incomplete_result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: candidates[0].project_key.clone(),
             summary: "Summary".to_string(),
             no_material_change: false,
             source_sessions: vec![ref1.clone()],
             items: vec![],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![ref1.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -499,10 +499,10 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
     assert!(state.latest_attempt_error.is_some());
 
     // Gate 2: Budget exhausted
-    let budget_exhausted_result = MemoryGenerationResultV2 {
+    let budget_exhausted_result = MemoryGenerationResult {
         schema_version: 2,
         projects: vec![],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![ref1.clone(), ref2.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -516,14 +516,14 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
     assert!(err.to_string().contains("budget exhausted"));
 
     // Gate 3: Invalid reference key
-    let invalid_ref_result = MemoryGenerationResultV2 {
+    let invalid_ref_result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: candidates[0].project_key.clone(),
             summary: "Summary".to_string(),
             no_material_change: false,
             source_sessions: vec![ref1.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: None,
                 category: MemoryItemCategory::Progress,
                 status: MemoryItemStatus::Active,
@@ -536,7 +536,7 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![ref1.clone(), ref2.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -550,15 +550,15 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
     assert!(err.to_string().contains("Unknown source reference"));
 
     // Gate 4: Duplicate recommendation rank
-    let duplicate_rank_result = MemoryGenerationResultV2 {
+    let duplicate_rank_result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: candidates[0].project_key.clone(),
             summary: "Summary".to_string(),
             no_material_change: false,
             source_sessions: vec![ref1.clone()],
             items: vec![
-                MemoryGenerationItemV2 {
+                MemoryGenerationItem {
                     continues_item_id: None,
                     category: MemoryItemCategory::Decision,
                     status: MemoryItemStatus::Verified,
@@ -570,7 +570,7 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
                     source_refs: vec![ref1.clone()],
                     promotion_nomination: MemoryPromotionNomination::None,
                 },
-                MemoryGenerationItemV2 {
+                MemoryGenerationItem {
                     continues_item_id: None,
                     category: MemoryItemCategory::FollowUp,
                     status: MemoryItemStatus::Active,
@@ -584,7 +584,7 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
                 },
             ],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![ref1.clone(), ref2.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -599,22 +599,22 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
 
     let expected_alpha_key = resolve_project_directory("/tmp/alpha-project", &[])
         .unwrap_or_else(|| "/tmp/alpha-project".to_string());
-    let unassigned_nomination_result = MemoryGenerationResultV2 {
+    let unassigned_nomination_result = MemoryGenerationResult {
         schema_version: 2,
         projects: vec![
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: expected_alpha_key.clone(),
                 summary: "Alpha summary".to_string(),
                 no_material_change: false,
                 source_sessions: vec![ref1.clone()],
                 items: vec![],
             },
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: "unassigned".to_string(),
                 summary: "Unassigned summary".to_string(),
                 no_material_change: false,
                 source_sessions: vec![ref2.clone()],
-                items: vec![MemoryGenerationItemV2 {
+                items: vec![MemoryGenerationItem {
                     continues_item_id: None,
                     category: MemoryItemCategory::Decision,
                     status: MemoryItemStatus::Verified,
@@ -628,7 +628,7 @@ async fn test_recent_snapshot_pipeline_quality_gates() {
                 }],
             },
         ],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![ref1.clone(), ref2.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -667,16 +667,16 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
         .find(|c| c.project_key == "unassigned")
         .unwrap();
 
-    let valid_result = MemoryGenerationResultV2 {
+    let valid_result = MemoryGenerationResult {
         schema_version: 2,
         projects: vec![
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: expected_alpha_key.clone(),
                 summary: "Alpha project updates and next steps.".to_string(),
                 no_material_change: false,
                 source_sessions: vec![alpha_candidate.short_ref.clone()],
                 items: vec![
-                    MemoryGenerationItemV2 {
+                    MemoryGenerationItem {
                         continues_item_id: None,
                         category: MemoryItemCategory::Progress,
                         status: MemoryItemStatus::Active,
@@ -688,7 +688,7 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
                         source_refs: vec![alpha_candidate.short_ref.clone()],
                         promotion_nomination: MemoryPromotionNomination::None,
                     },
-                    MemoryGenerationItemV2 {
+                    MemoryGenerationItem {
                         continues_item_id: None,
                         category: MemoryItemCategory::Decision,
                         status: MemoryItemStatus::Verified,
@@ -702,12 +702,12 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
                     },
                 ],
             },
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: "unassigned".to_string(),
                 summary: "Unassigned exploratory sessions.".to_string(),
                 no_material_change: false,
                 source_sessions: vec![unassigned_candidate.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
+                items: vec![MemoryGenerationItem {
                     continues_item_id: None,
                     category: MemoryItemCategory::Blocker,
                     status: MemoryItemStatus::Blocked,
@@ -721,7 +721,7 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
                 }],
             },
         ],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![
                 alpha_candidate.short_ref.clone(),
                 unassigned_candidate.short_ref.clone(),
@@ -788,10 +788,10 @@ async fn test_recent_snapshot_pipeline_success_atomicity_and_preservation() {
     assert_eq!(current_snap.snapshot_id, snapshot_view.snapshot_id);
 
     // 3. Trigger a failure on subsequent pipeline run -> last success must be preserved!
-    let failing_result = MemoryGenerationResultV2 {
+    let failing_result = MemoryGenerationResult {
         schema_version: 2,
         projects: vec![],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![],
             no_memory_sessions: vec![],
             unreadable_sessions: vec!["unreadable".to_string()],
@@ -1031,15 +1031,15 @@ async fn test_dual_watermark_reuse_pipeline() {
         .find(|c| c.project_key == "unassigned")
         .unwrap();
 
-    let initial_result = MemoryGenerationResultV2 {
+    let initial_result = MemoryGenerationResult {
         schema_version: 2,
         projects: vec![
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: alpha_cand.project_key.clone(),
                 summary: "Alpha project summary.".to_string(),
                 no_material_change: false,
                 source_sessions: vec![alpha_cand.short_ref.clone()],
-                items: vec![MemoryGenerationItemV2 {
+                items: vec![MemoryGenerationItem {
                     continues_item_id: None,
                     category: MemoryItemCategory::Progress,
                     status: MemoryItemStatus::Active,
@@ -1052,7 +1052,7 @@ async fn test_dual_watermark_reuse_pipeline() {
                     promotion_nomination: MemoryPromotionNomination::ProjectDecision,
                 }],
             },
-            MemoryGenerationProjectV2 {
+            MemoryGenerationProject {
                 project_key: "unassigned".to_string(),
                 summary: "Unassigned summary.".to_string(),
                 no_material_change: true,
@@ -1060,7 +1060,7 @@ async fn test_dual_watermark_reuse_pipeline() {
                 items: vec![],
             },
         ],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![
                 alpha_cand.short_ref.clone(),
                 unassigned_cand.short_ref.clone(),
@@ -1201,14 +1201,14 @@ async fn test_l1_item_continuation_and_7_day_limit() {
         .find(|c| c.project_key != "unassigned")
         .unwrap();
 
-    let initial_result = MemoryGenerationResultV2 {
+    let initial_result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: alpha_cand.project_key.clone(),
             summary: "Initial day 0 work.".to_string(),
             no_material_change: false,
             source_sessions: vec![alpha_cand.short_ref.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: None,
                 category: MemoryItemCategory::Progress,
                 status: MemoryItemStatus::Active,
@@ -1221,7 +1221,7 @@ async fn test_l1_item_continuation_and_7_day_limit() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![alpha_cand.short_ref.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -1289,14 +1289,14 @@ async fn test_l1_item_continuation_and_7_day_limit() {
         .unwrap();
 
     // Agent continues item 1, updates status to Blocked
-    let day2_result = MemoryGenerationResultV2 {
+    let day2_result = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: alpha_cand_day2.project_key.clone(),
             summary: "Day 2 work blocked.".to_string(),
             no_material_change: false,
             source_sessions: vec![alpha_cand_day2.short_ref.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: Some(item1_id.clone()),
                 category: MemoryItemCategory::Blocker,
                 status: MemoryItemStatus::Blocked,
@@ -1309,7 +1309,7 @@ async fn test_l1_item_continuation_and_7_day_limit() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![alpha_cand_day2.short_ref.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -1411,14 +1411,14 @@ async fn test_l1_terminal_state_displays_once_and_exits() {
         .find(|c| c.project_key != "unassigned")
         .unwrap();
 
-    let res1 = MemoryGenerationResultV2 {
+    let res1 = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: beta_cand1.project_key.clone(),
             summary: "Beta active task.".to_string(),
             no_material_change: false,
             source_sessions: vec![beta_cand1.short_ref.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: None,
                 category: MemoryItemCategory::Progress,
                 status: MemoryItemStatus::Active,
@@ -1431,7 +1431,7 @@ async fn test_l1_terminal_state_displays_once_and_exits() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![beta_cand1.short_ref.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -1468,14 +1468,14 @@ async fn test_l1_terminal_state_displays_once_and_exits() {
         .find(|c| c.project_key != "unassigned")
         .unwrap();
 
-    let res2 = MemoryGenerationResultV2 {
+    let res2 = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: beta_cand2.project_key.clone(),
             summary: "Beta task completed.".to_string(),
             no_material_change: false,
             source_sessions: vec![beta_cand2.short_ref.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: Some(item_id.clone()),
                 category: MemoryItemCategory::Progress,
                 status: MemoryItemStatus::Completed,
@@ -1488,7 +1488,7 @@ async fn test_l1_terminal_state_displays_once_and_exits() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: cand2.iter().map(|c| c.short_ref.clone()).collect(),
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],
@@ -1572,14 +1572,14 @@ async fn test_source_invalidation_retires_unpromoted_l1_item() {
         .find(|c| c.project_key != "unassigned")
         .unwrap();
 
-    let res = MemoryGenerationResultV2 {
+    let res = MemoryGenerationResult {
         schema_version: 2,
-        projects: vec![MemoryGenerationProjectV2 {
+        projects: vec![MemoryGenerationProject {
             project_key: gamma_cand.project_key.clone(),
             summary: "Gamma task.".to_string(),
             no_material_change: false,
             source_sessions: vec![gamma_cand.short_ref.clone()],
-            items: vec![MemoryGenerationItemV2 {
+            items: vec![MemoryGenerationItem {
                 continues_item_id: None,
                 category: MemoryItemCategory::Progress,
                 status: MemoryItemStatus::Active,
@@ -1592,7 +1592,7 @@ async fn test_source_invalidation_retires_unpromoted_l1_item() {
                 promotion_nomination: MemoryPromotionNomination::None,
             }],
         }],
-        coverage: MemoryGenerationCoverageV2 {
+        coverage: MemoryGenerationCoverage {
             covered_sessions: vec![gamma_cand.short_ref.clone()],
             no_memory_sessions: vec![],
             unreadable_sessions: vec![],

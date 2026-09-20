@@ -677,7 +677,31 @@ impl AppService {
                                     progress_task_runtime.clone(),
                                 );
                                 let op = progress.operation.clone().unwrap_or_else(|| "processing".to_string());
-                                tracker.report(op, progress.current, progress.total, progress.path.clone());
+                                tracker.report(op.clone(), progress.current, progress.total, progress.path.clone());
+
+                                let note = match (&progress.path, &progress.operation) {
+                                    (Some(p), Some(o)) => Some(format!("{o}: {p}")),
+                                    (Some(p), None) => Some(p.clone()),
+                                    (None, Some(o)) => Some(o.clone()),
+                                    (None, None) => None,
+                                };
+                                if let (Some(curr), total_opt) = (progress.current, progress.total) {
+                                    let _ = progress_task_runtime.set_stage_progress(
+                                        tid,
+                                        stg_id,
+                                        curr,
+                                        total_opt,
+                                        note,
+                                    );
+                                } else if let Some(note_str) = note {
+                                    let _ = progress_task_runtime.set_stage_progress(
+                                        tid,
+                                        stg_id,
+                                        0,
+                                        None,
+                                        Some(note_str),
+                                    );
+                                }
                             }
                         });
 

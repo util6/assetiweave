@@ -85,15 +85,17 @@ function fail(message) {
  * @param {object} [progress={}]
  */
 function emitProgress(progress = {}) {
+  const p = {
+    stage: progress.stage ?? "reading",
+    operation: progress.operation ?? "scanning",
+    worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
+    path: progress.path,
+    current: progress.current,
+    total: progress.total,
+  };
   emit("progress", {
-    progress: {
-      stage: progress.stage ?? "reading",
-      operation: progress.operation ?? "scanning",
-      worker: progress.worker ?? process.env.ASSETIWEAVE_WORKER_ID ?? undefined,
-      path: progress.path,
-      current: progress.current,
-      total: progress.total,
-    },
+    ...p,
+    progress: p,
   });
 }
 
@@ -1724,6 +1726,11 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
     return [];
   }
   if (!existsSync(dbPath)) return [];
+  emitProgress({
+    stage: "scan",
+    operation: "inspect_sqlite_schema",
+    path: `${path.basename(dbPath)}: PRAGMA table_info(threads)`,
+  });
   const columns = sqliteJson(dbPath, "PRAGMA table_info(threads)").map((row) => row.name);
   const idCol = pick(columns, ["id", "thread_id", "session_id"]);
   const rolloutCol = pick(columns, ["rollout_path", "path", "file_path", "jsonl_path"]);
@@ -1750,6 +1757,11 @@ function sessionRows({ sessionId = null, includeTitle = true } = {}) {
   const whereClause = filters.length > 0 ? ` WHERE ${filters.join(" AND ")}` : "";
   const orderClause = sessionId == null ? " ORDER BY rowid DESC" : "";
   const sql = `SELECT ${quoteIdent(idCol)} AS id, ${quoteIdent(rolloutCol)} AS rollout_path, ${titleProjection} AS title, ${updatedCol ? quoteIdent(updatedCol) : "NULL"} AS updated_at FROM threads${whereClause}${orderClause}`;
+  emitProgress({
+    stage: "scan",
+    operation: "query_sqlite_threads",
+    path: `${path.basename(dbPath)}: ${sql.length > 70 ? sql.slice(0, 70) + "..." : sql}`,
+  });
   return sqliteJson(dbPath, sql).map((row) => ({ ...row, rollout_path: expandPath(row.rollout_path) }));
 }
 
@@ -1785,13 +1797,26 @@ function readSession() {
   const requestedSessionId = input.params?.session_id ?? null;
 
   // 2. 查询 SQLite 获取数据库会话行，按请求 ID 过滤后，对每个 Session 执行格式化流水线
-  return sessionRows({ sessionId: requestedSessionId }).flatMap((row) => {
+  const rows = sessionRows({ sessionId: requestedSessionId });
+  const total = rows.length;
+  let current = 0;
+
+  return rows.flatMap((row) => {
+    current += 1;
     // 3. 展开并校验 `.jsonl` 会话日志文件的绝对路径，不存在则忽略
     const rolloutPath = expandPath(row.rollout_path);
     if (!rolloutPath || !existsSync(rolloutPath)) return [];
 
     const files = rolloutFilesForSession(rolloutPath, String(row.id));
     if (!files.length) return [];
+
+    emitProgress({
+      stage: "parse",
+      operation: "parsing_session_file",
+      path: `${path.basename(rolloutPath)} (Session ${row.id})`,
+      current,
+      total,
+    });
 
     // 4. 【步骤一：原子稳定读取】同步读取 JSONL 日志文本（合并多卷日志），生成防止并发追加写入的校验 Version Token
     const { text, versionToken } = readStableRollout(files, row.updated_at);

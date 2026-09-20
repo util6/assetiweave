@@ -8,9 +8,9 @@ use crate::backend::{
     dto::RecentMemorySnapshotView,
     models::{
         CandidateSession, CandidateSessionSummary, ContinuableMemoryItemView, L2ProjectMemoryView,
-        L3MemoryItemView, MemoryGenerationProjectV2, MemoryGenerationResultV2, MemoryItemCategory,
-        MemoryItemStatus, MemoryJobPurpose, MemoryPromotionNomination, MemoryScopeV2,
-        MemorySkillBinding, MemoryWindowV2, MemoryWorkOrderV2, RecentSnapshotSessionEvidence,
+        L3MemoryItemView, MemoryGenerationProject, MemoryGenerationResult, MemoryItemCategory,
+        MemoryItemStatus, MemoryJobPurpose, MemoryPromotionNomination, MemorySkillBinding,
+        MemoryWindow, MemoryWorkOrder, MemoryWorkOrderScope, RecentSnapshotSessionEvidence,
         RecentSnapshotWorkOrderEvidencePack, RecentSnapshotWorkOrderPayload, ResolvedEvidenceRef,
         SessionMemory, SessionMemorySourceReference, ALLOWED_MEMORY_GENERATION_TOOLS,
     },
@@ -49,7 +49,7 @@ fn build_recent_generation_prompt(
     envelope: &serde_json::Value,
     payload: &RecentSnapshotWorkOrderPayload,
 ) -> AppResult<String> {
-    let output_schema = schemars::schema_for!(MemoryGenerationResultV2);
+    let output_schema = schemars::schema_for!(MemoryGenerationResult);
     let evidence = model_visible_recent_snapshot_evidence(&payload.evidence)?;
     serde_json::to_string(&serde_json::json!({
         "contract": "memory.contract.v2",
@@ -195,7 +195,7 @@ fn extend_source_reference_aliases(
 }
 
 fn normalize_agent_memory_generation_result(
-    result: &mut MemoryGenerationResultV2,
+    result: &mut MemoryGenerationResult,
     candidates: &[CandidateSession],
     ref_map: &HashMap<String, ResolvedEvidenceRef>,
 ) {
@@ -227,7 +227,7 @@ fn normalize_agent_memory_generation_result(
                 .filter(|c| c.project_key == *project_key)
                 .map(|c| c.short_ref.clone())
                 .collect::<Vec<_>>();
-            result.projects.push(MemoryGenerationProjectV2 {
+            result.projects.push(MemoryGenerationProject {
                 project_key: (*project_key).to_string(),
                 summary: "No material change in this window.".to_string(),
                 no_material_change: true,
@@ -1475,17 +1475,17 @@ impl AppService {
         preparation: &RecentSnapshotPreparation,
         now: DateTime<Utc>,
     ) -> AppResult<String> {
-        let work_order = MemoryWorkOrderV2::new(
+        let work_order = MemoryWorkOrder::new(
             format!("recent-snapshot-{}", Uuid::new_v4()),
             self.tenant_id().to_string(),
             MemoryJobPurpose::RecentSnapshot,
             preparation.target.target_watermark_utc.to_rfc3339(),
-            MemoryWindowV2 {
+            MemoryWindow {
                 start_utc: preparation.target.window_start_utc.to_rfc3339(),
                 end_utc: preparation.target.window_end_utc.to_rfc3339(),
                 hours: preparation.target.window_hours as u32,
             },
-            MemoryScopeV2 { project_key: None },
+            MemoryWorkOrderScope { project_key: None },
             preparation.content_fingerprint.clone(),
             preparation.skill_binding.clone(),
             now.to_rfc3339(),
@@ -1536,7 +1536,7 @@ impl AppService {
             serde_json::from_str(&job.work_order_json).map_err(|_| {
                 AppError::Validation("MEMORY_WORK_ORDER_INVALID: invalid JSON".to_string())
             })?;
-        let work_order: MemoryWorkOrderV2 =
+        let work_order: MemoryWorkOrder =
             serde_json::from_value(envelope.get("workOrder").cloned().ok_or_else(|| {
                 AppError::Validation("MEMORY_WORK_ORDER_INVALID: missing work order".to_string())
             })?)
@@ -1567,7 +1567,7 @@ impl AppService {
                 "MEMORY_WORK_ORDER_INVALID: work order binding mismatch".to_string(),
             ));
         }
-        let expected_input_fingerprint = MemoryWorkOrderV2::compute_input_fingerprint(
+        let expected_input_fingerprint = MemoryWorkOrder::compute_input_fingerprint(
             work_order.purpose,
             &work_order.target_watermark_utc,
             work_order.window.hours,
@@ -1714,7 +1714,7 @@ impl AppService {
                 task_progress.transition("agent_execution");
                 task_progress.skip_current_and_transition("validation");
             }
-            MemoryGenerationResultV2 {
+            MemoryGenerationResult {
                 schema_version: 2,
                 projects: Vec::new(),
                 coverage: Default::default(),
@@ -1809,7 +1809,7 @@ impl AppService {
     /// 校验 Agent 输出是否符合准入与质量门禁 (M35-L1-07/12, Schema, Coverage, Refs)
     pub(crate) fn validate_memory_generation_result(
         &self,
-        result: &MemoryGenerationResultV2,
+        result: &MemoryGenerationResult,
         candidates: &[CandidateSession],
         ref_map: &HashMap<String, ResolvedEvidenceRef>,
     ) -> AppResult<()> {
@@ -2136,7 +2136,7 @@ impl AppService {
         &self,
         target: &WatermarkTarget,
         skill_binding: &MemorySkillBinding,
-        result: MemoryGenerationResultV2,
+        result: MemoryGenerationResult,
         candidates: &[CandidateSession],
         ref_map: &HashMap<String, ResolvedEvidenceRef>,
         target_fingerprint: &str,
@@ -2666,7 +2666,7 @@ impl AppService {
         &self,
         target_watermark_utc: DateTime<Utc>,
         window_hours: i64,
-        result: MemoryGenerationResultV2,
+        result: MemoryGenerationResult,
     ) -> AppResult<RecentMemorySnapshotView> {
         let target = WatermarkTarget {
             target_watermark_utc,
@@ -2883,7 +2883,7 @@ impl AppService {
     pub(crate) async fn evaluate_and_run_recent_snapshot<Tz: chrono::TimeZone>(
         &self,
         now: Option<DateTime<Tz>>,
-        mock_result: Option<MemoryGenerationResultV2>,
+        mock_result: Option<MemoryGenerationResult>,
     ) -> AppResult<Option<RecentMemorySnapshotView>> {
         let pool = self.db.pool();
         let tenant_id = self.tenant_id();
@@ -3091,18 +3091,18 @@ fn extract_json_payload(raw: &str) -> &str {
     trimmed
 }
 
-pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGenerationResultV2> {
+pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGenerationResult> {
     let json_text = extract_json_payload(raw);
     if json_text.is_empty() {
         return Err(AppError::Validation(
             "MEMORY_OUTPUT_INVALID: empty Agent output".to_string(),
         ));
     }
-    match serde_json::from_str::<MemoryGenerationResultV2>(json_text) {
+    match serde_json::from_str::<MemoryGenerationResult>(json_text) {
         Ok(result) => Ok(result),
         Err(orig_err) => {
             if let Some(repaired) = attempt_repair_truncated_json(json_text) {
-                if let Ok(result) = serde_json::from_str::<MemoryGenerationResultV2>(&repaired) {
+                if let Ok(result) = serde_json::from_str::<MemoryGenerationResult>(&repaired) {
                     tracing::warn!(
                         "Successfully repaired truncated JSON in memory generation output"
                     );
@@ -3110,7 +3110,7 @@ pub(crate) fn parse_memory_generation_output(raw: &str) -> AppResult<MemoryGener
                 }
             }
             Err(AppError::Validation(format!(
-                "MEMORY_OUTPUT_INVALID: expected one MemoryGenerationResultV2 JSON value: {orig_err}"
+                "MEMORY_OUTPUT_INVALID: expected one MemoryGenerationResult JSON value: {orig_err}"
             )))
         }
     }

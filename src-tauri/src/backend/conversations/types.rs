@@ -317,6 +317,8 @@ pub(super) struct ExternalAdapterLine {
     #[serde(default)]
     pub(super) error: Option<Value>,
     #[serde(default)]
+    pub(super) progress: Option<Value>,
+    #[serde(default)]
     pub(super) stage: Option<String>,
     #[serde(default)]
     pub(super) operation: Option<String>,
