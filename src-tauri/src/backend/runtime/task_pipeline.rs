@@ -1,5 +1,7 @@
+use super::task_activity::WorkerTracker;
 use super::tasks::{
-    StageStatus, TaskFailure, TaskKind, TaskMetric, TaskRuntime, TaskSkippedGroup, TaskStage,
+    StageStatus, TaskActivity, TaskFailure, TaskKind, TaskMetric, TaskRuntime, TaskSkippedGroup,
+    TaskStage,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -247,6 +249,68 @@ impl StageGuard {
                 reason_code,
                 count: 1,
                 samples: vec![sample],
+            });
+        }
+    }
+
+    pub fn worker(&self, worker_id: impl Into<String>) -> WorkerTracker {
+        WorkerTracker::new(
+            self.task_id.clone(),
+            self.stage_id.clone(),
+            worker_id,
+            self.runtime.clone(),
+        )
+    }
+
+    pub fn progress(&self, current: u64, total: Option<u64>, note: Option<String>) {
+        self.set_progress(current, total, note);
+    }
+
+    pub fn activity(
+        &self,
+        worker_id: impl Into<String>,
+        operation: impl Into<String>,
+        display_path: Option<String>,
+    ) {
+        let activity = TaskActivity {
+            stage_id: self.stage_id.clone(),
+            worker_id: worker_id.into(),
+            operation: operation.into(),
+            path: None,
+            display_path,
+            started_at: Utc::now().to_rfc3339(),
+            current: None,
+            total: None,
+        };
+        let _ = self.runtime.record_activity(&self.task_id, activity);
+    }
+
+    pub fn remove_activity(&self, worker_id: &str) {
+        let _ = self.runtime.remove_activity(&self.task_id, &self.stage_id, worker_id);
+    }
+
+    pub fn record_skipped_group(
+        &mut self,
+        reason_code: impl Into<String>,
+        samples: impl IntoIterator<Item = impl Into<String>>,
+    ) {
+        let reason_code = reason_code.into();
+        let samples: Vec<String> = samples.into_iter().map(Into::into).collect();
+        let count = samples.len() as u64;
+        if let Some(group) = self.skipped.iter_mut().find(|g| g.reason_code == reason_code) {
+            group.count += count;
+            for sample in samples {
+                if group.samples.len() < 5 {
+                    group.samples.push(sample);
+                }
+            }
+        } else {
+            let mut stored_samples = samples;
+            stored_samples.truncate(5);
+            self.skipped.push(TaskSkippedGroup {
+                reason_code,
+                count,
+                samples: stored_samples,
             });
         }
     }

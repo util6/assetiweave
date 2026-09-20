@@ -340,6 +340,9 @@ impl TaskContext {
     pub(crate) fn progress(&self) -> ProgressHandle {
         self.progress.clone()
     }
+    pub(crate) fn runtime(&self) -> &TaskRuntime {
+        &self.progress.runtime
+    }
     pub(crate) fn task_id(&self) -> &str {
         &self.progress.task_id
     }
@@ -1694,6 +1697,44 @@ impl TaskRuntime {
             entry.snapshot.clone()
         };
         self.publish(&snapshot);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn record_activity_silent(
+        &self,
+        task_id: &str,
+        activity: TaskActivity,
+    ) -> AppResult<TaskSnapshot> {
+        let snapshot = {
+            let mut tasks = self
+                .tasks
+                .lock()
+                .map_err(|_| AppError::Conflict("任务注册表不可用".to_string()))?;
+            let entry = tasks
+                .get_mut(task_id)
+                .ok_or_else(|| AppError::NotFound(format!("任务不存在: {task_id}")))?;
+            let now = Utc::now().to_rfc3339();
+            if let Some(stage) = entry
+                .snapshot
+                .stages
+                .iter_mut()
+                .find(|s| s.id == activity.stage_id)
+            {
+                if let Some(existing) = stage
+                    .current_activities
+                    .iter_mut()
+                    .find(|a| a.worker_id == activity.worker_id)
+                {
+                    *existing = activity;
+                } else {
+                    stage.current_activities.push(activity);
+                }
+            }
+            entry.snapshot.revision += 1;
+            entry.snapshot.updated_at = now;
+            entry.snapshot.clone()
+        };
+        // silent 模式只更新内存快照，不广播 publish，消除事件风暴
         Ok(snapshot)
     }
 
