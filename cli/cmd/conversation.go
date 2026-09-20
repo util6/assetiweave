@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -1498,6 +1500,8 @@ func newCmdConversationWeb(f *cmdutil.Factory) *cobra.Command {
 	cmd.AddCommand(newCmdConversationWebScaffold(f))
 	cmd.AddCommand(newCmdConversationWebAuthDetect(f))
 	cmd.AddCommand(newCmdConversationWebAuthCheck(f))
+	cmd.AddCommand(newCmdConversationWebAuthSet(f))
+	cmd.AddCommand(newCmdConversationWebLogin(f))
 	cmd.AddCommand(newCmdConversationWebSync(f))
 	return cmd
 }
@@ -1531,15 +1535,36 @@ func newCmdConversationWebScaffold(f *cmdutil.Factory) *cobra.Command {
 	return cmd
 }
 
+func resolveWebHarvesterDirectory(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return target
+	}
+	if _, err := os.Stat(filepath.Join(target, "web-harvester.json")); err == nil {
+		return target
+	}
+	if _, err := os.Stat(target); err == nil {
+		return target
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidate := filepath.Join(home, ".assetiweave", "harvesters", target)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return target
+}
+
 func newCmdConversationWebAuthDetect(f *cmdutil.Factory) *cobra.Command {
 	var browser, profile, domain, probeURL, credential string
 	cmd := &cobra.Command{
-		Use:   "auth-detect <directory>",
+		Use:   "auth-detect <directory-or-template>",
 		Short: "Create an auth probe request from a local browser login state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := resolveWebHarvesterDirectory(args[0])
 			result, err := webharvester.AuthDetect(webharvester.AuthDetectOptions{
-				Directory:  args[0],
+				Directory:  dir,
 				Browser:    browser,
 				Profile:    profile,
 				Domain:     domain,
@@ -1563,11 +1588,12 @@ func newCmdConversationWebAuthDetect(f *cmdutil.Factory) *cobra.Command {
 
 func newCmdConversationWebAuthCheck(f *cmdutil.Factory) *cobra.Command {
 	return &cobra.Command{
-		Use:   "auth-check <directory>",
+		Use:   "auth-check <directory-or-template>",
 		Short: "Run a configured web harvester login-state probe",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := webharvester.AuthCheck(webharvester.AuthCheckOptions{Directory: args[0]})
+			dir := resolveWebHarvesterDirectory(args[0])
+			result, err := webharvester.AuthCheck(webharvester.AuthCheckOptions{Directory: dir})
 			if err != nil {
 				return err
 			}
@@ -1577,15 +1603,68 @@ func newCmdConversationWebAuthCheck(f *cmdutil.Factory) *cobra.Command {
 	}
 }
 
+func newCmdConversationWebAuthSet(f *cmdutil.Factory) *cobra.Command {
+	var cookie, auth, probeURL, userAgent string
+	cmd := &cobra.Command{
+		Use:   "auth-set <directory-or-template>",
+		Short: "Set auth credentials (cookie or authorization token) for a web harvester",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := resolveWebHarvesterDirectory(args[0])
+			result, err := webharvester.AuthSet(webharvester.AuthSetOptions{
+				Directory:     dir,
+				Cookie:        cookie,
+				Authorization: auth,
+				ProbeURL:      probeURL,
+				UserAgent:     userAgent,
+			})
+			if err != nil {
+				return err
+			}
+			output.WriteSuccess(f.IOStreams.Out, result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cookie, "cookie", "", "cookie header string to set")
+	cmd.Flags().StringVar(&auth, "auth", "", "authorization header string to set (e.g. Bearer token)")
+	cmd.Flags().StringVar(&probeURL, "probe-url", "", "override probe URL; defaults to site-specific endpoint")
+	cmd.Flags().StringVar(&userAgent, "user-agent", "", "override User-Agent header")
+	return cmd
+}
+
+func newCmdConversationWebLogin(f *cmdutil.Factory) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "login <directory-or-template>",
+		Short:   "Launch an interactive browser window to log in and save credentials",
+		Aliases: []string{"li"},
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := resolveWebHarvesterDirectory(args[0])
+			loginScript := filepath.Join(dir, "scripts", "login.js")
+			if _, err := os.Stat(loginScript); err != nil {
+				return fmt.Errorf("interactive login script not found: %s (this harvester may not support browser login)", loginScript)
+			}
+			c := exec.Command("node", loginScript)
+			c.Stdin = f.IOStreams.In
+			c.Stdout = f.IOStreams.Out
+			c.Stderr = f.IOStreams.ErrOut
+			c.Env = append(os.Environ(), "ASSETIWEAVE_HARVESTER_DIR="+dir)
+			return c.Run()
+		},
+	}
+	return cmd
+}
+
 func newCmdConversationWebSync(f *cmdutil.Factory) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{
-		Use:   "sync <directory>",
+		Use:   "sync <directory-or-template>",
 		Short: "Download and normalize web conversation data from configured request templates",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dir := resolveWebHarvesterDirectory(args[0])
 			result, err := webharvester.Sync(webharvester.SyncOptions{
-				Directory: args[0],
+				Directory: dir,
 				Limit:     limit,
 			})
 			if err != nil {

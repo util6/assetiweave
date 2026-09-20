@@ -14,7 +14,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { normalizeRound } = require("./qwen-normalize.cjs");
 
-const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
+const root = process.env.ASSETIWEAVE_HARVESTER_DIR || path.resolve(__dirname, "..");
 const nowID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const rawDir = path.join(root, "output", "raw", nowID);
 const detailDir = path.join(rawDir, "details");

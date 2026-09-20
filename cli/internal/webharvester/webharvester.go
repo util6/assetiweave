@@ -160,6 +160,21 @@ type AuthDetectResult struct {
 	Wrote       []string `json:"wrote"`
 }
 
+type AuthSetOptions struct {
+	Directory     string
+	Cookie        string
+	Authorization string
+	ProbeURL      string
+	UserAgent     string
+}
+
+type AuthSetResult struct {
+	SiteID     string   `json:"site_id"`
+	ProbeURL   string   `json:"probe_url"`
+	Credential string   `json:"credential"`
+	Wrote      []string `json:"wrote"`
+}
+
 type SyncOptions struct {
 	Directory string
 	Client    *http.Client
@@ -355,8 +370,14 @@ func AuthDetect(options AuthDetectOptions) (AuthDetectResult, error) {
 		return AuthDetectResult{}, err
 	}
 	domain := strings.TrimSpace(options.Domain)
-	if domain == "" {
-		domain = "qianwen.com"
+	if domain == "" || domain == "qianwen.com" {
+		if strings.Contains(config.SiteID, "gemini") {
+			domain = "google.com"
+		} else if strings.Contains(config.SiteID, "chatgpt") {
+			domain = "chatgpt.com"
+		} else if domain == "" {
+			domain = "qianwen.com"
+		}
 	}
 	if !validCookieDomain(domain) {
 		return AuthDetectResult{}, validationError("invalid cookie domain: %s", domain)
@@ -465,13 +486,59 @@ func AuthDetect(options AuthDetectOptions) (AuthDetectResult, error) {
 			return AuthDetectResult{}, lastErr
 		}
 	}
+	hint := "open the target site in Chrome or Edge, sign in, then rerun auth-detect"
+	if lastErr != nil && strings.Contains(strings.ToLower(lastErr.Error()), "operation not permitted") {
+		hint = "macOS sandbox blocked reading browser cookie database. Run interactive login: `assetiweave-cli conversation web login " + options.Directory + "` or set credentials via: `assetiweave-cli conversation web auth-set " + options.Directory + " --cookie \"<cookie-string>\"`"
+	}
 	return AuthDetectResult{}, authError(
 		"BROWSER_AUTH_NOT_FOUND",
 		"browser login state was not found for "+domain,
-		"open the target site in Chrome or Edge, sign in, then rerun auth-detect",
+		hint,
 		details,
 		lastErr,
 	)
+}
+
+func AuthSet(options AuthSetOptions) (AuthSetResult, error) {
+	config, err := LoadConfig(options.Directory)
+	if err != nil {
+		return AuthSetResult{}, err
+	}
+	probeURL := strings.TrimSpace(options.ProbeURL)
+	if probeURL == "" {
+		probeURL = defaultProbeURLForDomain(config.SiteID)
+		if probeURL == "" || probeURL == "https://"+config.SiteID+"/" {
+			if strings.Contains(config.SiteID, "gemini") {
+				probeURL = "https://gemini.google.com/app"
+			} else if strings.Contains(config.SiteID, "chatgpt") {
+				probeURL = "https://chatgpt.com/api/auth/session"
+			}
+		}
+	}
+	requestPath := resolvePath(options.Directory, config.AuthProbe.Request)
+	credentialKind := "cookie"
+	credentialValue := strings.TrimSpace(options.Cookie)
+	if strings.TrimSpace(options.Authorization) != "" {
+		credentialKind = "token"
+		credentialValue = strings.TrimSpace(options.Authorization)
+	}
+	if credentialValue == "" {
+		return AuthSetResult{}, validationError("either --cookie or --auth is required")
+	}
+
+	template := authProbeTemplate(probeURL, credentialKind, credentialValue)
+	if ua := strings.TrimSpace(options.UserAgent); ua != "" {
+		template.Headers["User-Agent"] = ua
+	}
+	if err := writeJSON(requestPath, template); err != nil {
+		return AuthSetResult{}, err
+	}
+	return AuthSetResult{
+		SiteID:     config.SiteID,
+		ProbeURL:   probeURL,
+		Credential: credentialKind,
+		Wrote:      []string{requestPath},
+	}, nil
 }
 
 func Sync(options SyncOptions) (SyncResult, error) {

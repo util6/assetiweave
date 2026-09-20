@@ -39,6 +39,8 @@ func annotateCommandTree(root *cobra.Command) {
 	annotateLocalCommand(root, []string{"config", "plugins", "show"}, "system", platform.RiskRead)
 	annotateLocalCommand(root, []string{"conversation", "web", "auth-check"}, "conversation", platform.RiskRead)
 	annotateLocalCommand(root, []string{"conversation", "web", "auth-detect"}, "conversation", platform.RiskHighRiskWrite)
+	annotateLocalCommand(root, []string{"conversation", "web", "auth-set"}, "conversation", platform.RiskHighRiskWrite)
+	annotateLocalCommand(root, []string{"conversation", "web", "login"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"conversation", "web", "scaffold"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"conversation", "web", "sync"}, "conversation", platform.RiskHighRiskWrite)
 	annotateLocalCommand(root, []string{"harvester", "template", "list"}, "conversation", platform.RiskRead)

@@ -208,7 +208,7 @@ function findBrowserExecutable() {
  * @returns {object} { endpoint, process }
  */
 function readUAFromProbe() {
-  const rootDir = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
+  const rootDir = process.env.ASSETIWEAVE_HARVESTER_DIR || path.resolve(__dirname, "..");
   const authProbePath = path.join(rootDir, "requests", "auth-probe.json");
   if (fs.existsSync(authProbePath)) {
     try {
@@ -236,12 +236,12 @@ async function launchCDPBrowser(options = {}) {
   // For now, we try the user's default profile first. If it's locked, we fall back to
   // a harvester-dedicated profile.
   const harvesterProfileDir = path.join(os.homedir(), ".assetiweave", "browser-profile");
+  const isHeadless = options.headless !== false;
 
   const args = [
     `--remote-debugging-port=${port}`,
-    "--headless=new",
+    ...(isHeadless ? ["--headless=new", "--disable-gpu"] : []),
     `--user-agent=${readUAFromProbe()}`,
-    "--disable-gpu",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-extensions",
@@ -307,7 +307,7 @@ function parseCookieString(cookieStr, defaultDomain, siteURL) {
 }
 
 async function injectCookiesFromProbe(client, siteURL) {
-  const rootDir = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
+  const rootDir = process.env.ASSETIWEAVE_HARVESTER_DIR || path.resolve(__dirname, "..");
   const authProbePath = path.join(rootDir, "requests", "auth-probe.json");
   if (!fs.existsSync(authProbePath)) return;
 
@@ -357,7 +357,7 @@ async function injectCookiesFromProbe(client, siteURL) {
  * @returns {{ client, target, launched }}
  */
 async function acquireCDPTarget(options) {
-  const { urlPattern, siteURL, endpointEnv, allowLaunch = true } = options;
+  const { urlPattern, siteURL, endpointEnv, allowLaunch = true, headless = true } = options;
 
   // Step 1: Try to discover existing endpoint
   let endpoint = await discoverCDPEndpoint({ endpointEnv });
@@ -369,7 +369,7 @@ async function acquireCDPTarget(options) {
     if (target) {
       const client = createCDPClient(target.webSocketDebuggerUrl);
       await injectCookiesFromProbe(client, siteURL);
-      return { client, target, launched: false };
+      return { client, target, launched: false, browserProcess: null };
     }
     // Endpoint exists but no matching tab — try to open the URL in existing browser
     try {
@@ -377,7 +377,7 @@ async function acquireCDPTarget(options) {
       if (newTarget) {
         const client = createCDPClient(newTarget.webSocketDebuggerUrl);
         await injectCookiesFromProbe(client, siteURL);
-        return { client, target: newTarget, launched: false };
+        return { client, target: newTarget, launched: false, browserProcess: null };
       }
     } catch {}
   }
@@ -390,7 +390,7 @@ async function acquireCDPTarget(options) {
   }
 
   // Step 3: Launch a new browser
-  const result = await launchCDPBrowser({ siteURL, port: 9222 });
+  const result = await launchCDPBrowser({ siteURL, port: 9222, headless });
   endpoint = result.endpoint;
   launched = true;
 
@@ -401,9 +401,13 @@ async function acquireCDPTarget(options) {
     if (target) {
       const client = createCDPClient(target.webSocketDebuggerUrl);
       await injectCookiesFromProbe(client, siteURL);
-      return { client, target, launched: true };
+      return { client, target, launched: true, browserProcess: result.process };
     }
     await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (result && result.process) {
+    try { result.process.kill("SIGTERM"); } catch {}
   }
 
   throw new Error(
@@ -472,6 +476,120 @@ function shellQuote(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
+/**
+ * 安全关闭 CDP 客户端并清理自身拉起的无头浏览器进程
+ *
+ * @param {object} handle - acquireCDPTarget 返回的 handle 对象
+ */
+async function closeCDPTarget(handle) {
+  if (!handle) return;
+  const { client, launched, browserProcess } = handle;
+  if (client) {
+    if (launched) {
+      try {
+        await client.send("Browser.close").catch(() => {});
+      } catch {}
+    }
+    try {
+      client.close();
+    } catch {}
+  }
+  if (launched && browserProcess) {
+    try {
+      browserProcess.kill("SIGTERM");
+    } catch {}
+  }
+}
+
+/**
+ * 通过 CDP Network.getCookies 获取当前会话的 Cookie 并持久化回写到 auth-probe.json
+ *
+ * @param {object} client - CDP 客户端
+ * @param {string} siteURL - 站点绝对 URL
+ * @returns {Promise<boolean>}
+ */
+async function saveCookiesToProbe(client, siteURL) {
+  const rootDir = process.env.ASSETIWEAVE_HARVESTER_DIR || path.resolve(__dirname, "..");
+  const authProbePath = path.join(rootDir, "requests", "auth-probe.json");
+  try {
+    let result;
+    try {
+      result = await client.send("Network.getCookies", { urls: [siteURL] });
+    } catch {
+      result = await client.send("Storage.getCookies");
+    }
+    const cookies = result && Array.isArray(result.cookies) ? result.cookies : [];
+    if (cookies.length === 0) return false;
+
+    const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    let authProbe = {};
+    try {
+      if (fs.existsSync(authProbePath)) {
+        authProbe = JSON.parse(fs.readFileSync(authProbePath, "utf8"));
+      }
+    } catch {}
+    authProbe.method = authProbe.method || "GET";
+    authProbe.url = authProbe.url || siteURL;
+    if (!authProbe.headers) authProbe.headers = {};
+    authProbe.headers["Cookie"] = cookieHeader;
+    if (!authProbe.headers["User-Agent"] && !authProbe.headers["user-agent"]) {
+      authProbe.headers["User-Agent"] = readUAFromProbe();
+    }
+
+    fs.mkdirSync(path.dirname(authProbePath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(authProbePath, JSON.stringify(authProbe, null, 2) + "\n", { mode: 0o600 });
+    process.stderr.write(`[cdp-browser] 成功从 CDP 会话提取 ${cookies.length} 个 Cookie 并持久化到 auth-probe.json\n`);
+    return true;
+  } catch (err) {
+    process.stderr.write(`[cdp-browser] 提取 Cookie 失败: ${err.message || err}\n`);
+    return false;
+  }
+}
+
+/**
+ * 安全执行 Runtime.evaluate，具备 ExecutionContext 就绪探测与瞬态重试机制
+ *
+ * @param {object} client - CDP 客户端
+ * @param {string} expression - JS 表达式
+ * @param {object} [options={}] - 配置参数
+ * @returns {Promise<any>} evaluated 结果对象
+ */
+async function safeEvaluate(client, expression, options = {}) {
+  const maxRetries = options.maxRetries || 25;
+  const retryIntervalMs = options.retryIntervalMs || 600;
+  const timeoutMs = options.timeout || 120000;
+
+  try {
+    await client.send("Runtime.enable");
+  } catch {}
+
+  let lastError = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const evaluated = await client.send("Runtime.evaluate", {
+        expression,
+        awaitPromise: true,
+        returnByValue: true,
+        timeout: timeoutMs,
+      });
+      return evaluated;
+    } catch (err) {
+      lastError = err;
+      const msg = String(err.message || err);
+      if (
+        msg.includes("Cannot find default execution context") ||
+        msg.includes("Execution context was destroyed") ||
+        msg.includes("Inspected target navigated or closed")
+      ) {
+        await new Promise((r) => setTimeout(r, retryIntervalMs));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError || new Error("safeEvaluate 超时未获取到有效 ExecutionContext");
+}
+
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
@@ -483,6 +601,9 @@ module.exports = {
   findCDPTarget,
   launchCDPBrowser,
   acquireCDPTarget,
+  closeCDPTarget,
+  saveCookiesToProbe,
+  safeEvaluate,
   tryRefreshAuth,
   scanRunningBrowserPorts,
   findBrowserExecutable,

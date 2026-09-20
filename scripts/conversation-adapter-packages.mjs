@@ -18,7 +18,7 @@ const generatedCopies = [
     "builtin-assets/adapters/common/shell-projector.cjs",
     `builtin-assets/adapters/${adapterId}/shell-projector.cjs`,
   ]),
-  ...["gemini-web", "qwen-web"].flatMap((adapterId) => [
+  ...["chatgpt-web", "gemini-web", "qwen-web"].flatMap((adapterId) => [
     "adapter.js",
     "conversation-adapter.json",
     "shell-projector.cjs",

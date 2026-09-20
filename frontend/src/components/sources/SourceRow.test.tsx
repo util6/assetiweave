@@ -42,6 +42,39 @@ describe("SourceRow", () => {
     expect(html).toContain('aria-label="编辑资产"');
     expect(html).toContain('aria-label="删除资产"');
   });
+
+  it("renders asset count badge and preserves full scan status in title attribute", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <SourceRow
+          appShortcuts={[]}
+          assets={[asset]}
+          busy={false}
+          expanded={false}
+          expandedAssetIds={new Set()}
+          mountStatusesByAssetId={new Map<string, AssetMountStatus[]>()}
+          onAssetReveal={vi.fn()}
+          onDelete={vi.fn()}
+          onDeleteAsset={vi.fn()}
+          onEdit={vi.fn()}
+          onEditAsset={vi.fn()}
+          onReveal={vi.fn()}
+          onSetSourceMountProfile={vi.fn()}
+          onToggleAsset={vi.fn()}
+          onToggleExpanded={vi.fn()}
+          onToggleMount={vi.fn()}
+          profiles={[]}
+          source={{
+            ...source,
+            last_scan_status: "validated: 1 assets, 0 removed, 0 updated",
+          }}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain("1 个资产");
+    expect(html).toContain('title="状态刷新：1 个资产，移除 0，更新 0"');
+  });
 });
 
 const asset: Asset = {

@@ -11,9 +11,9 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { parseDetailBody } = require("./gemini-normalize.cjs");
-const { acquireCDPTarget, tryRefreshAuth } = require("./cdp-browser.cjs");
+const { acquireCDPTarget, closeCDPTarget, saveCookiesToProbe, safeEvaluate, tryRefreshAuth } = require("./cdp-browser.cjs");
 
-const root = process.env.ASSETIWEAVE_HARVESTER_DIR || process.cwd();
+const root = process.env.ASSETIWEAVE_HARVESTER_DIR || path.resolve(__dirname, "..");
 const runID = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const rawDir = path.join(root, "output", "raw", runID);
 const detailDir = path.join(rawDir, "details");
@@ -320,11 +320,12 @@ async function collectDirectWithRetry() {
 // ---------------------------------------------------------------------------
 
 async function collectViaBrowserContext() {
-  const { client, target, launched } = await acquireCDPTarget({
-    urlPattern: /^https:\/\/gemini\.google\.com\/app(?:\/|$|\?)/,
+  const cdpHandle = await acquireCDPTarget({
+    urlPattern: /^https:\/\/(?:[a-zA-Z0-9-]+\.)*gemini\.google\.com(?:\/|$|\?)/,
     siteURL: "https://gemini.google.com/app",
     endpointEnv: "ASSETIWEAVE_GEMINI_CDP_ENDPOINT",
   });
+  const { client, target, launched } = cdpHandle;
 
   try {
     await client.send("Runtime.enable");
@@ -481,12 +482,7 @@ async function collectViaBrowserContext() {
         details
       };
     })()`;
-    const evaluated = await client.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      timeout: 120000
-    });
+    const evaluated = await safeEvaluate(client, expression, { timeout: 120000 });
     if (evaluated.exceptionDetails) {
       throw new Error(evaluated.exceptionDetails.text || "Gemini browser collection failed");
     }
@@ -546,9 +542,12 @@ async function collectViaBrowserContext() {
         }
       }
     }
+    // 成功完成会话提取后，反向持久化最新 Cookie 到 requests/auth-probe.json
+    await saveCookiesToProbe(client, "https://gemini.google.com/app");
+
     return { listItems: value.listItems, sessions, detailFailures, usedBrowserContext: true };
   } finally {
-    client.close();
+    await closeCDPTarget(cdpHandle);
   }
 }
 

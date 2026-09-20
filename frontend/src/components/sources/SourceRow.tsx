@@ -117,8 +117,9 @@ export function SourceRow({
                   "bg-status-conflict/15 text-status-conflict",
                 statusTone === "idle" && "bg-theme-control-hover text-outline",
               )}
+              title={translateScanStatus(source.last_scan_status, t)}
             >
-              {translateScanStatus(source.last_scan_status, t)}
+              {t("source.assetCount", { count: assets.length })}
             </span>
           </div>
 

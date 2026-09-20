@@ -60,6 +60,7 @@ var commandAliases = map[string][]string{
 	"installed":      {"ins"},
 	"item":           {"it"},
 	"list":           {"ls", "l"},
+	"login":          {"li"},
 	"leader":         {"ld"},
 	"memory":         {"m", "mem"},
 	"mailbox":        {"mb"},
