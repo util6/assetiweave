@@ -164,7 +164,9 @@ function TaskCenterModalContent({
         const query = searchQuery.trim().toLowerCase();
         const matchesTitle = (task.title ?? "").toLowerCase().includes(query);
         const matchesId = (task.id ?? "").toLowerCase().includes(query);
-        const matchesKind = (task.kind ?? "").toLowerCase().includes(query);
+        const matchesCategory = (task.category ?? "").toLowerCase().includes(query);
+        const matchesKind =
+          (task.kind ?? "").toLowerCase().includes(query) || matchesCategory;
         return matchesTitle || matchesId || matchesKind;
       }
 
@@ -354,7 +356,7 @@ function TaskCenterModalContent({
                         </div>
 
                         <div className="mt-1 flex items-center gap-2 text-code-sm text-on-surface-variant">
-                          <span className="capitalize">{task.kind}</span>
+                          <span className="capitalize">{task.category || task.kind}</span>
                           <span className="text-on-surface-muted">•</span>
                           <span>{formatTimeShort(startedAt)}</span>
                         </div>
@@ -465,6 +467,14 @@ function TaskCenterModalContent({
                                   {selectedTask.id}
                                 </code>
                               </span>
+                              {selectedTask.category ? (
+                                <span>
+                                  分类:{" "}
+                                  <code className="rounded-full bg-theme-control/50 px-2 py-0.5 font-mono text-[11px] text-primary">
+                                    {selectedTask.category}
+                                  </code>
+                                </span>
+                              ) : null}
                               {tenantId ? (
                                 <span>
                                   租户:{" "}
@@ -681,7 +691,12 @@ function StageCard({
   const sessionRef = stage.agentSessionRef ?? stage.agent_session_ref;
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-theme-control-border bg-surface-elevated/50 p-4 transition-all hover:border-theme-control-border">
+    <div
+      className={clsx(
+        "flex flex-col gap-2.5 rounded-2xl border border-theme-control-border bg-surface-elevated/50 p-4 transition-all hover:border-theme-control-border",
+        stage.status === "skipped" && "opacity-60 bg-surface-elevated/20",
+      )}
+    >
       {/* 阶段标题栏 */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
@@ -826,6 +841,13 @@ function StageStatusBadge({ status }: { status: string }) {
         <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/40 px-2 py-0.5 text-caption font-medium text-on-surface-variant">
           <Ban className="size-3" />
           已取消
+        </span>
+      );
+    case "skipped":
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full border border-theme-control-border bg-theme-control/20 px-2 py-0.5 text-caption font-medium text-outline">
+          <ChevronRight className="size-3" />
+          已跳过
         </span>
       );
     default:

@@ -39,6 +39,27 @@ pub(crate) enum TaskKind {
     Other,
 }
 
+impl TaskKind {
+    pub(crate) fn default_category_string(&self) -> &'static str {
+        match self {
+            Self::ConversationSync => "conversation/sync",
+            Self::ConversationUsageScan => "conversation/usage_scan",
+            Self::ConversationDataMaintenance => "conversation/maintenance",
+            Self::SearchIndexRebuild => "search/rebuild",
+            Self::ScriptInstall => "script/install",
+            Self::ExtensionLifecycle => "extension/lifecycle",
+            Self::AiExecution => "ai/execution",
+            Self::AgentMarketRefresh => "agent_market/refresh",
+            Self::Memory => "memory/general",
+            Self::RemoteSkillAcquire => "skill/remote_acquire",
+            Self::Scan => "source/scan",
+            Self::Backup => "system/backup",
+            Self::BatchMount => "mount/batch",
+            Self::Other => "other",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) enum TaskState {
@@ -182,6 +203,8 @@ pub(crate) struct TaskSpec {
     pub(crate) conflict_keys: Vec<String>,
     pub(crate) capabilities: Option<TaskCapabilities>,
     pub(crate) detail: Value,
+    pub(crate) category: Option<super::task_pipeline::TaskCategory>,
+    pub(crate) pipeline: Option<super::task_pipeline::PipelineDescriptor>,
 }
 
 impl TaskSpec {
@@ -196,6 +219,8 @@ impl TaskSpec {
             conflict_keys: Vec::new(),
             capabilities: None,
             detail: Value::Null,
+            category: None,
+            pipeline: None,
         }
     }
 
@@ -228,6 +253,22 @@ impl TaskSpec {
         self
     }
 
+    pub(crate) fn with_category(
+        mut self,
+        category: impl Into<super::task_pipeline::TaskCategory>,
+    ) -> Self {
+        self.category = Some(category.into());
+        self
+    }
+
+    pub(crate) fn with_pipeline(
+        mut self,
+        pipeline: super::task_pipeline::PipelineDescriptor,
+    ) -> Self {
+        self.pipeline = Some(pipeline);
+        self
+    }
+
     pub(crate) fn with_conflict_key(mut self, conflict_key: impl Into<String>) -> Self {
         self.conflict_keys.push(conflict_key.into());
         self
@@ -247,6 +288,8 @@ impl TaskSpec {
 pub(crate) struct TaskSnapshot {
     pub(crate) task_id: String,
     pub(crate) kind: TaskKind,
+    #[serde(default)]
+    pub(crate) category: String,
     #[serde(skip)]
     pub(crate) tenant_id: Option<String>,
     pub(crate) title: Option<String>,
@@ -526,9 +569,20 @@ impl TaskRuntime {
             .user_visible
             .unwrap_or_else(|| !matches!(spec.kind, TaskKind::Other));
         let capabilities = spec.capabilities.unwrap_or_default();
+        let category = spec
+            .category
+            .clone()
+            .unwrap_or_else(|| super::task_pipeline::TaskCategory::from(spec.kind))
+            .0;
+        let stages = if let Some(pipeline) = &spec.pipeline {
+            pipeline.to_initial_stages()
+        } else {
+            Vec::new()
+        };
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            category,
             tenant_id: spec.tenant_id,
             title: spec.title,
             user_visible,
@@ -540,7 +594,7 @@ impl TaskRuntime {
             started_at: started_at.clone(),
             updated_at: started_at,
             finished_at: None,
-            stages: Vec::new(),
+            stages,
             metrics: Vec::new(),
             failures: Vec::new(),
             error_summary: None,
@@ -655,9 +709,20 @@ impl TaskRuntime {
             .user_visible
             .unwrap_or_else(|| !matches!(spec.kind, TaskKind::Other));
         let capabilities = spec.capabilities.unwrap_or_default();
+        let category = spec
+            .category
+            .clone()
+            .unwrap_or_else(|| super::task_pipeline::TaskCategory::from(spec.kind))
+            .0;
+        let stages = if let Some(pipeline) = &spec.pipeline {
+            pipeline.to_initial_stages()
+        } else {
+            Vec::new()
+        };
         let snapshot = TaskSnapshot {
             task_id: task_id.clone(),
             kind: spec.kind,
+            category,
             tenant_id: spec.tenant_id,
             title: spec.title,
             user_visible,
@@ -669,7 +734,7 @@ impl TaskRuntime {
             started_at: started_at.clone(),
             updated_at: started_at,
             finished_at: None,
-            stages: Vec::new(),
+            stages,
             metrics: Vec::new(),
             failures: Vec::new(),
             error_summary: None,
@@ -1430,6 +1495,30 @@ impl TaskRuntime {
                         }
                     }
                 }
+            } else {
+                let stage = TaskStage {
+                    id: stage_id.to_string(),
+                    name: stage_id.to_string(),
+                    status,
+                    started_at: if status == StageStatus::Running {
+                        Some(now.clone())
+                    } else {
+                        None
+                    },
+                    finished_at: if status.is_terminal() {
+                        Some(now.clone())
+                    } else {
+                        None
+                    },
+                    duration_ms: None,
+                    progress: None,
+                    current_activities: Vec::new(),
+                    metrics: Vec::new(),
+                    failures: Vec::new(),
+                    skipped: Vec::new(),
+                    agent_session_ref: None,
+                };
+                entry.snapshot.stages.push(stage);
             }
             entry.snapshot.revision += 1;
             entry.snapshot.updated_at = now;
@@ -1545,6 +1634,22 @@ impl TaskRuntime {
                 stage.metrics.extend(metrics.clone());
                 stage.failures.extend(failures.clone());
                 stage.skipped.extend(skipped.clone());
+            } else {
+                let stage = TaskStage {
+                    id: stage_id.to_string(),
+                    name: stage_id.to_string(),
+                    status,
+                    started_at: Some(now.clone()),
+                    finished_at: Some(now.clone()),
+                    duration_ms: Some(0),
+                    progress: None,
+                    current_activities: Vec::new(),
+                    metrics: metrics.clone(),
+                    failures: failures.clone(),
+                    skipped: skipped.clone(),
+                    agent_session_ref: None,
+                };
+                entry.snapshot.stages.push(stage);
             }
             for metric in metrics {
                 if let Some(existing) = entry

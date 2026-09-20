@@ -112,6 +112,7 @@ export interface TaskClearParams {
 export interface TaskView {
   id: string;
   kind: string;
+  category?: string | null;
   title: string;
   tenantId?: string | null;
   tenant_id?: string | null;
@@ -220,6 +221,7 @@ export function normalizeTaskView(raw: unknown): TaskView {
   });
 
   const tenantId = (data.tenantId ?? data.tenant_id ?? null) as string | null;
+  const category = (data.category ?? null) as string | null;
   const startedAt = (data.startedAt ?? data.started_at ?? null) as
     string | null;
   const updatedAt = (data.updatedAt ?? data.updated_at ?? null) as
@@ -240,6 +242,7 @@ export function normalizeTaskView(raw: unknown): TaskView {
   return {
     id: (data.id ?? "") as string,
     kind: (data.kind ?? "") as string,
+    category,
     title: (data.title ?? "") as string,
     tenantId,
     tenant_id: tenantId,

@@ -146,6 +146,41 @@ describe("TaskCenterModal", () => {
         finished_at: "2026-09-10T02:05:00Z",
         error_summary: "模型执行失败",
       },
+      {
+        id: "task-open-cat-3",
+        kind: "Other",
+        category: "custom/pipeline-run",
+        title: "自定义流水线",
+        state: "succeeded",
+        outcome: "success",
+        stages: [
+          {
+            id: "step_1",
+            name: "初始分析",
+            status: "succeeded",
+            current_activities: [],
+            metrics: [],
+            failures: [],
+            skipped: [],
+          },
+          {
+            id: "step_2",
+            name: "可选优化",
+            status: "skipped",
+            current_activities: [],
+            metrics: [],
+            failures: [],
+            skipped: [],
+          },
+        ],
+        metrics: [],
+        failures: [],
+        capabilities: { cancellable: false, retryable: false, clearable: true },
+        revision: 4,
+        started_at: "2026-09-10T04:00:00Z",
+        updated_at: "2026-09-10T04:02:00Z",
+        finished_at: "2026-09-10T04:02:00Z",
+      },
     ];
   });
 
@@ -369,17 +404,43 @@ describe("TaskCenterModal", () => {
       expect(selectedItem.className).toContain("conversation-row");
       expect(selectedItem.getAttribute("data-selected")).toBe("true");
 
-      const unselectedItem = within(taskList).getByRole("button", {
+      const unselectedItems = within(taskList).getAllByRole("button", {
         pressed: false,
       });
-      expect(unselectedItem.className).toContain("conversation-row");
-      expect(unselectedItem.getAttribute("data-selected")).toBe("false");
+      expect(unselectedItems.length).toBeGreaterThan(0);
+      expect(unselectedItems[0].className).toContain("conversation-row");
+      expect(unselectedItems[0].getAttribute("data-selected")).toBe("false");
 
       // 验证右侧详情具有 ui-view-transition 平滑过渡类
       const detailContainer = document.querySelector(
         "main .ui-view-transition",
       );
       expect(detailContainer).toBeTruthy();
+    });
+  });
+
+  it("支持展示开放任务分类 category 与跳过阶段状态 skipped", async () => {
+    mockSelectedTaskId = "task-open-cat-3";
+    render(
+      <I18nProvider>
+        <TaskCenterModal onClose={mockOnClose} open={true} />
+      </I18nProvider>,
+    );
+
+    // 验证分类文本在列表项与详情头部均正确渲染
+    expect(screen.getAllByText("custom/pipeline-run").length).toBeGreaterThanOrEqual(1);
+
+    // 验证 skipped 徽标
+    expect(screen.getByText("已跳过")).toBeTruthy();
+
+    // 验证按 category 搜索
+    const searchInput = screen.getByPlaceholderText(/搜索/i);
+    fireEvent.change(searchInput, { target: { value: "pipeline-run" } });
+
+    await waitFor(() => {
+      const taskList = screen.getByTestId("task-list");
+      expect(within(taskList).getByText("自定义流水线")).toBeTruthy();
+      expect(within(taskList).queryByText("会话同步")).toBeNull();
     });
   });
 });
